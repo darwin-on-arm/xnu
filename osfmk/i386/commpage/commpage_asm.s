@@ -1,0 +1,125 @@
+/*
+ * Copyright (c) 2003-2009 Apple Inc. All rights reserved.
+ *
+ * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
+ * 
+ * This file contains Original Code and/or Modifications of Original Code
+ * as defined in and that are subject to the Apple Public Source License
+ * Version 2.0 (the 'License'). You may not use this file except in
+ * compliance with the License. The rights granted to you under the License
+ * may not be used to create, or enable the creation or redistribution of,
+ * unlawful or unlicensed copies of an Apple operating system, or to
+ * circumvent, violate, or enable the circumvention or violation of, any
+ * terms of an Apple operating system software license agreement.
+ * 
+ * Please obtain a copy of the License at
+ * http://www.opensource.apple.com/apsl/ and read it before using this file.
+ * 
+ * The Original Code and all software distributed under the License are
+ * distributed on an 'AS IS' basis, WITHOUT WARRANTY OF ANY KIND, EITHER
+ * EXPRESS OR IMPLIED, AND APPLE HEREBY DISCLAIMS ALL SUCH WARRANTIES,
+ * INCLUDING WITHOUT LIMITATION, ANY WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE, QUIET ENJOYMENT OR NON-INFRINGEMENT.
+ * Please see the License for the specific language governing rights and
+ * limitations under the License.
+ * 
+ * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
+ */
+
+#include <machine/cpu_capabilities.h>
+#include <machine/commpage.h>
+#include <machine/asm.h>
+#include <assym.s>
+
+/*
+ * extern void	commpage_sched_gen_inc(void);
+ */
+	.text
+
+	.globl	_commpage_sched_gen_inc
+_commpage_sched_gen_inc:
+#if defined (__x86_64__)
+	FRAME
+	
+	/* Increment 32-bit commpage field if present */
+	movq	_commPagePtr32(%rip),%rdx
+	testq	%rdx,%rdx
+	je	1f
+	subq	$(ASM_COMM_PAGE32_BASE_ADDRESS),%rdx
+	lock
+	incl	ASM_COMM_PAGE_SCHED_GEN(%rdx)
+
+	/* Increment 64-bit commpage field if present */
+	movq	_commPagePtr64(%rip),%rdx
+	testq	%rdx,%rdx
+	je	1f
+	subq	$(ASM_COMM_PAGE32_START_ADDRESS),%rdx
+	lock
+	incl	ASM_COMM_PAGE_SCHED_GEN(%rdx)
+1:
+	EMARF
+	ret
+#elif defined (__i386__)
+	FRAME
+	
+	/* Increment 32-bit commpage field if present */
+	mov	_commPagePtr32,%edx
+	testl	%edx,%edx
+	je	1f
+	sub	$(ASM_COMM_PAGE32_BASE_ADDRESS),%edx
+	lock
+	incl	ASM_COMM_PAGE_SCHED_GEN(%edx)
+
+	/* Increment 64-bit commpage field if present */
+	mov	_commPagePtr64,%edx
+	testl	%edx,%edx
+	je	1f
+	sub	$(ASM_COMM_PAGE32_START_ADDRESS),%edx
+	lock
+	incl	ASM_COMM_PAGE_SCHED_GEN(%edx)
+1:
+	EMARF
+	ret
+#else
+#error unsupported architecture
+#endif
+
+/* pointers to the 32-bit commpage routine descriptors */
+/* WARNING: these must be sorted by commpage address! */
+	.const_data
+	.align	3
+	.globl	_commpage_32_routines
+_commpage_32_routines:
+	COMMPAGE_DESCRIPTOR_REFERENCE(preempt)
+	COMMPAGE_DESCRIPTOR_REFERENCE(backoff)
+	COMMPAGE_DESCRIPTOR_REFERENCE(pfz_enqueue)
+	COMMPAGE_DESCRIPTOR_REFERENCE(pfz_dequeue)
+	COMMPAGE_DESCRIPTOR_REFERENCE(pfz_mutex_lock)
+#if defined (__i386__)
+	.long	0
+#elif defined (__x86_64__)
+	.quad	0
+#else
+#error unsupported architecture
+#endif
+
+
+/* pointers to the 64-bit commpage routine descriptors */
+/* WARNING: these must be sorted by commpage address! */
+	.const_data
+	.align	3
+	.globl	_commpage_64_routines
+_commpage_64_routines:
+	COMMPAGE_DESCRIPTOR_REFERENCE(preempt_64)
+	COMMPAGE_DESCRIPTOR_REFERENCE(backoff_64)
+	COMMPAGE_DESCRIPTOR_REFERENCE(pfz_enqueue_64)
+	COMMPAGE_DESCRIPTOR_REFERENCE(pfz_dequeue_64)
+	COMMPAGE_DESCRIPTOR_REFERENCE(pfz_mutex_lock_64)
+#if defined (__i386__)
+	.long	0
+#elif defined (__x86_64__)
+	.quad	0
+#else
+#error unsupported architecture
+#endif
+

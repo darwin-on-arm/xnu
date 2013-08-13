@@ -1,0 +1,360 @@
+#
+# Copyright (c) 2000-2011 Apple Inc. All rights reserved.
+#
+# @APPLE_LICENSE_HEADER_START@
+# 
+# The contents of this file constitute Original Code as defined in and
+# are subject to the Apple Public Source License Version 1.1 (the
+# "License").  You may not use this file except in compliance with the
+# License.  Please obtain a copy of the License at
+# http://www.apple.com/publicsource and read it before using this file.
+# 
+# This Original Code and all software distributed under the License are
+# distributed on an "AS IS" basis, WITHOUT WARRANTY OF ANY KIND, EITHER
+# EXPRESS OR IMPLIED, AND APPLE HEREBY DISCLAIMS ALL SUCH WARRANTIES,
+# INCLUDING WITHOUT LIMITATION, ANY WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE OR NON-INFRINGEMENT.  Please see the
+# License for the specific language governing rights and limitations
+# under the License.
+# 
+# @APPLE_LICENSE_HEADER_END@
+#
+
+#
+# Mach Operating System
+# Copyright (c) 1986 Carnegie-Mellon University
+# All rights reserved.  The CMU software License Agreement specifies
+# the terms and conditions for use and redistribution.
+#
+
+#
+# Export IDENT for sub-makefiles
+#
+export IDENT
+
+export MakeInc_cmd=${SRCROOT}/makedefs/MakeInc.cmd
+export MakeInc_def=${SRCROOT}/makedefs/MakeInc.def
+export MakeInc_rule=${SRCROOT}/makedefs/MakeInc.rule
+export MakeInc_dir=${SRCROOT}/makedefs/MakeInc.dir
+
+include $(MakeInc_cmd)
+include $(MakeInc_def)
+
+#
+# XXX: CFLAGS
+#
+CFLAGS+= -include meta_features.h -DARCH_PRIVATE -DDRIVER_PRIVATE \
+	-D_KERNEL_BUILD -DKERNEL_BUILD -DMACH_KERNEL -DBSD_BUILD \
+	-DBSD_KERNEL_PRIVATE -DLP64KERN=1 -DLP64_DEBUG=0  -I. $(CFLAGS_INLINE_CONFIG)
+
+dp_backing_file.o_CFLAGS_ADD	+= -Wshorten-64-to-32
+ubc_subr.o_CFLAGS_ADD			+= -Wshorten-64-to-32
+vnode_pager.o_CFLAGS_ADD		+= -Wshorten-64-to-32
+vm_unix.o_CFLAGS_ADD			+= -Wshorten-64-to-32
+
+# Objects that don't want -Wsign-compare
+OBJS_NO_SIGN_COMPARE =		\
+		radix.o	\
+		route.o	\
+		rtsock.o	\
+		dhcp_options.o	\
+		igmp.o	\
+		in_cksum.o	\
+		ip_divert.o	\
+		ip_dummynet.o	\
+		ip_flow.o	\
+		ip_fw2.o	\
+		ip_fw2_compat.o	\
+		ip_icmp.o	\
+		ip_input.o	\
+		ip_mroute.o	\
+		ip_output.o	\
+		raw_ip.o	\
+		tcp_input.o	\
+		tcp_output.o	\
+		tcp_subr.o	\
+		tcp_usrreq.o	\
+		tcp_timer.o	\
+		udp_usrreq.o	\
+		ah_input.o	\
+		ah_core.o	\
+		ah_output.o	\
+		esp_core.o	\
+		esp_input.o	\
+		esp_output.o	\
+		esp_rijndael.o	\
+		ipsec.o	\
+		dest6.o	\
+		frag6.o	\
+		icmp6.o	\
+		in6.o	\
+		in6_src.o	\
+		in6_cksum.o	\
+		ip6_fw.o	\
+		ip6_forward.o	\
+		in6_ifattach.o	\
+		ip6_input.o	\
+		ip6_mroute.o	\
+		ip6_output.o	\
+		ipcomp_input.o	\
+		ipcomp_output.o	\
+		in6_proto.o	\
+		mld6.o	\
+		nd6.o	\
+		nd6_nbr.o	\
+		nd6_prproxy.o	\
+		nd6_rtr.o	\
+		raw_ip6.o	\
+		route6.o	\
+		scope6.o	\
+		udp6_usrreq.o	\
+		key.o	\
+		keysock.o	\
+		keydb.o	\
+		des_setkey.o	\
+		uipc_mbuf.o	\
+		uipc_mbuf2.o	\
+		uipc_socket.o	\
+		uipc_socket2.o
+
+$(foreach file,$(OBJS_NO_SIGN_COMPARE),$(eval $(call add_perfile_cflags,$(file),-Wno-sign-compare)))
+
+# Objects that want -Wcast-align warning treated as error
+OBJS_ERROR_CAST_ALIGN =			\
+		kern_control.o		\
+		mcache.o		\
+		sys_socket.o		\
+		uipc_mbuf.o		\
+		uipc_mbuf2.o		\
+		uipc_socket.o		\
+		uipc_socket2.o		\
+		uipc_syscalls.o		\
+		bpf.o			\
+		bpf_filter.o		\
+		bridgestp.o		\
+		bsd_comp.o		\
+		devtimer.o		\
+		dlil.o			\
+		ether_if_module.o	\
+		ether_inet_pr_module.o	\
+		ether_inet6_pr_module.o	\
+		flowhash.o		\
+		if.o			\
+		if_bridge.o		\
+		if_gif.o		\
+		if_llreach.o		\
+		if_loop.o		\
+		if_media.o		\
+		if_mib.o		\
+		if_pflog.o		\
+		if_stf.o		\
+		if_utun.o		\
+		if_utun_crypto.o	\
+		if_utun_crypto_ipsec.o	\
+		if_vlan.o		\
+		init.o			\
+		iptap.o			\
+		kext_net.o		\
+		kpi_interface.o		\
+		kpi_interfacefilter.o	\
+		kpi_protocol.o		\
+		kpi_protocol.o		\
+		ndrv.o			\
+		net_osdep.o		\
+		net_str_id.o		\
+		netsrc.o		\
+		ntstat.o		\
+		pf.o			\
+		pf_if.o			\
+		pf_ioctl.o		\
+		pf_norm.o		\
+		pf_osfp.o		\
+		pf_ruleset.o		\
+		pf_table.o		\
+		ppp_deflate.o		\
+		radix.o			\
+		raw_cb.o		\
+		raw_usrreq.o		\
+		route.o			\
+		rtsock.o		\
+		dhcp_options.o		\
+		altq_cbq.o		\
+		altq_fairq.o		\
+		altq_hfsc.o		\
+		altq_priq.o		\
+		altq_qfq.o		\
+		altq_subr.o		\
+		pktsched.o		\
+		pktsched_cbq.o		\
+		pktsched_fairq.o	\
+		pktsched_hfsc.o		\
+		pktsched_priq.o		\
+		pktsched_qfq.o		\
+		pktsched_rmclass.o	\
+		pktsched_tcq.o		\
+		classq.o		\
+		classq_blue.o		\
+		classq_red.o		\
+		classq_rio.o		\
+		classq_sfb.o		\
+		classq_subr.o		\
+		classq_util.o		\
+		igmp.o			\
+		in.o			\
+		in_arp.o		\
+		in_cksum.o		\
+		in_dhcp.o		\
+		in_gif.o		\
+		in_mcast.o		\
+		in_pcb.o		\
+		in_pcblist.o		\
+		in_proto.o		\
+		in_rmx.o		\
+		in_tclass.o		\
+		ip_divert.o		\
+		ip_ecn.o		\
+		ip_encap.o		\
+		ip_icmp.o		\
+		ip_id.o			\
+		ip_input.o		\
+		ip_mroute.o		\
+		ip_output.o		\
+		kpi_ipfilter.o		\
+		raw_ip.o		\
+		tcp_debug.o		\
+		tcp_input.o		\
+		tcp_ledbat.o		\
+		tcp_newreno.o		\
+		tcp_output.o		\
+		tcp_sack.o		\
+		tcp_subr.o		\
+		tcp_timer.o		\
+		tcp_usrreq.o		\
+		udp_usrreq.o		\
+		ah_core.o		\
+		ah_input.o		\
+		ah_output.o		\
+		dest6.o			\
+		esp_core.o		\
+		esp_input.o		\
+		esp_output.o		\
+		esp_rijndael.o		\
+		frag6.o			\
+		icmp6.o			\
+		in6.o			\
+		in6_cksum.o		\
+		in6_gif.o		\
+		in6_ifattach.o		\
+		in6_mcast.o		\
+		in6_pcb.o		\
+		in6_prefix.o		\
+		in6_proto.o		\
+		in6_rmx.o		\
+		in6_src.o		\
+		ip6_forward.o		\
+		ip6_id.o		\
+		ip6_input.o		\
+		ip6_mroute.o		\
+		ip6_output.o		\
+		ipcomp_core.o		\
+		ipcomp_input.o		\
+		ipcomp_output.o		\
+		ipsec.o			\
+		mld6.o			\
+		nd6.o			\
+		nd6_nbr.o		\
+		nd6_rtr.o		\
+		raw_ip6.o		\
+		route6.o		\
+		scope6.o		\
+		udp6_output.o		\
+		udp6_usrreq.o		\
+		key.o			\
+		key_debug.o		\
+		keydb.o			\
+		keysock.o
+
+$(foreach file,$(OBJS_ERROR_CAST_ALIGN),$(eval $(call add_perfile_cflags,$(file),-Werror=cast-align)))
+
+#
+# Directories for mig generated files
+#
+COMP_SUBDIRS = 
+
+#
+#  Make sure we don't remove this by accident if interrupted at the wrong
+#  time.
+#
+.PRECIOUS: Makefile
+
+#
+#  Theses macros are filled in by the config program depending on the
+#  current configuration.  The MACHDEP macro is replaced by the
+#  contents of the machine dependent makefile template and the others
+#  are replaced by the corresponding symbol definitions for the
+#  configuration.
+#
+
+%OBJS
+
+%CFILES
+
+%MFILES
+
+%SFILES
+
+%BFILES
+
+%ORDERED
+%MACHDEP
+
+#
+# This rule insures that the subr_prof.c does NOT get compiled with
+# profiling. It implements mcount() and profiling it leads to recursion.
+#
+
+subr_prof.o_CFLAGS_RM = -pg
+
+#
+#  OBJSDEPS is the set of files (defined in the machine dependent
+#  template if necessary) which all objects depend on (such as an
+#  in-line assembler expansion filter)
+#
+${OBJS}: ${OBJSDEPS}
+
+
+%LOAD
+
+LDOBJS = $(OBJS)
+
+$(COMPONENT).filelist: $(LDOBJS)
+	@echo LDFILELIST $(COMPONENT)
+	$(_v)( for obj in ${LDOBJS}; do	\
+		 echo $(TARGET)$(COMP_OBJ_DIR)/$(KERNEL_CONFIG)/$${obj}; \
+	done; ) > $(COMPONENT).filelist
+
+MAKESYSCALLS = $(SRCROOT)/bsd/kern/makesyscalls.sh
+
+init_sysent.c: $(SRCROOT)/bsd/kern/syscalls.master $(MAKESYSCALLS)
+	@echo "Generating $@ from $<";
+	$(_v)$(MAKESYSCALLS) $< table > /dev/null
+
+syscalls.c: $(SRCROOT)/bsd/kern/syscalls.master $(MAKESYSCALLS)
+	@echo "Generating $@ from $<";
+	$(_v)$(MAKESYSCALLS) $< names > /dev/null
+
+audit_kevents.c: $(SRCROOT)/bsd/kern/syscalls.master $(MAKESYSCALLS)
+	@echo "Generating $@ from $<";
+	$(_v)$(MAKESYSCALLS) $< audit > /dev/null
+
+do_depend: do_all
+	$(_v)${MD} -u Makedep -f -d `ls *.d`;
+
+do_all: $(COMPONENT).filelist
+
+do_build_all: do_depend
+
+%RULES
+
+include $(MakeInc_rule)
+include $(MakeInc_dir)
