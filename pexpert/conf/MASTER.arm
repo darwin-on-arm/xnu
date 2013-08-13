@@ -1,0 +1,16 @@
+######################################################################
+#  
+#  Standard Apple Mac OS Configurations:
+#  -------- ----- ------ ---------------
+#
+#  RELEASE	= [ intel mach mach_pe panic_info config_dtrace ]
+#  PROFILE	= [ RELEASE profile ]
+#  DEBUG	= [ RELEASE debug ]
+#
+#  EMBEDDED	= [ intel mach mach_pe panic_info ]
+#  DEVELOPMENT	= [ EMBEDDED config_dtrace ]
+#
+######################################################################
+
+machine		"arm"					# <intel>
+cpu		"arm"					# <intel>

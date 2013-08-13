@@ -1,0 +1,14 @@
+######################################################################
+#
+#  RELEASE	= [ intel mach libkerncpp config_dtrace config_kxld vm_pressure_events ]
+#  PROFILE	= [ RELEASE profile ]
+#  DEBUG	= [ RELEASE debug ]
+#
+#  EMBEDDED	= [ intel mach libkerncpp ]
+#  DEVELOPMENT	= [ EMBEDDED config_dtrace ]
+#
+######################################################################
+
+machine		"arm"					# <intel>
+cpu		"arm"					# <intel>
+

@@ -1,0 +1,19 @@
+######################################################################
+#BEGIN	Machine dependent Makefile fragment for x86_64
+######################################################################
+
+CWARNFLAGS = $(CWARNFLAGS_STD) -Wshorten-64-to-32
+
+# Files that must go in the __HIB segment:
+UNCONFIGURED_HIB_FILES=					\
+           hibernate_restore.o          \
+           hibernate_bootstrap.o
+
+HIB_FILES=$(filter $(UNCONFIGURED_HIB_FILES),$(OBJS))
+
+hibernate_restore.o_CFLAGS_ADD += -fno-stack-protector
+hibernate_bootstrap.o_CFLAGS_ADD += -fno-stack-protector
+
+######################################################################
+#END	Machine dependent Makefile fragment for x86_64
+######################################################################
