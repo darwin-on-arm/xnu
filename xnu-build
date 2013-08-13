@@ -62,7 +62,12 @@ if [ "$EUID" != "0" ]; then
 fi
 
 projnam=xnu
-project=xnu-2050.22.13
+project=$(git tag -l | head -n1)
+
+if [ ! $project ]; then
+	echo "You must check out this project from git."
+	exit 1
+fi
 
 ###
 ### We do our building in private/var/tmp since it's
@@ -89,7 +94,7 @@ buildtool="make"
 version="${project/$projnam-/}"
 build_version=$(($(GetBuildVersion $DARWIN_BUILDROOT/{Logs,Symbols,Headers,Roots}/$projnam/$project.*) + 1))
 
-REAL_SRCROOT="$BuildRoot/SourceCache/$projnam/$project"
+REAL_SRCROOT="$(pwd)"
 REAL_OBJROOT="$BuildRoot/$vartmp/$projnam/$project.obj~$build_version"
 REAL_SYMROOT="$BuildRoot/$vartmp/$projnam/$project.sym~$build_version"
 REAL_DSTROOT="$BuildRoot/$vartmp/$projnam/$project.root~$build_version"
