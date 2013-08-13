@@ -1,10 +1,42 @@
 /*
+ * Copyright 2013, winocm. <rms@velocitylimitless.org>
+ * All rights reserved.
+ * 
+ * Redistribution and use in source and binary forms, with or without modification,
+ * are permitted provided that the following conditions are met:
+ * 
+ *   Redistributions of source code must retain the above copyright notice, this
+ *   list of conditions and the following disclaimer.
+ * 
+ *   Redistributions in binary form must reproduce the above copyright notice, this
+ *   list of conditions and the following disclaimer in the documentation and/or
+ *   other materials provided with the distribution.
+ * 
+ *   If you are going to use this software in any form that does not involve
+ *   releasing the source to this project or improving it, let me know beforehand.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+ * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
+ * ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+ * ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+ * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+/*
  * OSAtomic operations.
  */
 
 .code 32
 .arm
 .syntax unified
+
+#ifdef BOARD_CONFIG_OMAP3530
+#define NO_EXCLUSIVES 1
+#endif
 
 .align 4
 .globl _OSCompareAndSwap64
@@ -13,7 +45,7 @@ _OSCompareAndSwap64:
     stmfd   sp!,{r4,r5,lr}
 _loop:
     /* ldrexd  r4, [r12] */
-#ifdef BOARD_CONFIG_OMAP3530
+#ifdef NO_EXCLUSIVES
     ldrd    r4, [r12]
 #else
     .long 0xe1bc4f9f
@@ -23,12 +55,13 @@ _loop:
     movne   r0, #0
     bne     ret
     /* strexd  r4, r2, [r12] */
-#ifdef BOARD_CONFIG_OMAP3530
+#ifdef NO_EXCLUSIVES
     strd    r2, [r12]
+    mov     r4, #0
 #else
     .long 0xe1ac4f92
 #endif
-    cmp     r3, #0
+    cmp     r4, #0
     bne     _loop
     mov     r0, #1
 ret:
@@ -39,15 +72,16 @@ ret:
 _OSAddAtomic64:
     stmfd   sp!, {r4-r9,lr}
 loop:
-#ifdef BOARD_CONFIG_OMAP3530
+#ifdef NO_EXCLUSIVES
     ldrd    r4, [r2]
 #else
     ldrexd  r4, r5, [r2]
 #endif
     adds    r8, r4, r0
     adc     r9, r5, r1
-#ifdef BOARD_CONFIG_OMAP3530
+#ifdef NO_EXCLUSIVES
     strd    r8, r9, [r2]
+    mov     r3, #0
 #else
     strexd  r3, r8, r9, [r2]
 #endif
