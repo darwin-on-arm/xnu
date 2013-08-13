@@ -20,7 +20,18 @@
  * 
  * @APPLE_LICENSE_HEADER_END@
  */
+
+#ifndef __linux__
 #include <libc.h>
+#else
+#include <stdio.h>
+#include <unistd.h>
+#include <string.h>
+#include <stdlib.h>
+#include <time.h>
+#include <stdarg.h>
+#endif
+
 #include <errno.h>
 #include <ctype.h>
 

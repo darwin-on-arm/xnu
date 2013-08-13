@@ -426,6 +426,7 @@ LD	= $(KC++) -nostdlib
 # Default LDFLAGS
 #
 export LDFLAGS_KERNEL_GEN = \
+	$(RC_LDFLAGS) \
 	-nostdlib \
 	-fapple-kext \
 	-read_only_relocs suppress \

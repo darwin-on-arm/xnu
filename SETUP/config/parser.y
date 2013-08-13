@@ -54,7 +54,6 @@
 %token	DUMPS
 %token	EQUALS
 %token	FLAGS
-%token	HZ
 %token	IDENT
 %token	INIT
 %token	MACHINE
@@ -1270,7 +1269,7 @@ deverror(const char *systemname, const char *devtype)
  */
 /*ARGSUSED*/
 int
-finddev(__unused dev_t dev)
+finddev(dev_t dev)
 {
 
 	/* punt on this right now */
