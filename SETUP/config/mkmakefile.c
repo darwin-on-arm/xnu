@@ -61,6 +61,11 @@ static char sccsid[] __attribute__((used)) = "@(#)mkmakefile.c	5.21 (Berkeley) 6
 #include <stdio.h>
 #include <unistd.h>	/* for unlink */
 #include <ctype.h>
+
+#ifdef __linux__
+#define __unused
+#endif
+
 #include "parser.h"
 #include "config.h"
 
