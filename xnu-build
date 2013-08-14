@@ -383,6 +383,7 @@ if [ "$EXIT_STATUS" == "0" ]; then
 		mkdir -p "$DARWIN_BUILDROOT/Headers/$projnam/$project.hdrs~$build_version"
 		ditto "$REAL_DSTROOT" "$DARWIN_BUILDROOT/Headers/$projnam/$project.hdrs~$build_version"
 	else
+		mkdir -p "$DARWIN_BUILDROOT/Roots/$projnam/"
 		rm -f "$DARWIN_BUILDROOT/Roots/$projnam/$project.root"
 		rm -f "$DARWIN_BUILDROOT/Roots/$projnam/$project.sym"
 		ln -s "$REAL_DSTROOT" "$DARWIN_BUILDROOT/Roots/$projnam/$project.root" 
