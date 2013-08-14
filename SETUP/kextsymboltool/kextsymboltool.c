@@ -21,16 +21,12 @@
  * @APPLE_LICENSE_HEADER_END@
  */
 
-#ifndef __linux__
-#include <libc.h>
-#else
 #include <stdio.h>
 #include <unistd.h>
 #include <string.h>
 #include <stdlib.h>
 #include <time.h>
 #include <stdarg.h>
-#endif
 
 #include <errno.h>
 #include <ctype.h>
@@ -47,7 +43,7 @@
 
 #include <uuid/uuid.h>
 
-#include <IOKit/IOTypes.h>
+#include <stdbool.h>
 
 #pragma mark Typedefs, Enums, Constants
 /*********************************************************************

@@ -58,7 +58,7 @@ my $BUILD_DATE = `date`;
 $BUILD_DATE =~ s/[\n\t]//g;
 my $BUILDER2=`whoami`;
 $BUILDER2 =~ s/[\n\t]//g;
-my $HOST=`hostname -s`;
+my $HOST=`hostname`;
 $HOST =~ s/[\n\t]//g;
 
 my $BUILDER = $BUILDER2 . "(" . $HOST . ")";
