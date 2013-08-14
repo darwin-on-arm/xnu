@@ -20,7 +20,17 @@
  *
  * @APPLE_LICENSE_HEADER_END@
  */
+#ifndef __linux__
 #include <libc.h>
+#else
+#include <stdio.h>
+#include <stdint.h>
+#include <stdarg.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#endif
+
 #include <errno.h>
 
 #include <sys/stat.h>
@@ -29,7 +39,13 @@
 
 #include <mach-o/swap.h>
 
+#ifndef __linux__
 #include <IOKit/IOTypes.h>
+#else
+#undef OSSwapInt32
+#define OSSwapInt32 	__builtin_bswap32
+#include <stdbool.h>
+#endif
 
 /*********************************************************************
 *********************************************************************/

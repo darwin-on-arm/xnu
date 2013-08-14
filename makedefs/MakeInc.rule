@@ -535,6 +535,11 @@ C_RULE_3=
 endif
 C_RULE_4=
 
+UNAME := $(shell uname)
+ifeq ($(UNAME), Linux)
+C_RULE_3=
+endif
+
 ifeq ($(ARCH_CONFIG),ARM)
 ifeq ($(KERNEL_CONFIG),RELEASE)
 C_RULE_3=
@@ -568,6 +573,12 @@ else
 P_RULE_4=
 endif
 
+UNAME := $(shell uname)
+ifeq ($(UNAME), Linux)
+P_RULE_4=
+endif
+
+
 ifeq ($(ARCH_CONFIG),ARM)
 ifeq ($(KERNEL_CONFIG),RELEASE)
 P_RULE_4=
@@ -595,11 +606,13 @@ $(TARGET)/mach_kernel: $(addprefix $(TARGET)/,$(foreach component,$(COMPONENT_LI
 	$(_v)$(CAT) $(addprefix $(TARGET)/,$(foreach component,$(COMPONENT_LIST), $(addprefix $(component)/$(firstword $($(addsuffix _KERNEL_CONFIG, $(shell printf $(component) | tr a-z A-Z))) $(KERNEL_CONFIG))/, $(addsuffix .filelist, $(component))))) < /dev/null > link.filelist
 	$(_v)$(LD) $(LDFLAGS_KERNEL) -filelist link.filelist version.o lastkernelconstructor.o `if [ -e $(STATIC_KMODS) ]; then echo $(STATIC_KMODS); fi` \
 		-o $(TARGET)/mach_kernel.sys $(LD_KERNEL_LIBS)
+	$(_v)if [ $(UNAME) != Linux ]; then \
 	$(_v)if [ $(BUILD_DWARF)  -eq  1 ]; then \
 		echo DSYMUTIL mach_kernel.sys; \
 		$(DSYMUTIL) $(DSYMUTIL_FLAGS) $(TARGET)/mach_kernel.sys -o $(TARGET)/mach_kernel.sys.dSYM > /dev/null; \
 		$(MKDIR) $(TARGET)/mach_kernel.sys.dSYM/$(DSYMRESDIR); \
 		$(INSTALL) $(INSTALL_FLAGS) $(SRCROOT)/kgmacros $(TARGET)/mach_kernel.sys.dSYM/$(DSYMRESDIR)/kgmacros; \
+	fi; \
 	fi;
 	$(_v)if [ $(MACHINE_CONFIG) != DEFAULT ] ; then     \
 		kernel_file_name=mach.`printf "%s" "$(KERNEL_CONFIG)" | $(TR) A-Z a-z`.`printf "%s" "$(MACHINE_CONFIG)" | $(TR) A-Z a-z`; \
@@ -616,8 +629,12 @@ $(TARGET)/mach_kernel: $(addprefix $(TARGET)/,$(foreach component,$(COMPONENT_LI
 	    if [[ $${onearch} = ARM ]]; then	\
             skip_ctf=TRUE;                                 \
             echo "Skipping CTF processing"; 			   \
-		fi												   \
+		fi	;											   \
     fi;													   \
+	if [ $(UNAME) = Linux ]; then \
+		echo "Skipping CTF processing on Linux."; \
+		skip_ctf=TRUE; \
+	fi; \
     if [ $${skip_ctf} = FALSE ]; then					   \
 	if [ $(BUILD_MACHO_OBJ) -eq 1 -a $(BUILD_DWARF) -eq 1 ]; then	   \
 		echo CTFMERGE mach_kernel;   		     	\

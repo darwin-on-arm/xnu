@@ -10,11 +10,12 @@ include $(MakeInc_def)
 SETUP_SUBDIRS = 	\
 	config		\
 	decomment	\
+	setsegname	\
 	md
 
 UNAME_S := $(shell uname -s)
 	ifeq ($(UNAME_S),Darwin)
-		SETUP_SUBDIRS += kextsymboltool setsegname
+		SETUP_SUBDIRS += kextsymboltool
 	endif
 
 include $(MakeInc_rule)
