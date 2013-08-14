@@ -607,7 +607,7 @@ $(TARGET)/mach_kernel: $(addprefix $(TARGET)/,$(foreach component,$(COMPONENT_LI
 	$(_v)$(LD) $(LDFLAGS_KERNEL) -filelist link.filelist version.o lastkernelconstructor.o `if [ -e $(STATIC_KMODS) ]; then echo $(STATIC_KMODS); fi` \
 		-o $(TARGET)/mach_kernel.sys $(LD_KERNEL_LIBS)
 	$(_v)if [ $(UNAME) != Linux ]; then \
-	$(_v)if [ $(BUILD_DWARF)  -eq  1 ]; then \
+	if [ $(BUILD_DWARF)  -eq  1 ]; then \
 		echo DSYMUTIL mach_kernel.sys; \
 		$(DSYMUTIL) $(DSYMUTIL_FLAGS) $(TARGET)/mach_kernel.sys -o $(TARGET)/mach_kernel.sys.dSYM > /dev/null; \
 		$(MKDIR) $(TARGET)/mach_kernel.sys.dSYM/$(DSYMRESDIR); \
