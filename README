@@ -1,0 +1,18 @@
+Linux dependencies for xnu
+==========================
+
+Building on XNU (on a Linux host) requires:
+   - cctools-839 or later
+   - ld64-139.4 or later
+   - LLVM 3.3 or later
+   - bootstrap_cmds-60 or later (migcom/mig only)
+   - clang/clang++
+
+For the sake of your sanity, the following archive contains:
+   - cctools-839
+   - ld64-139.4
+   - mig from bootstrap_cmds-60
+
+These binaries are compiled for a Linux 32-bit host and also require
+LLVM 3.3.
+
