@@ -61,7 +61,6 @@ struct kt {
 	{ "drive",	DRIVE },
 	{ "dumps",	DUMPS },
 	{ "flags",	FLAGS },
-	{ "hz",		HZ },
 	{ "ident",	IDENT },
 	{ "init",	INIT },
 	{ "machine",	MACHINE },

@@ -62,7 +62,7 @@ if [ "$EUID" != "0" ]; then
 fi
 
 projnam=xnu
-project=$(git tag -l | head -n1)
+project=$(git tag -l | tail -n1)
 
 if [ ! $project ]; then
 	echo "You must check out this project from git."
