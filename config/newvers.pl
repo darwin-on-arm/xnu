@@ -56,8 +56,12 @@ my $BUILD_OBJPATH=$ENV{'OBJPATH'} || $ENV{'OBJROOT'};
 $BUILD_OBJPATH =~ s,/+$,,;
 my $BUILD_DATE = `date`;
 $BUILD_DATE =~ s/[\n\t]//g;
-my $BUILDER=`whoami`;
-$BUILDER =~ s/[\n\t]//g;
+my $BUILDER2=`whoami`;
+$BUILDER2 =~ s/[\n\t]//g;
+my $HOST=`hostname -s`;
+$HOST =~ s/[\n\t]//g;
+
+my $BUILDER = $BUILDER2 . "(" . $HOST . ")";
 
 # Handle two scenarios:
 # SRCROOT=/tmp/xnu
