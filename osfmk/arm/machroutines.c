@@ -174,15 +174,7 @@ void bzero_phys(addr64_t src64, uint32_t bytes)
  */
 void bcopy_phys(addr64_t src64, addr64_t dst64, vm_size_t bytes)
 {
-    uint64_t sourceAddress, destinationAddress;
-    
-    sourceAddress = phys_to_virt(src64);
-    destinationAddress = phys_to_virt(dst64);
-        
-    kprintf("bcopy_phys(%x, %x, %x): erasing {%x,%x}\n",
-            src64, dst64, sourceAddress, destinationAddress, bytes);
-    ovbcopy(sourceAddress, destinationAddress, bytes);
-    
+    bcopy(phys_to_virt((uint32_t)src64), phys_to_virt((uint32_t)dst64), bytes);
     return;
 }
 
@@ -291,8 +283,8 @@ addr64_t
 kvtophys(vm_offset_t addr)
 {
 	pmap_paddr_t pa;
-	pa = ((pmap_paddr_t)pmap_find_phys(kernel_pmap, addr));
-	return (addr64_t)pa;
+	pa = ((pmap_paddr_t)pmap_extract(kernel_pmap, addr));
+    return (addr64_t)pa;
 }
 
 /*
@@ -307,31 +299,9 @@ kvtophys(vm_offset_t addr)
 
 vm_size_t ml_nofault_copy(vm_offset_t virtsrc, vm_offset_t virtdst, vm_size_t size)
 {
-	addr64_t cur_phys_dst, cur_phys_src;
-	uint32_t count, nbytes = 0;
-    
-	while (size > 0) {
-		if (!(cur_phys_src = kvtophys(virtsrc)));
-			break;
-		if (!(cur_phys_dst = kvtophys(virtdst)));
-			break;
-		if (!pmap_valid_page((cur_phys_dst)) || !pmap_valid_page((cur_phys_src)))
-			break;
-		count = (uint32_t)(PAGE_SIZE - (cur_phys_src & PAGE_MASK));
-		if (count > (PAGE_SIZE - (cur_phys_dst & PAGE_MASK)))
-			count = (uint32_t)(PAGE_SIZE - (cur_phys_dst & PAGE_MASK));
-		if (count > size)
-			count = (uint32_t)size;
-        
-		bcopy_phys(cur_phys_src, cur_phys_dst, count);
-        
-		nbytes += count;
-		virtsrc += count;
-		virtdst += count;
-		size -= count;
-	}
-    
-	return nbytes;
+	/* BAD. */
+    ovbcopy(virtsrc, virtdst, size);
+    return size;
 }
 
 /*

@@ -7,7 +7,7 @@
 //
 
 #include "AppleARMPE.h"
-
+#include <kern/debug.h>
 
 #define HIGH_SCORE  100000
 #define super IOPlatformExpert
@@ -35,6 +35,8 @@ bool ARMPlatformExpert::start(IOService *provider) {
     
     getProvider()->publishResource("IORTC");
     getProvider()->publishResource("IONVRAM");
+    
+    populate_model_name("CoolDevice1,1");
 
     PE_LOG("Dumping current service tree\n");
     IOPrintPlane(gIOServicePlane);
