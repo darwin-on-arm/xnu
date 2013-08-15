@@ -729,6 +729,7 @@ endif
 	if [ "`echo $(INSTALL_ARCHS_LC) | wc -w`" -eq 1 ]; then	\
 		$(RM) $(RMFLAGS) $@;				\
 		$(INSTALL) $(INSTALL_FLAGS) $< $@;			\
+		if [ $(UNAME) != Linux ]; then				\
 		if [ $(BUILD_DWARF) -eq 1 ]; then			\
 			$(RM) -rf $@.dSYM;				\
 			$(MKDIR) -p -m 0755 $@.dSYM/$(DSYMBUILDDIR);	\
@@ -738,7 +739,7 @@ endif
 			$(INSTALL) $(INSTALL_FLAGS)			\
 				$<.dSYM/$(DSYMRESDIR)/kgmacros		\
 				$@.dSYM/$(DSYMRESDIR)/kgmacros;		\
-		fi;							\
+		fi; fi;							\
 	else							\
 		if [ ! -e $@ ]; then				\
 			printf "" >empty_filesys_$(notdir $@);	\
