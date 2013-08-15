@@ -124,7 +124,7 @@ TARGET_CONFIGS=$(cat machine_configuration)
 # Hide this variable from the unset
 export -n SRCROOT OBJROOT SYMROOT DSTROOT
 export -n DARWIN_BUILDROOT DARWINBUILD_BUILD DARWINXREF_DB_FILE
-export -n USE_CHROOT INSTALL_XCODE TARGET_CONFIGS
+export -n USE_CHROOT INSTALL_XCODE TARGET_CONFIGS EXTERNAL_BUILD_FLAGS
 
 # Screen sets this to a multi-line value which causes trouble
 unset TERMCAP
@@ -238,7 +238,7 @@ EOF
 ###
 ### Add in the build environment variables from darwinxref
 ###
-build_string="$build_string \"SRCROOT=$SRCROOT\" \"OBJROOT=$OBJROOT\" \"SYMROOT=$SYMROOT\" \"DSTROOT=$DSTROOT\" \"TARGET_CONFIGS=$TARGET_CONFIGS\""
+build_string="$build_string $EXTERNAL_BUILD_FLAGS \"SRCROOT=$SRCROOT\" \"OBJROOT=$OBJROOT\" \"SYMROOT=$SYMROOT\" \"DSTROOT=$DSTROOT\" \"TARGET_CONFIGS=$TARGET_CONFIGS\""
 
 OLDIFS="$IFS"
 IFS=$'\n'
