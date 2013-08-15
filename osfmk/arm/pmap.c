@@ -379,19 +379,11 @@ pmap_get_phys_tte(uint32_t tte_va, void* virt)
     return pa;
 }
 
-/**
- * pmap_find_phys (old)
- *
- * Find the physical frame number of a virtual address.
- */
-ppnum_t pmap_find_phys(pmap_t pmap, addr64_t virt)
-{
+vm_offset_t pmap_extract(pmap_t pmap, vm_offset_t virt) {
     uint32_t* tte_ptr = (uint32_t*)addr_to_tte(pmap->ttb, (uint32_t)virt);
     uint32_t tte = *tte_ptr;
     uint32_t pte, *pte_ptr;
     uint32_t pa;
-    
-    return 0;
     
     pte = L1_PTE_ADDR(tte); /* l2 base */
     pte += pte_offset((uint32_t)virt);
@@ -399,11 +391,19 @@ ppnum_t pmap_find_phys(pmap_t pmap, addr64_t virt)
         return 0;
     pte_ptr = phys_to_virt((uint32_t*)pte);
     
-    pa = (*pte_ptr & L2_ADDR_MASK) >> 12;   //  PTE_SHIFT
-
-    kprintf("pmap_find_phys: pmap %p, virt -> pa: 0x%08x/0x%08x\n", pmap, virt, pa);
+    pa = (*pte_ptr & L2_ADDR_MASK);   //  PTE_SHIFT
     
     return pa;
+}
+
+/**
+ * pmap_find_phys (old)
+ *
+ * Find the physical frame number of a virtual address.
+ */
+ppnum_t pmap_find_phys(pmap_t pmap, addr64_t virt)
+{
+    return 0;
 }
 
 /**

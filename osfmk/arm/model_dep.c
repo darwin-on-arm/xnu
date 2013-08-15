@@ -84,6 +84,14 @@
 #include <libkern/kernel_mach_header.h>
 #include <libkern/OSKextLibPrivate.h>
 
+#define ANSI_COLOR_RED     "\x1b[31m"
+#define ANSI_COLOR_GREEN   "\x1b[32m"
+#define ANSI_COLOR_YELLOW  "\x1b[33m"
+#define ANSI_COLOR_BLUE    "\x1b[34m"
+#define ANSI_COLOR_MAGENTA "\x1b[35m"
+#define ANSI_COLOR_CYAN    "\x1b[36m"
+#define ANSI_COLOR_RESET   "\x1b[0m"
+
 /*
  * Frame pointer definition.
  */
@@ -244,9 +252,9 @@ static int panic_print_macho_symbol_name(kernel_mach_header_t *mh, vm_address_t 
     
     if (bestsym != NULL) {
         if (diff != 0) {
-            kdb_printf(" (%s: %s + 0x%lx)", module_name, bestsym, (unsigned long)diff);
+            kdb_printf(" (%s: " ANSI_COLOR_RED "%s" ANSI_COLOR_RESET " + 0x%lx)", module_name, bestsym, (unsigned long)diff);
         } else {
-            kdb_printf(" (%s: %s)", module_name, bestsym);
+            kdb_printf(" (%s: " ANSI_COLOR_RED "%s" ANSI_COLOR_RESET ")", module_name, bestsym);
         }
         return 1;
     }
