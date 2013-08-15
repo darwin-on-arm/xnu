@@ -1,4 +1,4 @@
-#! /bin/sh -
+#!/bin/bash
 #	@(#)makesyscalls.sh	8.1 (Berkeley) 6/10/93
 # $FreeBSD: src/sys/kern/makesyscalls.sh,v 1.60 2003/04/01 01:12:24 jeff Exp $
 #
@@ -688,7 +688,7 @@ s/\$//g
 		if (add_64bit_unsafe == 1  && add_64bit_fakesafe == 0)
 			my_flags = "UNSAFE_64BIT";
 
-		printf("\t{%s, %s, %s, \(sy_call_t *\)%s, %s, %s, %s, %s},", 
+		printf("\t{%s, %s, %s, (sy_call_t *)%s, %s, %s, %s, %s},", 
 				argssize, add_resv, my_flags, tempname, munge32, munge64, munge_ret, size32) > sysent
 		linesize = length(argssize) + length(add_resv) + length(my_flags) + length(tempname) + \
 				length(munge32) + length(munge64) + length(munge_ret) + 28
