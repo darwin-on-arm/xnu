@@ -145,7 +145,10 @@ void DebuggerWithContext(__unused unsigned int reason, void *ctx, const char *me
             panic_arm_backtrace(abort_context->gprs[7], 20, NULL, FALSE, NULL);
         }
     }
-    
+
+    kprintf("Debugger: We are hanging here.\n");
+    while(1) {};
+        
     hw_atomic_sub(&debug_mode, 1);
 
     return;
@@ -181,6 +184,9 @@ void Debugger(const char *message)
     /* Just print a backtrace anyways, useful for bringup. */
     __asm__ __volatile("mov %0, r7" : "=r"(stackptr));
     panic_arm_backtrace(stackptr, 20, NULL, FALSE, NULL);
+
+    kprintf("Debugger: We are hanging here.\n");
+    while(1) {};
     
     hw_atomic_sub(&debug_mode, 1);
     
