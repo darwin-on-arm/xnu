@@ -274,6 +274,15 @@ vm_offset_t ml_static_ptovirt(vm_offset_t paddr) {
     return phys_to_virt(paddr);
 }
 
+void ml_get_power_state(boolean_t *icp, boolean_t *pidlep)
+{
+    *pidlep = FALSE;
+}
+
+void machine_track_platform_idle(boolean_t entry) {
+    return;
+}
+
 /*
  *	kvtophys(addr)
  *
