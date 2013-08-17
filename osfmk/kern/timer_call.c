@@ -40,7 +40,7 @@
 
 #include <sys/kdebug.h>
 
-#if CONFIG_DTRACE && (DEVELOPMENT || DEBUG )
+#if CONFIG_DTRACE
 #include <mach/sdt.h>
 #endif
 
@@ -358,6 +358,7 @@ timer_call_enter_internal(
 		call->soft_deadline = deadline;
 	}
 #endif
+    call->ttd =  call->soft_deadline - ctime;
 
 	queue = timer_queue_assign(deadline);
 
@@ -409,6 +410,12 @@ timer_call_cancel(
 		timer_call_unlock(old_queue);
 	}
 	splx(s);
+
+#if CONFIG_DTRACE
+	DTRACE_TMR6(callout__cancel, timer_call_func_t, CE(call)->func,
+	    timer_call_param_t, CE(call)->param0, uint32_t, call->flags, 0,
+	    (call->ttd >> 32), (unsigned) (call->ttd & 0xFFFFFFFF));
+#endif
 
 	return (old_queue != NULL);
 }
@@ -500,18 +507,25 @@ timer_queue_expire(
 				DECR_TIMER_CALLOUT | DBG_FUNC_START,
 				VM_KERNEL_UNSLIDE(func), param0, param1, 0, 0);
 
-#if CONFIG_DTRACE && (DEVELOPMENT || DEBUG )
-			DTRACE_TMR3(callout__start, timer_call_func_t, func, 
-										timer_call_param_t, param0, 
-										timer_call_param_t, param1);
+#if CONFIG_DTRACE
+			DTRACE_TMR6(callout__start, timer_call_func_t, func,
+			    timer_call_param_t, param0, unsigned, call->flags,
+			    0, (call->ttd >> 32),
+			    (unsigned) (call->ttd & 0xFFFFFFFF));
 #endif
 
+			/* Maintain time-to-deadline in per-processor data
+			 * structure for thread wakeup deadline statistics.
+			 */
+			uint64_t *ttdp = &(PROCESSOR_DATA(current_processor(), timer_call_ttd));
+			*ttdp = call->ttd;
 			(*func)(param0, param1);
+			*ttdp = 0;
 
-#if CONFIG_DTRACE && (DEVELOPMENT || DEBUG )
-			DTRACE_TMR3(callout__end, timer_call_func_t, func, 
-										timer_call_param_t, param0, 
-										timer_call_param_t, param1);
+#if CONFIG_DTRACE
+			DTRACE_TMR3(callout__end, timer_call_func_t, func,
+			    timer_call_param_t, param0, timer_call_param_t,
+			    param1);
 #endif
 
 			KERNEL_DEBUG_CONSTANT_IST(KDEBUG_TRACE, 
