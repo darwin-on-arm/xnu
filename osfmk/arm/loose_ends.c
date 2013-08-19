@@ -29,7 +29,7 @@
  * @OSF_COPYRIGHT@
  */
 /*
- * Copyright 2013, winocm. <rms@velocitylimitless.org>
+ * Copyright 2013, winocm. <winocm@icloud.com>
  * All rights reserved.
  * 
  * Redistribution and use in source and binary forms, with or without modification,
