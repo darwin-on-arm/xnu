@@ -25,9 +25,6 @@ _bufattr_nocache
 _bufattr_throttled
 _cdevsw
 _cdevsw_setkqueueok
-_chudxnu_platform_ptr
-_chudxnu_thread_get_dirty
-_chudxnu_thread_set_dirty
 _clalloc
 _clfree
 _cons_cinput

@@ -582,7 +582,6 @@ __ZdaPv
 __ZdlPv
 __Znam
 __Znwm
-___bzero
 ___cxa_pure_virtual
 ___stack_chk_fail
 ___stack_chk_guard
@@ -657,7 +656,6 @@ _lck_rw_lock_exclusive_to_shared
 _lck_rw_lock_shared
 _lck_rw_lock_shared_to_exclusive
 _lck_rw_try_lock
-_lck_rw_unlock
 _lck_rw_unlock_exclusive
 _lck_rw_unlock_shared
 _lck_spin_alloc_init
