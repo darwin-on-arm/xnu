@@ -2282,6 +2282,8 @@
 		D81D6328177B8DA300B8AAD9 /* xnu-doc.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "xnu-doc.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		D8321CC51782182900A6FD0F /* bcopystub.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = bcopystub.c; sourceTree = "<group>"; };
 		D8321CD217824E8900A6FD0F /* bsd_arm.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = bsd_arm.c; sourceTree = "<group>"; };
+		D838B98E17C3CBB200CB26A8 /* pe_raspberrypi.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = pe_raspberrypi.c; sourceTree = "<group>"; };
+		D838B99B17C3CBBE00CB26A8 /* pe_s5l8930x.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = pe_s5l8930x.c; sourceTree = "<group>"; };
 		D84C922E17837D0A00CC8041 /* unix_syscalls.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; path = unix_syscalls.c; sourceTree = "<group>"; };
 		D84DC733177CDE2700A8E04D /* AppleARMCPU.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = AppleARMCPU.cpp; sourceTree = "<group>"; };
 		D84DC734177CDE2700A8E04D /* AppleARMCPU.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = AppleARMCPU.h; sourceTree = "<group>"; };
@@ -10619,6 +10621,8 @@
 		D8AC6F4A177C995300C22E56 /* arm */ = {
 			isa = PBXGroup;
 			children = (
+				D838B99B17C3CBBE00CB26A8 /* pe_s5l8930x.c */,
+				D838B98E17C3CBB200CB26A8 /* pe_raspberrypi.c */,
 				D8AC6F4B177C995300C22E56 /* pe_armsupport.c */,
 				D8AC6F4C177C995300C22E56 /* pe_bootargs.c */,
 				D8AC6F4D177C995300C22E56 /* pe_bringup.c */,

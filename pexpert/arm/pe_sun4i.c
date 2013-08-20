@@ -155,4 +155,10 @@ void PE_init_SocSupport_sun4i(void)
     
 }
 
+void PE_init_SocSupport_stub(void)
+{
+    PE_early_puts("PE_init_SocSupport: Initializing for SUN4I\n");
+    PE_init_SocSupport_sun4i();
+}
+
 #endif
