@@ -2850,7 +2850,6 @@ _cnputc
 _conslog_putc
 _convert_port_entry_to_map
 _convert_port_entry_to_object
-_current_act
 _current_proc
 _current_proc_EXTERNAL
 _current_task
