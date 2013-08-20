@@ -351,4 +351,10 @@ void PE_init_SocSupport_realview(void)
     
 }
 
+void PE_init_SocSupport_stub(void)
+{
+    PE_early_puts("PE_init_SocSupport: Initializing for ARM RealView PB-A8\n");
+    PE_init_SocSupport_realview();
+}
+
 #endif // BOARD_CONFIG_ARMPBA8

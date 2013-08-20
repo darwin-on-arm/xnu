@@ -384,4 +384,10 @@ void PE_init_SocSupport_omap3(void)
     Omap3_InitCaches();
 }
 
+void PE_init_SocSupport_stub(void)
+{
+    PE_early_puts("PE_init_SocSupport: Initializing for OMAP3530\n");
+    PE_init_SocSupport_omap3();
+}
+
 #endif

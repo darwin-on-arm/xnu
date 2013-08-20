@@ -147,4 +147,10 @@ void PE_init_SocSupport_raspberrypi(void)
     
 }
 
+void PE_init_SocSupport_stub(void)
+{
+    PE_early_puts("PE_init_SocSupport: Initializing for RASPBERRYPI\n");
+    PE_init_SocSupport_raspberrypi();
+}
+
 #endif

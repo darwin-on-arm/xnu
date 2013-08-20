@@ -289,6 +289,8 @@ static void panic_print_symbol_name(vm_address_t search)
  */
 void print_threads(void)
 {
+    return;
+    
     task_t task = kernel_task;
     register thread_t thread;
     

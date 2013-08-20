@@ -43,21 +43,11 @@
 
 SocDeviceDispatch    gPESocDispatch;
 
+extern void PE_init_SocSupport_stub(void);
+
 void PE_init_SocSupport(void)
 {
     PE_early_puts("PE_init_SocSupport: initializing SoC dispatch\n");
-#ifdef BOARD_CONFIG_ARMPBA8
-    /*
-     * Do the soc dispatch stuff for our platform.
-     */
-    PE_early_puts("PE_init_SocSupport: Initializing for ARM RealView PB-A8\n");
-    PE_init_SocSupport_realview();
-#elif defined(BOARD_CONFIG_SUN4I)
-    PE_init_SocSupport_sun4i();
-#elif defined(BOARD_CONFIG_OMAP3530)
-    PE_init_SocSupport_omap3();
-#else
-#error You need to fill out PE_init_SocSupport for your board!
-#endif
+    PE_init_SocSupport_stub();
     return;
 }

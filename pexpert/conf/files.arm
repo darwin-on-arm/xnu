@@ -9,3 +9,4 @@ pexpert/arm/pe_realview.c		standard
 pexpert/arm/pe_armsupport.c		standard
 pexpert/arm/pe_sun4i.c			standard
 pexpert/arm/pe_omap3530.c		standard
+pexpert/arm/pe_s5l8930x.c		standard
