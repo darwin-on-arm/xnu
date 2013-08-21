@@ -10,6 +10,17 @@
 #define FRAMEBUFFER_BASE    0x5F700000
 #define CLOCK_GATE_BASE     0xBF101000
 
+#define TIMER_BASE			0xBF102000
+#define TIMER0_BASE			TIMER_BASE + 0x0
+
+#define TIMER_IRQ_ENABLE	(1 << 0)
+#define TIMER_EXPIRED		(1 << 1)
+
+#define TIMER0_CLOCK_LOW	0x00
+#define TIMER0_CLOCK_HIGH	0x04
+#define TIMER0_VAL			0x08
+#define TIMER0_CTRL			0x10
+
 #define CLK_REG_OFF         0x10
 
 #define VIC_START           0xBF200000

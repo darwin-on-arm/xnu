@@ -200,11 +200,11 @@ EnterARM(set_mmu_ttbcr)
  * Flush a MVA specific entry from the TLB.
  */
  EnterARM(flush_mmu_single)
-    /* Shove the lowest 12-bits off the VA */
-    mov     r0, r0, lsr #12
-    mov     r0, r0, lsl #12
+    /* Shove the lowest 10-bits off the VA */
+    mov     r0, r0, lsr #10
+    mov     r0, r0, lsl #10
     /* Clean it */
-    mcr     p15, 0, r0, c8, c7, 0
+    mcr     p15, 0, r0, c8, c7, 1
     dsb     sy
     isb     sy
     bx      lr
