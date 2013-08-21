@@ -47,31 +47,7 @@
 #ifdef BOARD_CONFIG_S5L8930X
 #define KPRINTF_PREFIX  "PE_S5L8930X: "
 
-#define UART0_BASE          0x82500000
-#define GPIO_BASE           0xBFA00000
-#define FRAMEBUFFER_BASE    0x5F700000
-
-#define ULCON      0x0000 /* Line Control             */
-#define UCON       0x0004 /* Control                  */
-#define UFCON      0x0008 /* FIFO Control             */
-#define UMCON      0x000C /* Modem Control            */
-#define UTRSTAT    0x0010 /* Tx/Rx Status             */
-#define UERSTAT    0x0014 /* UART Error Status        */
-#define UFSTAT     0x0018 /* FIFO Status              */
-#define UMSTAT     0x001C /* Modem Status             */
-#define UTXH       0x0020 /* Transmit Buffer          */
-#define URXH       0x0024 /* Receive Buffer           */
-#define UBRDIV     0x0028 /* Baud Rate Divisor        */
-#define UFRACVAL   0x002C /* Divisor Fractional Value */
-#define UINTP      0x0030 /* Interrupt Pending        */
-#define UINTSP     0x0034 /* Interrupt Source Pending */
-#define UINTM      0x0038 /* Interrupt Mask           */
-
-#define UART_UFSTAT_TXFIFO_FULL (0x1 << 9)
-#define UART_UTRSTAT_TRANSMITTEREMPTY 0x4
-#define UART_UMSTAT_CTS 0x1
-
-#define barrier()               __asm__ __volatile__("": : :"memory");
+#include "s5l8930x.h"
 
 #define HwReg(x) *((volatile unsigned long*)(x))
 
@@ -80,11 +56,42 @@ extern void rtc_configure(uint64_t hz);
 
 #define uart_base   gS5L8930XUartBase
 vm_offset_t     gS5L8930XUartBase;
+vm_offset_t     gS5L8930XClockGateBase;
+
+/* The 8930 has 4 PL192 compatible VICs. */
+vm_offset_t     gS5L8930XVic0Base;
+vm_offset_t     gS5L8930XVic1Base;
+vm_offset_t     gS5L8930XVic2Base;
+vm_offset_t     gS5L8930XVic3Base;
 
 static uint64_t     clock_decrementer = 0;
 static boolean_t    clock_initialized = FALSE;
 static boolean_t    clock_had_irq = FALSE;
 static uint64_t     clock_absolute_time = 0;
+
+static void s5l8930x_clock_gate_switch(int gate, int state)
+{
+    uint32_t __register;
+
+    assert(gS5L8930XClockGateBase);
+
+    if(gate > 0x3f)
+        return;
+
+    __register = CLK_REG_OFF + (gate << 2);
+    if(state) {
+        HwReg(gS5L8930XClockGateBase + __register) = HwReg(gS5L8930XClockGateBase + __register) | 0xF;
+    } else {
+        HwReg(gS5L8930XClockGateBase + __register) = HwReg(gS5L8930XClockGateBase + __register) & ~0xF;
+    }
+
+    /* Wait for the state change to take effect. */
+    while((HwReg(gS5L8930XClockGateBase + __register) & 0xF) != 
+         ((HwReg(gS5L8930XClockGateBase + __register) >> 4) & 0xF))
+        barrier();
+
+    return;
+}
 
 static void timer_configure(void)
 {
@@ -96,13 +103,8 @@ void S5L8930X_putc(int c)
     /* Wait for FIFO queue to empty. */
     while(HwReg(gS5L8930XUartBase + UFSTAT) & UART_UFSTAT_TXFIFO_FULL)
         barrier();
-    
-    /* Spin while transmitter not empty */
-    while(HwReg(gS5L8930XUartBase + UTRSTAT) & UART_UTRSTAT_TRANSMITTEREMPTY)
-        barrier();
-    
-    HwReg(gS5L8930XUartBase + UTXH) = c;
-    
+
+    HwReg(gS5L8930XUartBase + UTXH) = c;    
     return;
 }
 
@@ -113,12 +115,95 @@ int S5L8930X_getc(void)
 
 void S5L8930X_uart_init(void)
 {
+    uint32_t divisorValue;
+    /* XXX: The UART init routine is also the Core Platform mapping routine... */
+    gS5L8930XVic0Base = ml_io_map(VIC(0), PAGE_SIZE);
+    gS5L8930XVic1Base = ml_io_map(VIC(1), PAGE_SIZE);
+    gS5L8930XVic2Base = ml_io_map(VIC(2), PAGE_SIZE);
+    gS5L8930XVic3Base = ml_io_map(VIC(3), PAGE_SIZE);
+    assert(gS5L8930XVic0Base && gS5L8930XVic1Base &&
+           gS5L8930XVic2Base && gS5L8930XVic3Base);
+
+    /* Map the UARTs... */
     gS5L8930XUartBase = ml_io_map(UART0_BASE, PAGE_SIZE);
+
+    /* Also map the ClockGate Base */
+    gS5L8930XClockGateBase = ml_io_map(CLOCK_GATE_BASE, PAGE_SIZE);
+
+    assert(gS5L8930XUartBase && gS5L8930XClockGateBase);
+
+    /* Enable clock gate. */
+    s5l8930x_clock_gate_switch(UART_CLOCKGATE, TRUE);
+
+    /* Set 8-bit frames. */
+    HwReg(gS5L8930XUartBase + ULCON) = UART_8BITS;
+
+    /* Use polling for RX/TX. */
+    HwReg(gS5L8930XUartBase + UCON) = 
+        ((UART_UCON_MODE_IRQORPOLL << UART_UCON_RXMODE_SHIFT) |
+        (UART_UCON_MODE_IRQORPOLL << UART_UCON_TXMODE_SHIFT));
+
+    /* Set clock. */
+    HwReg(gS5L8930XUartBase + UCON) = (HwReg(gS5L8930XUartBase + UCON) &
+        (~UART_CLOCK_SELECTION_MASK)) | (1 << UART_CLOCK_SELECTION_SHIFT);
+
+    /* Set baud to 115200. */
+    divisorValue = CLOCK_HZ / (115200 * 16) - 1;
+
+    HwReg(gS5L8930XUartBase + UBRDIV) = (HwReg(gS5L8930XUartBase + UBRDIV) &
+        (~UART_DIVVAL_MASK)) | divisorValue;
+
+    /* Reset FIFO */
+    HwReg(gS5L8930XUartBase + UFCON) = UART_FIFO_RESET_RX | UART_FIFO_RESET_TX;
+
+    /* Enable FIFO */
+    HwReg(gS5L8930XUartBase + UFCON) = UART_FIFO_ENABLE;
+
+    PE_kputc = S5L8930X_putc;
+
+    kprintf(KPRINTF_PREFIX "serial is up\n");
+
     return;
 }
 
 void S5L8930X_interrupt_init(void)
 {
+    /* Goddamn am I paranoid. */
+    assert(gS5L8930XVic0Base && gS5L8930XVic1Base &&
+           gS5L8930XVic2Base && gS5L8930XVic3Base);
+
+    /* Disable all interrupts. */
+    HwReg(gS5L8930XVic0Base + VICINTENCLEAR) = 0xFFFFFFFF;
+    HwReg(gS5L8930XVic1Base + VICINTENCLEAR) = 0xFFFFFFFF;
+    HwReg(gS5L8930XVic2Base + VICINTENCLEAR) = 0xFFFFFFFF;
+    HwReg(gS5L8930XVic3Base + VICINTENCLEAR) = 0xFFFFFFFF;
+
+    HwReg(gS5L8930XVic0Base + VICINTENABLE) = 0xFFFFFFFF;
+    HwReg(gS5L8930XVic1Base + VICINTENABLE) = 0xFFFFFFFF;
+    HwReg(gS5L8930XVic2Base + VICINTENABLE) = 0xFFFFFFFF;
+    HwReg(gS5L8930XVic3Base + VICINTENABLE) = 0xFFFFFFFF;
+
+    /* Please use IRQs. I don't want to implement a FIQ based timer decrementer handler. */
+    HwReg(gS5L8930XVic0Base + VICINTSELECT) = 0;
+    HwReg(gS5L8930XVic1Base + VICINTSELECT) = 0;
+    HwReg(gS5L8930XVic2Base + VICINTSELECT) = 0;
+    HwReg(gS5L8930XVic3Base + VICINTSELECT) = 0;
+
+    /* Unmask all interrupt levels. */
+    HwReg(gS5L8930XVic0Base + VICSWPRIORITYMASK) = 0xFFFF;
+    HwReg(gS5L8930XVic1Base + VICSWPRIORITYMASK) = 0xFFFF;
+    HwReg(gS5L8930XVic2Base + VICSWPRIORITYMASK) = 0xFFFF;
+    HwReg(gS5L8930XVic3Base + VICSWPRIORITYMASK) = 0xFFFF;
+
+    /* Set vector addresses to interrupt numbers. */
+    int i;
+    for(i = 0; i < 0x20; i++) {
+        HwReg(gS5L8930XVic0Base + VICVECTADDRS + (i * 4)) = (0x20 * 0) + i;
+        HwReg(gS5L8930XVic0Base + VICVECTADDRS + (i * 4)) = (0x20 * 1) + i;
+        HwReg(gS5L8930XVic0Base + VICVECTADDRS + (i * 4)) = (0x20 * 2) + i;
+        HwReg(gS5L8930XVic0Base + VICVECTADDRS + (i * 4)) = (0x20 * 3) + i;
+    }
+
     return;
 }
 
@@ -157,25 +242,18 @@ static void _fb_putc(int c) {
         vcputc(0, 0, '\r');
     }
     vcputc(0, 0, c);
-#if 0
     S5L8930X_putc(c);
-#endif
 }
 
 void S5L8930X_framebuffer_init(void)
 {
     /* Technically, iBoot should initialize this.. */
-    PE_state.video.v_baseAddr = (unsigned long)FRAMEBUFFER_BASE;
-    PE_state.video.v_rowBytes = 640 * 4;
-    PE_state.video.v_width = 640;
-    PE_state.video.v_height = 960;
-    PE_state.video.v_depth = 4 * (8);   // 16bpp
+    PE_state.video.v_depth = 4 * (8);   // 32bpp
     
     kprintf(KPRINTF_PREFIX "framebuffer initialized\n");
 
     initialize_screen((void*)&PE_state.video, kPEAcquireScreen);
     initialize_screen((void*)&PE_state.video, kPEEnableScreen);
-
     return;
 }
 
