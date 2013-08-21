@@ -1,1 +1,1 @@
-debug arm omap3530 debug arm armpba8
+debug arm omap3530 debug arm armpba8 debug arm s5l8930x
