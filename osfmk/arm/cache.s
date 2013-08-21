@@ -89,7 +89,6 @@ EnterThumb(flush_mmu_tlb)
  * Start and initialize ARM caches.
  */
 EnterARM(cache_initialize)
-
     /* Enable L2 cache */
     mrc     p15, 0, r0, c1, c0, 1
     orr     r0, r0, #(1 << 1)
@@ -100,6 +99,37 @@ EnterARM(cache_initialize)
     orr     r0, r0, #(1 << 11)
     orr     r0, r0, #(1 << 12)
     orr     r0, r0, #(1 << 2)
+    mcr     p15, 0, r0, c1, c0, 0
+
+    /* Clear caches */
+    mov     r0, #0
+    mcr     p15, 0, r0, c7, c5, 0
+
+    /* Clear prefetch buffer */
+    mov     r0, #0
+    mcr     p15, 0, r0, c7, c5, 4
+
+    isb     sy
+    dsb     sy
+
+    bx      lr
+
+/**
+ * cache_deinitialize
+ *
+ * Deinitialize ARM caches.
+ */
+EnterARM(cache_deinitialize)
+    /* Enable L2 cache */
+    mrc     p15, 0, r0, c1, c0, 1
+    bic     r0, r0, #(1 << 1)
+    mcr     p15, 0, r0, c1, c0, 1
+
+    /* Enable caching. */
+    mrc     p15, 0, r0, c1, c0, 0
+    bic     r0, r0, #(1 << 11)
+    bic     r0, r0, #(1 << 12)
+    bic     r0, r0, #(1 << 2)
     mcr     p15, 0, r0, c1, c0, 0
 
     /* Clear caches */

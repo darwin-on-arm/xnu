@@ -64,6 +64,8 @@ vm_offset_t     gS5L8930XVic1Base;
 vm_offset_t     gS5L8930XVic2Base;
 vm_offset_t     gS5L8930XVic3Base;
 
+vm_offset_t     gS5L8930XTimerBase;
+
 static uint64_t     clock_decrementer = 0;
 static boolean_t    clock_initialized = FALSE;
 static boolean_t    clock_had_irq = FALSE;
@@ -95,6 +97,14 @@ static void s5l8930x_clock_gate_switch(int gate, int state)
 
 static void timer_configure(void)
 {
+    /* DUMMY */
+    uint64_t hz = 32768;
+    gPEClockFrequencyInfo.timebase_frequency_hz = hz;
+
+    clock_decrementer = 1000;
+    kprintf(KPRINTF_PREFIX "decrementer frequency = %llu\n", clock_decrementer);    
+
+    rtc_configure(hz);
     return;
 }
 
@@ -123,6 +133,10 @@ void S5L8930X_uart_init(void)
     gS5L8930XVic3Base = ml_io_map(VIC(3), PAGE_SIZE);
     assert(gS5L8930XVic0Base && gS5L8930XVic1Base &&
            gS5L8930XVic2Base && gS5L8930XVic3Base);
+
+    /* Clocks. */
+    gS5L8930XTimerBase = ml_io_map(TIMER0_BASE, PAGE_SIZE);
+    assert(gS5L8930XTimerBase);
 
     /* Map the UARTs... */
     gS5L8930XUartBase = ml_io_map(UART0_BASE, PAGE_SIZE);
@@ -168,6 +182,9 @@ void S5L8930X_uart_init(void)
 
 void S5L8930X_interrupt_init(void)
 {
+    /* Disable interrupts */
+    ml_set_interrupts_enabled(FALSE);
+
     /* Goddamn am I paranoid. */
     assert(gS5L8930XVic0Base && gS5L8930XVic1Base &&
            gS5L8930XVic2Base && gS5L8930XVic3Base);
@@ -178,10 +195,10 @@ void S5L8930X_interrupt_init(void)
     HwReg(gS5L8930XVic2Base + VICINTENCLEAR) = 0xFFFFFFFF;
     HwReg(gS5L8930XVic3Base + VICINTENCLEAR) = 0xFFFFFFFF;
 
-    HwReg(gS5L8930XVic0Base + VICINTENABLE) = 0xFFFFFFFF;
-    HwReg(gS5L8930XVic1Base + VICINTENABLE) = 0xFFFFFFFF;
-    HwReg(gS5L8930XVic2Base + VICINTENABLE) = 0xFFFFFFFF;
-    HwReg(gS5L8930XVic3Base + VICINTENABLE) = 0xFFFFFFFF;
+    HwReg(gS5L8930XVic0Base + VICINTENABLE) = 0;
+    HwReg(gS5L8930XVic1Base + VICINTENABLE) = 0;
+    HwReg(gS5L8930XVic2Base + VICINTENABLE) = 0;
+    HwReg(gS5L8930XVic3Base + VICINTENABLE) = 0;
 
     /* Please use IRQs. I don't want to implement a FIQ based timer decrementer handler. */
     HwReg(gS5L8930XVic0Base + VICINTSELECT) = 0;
@@ -199,36 +216,104 @@ void S5L8930X_interrupt_init(void)
     int i;
     for(i = 0; i < 0x20; i++) {
         HwReg(gS5L8930XVic0Base + VICVECTADDRS + (i * 4)) = (0x20 * 0) + i;
-        HwReg(gS5L8930XVic0Base + VICVECTADDRS + (i * 4)) = (0x20 * 1) + i;
-        HwReg(gS5L8930XVic0Base + VICVECTADDRS + (i * 4)) = (0x20 * 2) + i;
-        HwReg(gS5L8930XVic0Base + VICVECTADDRS + (i * 4)) = (0x20 * 3) + i;
+        HwReg(gS5L8930XVic1Base + VICVECTADDRS + (i * 4)) = (0x20 * 1) + i;
+        HwReg(gS5L8930XVic2Base + VICVECTADDRS + (i * 4)) = (0x20 * 2) + i;
+        HwReg(gS5L8930XVic3Base + VICVECTADDRS + (i * 4)) = (0x20 * 3) + i;
     }
 
     return;
 }
 
+uint64_t S5L8930X_timer_value(void);
+void S5L8930X_timer_enabled(int enable);
+
 void S5L8930X_timebase_init(void)
 {
+    assert(gS5L8930XTimerBase);
+
+    /* Set rtclock stuff */
+    timer_configure();
+
+    /* Disable the timer. */
+    S5L8930X_timer_enabled(FALSE);
+
+    /* Enable the interrupt. */
+    HwReg(gS5L8930XVic0Base + VICINTENABLE) = 
+        HwReg(gS5L8930XVic0Base + VICINTENABLE) | (1 << 5) | (1 << 6);
+
+    /* Enable interrupts. */
+    ml_set_interrupts_enabled(TRUE);
+
+    /* Wait for it. */
+    kprintf(KPRINTF_PREFIX "waiting for system timer to come up...\n");
+    S5L8930X_timer_enabled(TRUE);
+
+    clock_initialized = TRUE;
+    
+    while(!clock_had_irq)
+        barrier();
+
     return;
 }
 
 void S5L8930X_handle_interrupt(void* context)
 {
+    /* Timer IRQs are handeled by us. */
+    if(HwReg(gS5L8930XVic0Base + VICADDRESS) == 6) {
+        /* Disable timer */
+        S5L8930X_timer_enabled(FALSE);
+
+        /* Update absolute time */
+        clock_absolute_time += (clock_decrementer - S5L8930X_timer_value());
+    
+        /* EOI. */
+        HwReg(gS5L8930XVic0Base + VICADDRESS) = 0;
+
+        /* Enable timer. */
+        S5L8930X_timer_enabled(TRUE);
+
+        /* We had an IRQ. */
+        clock_had_irq = TRUE;
+    }
     return;
 }
 
 uint64_t S5L8930X_get_timebase(void)
 {
-    return 0;
+    uint32_t timestamp;
+    
+    if(!clock_initialized)
+        return 0;
+    
+    timestamp = S5L8930X_timer_value();
+
+    if(timestamp) {
+        uint64_t v = clock_absolute_time;
+        v += (uint64_t)(((uint64_t)clock_decrementer) - (uint64_t)(timestamp));
+        return v;
+    } else {
+        clock_absolute_time += clock_decrementer;
+        return clock_absolute_time;
+    }
 }
 
 uint64_t S5L8930X_timer_value(void)
 {
-    return 0;
+    return HwReg(gS5L8930XTimerBase + TIMER0_VAL);
 }
 
 void S5L8930X_timer_enabled(int enable)
 {
+    /* How do you disable this timer? */
+    if(!enable) {
+        HwReg(gS5L8930XTimerBase + TIMER0_CTRL) = 2;
+        HwReg(gS5L8930XTimerBase + TIMER0_CTRL) = 0;
+    } else {
+        HwReg(gS5L8930XTimerBase + TIMER0_VAL) = 0xFFFFFFFF;
+        HwReg(gS5L8930XTimerBase + TIMER0_CTRL) = 3;
+        HwReg(gS5L8930XTimerBase + TIMER0_CTRL) = 1;
+        HwReg(gS5L8930XTimerBase + TIMER0_VAL) = clock_decrementer;
+    }
     return;
 }
 
@@ -243,6 +328,13 @@ static void _fb_putc(int c) {
     }
     vcputc(0, 0, c);
     S5L8930X_putc(c);
+}
+
+void S5L8930X_InitCaches(void)
+{
+    kprintf(KPRINTF_PREFIX "initializing i+dcache\n");
+    cache_initialize();
+    kprintf(KPRINTF_PREFIX "done\n");
 }
 
 void S5L8930X_framebuffer_init(void)
@@ -275,9 +367,10 @@ void PE_init_SocSupport_S5L8930X(void)
     
     gPESocDispatch.framebuffer_init = S5L8930X_framebuffer_init;
     
+    S5L8930X_InitCaches();
     S5L8930X_framebuffer_init();
     S5L8930X_uart_init();
-    
+
     PE_kputc = _fb_putc; //gPESocDispatch.uart_putc;
 }
 

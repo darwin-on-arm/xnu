@@ -668,6 +668,8 @@ pmap_enter_options(
         template_pte |= mmu_texcb_small(MMU_DMA);
     } else if(flags & VM_MEM_COHERENT) {
         template_pte |= mmu_texcb_small(MMU_CODE);
+    } else {
+        template_pte |= mmu_texcb_small(MMU_DMA);
     }
 
     *(uint32_t*)phys_to_virt(pte) = template_pte;
@@ -684,7 +686,7 @@ done:
     /*
      * Flush TLB.
      */
-    flush_mmu_tlb();
+    flush_mmu_single(pa);
     
     return KERN_SUCCESS;
 }
@@ -918,7 +920,7 @@ void pmap_page_protect(ppnum_t pn, vm_prot_t prot) {
                     uint32_t *pte_ptr = (uint32_t*)phys_to_virt(pte);
                     *pte_ptr &= ~(L2_ACCESS_PRW);
                     *pte_ptr |= (L2_ACCESS_PRO);
-                    flush_mmu_tlb();
+                    flush_mmu_single(pn);
                 }
                 /*
                  * Advance prev.

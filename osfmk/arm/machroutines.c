@@ -283,6 +283,14 @@ void machine_track_platform_idle(boolean_t entry) {
     return;
 }
 
+void
+ml_static_mfree(
+        vm_offset_t vaddr,
+        vm_size_t size)
+{
+	return;
+}
+
 /*
  *	kvtophys(addr)
  *
