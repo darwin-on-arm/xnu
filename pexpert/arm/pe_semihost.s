@@ -40,6 +40,7 @@
 /*
  * lol buffer
  */
+.globl _semihost_buffer_ptr
 _semihost_buffer:
     .space (8192), 0
 _semihost_buffer_ptr:
@@ -54,14 +55,13 @@ _semihost_buffer_ptr_ptr:
  * Writes character output to debugger standard out.
  */
 EnterThumb(PE_semihost_write_char)
-#ifdef BOARD_CONFIG_OMAP3530
+#ifndef BOARD_CONFIG_ARMPBA8
     ldr     r1, _semihost_buffer_ptr
     strb    r0, [r1]
     add     r1, r1, #1
     ldr     r2, _semihost_buffer_ptr_ptr
     str     r1, [r2]
-#endif
-#ifdef BOARD_CONFIG_ARMPBA8
+#else
     ldr     r1, _semihost_buffer_ptr
     strb    r0, [r1]
     mov     r0, #0x03       // SYS_WRITEC
