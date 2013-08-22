@@ -285,54 +285,72 @@ static void panic_print_symbol_name(vm_address_t search)
 /**
  * print_threads
  *
- * Dump all running kernel threads. Handles only kernel_task and kernel threads for now.
+ * Dump all running tasks and threads.
  */
 void print_threads(void)
 {
     if(!kernel_task)
         return;
     
-    task_t task = kernel_task;
-    register thread_t thread;
+	queue_head_t *task_list = &tasks;
+	task_t task = TASK_NULL;
+	thread_t thread = THREAD_NULL;
     
-    kprintf("\n*** Dumping kernel thread states ***\n");
+    kprintf("\n*** Dumping all tasks and threads ***\n");
     
-    queue_iterate(&task->threads, thread, thread_t, task_threads) {
-        kprintf("\nthread %p, task %p:\n", thread, task);
-       
-        assert(thread);
+	queue_iterate(task_list, task, task_t, tasks) {
+		char* name;
+
+		if (task->bsd_info && (name = proc_name_address(task->bsd_info))) {
+			/* */
+		}
+		else {
+			name = (char*)"<unknown>";
+		}
         
-        if(!thread->machine.iss) {
-            kprintf("    This thread has no valid savearea!\n");
-        } else {
-            char crash_string[] = "[>>>>>> CURRENT THREAD AT ABORT ENTER <<<<<<]";
-            kprintf("    Thread has ARM register state (kernel, savearea %p) %s:\n", thread->machine.iss,
-                    (current_thread() == thread) ? crash_string : "");
+        queue_iterate(&task->threads, thread, thread_t, task_threads) {
+            
+            kprintf("\ntask %p, thread %p, task_name: \"%s\"\n", thread, task, name);
+        
+            assert(thread);
+            
             if(thread->continuation)
-                kprintf("      Thread has continuation %p, args: %p\n", thread->continuation, thread->parameter);
-            kprintf("      r0:  0x%08x  r1: 0x%08x  r2: 0x%08x  r3: 0x%08x\n"
-                    "      r4:  0x%08x  r5: 0x%08x  r6: 0x%08x  r7: 0x%08x\n"
-                    "      r8:  0x%08x  r9: 0x%08x  10: 0x%08x  11: 0x%08x\n"
-                    "      12:  0x%08x  sp: 0x%08x  lr: 0x%08x  pc: 0x%08x\n"
-                    "    cpsr:  0x%08x\n",
-                    thread->machine.iss->r[0],
-                    thread->machine.iss->r[1],
-                    thread->machine.iss->r[2],
-                    thread->machine.iss->r[3],
-                    thread->machine.iss->r[4],
-                    thread->machine.iss->r[5],
-                    thread->machine.iss->r[6],
-                    thread->machine.iss->r[7],
-                    thread->machine.iss->r[8],
-                    thread->machine.iss->r[9],
-                    thread->machine.iss->r[10],
-                    thread->machine.iss->r[11],
-                    thread->machine.iss->r[12],
-                    thread->machine.iss->sp,
-                    thread->machine.iss->lr,
-                    thread->machine.iss->pc, thread->machine.iss->cpsr
-                    );
-            panic_arm_thread_backtrace(thread->machine.iss->r[7], 20, NULL, FALSE, NULL);
+                kprintf("      kernel continuation: %p\n", thread->continuation);
+            
+            if(!thread->continuation && thread->machine.iss) {
+                char crash_string[] = ANSI_COLOR_GREEN "Crashed ";
+                
+                if(!thread->continuation) {
+                    kprintf("    %sThread has ARM register state (kernel, savearea %p)%s:\n",
+                            (current_thread() == thread) ? crash_string : "",
+                            thread->machine.iss,
+                            ANSI_COLOR_RESET
+                            );
+                    kprintf("      r0:  0x%08x  r1: 0x%08x  r2: 0x%08x  r3: 0x%08x\n"
+                            "      r4:  0x%08x  r5: 0x%08x  r6: 0x%08x  r7: 0x%08x\n"
+                            "      r8:  0x%08x  r9: 0x%08x  10: 0x%08x  11: 0x%08x\n"
+                            "      12:  0x%08x  sp: 0x%08x  lr: 0x%08x  pc: 0x%08x\n"
+                            "    cpsr:  0x%08x\n",
+                            thread->machine.iss->r[0],
+                            thread->machine.iss->r[1],
+                            thread->machine.iss->r[2],
+                            thread->machine.iss->r[3],
+                            thread->machine.iss->r[4],
+                            thread->machine.iss->r[5],
+                            thread->machine.iss->r[6],
+                            thread->machine.iss->r[7],
+                            thread->machine.iss->r[8],
+                            thread->machine.iss->r[9],
+                            thread->machine.iss->r[10],
+                            thread->machine.iss->r[11],
+                            thread->machine.iss->r[12],
+                            thread->machine.iss->sp,
+                            thread->machine.iss->lr,
+                            thread->machine.iss->pc, thread->machine.iss->cpsr
+                            );
+                    panic_arm_thread_backtrace(thread->machine.iss->r[7], 20, NULL, FALSE, NULL);
+                }
+            }
         }
     }
 }
@@ -377,6 +395,11 @@ void panic_arm_backtrace(void *_frame, int nframes, const char *msg, boolean_t r
         
 		if (!curframep)
 			break;
+        
+        if((frame_index >= 1) && (frame == frame->prev)) {
+            kdb_printf("Looping frame\n");
+            goto invalid;
+        }
         
 		if (curframep & 0x3) {
 			kdb_printf("Unaligned frame\n");
@@ -450,6 +473,11 @@ void panic_arm_thread_backtrace(void *_frame, int nframes, const char *msg, bool
 			kdb_printf("          Unaligned frame\n");
 			goto invalid;
 		}
+        
+        if((frame_index >= 1) && (frame == frame->prev)) {
+            kdb_printf("          Looping frame\n");
+            goto invalid;
+        }
         
 		kdb_printf("                fp: %p   lr: 0x%lx ", frame, frame->caller);
 		if (frame_index < DUMPFRAMES)

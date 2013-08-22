@@ -47,6 +47,9 @@
 #include <arm/pmap.h>
 #include <arm/misc_protos.h>
 
+#define align_down(p, s)        ((uintptr_t)(p)&~(s-1))
+#define align_up(p, s)          align_down((uintptr_t)(p)+s-1, s)
+
 /*
  * cpu_ttb contains the current TTB (translation-table
  * base) of the processor. This is a physical address.
@@ -263,6 +266,20 @@ void arm_vm_init(uint32_t mem_limit, boot_args *args)
     if(!args) {
         panic("Boot-args may not be null for arm_vm_init, sorry\n");
     }
+
+    if(mem_limit)
+        args->memSize = mem_limit;
+
+    /* WARNING WARNING WARNING THE CODE BLOCK BELOW IS A VERY BAD IDEA */
+#ifdef BOARD_CONFIG_S5L8930X
+    /*
+     * Bad hack only on 8930X. We have ~256MB "only". Bringup only.
+     * Something goes very wrong when we have 512MB, and I can't debug
+     * this issue right now. :|
+     */
+    args->memSize = 0xf000000;
+#endif
+    /* WARNING WARNING WARNING THE CODE BLOCK ABOVE IS A VERY BAD IDEA */
     
     gPhysBase = args->physBase;
     gVirtBase = args->virtBase;
