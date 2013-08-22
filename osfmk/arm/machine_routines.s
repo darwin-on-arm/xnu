@@ -185,9 +185,11 @@ EnterARM(current_thread)
  * Set the current TTB control register for a split.
  */
 EnterARM(set_mmu_ttb)
+    orr     r0, r0, #0x18
     mcr     p15, 0, r0, c2, c0, 0
     bx      lr
 EnterARM(set_mmu_ttb_alt)
+    orr     r0, r0, #0x18
     mcr     p15, 0, r0, c2, c0, 1
     bx      lr
 EnterARM(set_mmu_ttbcr)

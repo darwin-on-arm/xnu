@@ -283,7 +283,7 @@ boolean_t pmap_map_bd(vm_offset_t virt,
      * happen.
      */
     
-    l2_map_linear_range((pte),
+    l2_map_linear_range_no_cache((pte),
                         start,
                         end);
     
@@ -669,7 +669,7 @@ pmap_enter_options(
     } else if(flags & VM_MEM_COHERENT) {
         template_pte |= mmu_texcb_small(MMU_CODE);
     } else {
-        template_pte |= mmu_texcb_small(MMU_DMA);
+        template_pte |= mmu_texcb_small(MMU_DATA);
     }
 
     *(uint32_t*)phys_to_virt(pte) = template_pte;
