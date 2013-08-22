@@ -370,6 +370,11 @@ void PE_init_SocSupport_S5L8930X(void)
     S5L8930X_InitCaches();
     S5L8930X_framebuffer_init();
     S5L8930X_uart_init();
+    
+#if 0
+    /* Stub. */
+    kprintf(KPRINTF_PREFIX: "we r not #fakr\n");
+#endif
 
     PE_kputc = _fb_putc; //gPESocDispatch.uart_putc;
 }
