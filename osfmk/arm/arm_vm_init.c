@@ -174,12 +174,42 @@ void l2_map_linear_range(uint32_t pa_cache_start, uint32_t phys_start, uint32_t 
         
 		*ptv |= L2_SMALL_PAGE;
 		*ptv |= L2_ACCESS_PRW;
+
+        *ptv |= mmu_texcb_small(MMU_CODE);
         
 		pte_iter += sizeof(unsigned int);
 		phys_iter += PAGE_SIZE;
 	}
-
 }
+
+void l2_map_linear_range_no_cache(uint32_t pa_cache_start, uint32_t phys_start, uint32_t phys_end)
+{
+    uint32_t pte_iter;
+    uint32_t page_iter;
+    uint32_t phys_iter;
+    
+    pte_iter = phys_to_virt(pa_cache_start);
+    page_iter = (phys_end - phys_start) >> PAGE_SHIFT;
+    phys_iter = phys_start;
+    
+    for (unsigned int i = 0; i < page_iter; i++)
+    {
+        unsigned int* ptv = (unsigned int*)pte_iter;
+        
+        if (phys_iter & ~L2_ADDR_MASK) {
+            panic("l2_map_linear_range: Misaligned physical page!\n");
+        }
+        
+        *ptv = phys_iter;
+        
+        *ptv |= L2_SMALL_PAGE;
+        *ptv |= L2_ACCESS_PRW;
+
+        pte_iter += sizeof(unsigned int);
+        phys_iter += PAGE_SIZE;
+    }
+}
+
 
 /**
  * l2_cache_to_range
@@ -275,7 +305,7 @@ void arm_vm_init(uint32_t mem_limit, boot_args *args)
     /*
      * Bad hack only on 8930X. We have ~256MB "only". Bringup only.
      * Something goes very wrong when we have 512MB, and I can't debug
-     * this issue right now. :|
+     * this issue right now. iBoot is weird. :|
      */
     args->memSize = 0xf000000;
 #endif
