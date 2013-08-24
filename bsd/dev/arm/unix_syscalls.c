@@ -204,7 +204,7 @@ unix_syscall(arm_saved_state_t *state)
         /* Not an error, like stat64() */
         state->r[0] = uthread->uu_rval[0];
         state->r[1] = uthread->uu_rval[1];
-        state->cpsr &= ~(1 << 29);
+        state->cpsr &= ~(1 << 29);          /* C-bit IIRC, turn this into a Define */
     }
 
     uthread->uu_flag &= ~UT_NOTCANCELPT;
