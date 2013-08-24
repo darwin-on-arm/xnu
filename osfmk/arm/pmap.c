@@ -56,6 +56,10 @@
 #include <vm/vm_page.h>
 #include <arm/cpu_capabilities.h>
 
+#ifndef DEBUG_PMAP
+#define kprintf(args...)
+#endif
+
 /*
  * Kernel's physical memory map.
  */
@@ -119,6 +123,9 @@ boolean_t pmap_initialized = FALSE;
 #define SPLX(spl)    { \
     splx(spl); \
 }
+
+#define WRITE_PTE(pte, target) \
+    *(uint32_t*)phys_to_virt(pte) = target;
 
 /*
  * Lock on pmap system
@@ -672,7 +679,7 @@ pmap_enter_options(
         template_pte |= mmu_texcb_small(MMU_DATA);
     }
 
-    *(uint32_t*)phys_to_virt(pte) = template_pte;
+    WRITE_PTE(pte, template_pte);
     
     /*
      * Update counts
@@ -894,8 +901,8 @@ void pmap_page_protect(ppnum_t pn, vm_prot_t prot) {
                 /*
                  * Remove the mapping.
                  */
-                uint32_t* pte_ptr = (uint32_t*)phys_to_virt(pte);
-                *pte_ptr = 0x0;
+                WRITE_PTE(pte, 0);
+
                 assert(pmap->stats.resident_count >= 1);
                 pmap->stats.resident_count--;
                 /*
