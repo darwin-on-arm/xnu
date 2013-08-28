@@ -476,7 +476,7 @@ endif
 KERNEL_MIN_ADDRESS      := 0xffffff8000000000
 KERNEL_BASE_OFFSET      := 0x100000
 KERNEL_STATIC_SLIDE     := $(shell printf "0x%016x" \
-			   $(( $(SLIDE) << 21 ])))
+			   $(( $(SLIDE) << 21 )))
 KERNEL_STATIC_BASE      := $(shell printf "0x%016x" \
 			   $(( $(KERNEL_MIN_ADDRESS) + $(KERNEL_BASE_OFFSET) )))
 KERNEL_HIB_SECTION_BASE := $(shell printf "0x%016x" \
