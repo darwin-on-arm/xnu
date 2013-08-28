@@ -57,6 +57,7 @@ static char sccsid[] __attribute__((used)) = "@(#)mkglue.c	5.6 (Berkeley) 6/18/8
 #include <stdio.h>
 #include <string.h>
 #include "config.h"
+#undef MACHINE
 #include "parser.h"
 #include <ctype.h>
 

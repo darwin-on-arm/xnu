@@ -367,7 +367,14 @@ void PE_init_SocSupport_S5L8930X(void)
     
     gPESocDispatch.framebuffer_init = S5L8930X_framebuffer_init;
     
-    S5L8930X_InitCaches();
+    char tempbuf[16];
+    
+    if(PE_parse_boot_argn("-no-cache", tempbuf, sizeof(tempbuf))) {
+        kprintf(KPRINTF_PREFIX "No caching enabled (I+D).\n");
+    } else {
+        S5L8930X_InitCaches();
+    }
+
     S5L8930X_framebuffer_init();
     S5L8930X_uart_init();
 

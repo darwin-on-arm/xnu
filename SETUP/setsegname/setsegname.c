@@ -39,7 +39,7 @@
 
 #include <mach-o/swap.h>
 
-#ifndef __linux__
+#ifdef __APPLE__
 #include <IOKit/IOTypes.h>
 #else
 #undef OSSwapInt32
