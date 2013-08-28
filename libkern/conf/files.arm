@@ -1,1 +1,3 @@
 libkern/arm/OSAtomic.s                 standard
+libkern/zlib/arm/inffastS.s   optional zlib
+libkern/zlib/arm/adler32vec.s optional zlib
