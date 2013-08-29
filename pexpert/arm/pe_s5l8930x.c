@@ -330,13 +330,6 @@ static void _fb_putc(int c) {
     S5L8930X_putc(c);
 }
 
-void S5L8930X_InitCaches(void)
-{
-    kprintf(KPRINTF_PREFIX "initializing i+dcache\n");
-    cache_initialize();
-    kprintf(KPRINTF_PREFIX "done\n");
-}
-
 void S5L8930X_framebuffer_init(void)
 {
     /* Technically, iBoot should initialize this.. */
@@ -366,14 +359,6 @@ void PE_init_SocSupport_S5L8930X(void)
     gPESocDispatch.timer_enabled = S5L8930X_timer_enabled;
     
     gPESocDispatch.framebuffer_init = S5L8930X_framebuffer_init;
-    
-    char tempbuf[16];
-    
-    if(PE_parse_boot_argn("-no-cache", tempbuf, sizeof(tempbuf))) {
-        kprintf(KPRINTF_PREFIX "No caching enabled (I+D).\n");
-    } else {
-        S5L8930X_InitCaches();
-    }
 
     S5L8930X_framebuffer_init();
     S5L8930X_uart_init();

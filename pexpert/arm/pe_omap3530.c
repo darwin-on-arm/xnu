@@ -380,8 +380,6 @@ void PE_init_SocSupport_omap3(void)
 
     Omap3_framebuffer_init();
     PE_kputc = _fb_putc; //gPESocDispatch.uart_putc;
-
-    Omap3_InitCaches();
 }
 
 void PE_init_SocSupport_stub(void)

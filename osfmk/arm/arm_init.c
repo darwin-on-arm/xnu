@@ -142,6 +142,19 @@ void arm_init(boot_args* args) {
     PE_init_platform(TRUE, (void*)args);
 
     /*
+     * Enable I+D cache.
+     */
+    char tempbuf[16];
+    
+    if(PE_parse_boot_argn("-no-cache", tempbuf, sizeof(tempbuf))) {
+        kprintf("cache: No caching enabled (I+D).\n");
+    } else {
+        kprintf("cache: initializing i+dcache\n");
+        cache_initialize();
+        kprintf("cache: done\n");
+    }
+
+    /*
      * Start system timers.
      */
     thread = current_thread();
