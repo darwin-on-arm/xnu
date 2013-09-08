@@ -37,6 +37,7 @@
 #include <mach/vm_types.h>
 #include <mach/vm_param.h>
 #include <mach/thread_status.h>
+#include <mach/boolean.h>
 #include <kern/misc_protos.h>
 #include <kern/assert.h>
 #include <kern/cpu_number.h>
@@ -56,6 +57,8 @@
 #include <vm/vm_page.h>
 #include <arm/cpu_capabilities.h>
 
+#define DEBUG_PMAP
+
 #ifndef DEBUG_PMAP
 #define kprintf(args...)
 #endif
@@ -64,18 +67,13 @@
  * Kernel's physical memory map.
  */
 
+#define ATTR_WIRED              1
+
 vm_offset_t free_l1_tables;
 
-typedef enum {
-    ATTR_NONE   = 0x0,
-    ATTR_READ   = 0x1,
-    ATTR_WRITE  = 0x2,
-    ATTR_WIRED  = 0x4,
-} attr_bits_t;
-
-#define PV_ENTRY_NULL   ((pv_entry_t) 0)
-
-#define pa_index(pa)    (atop(pa - gPhysBase))
+#define PV_ENTRY_NULL          ((pv_entry_t) 0)
+#define arm_atop(pa)           ((pa & L1_PTE_ADDR_MASK) >> PAGE_SHIFT)
+#define pa_index(pa)           (arm_atop(pa) - arm_atop(gPhysBase))
 #define pai_to_pvh(pai)        (&pv_head_table[pai])
 
 unsigned int	inuse_ptepages_count = 0;
@@ -92,11 +90,6 @@ static struct vm_object pmap_object_store;
 vm_object_t pmap_object;
 
 extern uint32_t first_avail, avail_end;
-
-extern uint32_t identityBaseVA, identityCachePA;
-extern uint32_t managedBaseVA, managedCachePA;
-extern uint32_t exceptionVectVA, exceptionCachePA;
-extern uint32_t sectionOffset;
 
 uint32_t virt_begin, virt_end, ram_begin;
 
@@ -159,7 +152,6 @@ lock_t pmap_system_lock;
     lock_write_to_read(&pmap_system_lock);    \
 }
 
-
 /**
  * pmap_common_init
  *
@@ -168,9 +160,9 @@ lock_t pmap_system_lock;
 void pmap_common_init(pmap_t pmap)
 {
     usimple_lock_init(&pmap->lock, 0);
-    ledger_reference(pmap->ledger);
-    pmap->ref_count = 1;
-    pmap->nx_enabled = 0;
+    ledger_reference(pmap->pm_ledger);
+    pmap->pm_refcnt = 1;
+    pmap->pm_nx = FALSE;
 }
 
 /**
@@ -184,7 +176,6 @@ pmap_virtual_space(vm_offset_t *startp,
 {
     *startp = virt_begin;
     *endp = virt_end;
-    kprintf("pmap_virtual_space: region 0x%08x-0x%08x\n", virt_begin, virt_end);
 }
 
 /**
@@ -196,7 +187,7 @@ void pmap_bootstrap(__unused uint64_t msize,
                     vm_offset_t* __first_avail,
                     __unused unsigned int kmapsize)
 {
-    vm_offset_t    addr;
+    vm_offset_t addr;
     vm_map_offset_t vaddr;
     vm_size_t s;
     ppnum_t page_number;
@@ -217,8 +208,8 @@ void pmap_bootstrap(__unused uint64_t msize,
      * Initialize kernel pmap.
      */
     pmap_common_init(kernel_pmap);
-    kernel_pmap->stats.resident_count = 0;
-    kernel_pmap->stats.wired_count = 0;
+    kernel_pmap->pm_stats.resident_count = 0;
+    kernel_pmap->pm_stats.wired_count = 0;
     
     /*
      * More needs to be done.
@@ -256,8 +247,6 @@ void pmap_bootstrap(__unused uint64_t msize,
  */
 void pmap_static_init(void)
 {
-    kdb_printf("pmap_static_init: Bootstrapping pmap\n");
-
     return;
 }
 
@@ -272,7 +261,7 @@ boolean_t pmap_map_bd(vm_offset_t virt,
                       vm_prot_t prot,
                       unsigned int flags)
 {
-    uint32_t* tte_ptr = (uint32_t*)addr_to_tte(kernel_pmap->ttb, virt);
+    uint32_t* tte_ptr = (uint32_t*)addr_to_tte(kernel_pmap->pm_l1_virt, virt);
     uint32_t tte = *tte_ptr;
     uint32_t pte;
 
@@ -337,7 +326,7 @@ boolean_t pmap_next_page(ppnum_t *addrp)
 vm_offset_t
 pmap_get_phys(pmap_t pmap, void* virt)
 {
-    uint32_t* tte_ptr = (uint32_t*)addr_to_tte(pmap->ttb, (uint32_t)virt);
+    uint32_t* tte_ptr = (uint32_t*)addr_to_tte(pmap->pm_l1_virt, (uint32_t)virt);
     uint32_t tte = *tte_ptr;
     uint32_t pte, *pte_ptr;
     uint32_t pa;
@@ -387,7 +376,7 @@ pmap_get_phys_tte(uint32_t tte_va, void* virt)
 }
 
 vm_offset_t pmap_extract(pmap_t pmap, vm_offset_t virt) {
-    uint32_t* tte_ptr = (uint32_t*)addr_to_tte(pmap->ttb, (uint32_t)virt);
+    uint32_t* tte_ptr = (uint32_t*)addr_to_tte(pmap->pm_l1_virt, (uint32_t)virt);
     uint32_t tte = *tte_ptr;
     uint32_t pte, *pte_ptr;
     uint32_t pa;
@@ -410,7 +399,28 @@ vm_offset_t pmap_extract(pmap_t pmap, vm_offset_t virt) {
  */
 ppnum_t pmap_find_phys(pmap_t pmap, addr64_t virt)
 {
-    return 0;
+    uint32_t* tte_ptr = (uint32_t*)addr_to_tte(pmap->pm_l1_virt, (uint32_t)virt);
+    uint32_t tte = *tte_ptr;
+    uint32_t pte, *pte_ptr;
+    uint32_t pa;
+    
+    if (!tte_is_page_table(tte)) {
+        /* Not cached */
+        return 0;
+    }
+
+    pte = L1_PTE_ADDR(tte); /* l2 base */
+    pte += pte_offset((uint32_t)virt);
+    if(!pte)
+        return 0;
+    pte_ptr = phys_to_virt((uint32_t*)pte);
+    
+    pa = *pte_ptr & L2_ADDR_MASK;   // Knock off the last two bits.
+
+    if(pmap_verify_free(pa))
+        return 0;
+    
+    return pa;
 }
 
 /**
@@ -422,7 +432,7 @@ void
 pmap_reference(pmap_t pmap)
 {
     if (pmap != PMAP_NULL)
-        (void)hw_atomic_add(&pmap->ref_count, 1); /* Bump the count */
+        (void)hw_atomic_add(&pmap->pm_refcnt, 1); /* Bump the count */
 }
 
 /**
@@ -461,12 +471,12 @@ vm_offset_t pmap_tte(pmap_t pmap, addr64_t virt)
     
     assert(pmap != NULL);
     
-    size_begin = pmap->ttb;
+    size_begin = pmap->pm_l1_virt;
 
-    if((size_begin + size_max) < addr_to_tte(pmap->ttb, virt))
+    if((size_begin + size_max) < addr_to_tte(pmap->pm_l1_virt, virt))
         panic("size extends past tte length");
     
-    return addr_to_tte(pmap->ttb, virt);
+    return addr_to_tte(pmap->pm_l1_virt, virt);
 }
 
 /**
@@ -483,7 +493,7 @@ pt_entry_t pmap_pte(pmap_t pmap, addr64_t virt)
     if(!pmap)
         return NULL;
     
-    tte_ptr = (uint32_t*)addr_to_tte(pmap->ttb, (uint32_t)virt);
+    tte_ptr = (uint32_t*)addr_to_tte(pmap->pm_l1_virt, (uint32_t)virt);
     tte = *tte_ptr;
     
     pte = L1_PTE_ADDR(tte); /* l2 base */
@@ -491,6 +501,7 @@ pt_entry_t pmap_pte(pmap_t pmap, addr64_t virt)
         return NULL;
     
     pte += pte_offset((uint32_t)virt);
+
     return (pt_entry_t)pte;
 }
 
@@ -611,10 +622,12 @@ pmap_enter_options(
         kprintf("pmap_expand: expanded pmap, va 0x%08x -> 0x%08x\n", va, pa);
         PMAP_LOCK(pmap);
     }
+    
 #if 0
     kprintf("pmap_enter: 0x%08x -> 0x%08x (pmap: 0x%08x, pte: 0x%08x, ttb: 0x%08x, ttb_phys: 0x%08x)\n",
-            va, pa, pmap, pte, pmap->ttb, pmap->ttb_phys);
+            va, pa, pmap, pte, pmap->pm_l1_virt, pmap->pm_l1_phys);
 #endif
+
     /*
      * See if it has an old PA.
      */
@@ -659,7 +672,7 @@ pmap_enter_options(
      * Step 3) Enter and count the mapping.
      */
     
-    pmap->stats.resident_count++;
+    pmap->pm_stats.resident_count++;
     
     /*
      * Enter it in the pmap.
@@ -685,7 +698,7 @@ pmap_enter_options(
      * Update counts
      */
     if(wired)
-        pmap->stats.wired_count++;
+        pmap->pm_stats.wired_count++;
     
 done:
     PMAP_UNLOCK(pmap);
@@ -901,10 +914,12 @@ void pmap_page_protect(ppnum_t pn, vm_prot_t prot) {
                 /*
                  * Remove the mapping.
                  */
+#if 0
                 WRITE_PTE(pte, 0);
+#endif
 
-                assert(pmap->stats.resident_count >= 1);
-                pmap->stats.resident_count--;
+                assert(pmap->pm_stats.resident_count >= 1);
+                pmap->pm_stats.resident_count--;
                 /*
                  * Remove the pv_entry.
                  */
@@ -1003,16 +1018,10 @@ pmap_create(ledger_t ledger, vm_map_size_t size, __unused boolean_t is_64bit)
     our_pmap = (pmap_t)zalloc(pmap_zone);
     kprintf("pmap_create: %p = new_pmap\n", our_pmap);
     
-    our_pmap->ref_count = 1;
+    our_pmap->pm_refcnt = 1;
     pmap_common_init(our_pmap);
-    
-    /*
-     * Awesome. Now allocate a L1/L2 for it. 
-     */
 
-    /*
-     * alloc aligned object, should *really* use the pmap object.
-     */
+    /* allocate object. */
     vm_page_t m;
     uint32_t ctr;
     vm_offset_t address = NULL;
@@ -1034,11 +1043,11 @@ pmap_create(ledger_t ledger, vm_map_size_t size, __unused boolean_t is_64bit)
     
     address = m->phys_page;
     
-    our_pmap->ttb = phys_to_virt(address);
-    our_pmap->ttb_phys = address;
+    our_pmap->pm_l1_virt = phys_to_virt(address);
+    our_pmap->pm_l1_phys = address;
     bzero(phys_to_virt(address), PAGE_SIZE);
     
-    kprintf("pmap_create: new ttb 0x%08x, 0x%08x\n", our_pmap->ttb, our_pmap->ttb_phys);
+    kprintf("pmap_create: new ttb 0x%08x, 0x%08x\n", our_pmap->pm_l1_virt, our_pmap->pm_l1_phys);
     
     return our_pmap;
 }
@@ -1080,13 +1089,13 @@ pmap_change_wiring(pmap_t map,
         /*
          * wiring down mapping
          */
-        OSAddAtomic(+1,  &map->stats.wired_count);
+        OSAddAtomic(+1,  &map->pm_stats.wired_count);
     } else if (!wired) {
         /*
          * unwiring mapping
          */
-        assert(map->stats.wired_count >= 1);
-        OSAddAtomic(-1,  &map->stats.wired_count);
+        assert(map->pm_stats.wired_count >= 1);
+        OSAddAtomic(-1,  &map->pm_stats.wired_count);
     }
     
     PMAP_UNLOCK(map);
@@ -1101,7 +1110,7 @@ void pmap_switch(pmap_t tpmap)
         goto out;
     } else {
         current_cpu_datap()->user_pmap = tpmap;
-        set_mmu_ttb(tpmap->ttb_phys);
+        set_mmu_ttb(tpmap->pm_l1_phys);
         flush_mmu_tlb();
     }
 out:
@@ -1121,7 +1130,7 @@ pmap_destroy(pmap_t pmap)
     assert(pmap != NULL);
     
     PMAP_LOCK(pmap);
-    refcount = --(pmap->ref_count);
+    refcount = --(pmap->pm_refcnt);
     PMAP_UNLOCK(pmap);
     
     if(refcount) {
@@ -1129,7 +1138,7 @@ pmap_destroy(pmap_t pmap)
         return;
     }
     
-    ledger_dereference(pmap->ledger);
+    ledger_dereference(pmap->pm_ledger);
     zfree(pmap_zone, pmap);
     return;
 }
@@ -1142,7 +1151,7 @@ pmap_destroy(pmap_t pmap)
 int pmap_resident_count(pmap_t pmap)
 {
     assert(pmap);
-    return (pmap)->stats.resident_count;
+    return (pmap)->pm_stats.resident_count;
 }
 
 /**
@@ -1200,7 +1209,7 @@ kern_return_t pmap_nest(pmap_t grand, pmap_t subord, addr64_t va_start, addr64_t
     PMAP_UNLOCK(subord);
     
     kprintf("ttb of subordinate is 0x%08x, ttb grand: 0x%08x\n",
-            grand->ttb, subord->ttb);
+            grand->pm_l1_virt, subord->pm_l1_virt);
     
     panic("not yet\n");
 }

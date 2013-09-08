@@ -337,7 +337,6 @@ void S5L8930X_framebuffer_init(void)
     
     kprintf(KPRINTF_PREFIX "framebuffer initialized\n");
 
-    initialize_screen((void*)&PE_state.video, kPEAcquireScreen);
     initialize_screen((void*)&PE_state.video, kPEEnableScreen);
     return;
 }

@@ -127,12 +127,12 @@ void DebuggerWithContext(__unused unsigned int reason, void *ctx, const char *me
 	void *stackptr;
     
     dim_screen();
+
+    hw_atomic_add(&debug_mode, 1);
     
 	kdb_printf("============================================\n"
                "= Debugger (Context) called: <%s>\n"
                "============================================\n", message);
-    
-    hw_atomic_add(&debug_mode, 1);
     
     print_threads();
     
@@ -165,12 +165,12 @@ void Debugger(const char *message)
 	void *stackptr;
     
     dim_screen();
+
+    hw_atomic_add(&debug_mode, 1);
     
 	kdb_printf("============================================\n"
                "= Debugger called: <%s>\n"
                "============================================\n", message);
-
-    hw_atomic_add(&debug_mode, 1);
     
     /* Disable preemption, and dump information. */
     ml_set_interrupts_enabled(FALSE);

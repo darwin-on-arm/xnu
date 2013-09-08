@@ -61,18 +61,62 @@ typedef uint32_t	pd_entry_t;	/* L1 table entry */
 typedef uint32_t	pt_entry_t;	/* L2 table entry */
 
 #pragma pack(4)							/* Make sure the structure stays as we defined it */
+
+/* new pmap struct */
+typedef uint32_t    paddr_t;        /* Physical address */
+typedef uint32_t    vaddr_t;        /* Virtual address */
+
 struct pmap {
+    paddr_t         pm_l1_phys;     /* L1 table address */
+    vaddr_t         pm_l1_virt;     /* L1 virtual table address */
+    vaddr_t         pm_l2_cache;    /* L2 page tables */
 	decl_simple_lock_data(,lock)	/* lock on map */
-	uint32_t        ttb;
-    uint32_t        ttb_phys;
-    vm_offset_t     l2_cache;
-    int             ref_count;
-    ledger_t        ledger;
-    boolean_t       pm_shared;
-    task_map_t      pm_task_map;
-    int             nx_enabled;
-    struct pmap_statistics  stats;
+    int             pm_refcnt;      /* pmap reference count */
+    ledger_t        pm_ledger;      /* self ledger */
+    boolean_t       pm_shared;      /* nested pmap? */
+    int             pm_nx;          /* protection for pmap */
+    task_map_t      pm_task_map;    /* process task map */
+    struct pmap_statistics  pm_stats;
 };
+
+typedef struct arm_l1_entry_t {
+    uint32_t    is_coarse:1;        /* Is it a coarse page/section descriptor? */
+    uint32_t    is_section:1;
+    uint32_t    bufferable:1;       /* Zero on coarse. */
+    uint32_t    cacheable:1;        /* Zero on coarse. */
+    uint32_t    sbz:1;              /* Should be zero. */
+    uint32_t    domain:4;           /* Domain entry */
+    uint32_t    ecc:1;              /* P-bit */
+    uint32_t    pfn:22;
+} arm_l1_entry_t;
+
+typedef struct arm_l2_entry_t {
+    uint32_t    nx:1;               /* 1 on 64kB pages, not supported. */
+    uint32_t    valid:1;            /* 0 on 64kB pages, not supported. */
+    uint32_t    bufferable:1;
+    uint32_t    cacheable:1;
+    uint32_t    ap:2;
+    uint32_t    tex:3;
+    uint32_t    apx:1;
+    uint32_t    shareable:1;
+    uint32_t    non_global:1;
+    uint32_t    pfn:20;
+} arm_l2_entry_t;
+
+typedef struct arm_l1_t {
+    union {
+        arm_l1_entry_t l1;
+        uint32_t ulong;
+    };
+} arm_l1_t;
+
+typedef struct arm_l2_t {
+    union {
+        arm_l2_entry_t l2;
+        uint32_t ulong;
+    };
+} arm_l2_t;
+
 #pragma pack()
 
 #define	PMAP_SWITCH_USER(th, map, my_cpu) th->map = map;
