@@ -316,8 +316,11 @@ void print_threads(void)
         
             assert(thread);
             
-            if(thread->continuation)
-                kprintf("      kernel continuation: %p\n", thread->continuation);
+            if(thread->continuation) {
+                kprintf("      kernel continuation: %p ", thread->continuation);
+                panic_print_symbol_name(thread->continuation);
+                kprintf("\n");
+            }
             
             if(!thread->continuation && thread->machine.iss) {
                 char crash_string[] = ANSI_COLOR_GREEN "Crashed ";
