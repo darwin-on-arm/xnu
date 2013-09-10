@@ -185,7 +185,9 @@ void Debugger(const char *message)
     __asm__ __volatile("mov %0, r7" : "=r"(stackptr));
     panic_arm_backtrace(stackptr, 20, NULL, FALSE, NULL);
 
-    kprintf("Debugger: We are hanging here.\n");
+    kprintf("Debugger: We are hanging here.\n\n");
+    kprintf(ANSI_COLOR_YELLOW "for @b3ll: aelins!" ANSI_COLOR_RESET "\n");
+    
     while(1) {};
     
     hw_atomic_sub(&debug_mode, 1);

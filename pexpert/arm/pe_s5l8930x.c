@@ -337,7 +337,15 @@ void S5L8930X_framebuffer_init(void)
     
     kprintf(KPRINTF_PREFIX "framebuffer initialized\n");
 
-    initialize_screen((void*)&PE_state.video, kPEAcquireScreen);
+    /*
+     * Enable I+D cache.
+     */
+    char tempbuf[16];
+    
+    if(PE_parse_boot_argn("-early-fb-debug", tempbuf, sizeof(tempbuf))) {
+        initialize_screen((void*)&PE_state.video, kPEAcquireScreen);
+    }
+    
     initialize_screen((void*)&PE_state.video, kPEEnableScreen);
     return;
 }
