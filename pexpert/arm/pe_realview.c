@@ -322,6 +322,7 @@ void RealView_framebuffer_init(void)
     kprintf(KPRINTF_PREFIX "framebuffer initialized\n");
     bzero(framebuffer, (pitch * height));
     
+    initialize_screen((void*)&PE_state.video, kPEAcquireScreen);
     initialize_screen((void*)&PE_state.video, kPEEnableScreen);
 }
 

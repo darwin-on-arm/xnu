@@ -126,9 +126,23 @@ kern_return_t machine_thread_create(thread_t thread, task_t task)
     /* Create a thread and set the members in the pcb. */
     assert(thread != NULL);
     assert(thread->machine.iss == NULL);
+    
+    if (thread->machine.iss == NULL) {
+        kmem_alloc_kobject(kernel_map, &sv, sizeof(arm_saved_state_t));
+        if(!sv)
+            panic("couldn't alloc savearea for thread\n");
+    }
 
+    /* Okay, got one. */
+    bzero(sv, sizeof(arm_saved_state_t));
+
+    /* Set the members now. */
+    thread->machine.iss = sv;
     thread->machine.preempt_count = 0;
     thread->machine.cpu_data = cpu_datap(cpu_number());
+    
+    /* Also kernel threads */
+    thread->machine.uss = thread->machine.iss;
             
     return KERN_SUCCESS;
 }

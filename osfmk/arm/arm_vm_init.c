@@ -164,17 +164,19 @@ void l2_map_linear_range(uint32_t pa_cache_start, uint32_t phys_start, uint32_t 
     
 	for (unsigned int i = 0; i < page_iter; i++)
 	{
-		arm_l2_t* ptv = (arm_l2_t*)pte_iter;
+		unsigned int* ptv = (unsigned int*)pte_iter;
         
 		if (phys_iter & ~L2_ADDR_MASK) {
 			panic("l2_map_linear_range: Misaligned physical page!\n");
 		}
         
-        ptv->l2.pfn = (phys_iter >> PAGE_SHIFT);
-        ptv->l2.valid = TRUE;
-        ptv->l2.ap = 0x1;
-        ptv->ulong |= mmu_texcb_small(MMU_CODE);
+		*ptv = phys_iter;
+        
+		*ptv |= L2_SMALL_PAGE;
+		*ptv |= L2_ACCESS_PRW;
 
+        *ptv |= mmu_texcb_small(MMU_CODE);
+        
 		pte_iter += sizeof(unsigned int);
 		phys_iter += PAGE_SIZE;
 	}
@@ -191,20 +193,21 @@ void l2_map_linear_range_no_cache(uint32_t pa_cache_start, uint32_t phys_start, 
     phys_iter = phys_start;
     
     for (unsigned int i = 0; i < page_iter; i++)
-	{
-		arm_l2_t* ptv = (arm_l2_t*)pte_iter;
+    {
+        unsigned int* ptv = (unsigned int*)pte_iter;
         
-		if (phys_iter & ~L2_ADDR_MASK) {
-			panic("l2_map_linear_range: Misaligned physical page!\n");
-		}
+        if (phys_iter & ~L2_ADDR_MASK) {
+            panic("l2_map_linear_range: Misaligned physical page!\n");
+        }
         
-        ptv->l2.pfn = (phys_iter >> PAGE_SHIFT);
-        ptv->l2.valid = TRUE;
-        ptv->l2.ap = 0x1;
+        *ptv = phys_iter;
+        
+        *ptv |= L2_SMALL_PAGE;
+        *ptv |= L2_ACCESS_PRW;
 
-		pte_iter += sizeof(unsigned int);
-		phys_iter += PAGE_SIZE;
-	}
+        pte_iter += sizeof(unsigned int);
+        phys_iter += PAGE_SIZE;
+    }
 }
 
 
@@ -239,14 +242,14 @@ void l2_cache_to_range(uint32_t pa_cache_start, uint32_t va, uint32_t tteb, uint
 	/* Create an L2 for every section in the given region */
 	for (unsigned int tte = tte_pbase; tte < (tte_pbase+tte_psize); tte += 4)
 	{
-		arm_l1_t* ttv = (arm_l1_t*)tte;
+		unsigned int* ttv = (unsigned int*)tte;
 
 		if (pte_iter & ~L1_PTE_ADDR_MASK) {
             panic("l2_cache_to_range: Misaligned L2 table %x!\n", pte_iter);
 		}
 		
-		ttv->ulong = pte_iter;
-		ttv->l1.is_coarse = TRUE;
+		*ttv = pte_iter;
+		*ttv |= L1_TYPE_PTE;
 		
 		pte_iter += L2_SIZE;
 	}
@@ -413,8 +416,8 @@ void arm_vm_init(uint32_t mem_limit, boot_args *args)
 					  align_up(PAGE_SIZE, 0x00100000),
                       TRUE);
     
-    kernel_pmap->pm_l1_virt = phys_to_virt(cpu_ttb);
-    kernel_pmap->pm_l1_phys = cpu_ttb;
+    kernel_pmap->ttb = phys_to_virt(cpu_ttb);
+    kernel_pmap->ttb_phys = cpu_ttb;
     
     /*
      * Mach kernel vmaddr (0x80001000) gets rebased to 0x80000000.
