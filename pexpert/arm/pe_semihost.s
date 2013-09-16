@@ -33,7 +33,10 @@
 #include <arm/arch.h>
 #include <arm/asm_help.h>
 
+#ifndef __LP64__
 .code 16
+#endif
+
 .text
 .align 4
 
@@ -54,6 +57,7 @@ _semihost_buffer_ptr_ptr:
  *
  * Writes character output to debugger standard out.
  */
+#ifndef __LP64__
 EnterThumb(PE_semihost_write_char)
 #ifndef BOARD_CONFIG_ARMPBA8
     ldr     r1, _semihost_buffer_ptr
@@ -68,3 +72,12 @@ EnterThumb(PE_semihost_write_char)
     svc     0xab
 #endif
     bx      lr
+#else
+.globl _PE_semihost_write_char
+.align 6
+_PE_semihost_write_char:
+    ldr     x1, _semihost_buffer_ptr
+    str     w0, [x1]
+    movz    x0, #0x03
+    hlt     #0xf000
+#endif

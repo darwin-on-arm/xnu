@@ -1,0 +1,20 @@
+OPTIONS/show_space		optional show_space
+OPTIONS/gdb				optional gdb
+OPTIONS/iplmeas			optional iplmeas
+OPTIONS/fb				optional fb
+OPTIONS/debug			optional debug
+OPTIONS/gprof		optional gprof
+OPTIONS/dynamic_num_nodes	optional dynamic_num_nodes
+OPTIONS/vtoc_compat	optional vtoc_compat
+OPTIONS/fddi		optional fddi
+
+osfmk/console/panic_dialog.c	     optional  vc device-driver
+osfmk/console/video_console.c        optional  vc device-driver
+osfmk/console/arm/video_scroll.c	optional vc device-driver
+
+osfmk/arm64/memcmp.s		standard
+osfmk/arm64/memmove.s		standard
+osfmk/arm64/memset.s		standard
+osfmk/arm64/stubs.s		standard
+
+osfmk/arm/loose_ends.c		standard

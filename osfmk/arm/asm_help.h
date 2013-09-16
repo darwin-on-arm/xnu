@@ -36,6 +36,8 @@
 #ifndef _ARM_ASM_HELP_H_
 #define _ARM_ASM_HELP_H_
 
+#include <arm/arch.h>
+
 /*
  * LLVM-AS is a horrible sin upon humanity.
  */
@@ -71,6 +73,29 @@
     .thumb_func _ ##function        ;   \
     .globl _ ##function             ;   \
     _##function:                    ;   \
+
+/* AArch64 stuff */
+#ifdef _ARM_ARCH_8
+#undef EnterARM
+#undef EnterThumb
+#undef EnterARM_NoAlign
+#undef EnterThumb_NoAlign
+
+#define EnterAArch64(function)          \
+    .align 6                        ;   \
+    .globl _ ##function             ;   \
+    _##function:                    ;
+    
+#define EnterAArch64_NoAlign(function)  \
+    .align 6                        ;   \
+    .globl _ ##function             ;   \
+    _##function:                    ;  
+
+#define EnterARM_NoAlign    EnterAArch64_NoAlign
+#define EnterThumb_NoAlign  EnterAArch64_NoAlign
+#define EnterARM            EnterAArch64
+#define EnterThumb          EnterAArch64
+#endif
 
 /*
  * ARM atomic function helper macro.

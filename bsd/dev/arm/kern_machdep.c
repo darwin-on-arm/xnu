@@ -54,6 +54,10 @@ grade_binary(cpu_type_t exectype, __unused cpu_subtype_t execsubtype)
 	switch(exectype) {
     case CPU_TYPE_ARM:
 		return 1;
+#ifdef __LP64__
+	case CPU_TYPE_ARM64:
+		return 1;
+#endif
 	default:			/* all other binary types */
 		return 0;
 	}
