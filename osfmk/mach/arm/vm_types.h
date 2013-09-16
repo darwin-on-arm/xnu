@@ -101,6 +101,9 @@ typedef	natural_t		vm_size_t;
  * where the size of the map is not known - or we don't
  * want to have to distinguish.
  */
+//#if defined(__IPHONE_OS_VERSION_MIN_REQUIRED) && (__IPHONE_OS_VERSION_MIN_REQUIRED < __IPHONE_5_0)
+
+/* We target iOS 4.3 for compatibility. */
 typedef uint32_t		mach_vm_address_t;
 typedef uint32_t		mach_vm_offset_t;
 typedef uint32_t		mach_vm_size_t;
@@ -118,6 +121,7 @@ typedef uint32_t		vm32_size_t;
 typedef vm_offset_t		mach_port_context_t;
 
 
+/* ARM64_TODO: sigh, need to adjust these... */
 #define VM_MAP_MIN_ADDRESS	VM_MIN_ADDRESS
 #define VM_MAP_MAX_ADDRESS	VM_MAX_ADDRESS
 

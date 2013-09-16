@@ -45,37 +45,37 @@
 #ifndef __ASSEMBLER__
 #include <arm/_types.h>
 #include <sys/cdefs.h>
+
 /*
  * Basic integral types.  Omit the typedef if
  * not possible for a machine/compiler combination.
  */
+
+typedef	unsigned char		u_int8_t;
+typedef	unsigned short		u_int16_t;
+typedef	unsigned int		u_int32_t;
+typedef	unsigned long long	u_int64_t;
+
 #ifndef _INT8_T
 #define _INT8_T
 typedef	__signed char		int8_t;
 #endif
-typedef	unsigned char		u_int8_t;
+
 #ifndef _INT16_T
 #define _INT16_T
 typedef	short			int16_t;
 #endif
-typedef	unsigned short		u_int16_t;
+
 #ifndef _INT32_T
 #define _INT32_T
 typedef	int			int32_t;
 #endif
-typedef	unsigned int		u_int32_t;
+
 #ifndef _INT64_T
 #define _INT64_T
 typedef	long long		int64_t;
 #endif
-typedef	unsigned long long	u_int64_t;
-
-#if __LP64__
-typedef int64_t			register_t;
-#else
-typedef int32_t			register_t;
-#endif
-
+ 
 #ifndef _INTPTR_T
 #define _INTPTR_T
 typedef __darwin_intptr_t	intptr_t;
@@ -85,16 +85,8 @@ typedef __darwin_intptr_t	intptr_t;
 typedef unsigned long		uintptr_t;
 #endif
 
-#if !defined(_ANSI_SOURCE) && (!defined(_POSIX_C_SOURCE) || defined(_DARWIN_C_SOURCE))
-/* These types are used for reserving the largest possible size. */
-typedef u_int32_t		user_addr_t;	
-typedef u_int32_t		user_size_t;	
-typedef int32_t			user_ssize_t;
-typedef int32_t			user_long_t;
-typedef u_int32_t		user_ulong_t;
-typedef int32_t			user_time_t;
-typedef int64_t			user_off_t;
 
+#if defined(__arm__)
 typedef u_int32_t		user32_addr_t;	
 typedef u_int32_t		user32_size_t;	
 typedef int32_t			user32_ssize_t;
@@ -109,7 +101,37 @@ typedef int64_t			user64_ssize_t;
 typedef int64_t			user64_long_t;
 typedef u_int64_t		user64_ulong_t;
 typedef int64_t			user64_time_t;
+#endif
+ 
+#ifndef __offsetof
+#define __offsetof(type, field) ((size_t)(&((type *)0)->field))
+#endif
 
+#if __LP64__
+typedef int64_t			register_t;
+#else
+typedef int32_t			register_t;
+#endif
+
+#if !defined(_ANSI_SOURCE) && (!defined(_POSIX_C_SOURCE) || defined(_DARWIN_C_SOURCE))
+/* These types are used for reserving the largest possible size. */
+#ifdef __arm64__
+typedef u_int64_t		user_addr_t;	
+typedef u_int64_t		user_size_t;	
+typedef int64_t			user_ssize_t;
+typedef int64_t			user_long_t;
+typedef u_int64_t		user_ulong_t;
+typedef int64_t			user_time_t;
+typedef int64_t			user_off_t;
+#else
+typedef u_int32_t		user_addr_t;	
+typedef u_int32_t		user_size_t;	
+typedef int32_t			user_ssize_t;
+typedef int32_t			user_long_t;
+typedef u_int32_t		user_ulong_t;
+typedef int32_t			user_time_t;
+typedef int64_t			user_off_t;
+#endif
 
 #define USER_ADDR_NULL	((user_addr_t) 0)
 #define CAST_USER_ADDR_T(a_ptr)   ((user_addr_t)((uintptr_t)(a_ptr)))
@@ -120,13 +142,12 @@ typedef int64_t			user64_time_t;
 /* This defines the size of syscall arguments after copying into the kernel: */
 #if defined(__arm__)
 typedef u_int32_t		syscall_arg_t;
+#elif defined(__arm64__)
+typedef u_int64_t		syscall_arg_t;
 #else
 #error Unknown architecture.
 #endif 
 
-#ifndef __offsetof
-#define __offsetof(type, field) ((size_t)(&((type *)0)->field))
-#endif
 
 #endif /* __ASSEMBLER__ */
 #endif	/* _MACHTYPES_H_ */

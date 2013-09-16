@@ -50,7 +50,7 @@
 
 /* There is another definition of ALIGN for .c sources */
 #ifdef ASSEMBLER
-#define ALIGN 4
+#define ALIGN 2
 #endif /* ASSEMBLER */
 
 #ifndef FALIGN
@@ -172,6 +172,14 @@
 # define BRANCH_EXTERN(x)	b	EXT(x)
 #endif
 
+/*
+ * arg0: Register for thread pointer
+ */
+.macro READ_THREAD
+	mrc p15, 0, $0, c13, c0, 4  /* Read TPIDRPRW */
+.endmacro
+
+
 /* Macros for loading up addresses that are external to the .s file.
  * LOAD_ADDR:  loads the address for (label) into (reg). Not safe for
  *   loading to the PC.
@@ -265,6 +273,32 @@ L_##label: ;                      \
 	.long	EXT(label)
 
 #endif /* SLIDABLE */
+
+/* The linker can deal with branching from ARM to thumb in unconditional
+ *   branches, but not in conditional branches.  To support this in our
+ *   assembly (which allows us to build xnu without -mno-thumb), use the
+ *   following macros for branching conditionally to external symbols.
+ *   These macros are used just like the corresponding conditional branch
+ *   instructions.
+ */
+
+#define SHIM_LABEL_GUTS(line_num) L_cond_extern_##line_num##_shim
+#define SHIM_LABEL(line_num) SHIM_LABEL_GUTS(line_num)
+
+#define COND_EXTERN_BEQ(label)         \
+	bne	SHIM_LABEL(__LINE__) ; \
+	b	EXT(label) ;           \
+SHIM_LABEL(__LINE__):
+
+#define COND_EXTERN_BLNE(label)        \
+	beq	SHIM_LABEL(__LINE__) ; \
+	bl	EXT(label) ;           \
+SHIM_LABEL(__LINE__):
+
+#define COND_EXTERN_BLGT(label)        \
+	ble	SHIM_LABEL(__LINE__) ; \
+	bl	EXT(label) ;           \
+SHIM_LABEL(__LINE__):
 
 #endif /* ASSEMBLER */
 

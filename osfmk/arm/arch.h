@@ -5,12 +5,6 @@
 #define _ARM_ARCH_H
 
 /* Collect the __ARM_ARCH_*__ compiler flags into something easier to use. */
-#ifdef __LP64__
-#if defined(__ARM64_ARCH_8__)
-#define _ARM_ARCH_8
-#endif
-#endif
-
 #if defined (__ARM_ARCH_7A__) || defined (__ARM_ARCH_7S__) || defined (__ARM_ARCH_7F__) || defined (__ARM_ARCH_7K__)
 #define _ARM_ARCH_7
 #endif

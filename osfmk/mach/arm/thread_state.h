@@ -11,7 +11,7 @@
 /* Size of maximum exported thread state in words */
 #define ARM_THREAD_STATE_MAX	(144)    /* Size of biggest state possible */
 
-#if defined (__arm__)
+#if defined (__arm__) || defined(__arm64__)
 #define THREAD_STATE_MAX	ARM_THREAD_STATE_MAX
 #else
 #error Unsupported arch

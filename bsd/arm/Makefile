@@ -10,12 +10,14 @@ include $(MakeInc_def)
 DATAFILES = \
 	_structs.h	endian.h	param.h		types.h \
 	_limits.h	_types.h	limits.h	setjmp.h \
-	_param.h	arch.h		locks.h		signal.h
+	_param.h	arch.h		locks.h		signal.h \
+	_mcontext.h
 
 KERNELFILES = \
 	_structs.h	endian.h	param.h		types.h \
 	_limits.h	_types.h	limits.h	setjmp.h \
-	_param.h	arch.h		locks.h		signal.h
+	_param.h	arch.h		locks.h		signal.h \
+	_mcontext.h
 
 
 INSTALL_MD_LIST = ${DATAFILES}
