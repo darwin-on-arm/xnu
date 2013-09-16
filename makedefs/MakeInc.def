@@ -7,6 +7,7 @@ export RELATIVE_SOURCE_PATH ?= .
 export DEFAULT_ARM_MACHINE_CONFIG = ARMPBA8
 export DEFAULT_L4_ARM_MACHINE_CONFIG = LOLWUT
 
+export DEFAULT_ARM64_MACHINE_CONFIG = FOUNDATION
 
 #
 # gnumake 3.77 support
@@ -45,7 +46,7 @@ endif
 # Architecture options
 #
 ifndef SUPPORTED_ARCH_CONFIGS
-export SUPPORTED_ARCH_CONFIGS = I386 X86_64 ARM
+export SUPPORTED_ARCH_CONFIGS = I386 X86_64 ARM ARM64
 endif
 
 ifndef ARCH_CONFIGS
@@ -122,6 +123,7 @@ endif
 export SUPPORTED_I386_MACHINE_CONFIGS := DEFAULT
 export SUPPORTED_X86_64_MACHINE_CONFIGS := DEFAULT
 export SUPPORTED_ARM_MACHINE_CONFIGS := S5L8930X ARMPBA8 SUN4I OMAP3530
+export SUPPORTED_ARM64_MACHINE_CONFIGS := DEFAULT FOUNDATION
 
 #
 # Target configuration options.  NOTE - target configurations will 
@@ -296,7 +298,7 @@ endif
 ARCH_FLAGS_ARM		  = -arch armv7
 ARCH_FLAGS_I386		  = -arch i386
 ARCH_FLAGS_X86_64	  = -arch x86_64
-
+ARCH_FLAGS_ARM64	= -arch arm64
 
 #
 # Default CFLAGS
@@ -339,7 +341,9 @@ export CFLAGS_X86_64	= -Dx86_64 -DX86_64 -D__X86_64__ -DLP64 \
 				-integrated-as
 export CFLAGS_ARM 	= -Darm -DARM -D__ARM__ -DPAGE_SIZE_FIXED \
 				-fno-strict-aliasing -fno-keep-inline-functions
-
+export CFLAGS_ARM64	= -Darm -DARM64 -D__arm__ -DARM -D__ARM64__ -DPAGE_SIZE_FIXED \
+				-fno-strict-aliasing -fno-keep-inline-functions -DLP64 \
+				-msoft-float
 
 
 ifeq (-arch armv7,$(ARCH_FLAGS_ARM))
@@ -349,6 +353,11 @@ ifeq (-arch armv6,$(ARCH_FLAGS_ARM))
 CFLAGS_ARM		+= -mthumb -msoft-float
 endif
 
+
+export CFLAGS_RELEASEARM64 = -O2
+export CFLAGS_DEVELOPMENTARM64 = -O2
+export CFLAGS_DEBUGARM64 = -O0
+export CFLAGS_PROFILEARM64 = -O2
 
 export CFLAGS_RELEASEI386 = -O2
 export CFLAGS_DEVELOPMENTI386 = -O2

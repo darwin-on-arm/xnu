@@ -1,0 +1,2 @@
+# pain.
+bcopyinout.o_SFLAGS_ADD += -no-integrated-as
