@@ -1,0 +1,8 @@
+
+# libIOKit
+iokit/Kernel/WKdmCompress.c			optional iokitcpp
+iokit/Kernel/WKdmDecompress.c			optional iokitcpp
+
+# Power Domains
+iokit/Kernel/IOPMrootDomain.cpp    			    optional iokitcpp
+iokit/Kernel/IOHibernateIO.cpp    			    optional iokitcpp

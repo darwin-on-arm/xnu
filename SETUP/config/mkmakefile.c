@@ -1044,6 +1044,7 @@ do_rules(FILE *f)
 				case MACHINE_SPARC:
 				case MACHINE_PPC:
 				case MACHINE_ARM:
+				case MACHINE_ARM64:
 				case MACHINE_X86_64:
 					extras = "_P";
 					goto common;

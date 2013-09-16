@@ -1,10 +1,13 @@
 ######################################################################
+#  
+#  Standard Apple Mac OS Configurations:
+#  -------- ----- ------ ---------------
 #
-#  RELEASE	= [ intel mach libkerncpp hibernation networking config_dtrace crypto allcrypto zlib config_kxld config_static_cppinit iokitstats vm_pressure_events ]
+#  RELEASE	= [ intel mach mach_pe panic_info config_dtrace ]
 #  PROFILE	= [ RELEASE profile ]
 #  DEBUG	= [ RELEASE debug ]
 #
-#  EMBEDDED	= [ intel mach libkerncpp networking crypto zlib ]
+#  EMBEDDED	= [ intel mach mach_pe panic_info ]
 #  DEVELOPMENT	= [ EMBEDDED config_dtrace ]
 #
 ######################################################################
