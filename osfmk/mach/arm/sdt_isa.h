@@ -90,6 +90,8 @@
 #define ARGS9_EXTENT	9
 #define ARGS10_EXTENT	10	
 
+#ifndef __LP64__
+
 #define DTRACE_CALL0ARGS(provider, name)			\
 	asm volatile (						\
 		DTRACE_CALL(provider, name)			\
@@ -261,6 +263,24 @@
 		      : "l" (__dtrace_args)							\
 		      : "memory", "r0", "r1", "r2", "r3"					\
 	);
+
+#else
+
+/* We have no Dtrace on 64-bit. */
+#define DTRACE_CALL0ARGS(provider, name)
+#define DTRACE_CALL1ARG(provider, name)
+#define DTRACE_CALL2ARGS(provider, name)
+#define DTRACE_CALL3ARGS(provider, name)
+#define DTRACE_CALL4ARGS(provider, name)
+#define DTRACE_CALL5ARGS(provider, name)
+#define DTRACE_CALL6ARGS(provider, name)
+#define DTRACE_CALL7ARGS(provider, name)
+#define DTRACE_CALL8ARGS(provider, name)
+#define DTRACE_CALL9ARGS(provider, name)
+#define DTRACE_CALL10ARGS(provider, name)
+
+
+#endif
 
 #endif /* __arm__ */
 

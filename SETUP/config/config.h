@@ -180,6 +180,7 @@ extern const char	*machinename;
 #define MACHINE_PPC	19
 #define MACHINE_ARM	20
 #define MACHINE_X86_64	21
+#define MACHINE_ARM64   22
 
 /*
  * For each machine, a set of CPU's may be specified as supported.

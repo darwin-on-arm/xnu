@@ -286,9 +286,13 @@ pad:
     
     vm_offset_t stackptr, stackptr_prev, raddr;
     unsigned int frame_index = 0;
-    
+
+#ifndef __LP64__    
     __asm__ __volatile("mov %0, r7" : "=r"(stackptr));
-    
+#else
+    __asm__ __volatile("mov %0, fp" : "=r"(stackptr));
+#endif
+
     raddr = *((vm_offset_t*) stackptr + 4); // First return address
     
     bt[frame_index++] = (void *) raddr;

@@ -19,8 +19,8 @@
 #
 ######################################################################
 #
-machine		"arm"						# <intel>
-cpu		"arm"						# <intel>
+machine		"arm64"						# <intel>
+cpu		"arm64"						# <intel>
 
 pseudo-device	com		2
 pseudo-device	vc		1

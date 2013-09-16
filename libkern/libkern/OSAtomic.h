@@ -642,9 +642,15 @@ static inline void OSMemoryBarrier(void) {
 #endif
 
 #if defined(__arm__)
+#ifndef __LP64__
 static inline void OSMemoryBarrier(void) {
 	__asm__ volatile("dsb" ::: "memory");
 }
+#else
+static inline void OSMemoryBarrier(void) {
+    __asm__ volatile("dsb ish" ::: "memory");
+}
+#endif
 #endif
 
 #endif /*XNU_KERNEL_PRIVATE */

@@ -199,6 +199,7 @@ main(int argc, char *argv[])
 		break;
 
 	case MACHINE_ARM:
+	case MACHINE_ARM64:
 		arm_ioconf();
 		break;
 

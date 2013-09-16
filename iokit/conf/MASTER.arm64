@@ -12,7 +12,7 @@
 #
 ######################################################################
 
-machine		"arm"					# <intel>
-cpu		"arm"					# <intel>
+machine		"arm64"					# <intel>
+cpu		"arm64"					# <intel>
 
 options		NO_KEXTD				# <no_kextd>

@@ -233,6 +233,9 @@ Config_spec:
 		} else if (!strcmp($2, "ppc")) {
 			machine = MACHINE_PPC;
 			machinename = "ppc";
+		} else if (!strcmp($2, "arm64")) {
+			machine = MACHINE_ARM64;
+			machinename = "arm64";
 		} else if (!strcmp($2, "arm")) {
 			machine = MACHINE_ARM;
 			machinename = "arm";
