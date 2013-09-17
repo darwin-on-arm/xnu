@@ -45,6 +45,7 @@
 #include <machine/commpage.h>
 #include <machine/machine_routines.h>
 
+#ifndef __LP64__
 /**
  * timer_grab
  *
@@ -53,6 +54,7 @@
 uint64_t timer_grab(timer_t timer) {
     return *(uint64_t*)timer;
 }
+#endif
 
 /**
  * timer_update
