@@ -128,7 +128,7 @@ EnterARM(hw_lock_to)
 hw_lock_to_enable_preempt:
     stmfd   sp!, {r0,r1,r7,lr}
     add     r7, sp, #8
-    ldr     pc, __enable_preemption
+    blx     __enable_preemption
     ldmfd   sp!, {r0,r1,r7,lr}
     bx      lr
 
