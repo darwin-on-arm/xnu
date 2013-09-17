@@ -18,3 +18,12 @@ osfmk/arm64/memset.s		standard
 osfmk/arm64/stubs.s		standard
 
 osfmk/arm/loose_ends.c		standard
+osfmk/arm/model_dep.c		standard
+osfmk/arm/locks_arm.c		standard
+osfmk/arm/machroutines.c	standard
+osfmk/arm/pmCPU.c		standard
+osfmk/arm/mp.c			standard
+osfmk/arm/pal.c			standard
+osfmk/arm/commpage/commpage.c	standard
+osfmk/kdp/ml/arm/kdp_machdep.c         optional        mach_kdp
+osfmk/kdp/ml/arm/kdp_vm.c              optional        mach_kdp

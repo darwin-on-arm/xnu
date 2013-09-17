@@ -134,6 +134,7 @@ void DebuggerWithContext(__unused unsigned int reason, void *ctx, const char *me
     
     hw_atomic_add(&debug_mode, 1);
     
+#ifndef __LP64__
     print_threads();
     
     /* Disable preemption, and dump information. */
@@ -145,6 +146,7 @@ void DebuggerWithContext(__unused unsigned int reason, void *ctx, const char *me
             panic_arm_backtrace(abort_context->gprs[7], 20, NULL, FALSE, NULL);
         }
     }
+#endif
 
     kprintf("Debugger: We are hanging here.\n");
     while(1) {};
@@ -179,11 +181,13 @@ void Debugger(const char *message)
 		disable_preemption();
     }
 
+#ifndef __LP64__
     print_threads();
     
     /* Just print a backtrace anyways, useful for bringup. */
     __asm__ __volatile("mov %0, r7" : "=r"(stackptr));
     panic_arm_backtrace(stackptr, 20, NULL, FALSE, NULL);
+#endif
 
     kprintf("Debugger: We are hanging here.\n\n");
     kprintf(ANSI_COLOR_YELLOW "for @b3ll: aelins!" ANSI_COLOR_RESET "\n");
@@ -284,6 +288,7 @@ static void panic_print_symbol_name(vm_address_t search)
     }
 }
 
+#ifndef __LP64__
 /**
  * print_threads
  *
@@ -359,6 +364,7 @@ void print_threads(void)
         }
     }
 }
+#endif
 
 /**
  * panic_arm_backtrace
