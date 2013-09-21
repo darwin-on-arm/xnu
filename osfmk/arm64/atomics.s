@@ -27,46 +27,70 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 /*
- * Other prototypes for the ARM platform.
+ * ARM atomic hardware functions.
  */
 
-#ifndef _ARM_MISC_PROTOS_H_
-#define _ARM_MISC_PROTOS_H_
+#include <arm/arch.h>
+#include <arm/asm_help.h>
 
-#include <mach/mach_types.h>
-#include <pexpert/pexpert.h>
-#include <machine/machine_routines.h>
-#include <mach/vm_param.h>
-#include <kern/processor.h>
+/**
+ * hw_compare_and_store
+ *
+ * Take the value in the destination, compare it to the old value, if equal
+ * atomically write the new value to the address. 
+ */
+.globl _hw_compare_and_store
+.globl _OSCompareAndSwap
+_hw_compare_and_store:
+_OSCompareAndSwap:
+    mov     x4, x0
+loop:
+    ldr     w3, [x2]
+    mov     x0, #0
+    cmp     w3, w4
+    b.ne    loop_exit
+    b.eq    loop_store
+    b       loop
+loop_exit:
+    ret     lr
+loop_store:
+    str     w1, [x2]
+    mov     x0, #1
+    ret     lr
 
-typedef struct _abort_information_context {
-    uint32_t    gprs[13];
-    uint32_t    sp;
-    uint32_t    lr;
-    uint32_t    pc;
-    uint32_t    cpsr;
-    uint32_t    fsr;
-    uint32_t    far;
-} abort_information_context_t;
+/* The others. */
+.align 6
+.globl _hw_atomic_sub
+.globl _hw_atomic_add
+.globl _hw_atomic_and_noret
+.globl _hw_atomic_or_noret
+_hw_atomic_sub:
+    mov     x2, x0
+try_sub:
+    ldr     x0, [x2]
+    sub     x0, x0, x1
+    str     x0, [x2]
+    ret     lr 
+_hw_atomic_add:
+    mov     x2, x0
+try_add:
+    ldr     x0, [x2]
+    add     x0, x0, x1
+    str     x0, [x2]
+    ret     lr 
+_hw_atomic_or_noret:
+    mov     x2, x0
+try_or:
+    ldr     x0, [x4]
+    orr     x0, x0, x1
+    str     x0, [x2]
+    ret     lr 
+_hw_atomic_and_noret:
+    mov     x2, x0
+try_and:
+    ldr     x0, [x2]
+    and     x0, x0, x1
+    str     x0, [x2]
+    ret     lr 
 
-extern processor_t	cpu_processor_alloc(boolean_t is_boot_cpu);
-extern void cpu_init(void);
-extern void cpu_bootstrap(void);
-
-#ifndef __LP64__
-extern void arm_set_threadpid_user_readonly(uint32_t* address);
-extern void arm_set_threadpid_priv_readwrite(uint32_t* address);
-#else
-extern void arm_set_threadpid_user_readonly(uint64_t* address);
-extern void arm_set_threadpid_priv_readwrite(uint64_t* address);
-#endif
-
-extern arm_usimple_lock(usimple_lock_t l);
-
-void panic_arm_backtrace(void *_frame, int nframes, const char *msg, boolean_t regdump, arm_saved_state_t *regs);
-
-void arm_vm_init(uint32_t mem_limit, boot_args *args);
-
-void sleh_abort(void* context, int reason);
-
-#endif
+    

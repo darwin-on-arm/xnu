@@ -122,3 +122,15 @@ ___enable_preemption:
 .globl _ml_cause_interrupt
 _ml_cause_interrupt:
     ret    lr
+
+
+/**
+ * current_thread
+ *
+ * Return the core thread structure of the currently executing thread.
+ */
+.align 6
+.globl _current_thread
+_current_thread:
+    mrs     x0, tpidr_el1
+    ret     lr

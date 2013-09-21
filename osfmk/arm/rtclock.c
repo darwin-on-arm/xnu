@@ -168,7 +168,7 @@ clock_get_system_nanotime(
 	_absolutetime_to_nanotime(now, secs, nanosecs);
 }
 
-void clock_get_system_microtime(uint32_t *secs, uint32_t *microsecs)
+void clock_get_system_microtime(clock_sec_t *secs, clock_usec_t *microsecs)
 {
 	uint64_t	now, t64;
 	uint32_t	divisor;

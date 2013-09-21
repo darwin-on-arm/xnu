@@ -26,9 +26,15 @@ osfmk/arm/mp.c			standard
 osfmk/arm/pal.c			standard
 osfmk/arm/commpage/commpage.c	standard
 osfmk/arm/etimer.c		standard
+osfmk/arm/rtclock.c 	standard
+osfmk/arm/cpu.c 		standard
+osfmk/arm/conf.c 		standard
 
+osfmk/arm64/cpu_number.s 	standard
+osfmk/arm64/atomics.s 		standard
 osfmk/arm64/locks_arm64.s	standard
 osfmk/arm64/machine_routines_asm.s	standard
+osfmk/arm64/thread_initialize.c 	standard
 
 osfmk/kdp/ml/arm/kdp_machdep.c         optional        mach_kdp
 osfmk/kdp/ml/arm/kdp_vm.c              optional        mach_kdp

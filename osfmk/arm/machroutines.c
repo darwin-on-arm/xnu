@@ -163,7 +163,11 @@ void ovbcopy(const char *from, char *to, vm_size_t bytes)
  */
 void bzero_phys(addr64_t src64, uint32_t bytes)
 {
+#ifndef __LP64__
     bzero(phys_to_virt((uint32_t)src64), bytes);
+#else
+    bzero(phys_to_virt((uint64_t)src64), bytes);
+#endif
 }
 
 /**
@@ -174,7 +178,11 @@ void bzero_phys(addr64_t src64, uint32_t bytes)
  */
 void bcopy_phys(addr64_t src64, addr64_t dst64, vm_size_t bytes)
 {
+#ifndef __LP64__
     bcopy(phys_to_virt((uint32_t)src64), phys_to_virt((uint32_t)dst64), bytes);
+#else
+    bcopy(phys_to_virt((uint64_t)src64), phys_to_virt((uint64_t)dst64), bytes);
+#endif
     return;
 }
 

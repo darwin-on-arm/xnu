@@ -26,47 +26,10 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-/*
- * Other prototypes for the ARM platform.
- */
 
-#ifndef _ARM_MISC_PROTOS_H_
-#define _ARM_MISC_PROTOS_H_
-
-#include <mach/mach_types.h>
-#include <pexpert/pexpert.h>
-#include <machine/machine_routines.h>
-#include <mach/vm_param.h>
-#include <kern/processor.h>
-
-typedef struct _abort_information_context {
-    uint32_t    gprs[13];
-    uint32_t    sp;
-    uint32_t    lr;
-    uint32_t    pc;
-    uint32_t    cpsr;
-    uint32_t    fsr;
-    uint32_t    far;
-} abort_information_context_t;
-
-extern processor_t	cpu_processor_alloc(boolean_t is_boot_cpu);
-extern void cpu_init(void);
-extern void cpu_bootstrap(void);
-
-#ifndef __LP64__
-extern void arm_set_threadpid_user_readonly(uint32_t* address);
-extern void arm_set_threadpid_priv_readwrite(uint32_t* address);
-#else
-extern void arm_set_threadpid_user_readonly(uint64_t* address);
-extern void arm_set_threadpid_priv_readwrite(uint64_t* address);
-#endif
-
-extern arm_usimple_lock(usimple_lock_t l);
-
-void panic_arm_backtrace(void *_frame, int nframes, const char *msg, boolean_t regdump, arm_saved_state_t *regs);
-
-void arm_vm_init(uint32_t mem_limit, boot_args *args);
-
-void sleh_abort(void* context, int reason);
-
-#endif
+.align 6
+.globl _cpu_number
+_cpu_number:
+	mrs 	x1, mpidr_el1
+	ands 	x0, x1, #0xFF
+	ret 	lr

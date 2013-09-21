@@ -268,3 +268,103 @@ rwld_jump_lock_done:
     b       _lock_done
 L_rwldpanicstring:
     .asciz "lck_rw_done(): lock (0x%016x: 0x%08x)"
+
+/**
+ * lock_read_to_write/lck_rw_lock_shared_to_exclusive
+ */
+.align 6
+.globl _lock_read_to_write
+.globl _lck_rw_lock_shared_to_exclusive
+_lock_read_to_write:
+_lck_rw_lock_shared_to_exclusive:
+    ldr     w1, [x0]
+    movz    w3, #0xFFFF
+    lsr     w3, w3, #16
+    ands    w2, w1, w3
+    b.ne    rwlsepanic
+    bic     w1, w1, w3
+    subs    w2, w2, #0x10000
+    b.ne    rwlsejump
+    movz    w3, #5
+    ands    w3, w1, w4
+    b.ne    rwlsejump
+    orr     w1, w1, #4
+    str     w1, [x0]
+    movz    x0, #1
+    ret     lr
+rwlsepanic:
+    mov     x2, x1
+    mov     x1, x0
+    adr     x0, L_rwlsepanicstring
+    bl      _panic
+rwlsejump:
+    stp     fp, lr, [sp, #-16]!
+    add     fp, sp, #0
+    bl      _lck_rw_lock_shared_gen
+    add     sp, fp, #0
+    ldp     fp, lr, [sp], #16
+    ret     lr
+L_rwlsepanicstring:
+    .asciz "lck_rw_lock_shared_to_exclusive(): LOCK 0x%016x = 0x%016x"
+
+/**
+ * lck_mtx_unlock
+ */
+.align 6
+.globl _lck_mtx_unlock 
+_lck_mtx_unlock:
+    mrs     x4, daif
+
+    /* Disable interrupts. */
+    movz    x2, #0xC0
+    bic     x3, x1, x2
+    msr     daif, x3
+
+    movz    w2, #0
+    mrs     x5, tpidr_el1
+mluloop:
+    ldxr    w1, [x0]
+    ands    w3, w1, #3
+    b.ne    lmuslow
+    movz    w6, #3
+    bic     w3, w1, w5
+    cmp     w3, w12
+    b.ne    lmupanic    // This is broken.
+    stxr    w1, w2, [x0]
+    cmp     w1, #0
+    b.eq    mluexit
+    b       mluloop 
+lmuslow:
+    stp     x0, x1, [sp, #-16]!
+    stp     fp, lr, [sp, #-16]!
+    add     fp, sp, #0
+    mrs     x5, tpidr_el1
+    ldr     w6, [x5, MACHINE_THREAD_PREEMPT_COUNT]
+    adds    w6, w6, #1 
+    str     w6, [x5, MACHINE_THREAD_PREEMPT_COUNT]
+    ldr     w1, [x0]
+    ands    w3, w1, #1
+    b.ne    lmupanic
+    orr     w3, w1, #1
+    str     w3, [x0]
+    movz    w2, #3
+    bic     w1, w1, w2
+    ands    w2, w3, #2
+    b.ne    lmupanic
+    bl      _lck_mtx_unlock_wakeup
+    add     sp, fp, #0
+    ldp     fp, lr, [sp], #16
+    ldp     x0, x1, [sp], #16
+    ldr     w1, [x0]
+    and     w3, w1, #2
+    str     w3, [x0]
+    b       __enable_preemption
+lmupanic:
+    mov     x1, x0
+    ldr     w2, [x1]
+    adr     x0, L_lmupanicstr
+    bl      _panic
+L_lmupanicstr:
+    .asciz "lck_mtx_unlock(): MUTEX 0x%08x 0x%08x"
+mluexit:
+    ret     lr
