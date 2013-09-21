@@ -85,17 +85,17 @@ void machine_set_current_thread(thread_t thread)
     /* Set the current thread. */
     CurrentThread = thread;
     
-    arm_set_threadpid_user_readonly((uint32_t*)CurrentThread->machine.cthread_self);
-    arm_set_threadpid_priv_readwrite((uint32_t*)CurrentThread);
+    arm_set_threadpid_user_readonly((uint64_t*)CurrentThread->machine.cthread_self);
+    arm_set_threadpid_priv_readwrite((uint64_t*)CurrentThread);
 }
 
 void
-thread_set_cthread_self(uint32_t cthr)
+thread_set_cthread_self(uint64_t cthr)
 {
     thread_t curthr = current_thread();
     assert(curthr);
     curthr->machine.cthread_self = cthr;
-    arm_set_threadpid_user_readonly((uint32_t*)curthr->machine.cthread_self);
+    arm_set_threadpid_user_readonly((uint64_t*)curthr->machine.cthread_self);
 }
 
 uint64_t
@@ -208,9 +208,9 @@ machine_stack_handoff(thread_t old,
 	stack = machine_stack_detach(old);
 	new->kernel_stack = stack;
     
-    uint32_t *kstack = (uint32_t*)STACK_IKS(stack);
+    uint64_t *kstack = (uint64_t*)STACK_IKS(stack);
     new->machine.iss = (arm_saved_state_t*)kstack;
-    new->machine.iss->sp = (uint32_t)kstack - sizeof(arm_saved_state_t);
+    new->machine.iss->sp = (uint64_t)kstack - sizeof(arm_saved_state_t);
     
     old->machine.iss = 0;
     
@@ -272,15 +272,15 @@ void machine_stack_attach(thread_t thread, vm_offset_t stack)
     kprintf("machine_stack_attach: setting stack %p for thread %p\n",
             stack, thread);
     
-    uint32_t *kstack = (uint32_t*)STACK_IKS(stack);
+    uint64_t *kstack = (uint64_t*)STACK_IKS(stack);
     
     thread->kernel_stack = stack;
     
     thread->machine.iss = (arm_saved_state_t*)kstack;
     
-    thread->machine.iss->r[0] = (uint32_t)thread;
-    thread->machine.iss->lr = (uint32_t)thread_continue;
-    thread->machine.iss->sp = (uint32_t)kstack - sizeof(arm_saved_state_t);
+    thread->machine.iss->r[0] = (uint64_t)thread;
+    thread->machine.iss->lr = (uint64_t)thread_continue;
+    thread->machine.iss->sp = (uint64_t)kstack - sizeof(arm_saved_state_t);
 
     thread->machine.uss = thread->machine.iss;
     
