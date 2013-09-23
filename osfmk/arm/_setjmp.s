@@ -46,22 +46,12 @@ EnterThumb(_setjmp)
     /* Store core registers */
     stmia  r0!, {r4-r8, r10-r11, sp, lr}
 
-#if 0
-    /* Store floating-point registers */
-    vstmia r0, {d8-d15}
-#endif
-
     mov    r0, #0
     bx     lr
 
 EnterThumb(_longjmp)
     /* Restore core registers */
     ldmia  r0!, {r4-r8, r10-r11, sp, lr}
-
-#if 0
-    /* Restore floating-point registers */
-    vldmia r0, {d8-d15}
-#endif
 
     /* Set return value */
     movs   r0, r1
