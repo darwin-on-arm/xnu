@@ -92,6 +92,8 @@ vm_offset_t	vm_kernel_stext;
 vm_offset_t	vm_kernel_etext;
 vm_offset_t	vm_kernel_slide;
 
+pmap_paddr_t avail_remaining;
+
 /*
  * These both are initialized to the same value.
  */

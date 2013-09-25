@@ -56,14 +56,15 @@
 #include <vm/vm_page.h>
 #include <arm/cpu_capabilities.h>
 
-#ifndef DEBUG_PMAP
+//#ifndef DEBUG_PMAP
 #define kprintf(args...)
-#endif
+//#endif
 
 /*
  * Kernel's physical memory map.
  */
 
+static pmap_paddr_t avail_remaining;
 vm_offset_t free_l1_tables;
 
 typedef enum {
@@ -206,7 +207,7 @@ void pmap_bootstrap(__unused uint64_t msize,
     assert(__first_avail != NULL);
     
     virt_begin = (*__first_avail);
-    virt_end = 0xFFFEFFFF;  // Don't go to ARM VT. :(
+    virt_end = 0xFFFE0000;  // Don't go to ARM VT. :(
 
     vm_last_addr = virt_end;
     
@@ -223,6 +224,8 @@ void pmap_bootstrap(__unused uint64_t msize,
     /*
      * More needs to be done.
      */
+    avail_remaining = (avail_end - first_avail) >> PAGE_SHIFT;
+    
     s = sizeof(struct pv_entry) * (mem_size / PAGE_SIZE);
     addr = phys_to_virt(first_avail);
     first_avail += s;
@@ -324,6 +327,7 @@ boolean_t pmap_next_page(ppnum_t *addrp)
     
     *addrp = first_avail;
     first_avail += PAGE_SIZE;
+    avail_remaining--;
     
     return TRUE;
 }
@@ -705,7 +709,7 @@ done:
  */
 unsigned int pmap_free_pages(void)
 {
-    return (avail_end - first_avail) >> PAGE_SHIFT;
+    return avail_remaining;
 }
 
 /**
@@ -844,7 +848,7 @@ void pmap_page_protect(ppnum_t pn, vm_prot_t prot) {
     pmap_t pmap;
     spl_t spl;
     int pai;
-    
+
     assert(pn != vm_page_fictitious_addr);
     
     if (!valid_page(pn)) {
