@@ -4,7 +4,7 @@
 #  PROFILE	= [ RELEASE profile ]
 #  DEBUG	= [ RELEASE debug ]
 #
-#  EMBEDDED	= [ intel mach libkerncpp networking crypto zlib ]
+#  EMBEDDED	= [ intel mach libkerncpp networking crypto zlib config_kxld ]
 #  DEVELOPMENT	= [ EMBEDDED config_dtrace ]
 #
 ######################################################################

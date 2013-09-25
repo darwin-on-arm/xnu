@@ -48,6 +48,8 @@ copypv(addr64_t src64, addr64_t snk64, unsigned int size, int which)
     
 	int bothphys = 0;
 
+    kprintf("copypv: 0x%016llx 0x%016llx %u %d\n", src64, snk64, size, which);
+
 	if ((which & (cppvPsrc | cppvPsnk)) == 0 )				/* Make sure that only one is virtual */
 		panic("copypv: no more than 1 parameter may be virtual\n");	/* Not allowed */
 

@@ -235,7 +235,7 @@ void pmap_bootstrap(__unused uint64_t msize,
     /*
      * now fill out the addresses
      */
-    vaddr = (vm_map_offset_t)VM_MIN_KERNEL_ADDRESS;
+    vaddr = (vm_map_offset_t)0;
     for(page_number = 0; page_number <= pa_index(ram_begin); page_number++) {
         pv_entry_t  entry;
         
@@ -414,7 +414,16 @@ vm_offset_t pmap_extract(pmap_t pmap, vm_offset_t virt) {
  */
 ppnum_t pmap_find_phys(pmap_t pmap, addr64_t virt)
 {
-    return 0;
+    ppnum_t ppn = 0;
+    spl_t x = splhigh();
+    
+    if (!pmap->ref_count)
+        goto pfp_exit;
+
+pfp_exit:
+    splx(x);
+
+    return ppn;
 }
 
 /**

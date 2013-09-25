@@ -13,9 +13,9 @@
 #  DEBUG= [ RELEASE osf_debug debug mach_assert task_zone_info ]
 #  PROFILE = [ RELEASE profile ]
 #
-#  EMBEDDED_BASE = [ bsmall intel pc iokit mach_pe mach mach_kdp config_serial_kdp event vol hd pst gdb fixpri simple_clock mkernserv uxpr kernstack ipc_compat ipc_debug fb mk30 mk30_arm hibernation config_sleep crypto ]
+#  EMBEDDED_BASE = [ bsmall intel pc iokit mach_pe mach mach_kdp config_serial_kdp event vol hd pst gdb fixpri simple_clock mkernserv uxpr kernstack ipc_compat ipc_debug fb mk30 mk30_arm hibernation config_sleep crypto config_sched_traditional ]
 #  EMBEDDED = [ EMBEDDED_BASE no_printf_str no_kprintf_str no_kdebug ]
-#  DEVELOPMENT = [ EMBEDDED_BASE mach_assert config_dtrace config_counters task_zone_info ]
+#  DEVELOPMENT = [ EMBEDDED_BASE mach_assert config_dtrace config_counters task_zone_info zleaks ]
 #
 ######################################################################
 #
