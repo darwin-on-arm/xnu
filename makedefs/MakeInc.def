@@ -342,8 +342,7 @@ export CFLAGS_X86_64	= -Dx86_64 -DX86_64 -D__X86_64__ -DLP64 \
 export CFLAGS_ARM 	= -Darm -DARM -D__ARM__ -DPAGE_SIZE_FIXED \
 				-fno-strict-aliasing -fno-keep-inline-functions
 export CFLAGS_ARM64	= -Darm -DARM64 -D__arm__ -DARM -D__ARM64__ -DPAGE_SIZE_FIXED \
-				-fno-strict-aliasing -fno-keep-inline-functions -DLP64 \
-				-msoft-float
+				-fno-strict-aliasing -fno-keep-inline-functions -DLP64 -integrated-as
 
 
 ifeq (-arch armv7,$(ARCH_FLAGS_ARM))

@@ -35,6 +35,7 @@ osfmk/arm64/atomics.s 		standard
 osfmk/arm64/locks_arm64.s	standard
 osfmk/arm64/machine_routines_asm.s	standard
 osfmk/arm64/thread_initialize.c 	standard
+osfmk/arm64/arm64_vm_init.c		standard
 
 osfmk/kdp/ml/arm/kdp_machdep.c         optional        mach_kdp
 osfmk/kdp/ml/arm/kdp_vm.c              optional        mach_kdp
