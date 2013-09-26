@@ -263,6 +263,7 @@ void machine_stack_attach(thread_t thread, vm_offset_t stack)
     uint32_t *kstack = (uint32_t*)STACK_IKS(stack);
     
     thread->kernel_stack = stack;
+    bzero((void*)stack, KERNEL_STACK_SIZE);
     
     thread->machine.iss = (arm_saved_state_t*)kstack;
     thread->machine.iss->r[0] = (uint32_t)thread;

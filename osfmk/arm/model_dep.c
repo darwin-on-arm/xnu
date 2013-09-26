@@ -331,9 +331,9 @@ void print_threads(void)
                 char crash_string[] = ANSI_COLOR_GREEN "Crashed ";
                 
                 if(!thread->continuation) {
-                    kprintf("    %sThread has ARM register state (kernel, savearea %p)%s:\n",
+                    kprintf("    %sThread has ARM register state (kernel, savearea %p, kstack 0x%08x)%s:\n",
                             (current_thread() == thread) ? crash_string : "",
-                            thread->machine.iss,
+                            thread->machine.iss, thread->kernel_stack,
                             ANSI_COLOR_RESET
                             );
                     kprintf("      r0:  0x%08x  r1: 0x%08x  r2: 0x%08x  r3: 0x%08x\n"

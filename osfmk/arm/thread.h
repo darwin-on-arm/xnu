@@ -50,7 +50,7 @@ __private_extern__ unsigned int _MachineStateCount[];
 /*
  * Kernel stack stuff.
  */
-#define FP_SIZE     16
+#define FP_SIZE     sizeof(arm_saved_state_t)
 
 #define STACK_IKS(stack)		\
     ((vm_offset_t)(((vm_offset_t)stack)+KERNEL_STACK_SIZE)-FP_SIZE)
