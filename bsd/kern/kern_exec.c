@@ -3463,7 +3463,7 @@ create_unix_stack(vm_map_t map, load_result_t* load_result,
 
 #include <sys/reboot.h>
 
-static char		init_program_name[128] = "/sbin/launchd";
+static char		init_program_name[128] = "";
 
 struct execve_args	init_exec_args;
 
@@ -3500,11 +3500,12 @@ load_init_program(proc_t p)
 				VM_FLAGS_ANYWHERE);
 	if (init_addr == 0)
 		init_addr++;
-    
-    uint32_t *paddr = (uint32_t*)init_addr;
-    *paddr = 0xdeadbeef;
 
-	kprintf("copyout to: 0x%08x -> 0x%08x (0x%08x)\n", argv, CAST_USER_ADDR_T(init_addr), init_addr);
+	/* Use the user specified program name. */
+    if(!PE_parse_boot_argn("init", init_program_name, 128))
+    	strncpy(init_program_name, "/sbin/launchd", sizeof("/sbin/launchd"));
+
+    kprintf("attempting to start init of %s\n", init_program_name);
 
 	(void) copyout((caddr_t) init_program_name, CAST_USER_ADDR_T(init_addr),
 			(unsigned) sizeof(init_program_name)+1);
