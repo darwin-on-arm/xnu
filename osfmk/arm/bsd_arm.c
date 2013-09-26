@@ -136,6 +136,16 @@ thread_entrypoint(
 }
 
 kern_return_t
+thread_userstackdefault(
+    thread_t thread,
+    mach_vm_offset_t *default_user_stack)
+{
+    *default_user_stack = USRSTACK;
+    return (KERN_SUCCESS);
+}
+
+
+kern_return_t
 machine_thread_set_state(
     thread_t                thread,
     thread_flavor_t         flavor,

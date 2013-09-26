@@ -85,8 +85,8 @@ void machine_set_current_thread(thread_t thread)
     /* Set the current thread. */
     CurrentThread = thread;
     
-    arm_set_threadpid_user_readonly((uint32_t*)CurrentThread->machine.cthread_self);
-    arm_set_threadpid_priv_readwrite((uint32_t*)CurrentThread);
+    arm_set_threadpid_user_readonly((uint32_t*)thread->machine.cthread_self);
+    arm_set_threadpid_priv_readwrite((uint32_t*)thread);
 }
 
 void
@@ -127,17 +127,7 @@ kern_return_t machine_thread_create(thread_t thread, task_t task)
     assert(thread != NULL);
     assert(thread->machine.iss == NULL);
     
-    if (thread->machine.iss == NULL) {
-        kmem_alloc_kobject(kernel_map, &sv, sizeof(arm_saved_state_t));
-        if(!sv)
-            panic("couldn't alloc savearea for thread\n");
-    }
-
-    /* Okay, got one. */
-    bzero(sv, sizeof(arm_saved_state_t));
-
     /* Set the members now. */
-    thread->machine.iss = sv;
     thread->machine.preempt_count = 0;
     thread->machine.cpu_data = cpu_datap(cpu_number());
     
@@ -160,10 +150,8 @@ thread_t machine_switch_context(thread_t old, thread_continue_t continuation, th
 
     kprintf("machine_switch_context: %p -> %p (cont: %p)\n", old, new, continuation);
 
-#if 0
 	if (old == new)
         panic("machine_switch_context: old = new thread (%p %p)", old, new);
-#endif
     
     datap = cpu_datap(cpu_number());
     assert(datap != NULL);
@@ -277,13 +265,10 @@ void machine_stack_attach(thread_t thread, vm_offset_t stack)
     thread->kernel_stack = stack;
     
     thread->machine.iss = (arm_saved_state_t*)kstack;
-    
     thread->machine.iss->r[0] = (uint32_t)thread;
     thread->machine.iss->lr = (uint32_t)thread_continue;
     thread->machine.iss->sp = (uint32_t)kstack - sizeof(arm_saved_state_t);
 
-    thread->machine.uss = thread->machine.iss;
-    
     return;
 }
 

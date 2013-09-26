@@ -1,1 +1,1 @@
-debug arm omap3530 debug arm armpba8 debug arm s5l8930x
+debug arm omap3530 debug arm armpba8 debug arm s5l8930x development arm omap3530 development arm armpba8 development arm s5l8930x release arm omap3530 release arm armpba8 release arm s5l8930x

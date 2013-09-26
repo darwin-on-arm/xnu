@@ -45,7 +45,7 @@ EnterARM(lck_mtx_ilk_unlock)
     ldr     r2, [r0]
     bic     r3, r2, #1
     str     r3, [r0]
-    LoadConstantToReg(__enable_preemption, pc)
+    b       __enable_preemption
 
 /**
  * ml_set_interrupts_enabled
@@ -137,8 +137,13 @@ EnterARM(__enable_preemption)
 EnterARM(_enable_preemption)
     /* Get thread ID */
     LoadThreadRegister(r12)
-    DecrementPreemptLevel(r12, r2)
+    ldr     r2, [r12, MACHINE_THREAD_PREEMPT_COUNT]
+    subs    r2, r2, #1
+    strne   r2, [r12, MACHINE_THREAD_PREEMPT_COUNT]
     bxne    lr
+
+    /* Preempt. */
+    cpsid   if
 
     /* Check for interrupts */
     mrs     r3, cpsr
@@ -148,7 +153,7 @@ EnterARM(_enable_preemption)
 
     /* Get CPU data and add an AST. */
     ldr     r1, [r12, MACHINE_THREAD_CPU_DATA]
-    add     r0, r1, CPU_PENDING_AST
+    ldr     r0, [r1, CPU_PENDING_AST]
     str     r2, [r12, MACHINE_THREAD_PREEMPT_COUNT]
 
     ands    r1, r0, #4
@@ -172,8 +177,7 @@ __preempt:
  * saved from machine_set_current_thread.
  */
 EnterARM(current_thread)
-    LoadConstantToReg(_CurrentThread, r0)
-    ldr     r0, [r0]
+    mrc     p15, 0, r0, c13, c0, 4
     bx      lr
 
 /**

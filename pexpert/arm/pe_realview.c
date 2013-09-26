@@ -207,7 +207,7 @@ void RealView_handle_interrupt(void* context)
 {
     arm_saved_state_t* regs = (arm_saved_state_t*)context;
     uint32_t ack;
-    
+
     /* Acknowledge interrupt */
     ack = HARDWARE_REGISTER(gRealviewPicBase + 0xC);
 

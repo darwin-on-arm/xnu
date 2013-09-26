@@ -143,7 +143,6 @@ UNIMPLEMENTED_STUB(_tempDTraceTrapHook)
 UNIMPLEMENTED_STUB(_thread_kdb_return)
 
 // SDKFASLDFLAKSDFLKASDf
-UNIMPLEMENTED_STUB(_PE_current_console)
 UNIMPLEMENTED_STUB(_PE_display_icon)
 UNIMPLEMENTED_STUB(_PE_initialize_console)
 UNIMPLEMENTED_STUB(__vm_commpage_init)
@@ -156,7 +155,6 @@ UNIMPLEMENTED_STUB(_bzero_phys_nc)
 UNIMPLEMENTED_STUB(_chudxnu_thread_ast)
 UNIMPLEMENTED_STUB(_clock_gettimeofday_set_commpage)
 UNIMPLEMENTED_STUB(_clock_timebase_info)
-UNIMPLEMENTED_STUB(_cnputcusr)
 UNIMPLEMENTED_STUB(_commpage_text_populate)
 UNIMPLEMENTED_STUB(_cons_ops_index)
 UNIMPLEMENTED_STUB(_consider_machine_collect)
@@ -253,7 +251,6 @@ UNIMPLEMENTED_STUB(_thread_set_parent)
 UNIMPLEMENTED_STUB(_thread_set_wq_state32)
 UNIMPLEMENTED_STUB(_thread_setsinglestep)
 UNIMPLEMENTED_STUB(_thread_syscall_return)
-UNIMPLEMENTED_STUB(_thread_userstackdefault)
 UNIMPLEMENTED_STUB(_unix_syscall_return)
 
 

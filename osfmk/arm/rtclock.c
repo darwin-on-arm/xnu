@@ -61,7 +61,7 @@ static uint32_t rtclock_sec_divisor;
 static uint64_t rtclock_min_decrementer = 1 * NSEC_PER_USEC;
 static uint64_t rtclock_max_decrementer = 100000000;
 
-static uint64_t rtclock_scaler;
+static uint64_t rtclock_scaler = 0;
 
 extern uint64_t clock_decrementer;
 
