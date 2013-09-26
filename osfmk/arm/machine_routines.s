@@ -60,8 +60,8 @@ EnterARM(ml_set_interrupts_enabled)
 
 astloop:
     mrc     p15, 0, r0, c13, c0, 4
-    add     r1, r0, MACHINE_THREAD_CPU_DATA
-    add     r0, r1, CPU_PENDING_AST
+    ldr     r1, [r0, MACHINE_THREAD_CPU_DATA]
+    ldr     r0, [r1, CPU_PENDING_AST]
     
     stmfd   sp!,{r0,r2,r7,lr}
     bl      _get_preemption_level
@@ -70,7 +70,6 @@ astloop:
 
     bne     enable_interrupts
 
-    ldr     r0, [r0]
     and     r0, r0, #4
     cmp     r0, #0
     beq     enable_interrupts
