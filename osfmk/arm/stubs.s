@@ -50,7 +50,7 @@
         nop                                 ;   \
         nop                                 ;   \
         ldr     r0, ps_ptr_ ##Function      ;   \
-        blx     _Debugger                   ;   \
+        blx     _panic                      ;   \
     ps_ptr_ ##Function:                     ;   \
         .long   panicString_ ##Function     ;   \
     panicString_ ##Function:                ;   \

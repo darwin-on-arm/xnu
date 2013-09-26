@@ -56,8 +56,9 @@ copypv(addr64_t src64, addr64_t snk64, unsigned int size, int which)
 	if ((which & (cppvPsrc | cppvPsnk)) == (cppvPsrc | cppvPsnk))
 	        bothphys = 1;							/* both are physical */
 
-    if(src64 > 0xFFFFFFFF)
+    if(src64 > 0xFFFFFFFF) {
         src64 >>= 12;
+    }
 
     if(bothphys) {
         panic("not done yet");

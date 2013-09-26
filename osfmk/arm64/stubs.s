@@ -50,6 +50,8 @@
 # 59 "osfmk/arm64/stubs.s"
 #endif
 
+#define _Debugger _panic
+
 .align 6
  .globl _LockTimeOut 
  _LockTimeOut: 
@@ -1437,30 +1439,6 @@
  panicString__thread_kdb_return: 
  .asciz "_thread_kdb_return is not implemented." 
 
-
-
-.align 6
- .globl _PE_current_console 
- _PE_current_console: 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- ldr x0, ps_ptr__PE_current_console 
- blx _Debugger 
- ps_ptr__PE_current_console: 
- .long panicString__PE_current_console 
- panicString__PE_current_console: 
- .asciz "_PE_current_console is not implemented." 
-
 .align 6
  .globl _PE_display_icon 
  _PE_display_icon: 
@@ -1723,29 +1701,7 @@
  ps_ptr__clock_timebase_info: 
  .long panicString__clock_timebase_info 
  panicString__clock_timebase_info: 
- .asciz "_clock_timebase_info is not implemented." 
-
-.align 6
- .globl _cnputcusr 
- _cnputcusr: 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- ldr x0, ps_ptr__cnputcusr 
- blx _Debugger 
- ps_ptr__cnputcusr: 
- .long panicString__cnputcusr 
- panicString__cnputcusr: 
- .asciz "_cnputcusr is not implemented." 
+ .asciz "_clock_timebase_info is not implemented."
 
 .align 6
  .globl _commpage_text_populate 
@@ -3903,3 +3859,1168 @@
  panicString__unix_syscall_return: 
  .asciz "_unix_syscall_return is not implemented." 
 
+.align 6
+ .globl _Call_continuation 
+ _Call_continuation: 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ ldr x0, ps_ptr__Call_continuation 
+ blx _panic 
+ ps_ptr__Call_continuation: 
+ .long panicString__Call_continuation 
+ panicString__Call_continuation: 
+ .asciz "_Call_continuation is not implemented." 
+
+.align 6
+ .globl _OSAddAtomic64 
+ _OSAddAtomic64: 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ ldr x0, ps_ptr__OSAddAtomic64 
+ blx _panic 
+ ps_ptr__OSAddAtomic64: 
+ .long panicString__OSAddAtomic64 
+ panicString__OSAddAtomic64: 
+ .asciz "_OSAddAtomic64 is not implemented." 
+
+.align 6
+ .globl _OSAddAtomicLong 
+ _OSAddAtomicLong: 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ ldr x0, ps_ptr__OSAddAtomicLong 
+ blx _panic 
+ ps_ptr__OSAddAtomicLong: 
+ .long panicString__OSAddAtomicLong 
+ panicString__OSAddAtomicLong: 
+ .asciz "_OSAddAtomicLong is not implemented." 
+
+.align 6
+ .globl _OSCompareAndSwap64 
+ _OSCompareAndSwap64: 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ ldr x0, ps_ptr__OSCompareAndSwap64 
+ blx _panic 
+ ps_ptr__OSCompareAndSwap64: 
+ .long panicString__OSCompareAndSwap64 
+ panicString__OSCompareAndSwap64: 
+ .asciz "_OSCompareAndSwap64 is not implemented." 
+
+.align 6
+ .globl _OSCompareAndSwapPtr 
+ _OSCompareAndSwapPtr: 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ ldr x0, ps_ptr__OSCompareAndSwapPtr 
+ blx _panic 
+ ps_ptr__OSCompareAndSwapPtr: 
+ .long panicString__OSCompareAndSwapPtr 
+ panicString__OSCompareAndSwapPtr: 
+ .asciz "_OSCompareAndSwapPtr is not implemented." 
+
+.align 6
+ .globl _PE_init_SocSupport_stub 
+ _PE_init_SocSupport_stub: 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ ldr x0, ps_ptr__PE_init_SocSupport_stub 
+ blx _panic 
+ ps_ptr__PE_init_SocSupport_stub: 
+ .long panicString__PE_init_SocSupport_stub 
+ panicString__PE_init_SocSupport_stub: 
+ .asciz "_PE_init_SocSupport_stub is not implemented." 
+
+.align 6
+ .globl _Switch_context 
+ _Switch_context: 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ ldr x0, ps_ptr__Switch_context 
+ blx _panic 
+ ps_ptr__Switch_context: 
+ .long panicString__Switch_context 
+ panicString__Switch_context: 
+ .asciz "_Switch_context is not implemented." 
+
+.align 6
+ .globl __start 
+ __start: 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ ldr x0, ps_ptr___start 
+ blx _panic 
+ ps_ptr___start: 
+ .long panicString___start 
+ panicString___start: 
+ .asciz "__start is not implemented." 
+
+.align 6
+ .globl _copyin 
+ _copyin: 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ ldr x0, ps_ptr__copyin 
+ blx _panic 
+ ps_ptr__copyin: 
+ .long panicString__copyin 
+ panicString__copyin: 
+ .asciz "_copyin is not implemented." 
+
+.align 6
+ .globl _copyinmsg 
+ _copyinmsg: 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ ldr x0, ps_ptr__copyinmsg 
+ blx _panic 
+ ps_ptr__copyinmsg: 
+ .long panicString__copyinmsg 
+ panicString__copyinmsg: 
+ .asciz "_copyinmsg is not implemented." 
+
+.align 6
+ .globl _copyinstr 
+ _copyinstr: 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ ldr x0, ps_ptr__copyinstr 
+ blx _panic 
+ ps_ptr__copyinstr: 
+ .long panicString__copyinstr 
+ panicString__copyinstr: 
+ .asciz "_copyinstr is not implemented." 
+
+.align 6
+ .globl _copyout 
+ _copyout: 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ ldr x0, ps_ptr__copyout 
+ blx _panic 
+ ps_ptr__copyout: 
+ .long panicString__copyout 
+ panicString__copyout: 
+ .asciz "_copyout is not implemented." 
+
+.align 6
+ .globl _copyoutmsg 
+ _copyoutmsg: 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ ldr x0, ps_ptr__copyoutmsg 
+ blx _panic 
+ ps_ptr__copyoutmsg: 
+ .long panicString__copyoutmsg 
+ panicString__copyoutmsg: 
+ .asciz "_copyoutmsg is not implemented." 
+
+.align 6
+ .globl _copyoutstr 
+ _copyoutstr: 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ ldr x0, ps_ptr__copyoutstr 
+ blx _panic 
+ ps_ptr__copyoutstr: 
+ .long panicString__copyoutstr 
+ panicString__copyoutstr: 
+ .asciz "_copyoutstr is not implemented." 
+
+.align 6
+ .globl _copypv 
+ _copypv: 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ ldr x0, ps_ptr__copypv 
+ blx _panic 
+ ps_ptr__copypv: 
+ .long panicString__copypv 
+ panicString__copypv: 
+ .asciz "_copypv is not implemented." 
+
+.align 6
+ .globl _copystr 
+ _copystr: 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ ldr x0, ps_ptr__copystr 
+ blx _panic 
+ ps_ptr__copystr: 
+ .long panicString__copystr 
+ panicString__copystr: 
+ .asciz "_copystr is not implemented." 
+
+.align 6
+ .globl _flush_dcache 
+ _flush_dcache: 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ ldr x0, ps_ptr__flush_dcache 
+ blx _panic 
+ ps_ptr__flush_dcache: 
+ .long panicString__flush_dcache 
+ panicString__flush_dcache: 
+ .asciz "_flush_dcache is not implemented." 
+
+.align 6
+ .globl _invalidate_icache 
+ _invalidate_icache: 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ ldr x0, ps_ptr__invalidate_icache 
+ blx _panic 
+ ps_ptr__invalidate_icache: 
+ .long panicString__invalidate_icache 
+ panicString__invalidate_icache: 
+ .asciz "_invalidate_icache is not implemented." 
+
+.align 6
+ .globl _lck_mtx_assert 
+ _lck_mtx_assert: 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ ldr x0, ps_ptr__lck_mtx_assert 
+ blx _panic 
+ ps_ptr__lck_mtx_assert: 
+ .long panicString__lck_mtx_assert 
+ panicString__lck_mtx_assert: 
+ .asciz "_lck_mtx_assert is not implemented." 
+
+.align 6
+ .globl _lck_mtx_lock 
+ _lck_mtx_lock: 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ ldr x0, ps_ptr__lck_mtx_lock 
+ blx _panic 
+ ps_ptr__lck_mtx_lock: 
+ .long panicString__lck_mtx_lock 
+ panicString__lck_mtx_lock: 
+ .asciz "_lck_mtx_lock is not implemented." 
+
+.align 6
+ .globl _lck_mtx_try_lock 
+ _lck_mtx_try_lock: 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ ldr x0, ps_ptr__lck_mtx_try_lock 
+ blx _panic 
+ ps_ptr__lck_mtx_try_lock: 
+ .long panicString__lck_mtx_try_lock 
+ panicString__lck_mtx_try_lock: 
+ .asciz "_lck_mtx_try_lock is not implemented." 
+
+.align 6
+ .globl _lck_rw_done 
+ _lck_rw_done: 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ ldr x0, ps_ptr__lck_rw_done 
+ blx _panic 
+ ps_ptr__lck_rw_done: 
+ .long panicString__lck_rw_done 
+ panicString__lck_rw_done: 
+ .asciz "_lck_rw_done is not implemented." 
+
+.align 6
+ .globl _lck_rw_lock_exclusive 
+ _lck_rw_lock_exclusive: 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ ldr x0, ps_ptr__lck_rw_lock_exclusive 
+ blx _panic 
+ ps_ptr__lck_rw_lock_exclusive: 
+ .long panicString__lck_rw_lock_exclusive 
+ panicString__lck_rw_lock_exclusive: 
+ .asciz "_lck_rw_lock_exclusive is not implemented." 
+
+.align 6
+ .globl _lck_rw_lock_exclusive_to_shared 
+ _lck_rw_lock_exclusive_to_shared: 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ ldr x0, ps_ptr__lck_rw_lock_exclusive_to_shared 
+ blx _panic 
+ ps_ptr__lck_rw_lock_exclusive_to_shared: 
+ .long panicString__lck_rw_lock_exclusive_to_shared 
+ panicString__lck_rw_lock_exclusive_to_shared: 
+ .asciz "_lck_rw_lock_exclusive_to_shared is not implemented." 
+
+.align 6
+ .globl _lck_rw_try_lock_exclusive 
+ _lck_rw_try_lock_exclusive: 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ ldr x0, ps_ptr__lck_rw_try_lock_exclusive 
+ blx _panic 
+ ps_ptr__lck_rw_try_lock_exclusive: 
+ .long panicString__lck_rw_try_lock_exclusive 
+ panicString__lck_rw_try_lock_exclusive: 
+ .asciz "_lck_rw_try_lock_exclusive is not implemented." 
+
+.align 6
+ .globl _lck_rw_try_lock_shared 
+ _lck_rw_try_lock_shared: 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ ldr x0, ps_ptr__lck_rw_try_lock_shared 
+ blx _panic 
+ ps_ptr__lck_rw_try_lock_shared: 
+ .long panicString__lck_rw_try_lock_shared 
+ panicString__lck_rw_try_lock_shared: 
+ .asciz "_lck_rw_try_lock_shared is not implemented." 
+
+.align 6
+ .globl _lock_done 
+ _lock_done: 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ ldr x0, ps_ptr__lock_done 
+ blx _panic 
+ ps_ptr__lock_done: 
+ .long panicString__lock_done 
+ panicString__lock_done: 
+ .asciz "_lock_done is not implemented." 
+
+.align 6
+ .globl _lock_write 
+ _lock_write: 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ ldr x0, ps_ptr__lock_write 
+ blx _panic 
+ ps_ptr__lock_write: 
+ .long panicString__lock_write 
+ panicString__lock_write: 
+ .asciz "_lock_write is not implemented." 
+
+.align 6
+ .globl _lock_write_to_read 
+ _lock_write_to_read: 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ ldr x0, ps_ptr__lock_write_to_read 
+ blx _panic 
+ ps_ptr__lock_write_to_read: 
+ .long panicString__lock_write_to_read 
+ panicString__lock_write_to_read: 
+ .asciz "_lock_write_to_read is not implemented." 
+
+.align 6
+ .globl _machine_load_context 
+ _machine_load_context: 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ ldr x0, ps_ptr__machine_load_context 
+ blx _panic 
+ ps_ptr__machine_load_context: 
+ .long panicString__machine_load_context 
+ panicString__machine_load_context: 
+ .asciz "_machine_load_context is not implemented." 
+
+.align 6
+ .globl _machine_thread_set_state 
+ _machine_thread_set_state: 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ ldr x0, ps_ptr__machine_thread_set_state 
+ blx _panic 
+ ps_ptr__machine_thread_set_state: 
+ .long panicString__machine_thread_set_state 
+ panicString__machine_thread_set_state: 
+ .asciz "_machine_thread_set_state is not implemented." 
+
+.align 6
+ .globl _ml_set_interrupts_enabled 
+ _ml_set_interrupts_enabled: 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ ldr x0, ps_ptr__ml_set_interrupts_enabled 
+ blx _panic 
+ ps_ptr__ml_set_interrupts_enabled: 
+ .long panicString__ml_set_interrupts_enabled 
+ panicString__ml_set_interrupts_enabled: 
+ .asciz "_ml_set_interrupts_enabled is not implemented." 
+
+.align 6
+ .globl _pmap_change_wiring 
+ _pmap_change_wiring: 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ ldr x0, ps_ptr__pmap_change_wiring 
+ blx _panic 
+ ps_ptr__pmap_change_wiring: 
+ .long panicString__pmap_change_wiring 
+ panicString__pmap_change_wiring: 
+ .asciz "_pmap_change_wiring is not implemented." 
+
+.align 6
+ .globl _pmap_create 
+ _pmap_create: 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ ldr x0, ps_ptr__pmap_create 
+ blx _panic 
+ ps_ptr__pmap_create: 
+ .long panicString__pmap_create 
+ panicString__pmap_create: 
+ .asciz "_pmap_create is not implemented." 
+
+.align 6
+ .globl _pmap_create_sharedpage 
+ _pmap_create_sharedpage: 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ ldr x0, ps_ptr__pmap_create_sharedpage 
+ blx _panic 
+ ps_ptr__pmap_create_sharedpage: 
+ .long panicString__pmap_create_sharedpage 
+ panicString__pmap_create_sharedpage: 
+ .asciz "_pmap_create_sharedpage is not implemented." 
+
+.align 6
+ .globl _pmap_enter 
+ _pmap_enter: 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ ldr x0, ps_ptr__pmap_enter 
+ blx _panic 
+ ps_ptr__pmap_enter: 
+ .long panicString__pmap_enter 
+ panicString__pmap_enter: 
+ .asciz "_pmap_enter is not implemented." 
+
+.align 6
+ .globl _pmap_enter_options 
+ _pmap_enter_options: 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ ldr x0, ps_ptr__pmap_enter_options 
+ blx _panic 
+ ps_ptr__pmap_enter_options: 
+ .long panicString__pmap_enter_options 
+ panicString__pmap_enter_options: 
+ .asciz "_pmap_enter_options is not implemented." 
+
+.align 6
+ .globl _pmap_extract 
+ _pmap_extract: 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ ldr x0, ps_ptr__pmap_extract 
+ blx _panic 
+ ps_ptr__pmap_extract: 
+ .long panicString__pmap_extract 
+ panicString__pmap_extract: 
+ .asciz "_pmap_extract is not implemented." 
+
+.align 6
+ .globl _pmap_find_phys 
+ _pmap_find_phys: 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ ldr x0, ps_ptr__pmap_find_phys 
+ blx _panic 
+ ps_ptr__pmap_find_phys: 
+ .long panicString__pmap_find_phys 
+ panicString__pmap_find_phys: 
+ .asciz "_pmap_find_phys is not implemented." 
+
+.align 6
+ .globl _pmap_map_bd 
+ _pmap_map_bd: 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ ldr x0, ps_ptr__pmap_map_bd 
+ blx _panic 
+ ps_ptr__pmap_map_bd: 
+ .long panicString__pmap_map_bd 
+ panicString__pmap_map_bd: 
+ .asciz "_pmap_map_bd is not implemented." 
+
+.align 6
+ .globl _pmap_page_protect 
+ _pmap_page_protect: 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ ldr x0, ps_ptr__pmap_page_protect 
+ blx _panic 
+ ps_ptr__pmap_page_protect: 
+ .long panicString__pmap_page_protect 
+ panicString__pmap_page_protect: 
+ .asciz "_pmap_page_protect is not implemented." 
+
+.align 6
+ .globl _pmap_pre_expand 
+ _pmap_pre_expand: 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ ldr x0, ps_ptr__pmap_pre_expand 
+ blx _panic 
+ ps_ptr__pmap_pre_expand: 
+ .long panicString__pmap_pre_expand 
+ panicString__pmap_pre_expand: 
+ .asciz "_pmap_pre_expand is not implemented." 
+
+.align 6
+ .globl _pmap_switch 
+ _pmap_switch: 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ ldr x0, ps_ptr__pmap_switch 
+ blx _panic 
+ ps_ptr__pmap_switch: 
+ .long panicString__pmap_switch 
+ panicString__pmap_switch: 
+ .asciz "_pmap_switch is not implemented." 
+
+.align 6
+ .globl _ram_begin 
+ _ram_begin: 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ ldr x0, ps_ptr__ram_begin 
+ blx _panic 
+ ps_ptr__ram_begin: 
+ .long panicString__ram_begin 
+ panicString__ram_begin: 
+ .asciz "_ram_begin is not implemented." 
+
+.align 6
+ .globl _thread_adjuserstack 
+ _thread_adjuserstack: 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ ldr x0, ps_ptr__thread_adjuserstack 
+ blx _panic 
+ ps_ptr__thread_adjuserstack: 
+ .long panicString__thread_adjuserstack 
+ panicString__thread_adjuserstack: 
+ .asciz "_thread_adjuserstack is not implemented." 
+
+.align 6
+ .globl _thread_bootstrap_return 
+ _thread_bootstrap_return: 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ ldr x0, ps_ptr__thread_bootstrap_return 
+ blx _panic 
+ ps_ptr__thread_bootstrap_return: 
+ .long panicString__thread_bootstrap_return 
+ panicString__thread_bootstrap_return: 
+ .asciz "_thread_bootstrap_return is not implemented." 
+
+.align 6
+ .globl _thread_entrypoint 
+ _thread_entrypoint: 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ ldr x0, ps_ptr__thread_entrypoint 
+ blx _panic 
+ ps_ptr__thread_entrypoint: 
+ .long panicString__thread_entrypoint 
+ panicString__thread_entrypoint: 
+ .asciz "_thread_entrypoint is not implemented." 
+
+.align 6
+ .globl _thread_exception_return 
+ _thread_exception_return: 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ ldr x0, ps_ptr__thread_exception_return 
+ blx _panic 
+ ps_ptr__thread_exception_return: 
+ .long panicString__thread_exception_return 
+ panicString__thread_exception_return: 
+ .asciz "_thread_exception_return is not implemented." 
+
+.align 6
+ .globl _thread_setentrypoint 
+ _thread_setentrypoint: 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ ldr x0, ps_ptr__thread_setentrypoint 
+ blx _panic 
+ ps_ptr__thread_setentrypoint: 
+ .long panicString__thread_setentrypoint 
+ panicString__thread_setentrypoint: 
+ .asciz "_thread_setentrypoint is not implemented." 
+
+.align 6
+ .globl _thread_setuserstack 
+ _thread_setuserstack: 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ ldr x0, ps_ptr__thread_setuserstack 
+ blx _panic 
+ ps_ptr__thread_setuserstack: 
+ .long panicString__thread_setuserstack 
+ panicString__thread_setuserstack: 
+ .asciz "_thread_setuserstack is not implemented." 
+
+.align 6
+ .globl _thread_userstack 
+ _thread_userstack: 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ ldr x0, ps_ptr__thread_userstack 
+ blx _panic 
+ ps_ptr__thread_userstack: 
+ .long panicString__thread_userstack 
+ panicString__thread_userstack: 
+ .asciz "_thread_userstack is not implemented." 
+
+.align 6
+ .globl _vfp_context_save 
+ _vfp_context_save: 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ ldr x0, ps_ptr__vfp_context_save 
+ blx _panic 
+ ps_ptr__vfp_context_save: 
+ .long panicString__vfp_context_save 
+ panicString__vfp_context_save: 
+ .asciz "_vfp_context_save is not implemented." 
+
+.align 6
+ .globl _vfp_enable_exception 
+ _vfp_enable_exception: 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ ldr x0, ps_ptr__vfp_enable_exception 
+ blx _panic 
+ ps_ptr__vfp_enable_exception: 
+ .long panicString__vfp_enable_exception 
+ panicString__vfp_enable_exception: 
+ .asciz "_vfp_enable_exception is not implemented."
