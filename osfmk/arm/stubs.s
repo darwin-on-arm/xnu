@@ -71,8 +71,6 @@ UNIMPLEMENTED_STUB(_aout_db_search_symbol)
 UNIMPLEMENTED_STUB(_aout_db_sym_init)
 UNIMPLEMENTED_STUB(_aout_db_symbol_values)
 
-UNIMPLEMENTED_STUB(_atomic_add_64)
-
 UNIMPLEMENTED_STUB(_cngetc)
 UNIMPLEMENTED_STUB(_cnmaygetc)
 UNIMPLEMENTED_STUB(_cnputc_unbuffered)
