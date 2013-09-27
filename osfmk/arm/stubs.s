@@ -59,9 +59,7 @@
 UNIMPLEMENTED_STUB(_LockTimeOut)
 
 UNIMPLEMENTED_STUB(__MachineStateCount)
-UNIMPLEMENTED_STUB(__longjmp)
 UNIMPLEMENTED_STUB(__serial_getc)
-UNIMPLEMENTED_STUB(__setjmp)
 
 UNIMPLEMENTED_STUB(_aout_db_init)
 UNIMPLEMENTED_STUB(_aout_db_line_at_pc)
@@ -72,8 +70,6 @@ UNIMPLEMENTED_STUB(_aout_db_search_by_addr)
 UNIMPLEMENTED_STUB(_aout_db_search_symbol)
 UNIMPLEMENTED_STUB(_aout_db_sym_init)
 UNIMPLEMENTED_STUB(_aout_db_symbol_values)
-
-UNIMPLEMENTED_STUB(_atomic_add_64)
 
 UNIMPLEMENTED_STUB(_cngetc)
 UNIMPLEMENTED_STUB(_cnmaygetc)
@@ -122,8 +118,6 @@ UNIMPLEMENTED_STUB(_kdb_on)
 
 UNIMPLEMENTED_STUB(_kern_dump)
 
-UNIMPLEMENTED_STUB(_machine_boot_info)
-UNIMPLEMENTED_STUB(_machine_delay_until)
 UNIMPLEMENTED_STUB(_machine_signal_idle)
 UNIMPLEMENTED_STUB(_mapping_set_mod)
 

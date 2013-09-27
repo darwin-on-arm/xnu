@@ -508,7 +508,7 @@ static inline void atomic_add_32( uint32_t *theValue, int32_t theAmount )
 	(void)OSAddAtomic( theAmount, theValue );
 }
 
-#if defined(__i386__) || defined(__x86_64__)
+#if defined(__i386__) || defined(__x86_64__) || defined(__arm__)
 static inline void atomic_add_64( uint64_t *theValue, int64_t theAmount )
 {
 	(void)OSAddAtomic64( theAmount, (SInt64 *)theValue );
