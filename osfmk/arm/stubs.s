@@ -120,8 +120,6 @@ UNIMPLEMENTED_STUB(_kdb_on)
 
 UNIMPLEMENTED_STUB(_kern_dump)
 
-UNIMPLEMENTED_STUB(_machine_boot_info)
-UNIMPLEMENTED_STUB(_machine_delay_until)
 UNIMPLEMENTED_STUB(_machine_signal_idle)
 UNIMPLEMENTED_STUB(_mapping_set_mod)
 
