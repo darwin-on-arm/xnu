@@ -51,6 +51,8 @@
 #include <machine/commpage.h>
 #include <sys/kdebug.h>
 
+#include <arm/machine_cpu.h>
+
 #include <pexpert/pexpert.h>
 #include <pexpert/arm/boot.h>
 #include <pexpert/arm/protos.h>
@@ -116,6 +118,16 @@ void rtclock_intr(arm_saved_state_t* regs) {
 uint64_t mach_absolute_time(void)
 {
     return pe_arm_get_timebase(NULL);
+}
+
+void machine_delay_until(uint64_t deadline)
+{
+	uint64_t now;
+
+	do {
+		cpu_pause();
+		now = mach_absolute_time();
+	} while (now < deadline);
 }
 
 static inline uint32_t _absolutetime_to_microtime(uint64_t abstime, clock_sec_t *secs, clock_usec_t *microsecs)

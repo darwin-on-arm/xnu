@@ -70,6 +70,7 @@
 
 #include <arm/misc_protos.h>
 
+#include <pexpert/pexpert.h>
 #include <pexpert/arm/boot.h>
 
 #include <vm/pmap.h>
@@ -535,6 +536,16 @@ void machine_startup(void)
     
     kernel_bootstrap();
     return;
+}
+
+/**
+ * machine_boot_info
+ *
+ * Return string of boot args passed to kernel.
+ */
+char *machine_boot_info(char *buf, vm_size_t size)
+{
+	return(PE_boot_args());
 }
 
 /**

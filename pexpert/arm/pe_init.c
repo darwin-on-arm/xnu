@@ -104,9 +104,15 @@ void PE_init_iokit(void)
 			(void *)0, (void *)0);
 }
 
-int PE_current_console(PE_Video * info)
-{
-    *info = PE_state.video;
-    return(0);
-}
+/**
+ * PE_current_console
+ *
+ * Get video console information
+ */
 
+int PE_current_console(PE_Video *info)
+{
+	*info = PE_state.video;
+
+	return 0;
+}
