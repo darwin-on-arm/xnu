@@ -103,3 +103,16 @@ void PE_init_iokit(void)
     StartIOKit( PE_state.deviceTreeHead, PE_state.bootArgs,
 			(void *)0, (void *)0);
 }
+
+/**
+ * PE_current_console
+ *
+ * Get video console information
+ */
+
+int PE_current_console(PE_Video *info)
+{
+	*info = PE_state.video;
+
+	return 0;
+}
