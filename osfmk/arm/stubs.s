@@ -61,6 +61,9 @@ UNIMPLEMENTED_STUB(_LockTimeOut)
 UNIMPLEMENTED_STUB(__MachineStateCount)
 UNIMPLEMENTED_STUB(__serial_getc)
 
+UNIMPLEMENTED_STUB(__longjmp)
+UNIMPLEMENTED_STUB(__setjmp)
+
 UNIMPLEMENTED_STUB(_aout_db_init)
 UNIMPLEMENTED_STUB(_aout_db_line_at_pc)
 UNIMPLEMENTED_STUB(_aout_db_lookup)
