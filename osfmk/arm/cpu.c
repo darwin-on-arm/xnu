@@ -173,6 +173,28 @@ cpu_type_t cpu_type(void)
 	return current_cpu_datap()->cpu_type;
 }
 
+
+cpu_type_t
+slot_type(
+	int		slot_num)
+{
+	return (cpu_datap(slot_num)->cpu_type);
+}
+
+cpu_subtype_t
+slot_subtype(
+	int		slot_num)
+{
+	return (cpu_datap(slot_num)->cpu_subtype);
+}
+
+cpu_threadtype_t
+slot_threadtype(
+	int		slot_num)
+{
+	return CPU_THREADTYPE_NONE;
+}
+
 cpu_subtype_t cpu_subtype(void)
 {
 	return current_cpu_datap()->cpu_subtype;

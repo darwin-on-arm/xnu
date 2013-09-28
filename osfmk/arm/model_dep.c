@@ -359,6 +359,34 @@ void print_threads(void)
                             thread->machine.iss->lr,
                             thread->machine.iss->pc, thread->machine.iss->cpsr
                             );
+
+                    if(thread->machine.uss && thread->machine.uss->pc && thread->machine.uss->lr && thread->machine.uss->sp) {
+                        kprintf("    %sThread has ARM register state (user, savearea %p)%s\n", 
+                                (current_thread() == thread) ? crash_string : "", thread->machine.uss, ANSI_COLOR_RESET);
+                        kprintf("      r0:  0x%08x  r1: 0x%08x  r2: 0x%08x  r3: 0x%08x\n"
+                                "      r4:  0x%08x  r5: 0x%08x  r6: 0x%08x  r7: 0x%08x\n"
+                                "      r8:  0x%08x  r9: 0x%08x  10: 0x%08x  11: 0x%08x\n"
+                                "      12:  0x%08x  sp: 0x%08x  lr: 0x%08x  pc: 0x%08x\n"
+                                "    cpsr:  0x%08x\n",
+                                thread->machine.uss->r[0],
+                                thread->machine.uss->r[1],
+                                thread->machine.uss->r[2],
+                                thread->machine.uss->r[3],
+                                thread->machine.uss->r[4],
+                                thread->machine.uss->r[5],
+                                thread->machine.uss->r[6],
+                                thread->machine.uss->r[7],
+                                thread->machine.uss->r[8],
+                                thread->machine.uss->r[9],
+                                thread->machine.uss->r[10],
+                                thread->machine.uss->r[11],
+                                thread->machine.uss->r[12],
+                                thread->machine.uss->sp,
+                                thread->machine.uss->lr,
+                                thread->machine.uss->pc, thread->machine.uss->cpsr
+                                );
+                    }
+
                     panic_arm_thread_backtrace(thread->machine.iss->r[7], 20, NULL, FALSE, NULL);
                 }
             }
@@ -554,6 +582,9 @@ char *machine_boot_info(char *buf, vm_size_t size)
 extern const char *mach_syscall_name_table[];
 void mach_syscall_trace(arm_saved_state_t* state)
 {
+    int num = -(state->r[12]);
+    kprintf("MACH Trap: (%d/%s)\n",  num, mach_syscall_name_table[num]);
+
 #if 0
     int num = -(state->r[12]);
     kprintf("MACH Trap: (%d/%s)\n"

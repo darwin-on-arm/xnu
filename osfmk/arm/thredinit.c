@@ -131,9 +131,10 @@ kern_return_t machine_thread_create(thread_t thread, task_t task)
     thread->machine.preempt_count = 0;
     thread->machine.cpu_data = cpu_datap(cpu_number());
     thread->machine.vfp_enable = 0;
+    thread->machine.vfp_dirty = 0;
 
     /* Also kernel threads */
-    thread->machine.uss = thread->machine.iss;
+    thread->machine.uss = &thread->machine.user_regs;
             
     return KERN_SUCCESS;
 }
@@ -151,14 +152,14 @@ thread_t machine_switch_context(thread_t old, thread_continue_t continuation, th
 
     kprintf("machine_switch_context: %p -> %p (cont: %p)\n", old, new, continuation);
 
-//	if (old == new)
-//        panic("machine_switch_context: old = new thread (%p %p)", old, new);
+    if (old == new)
+        panic("machine_switch_context: old = new thread (%p %p)", old, new);
     
     datap = cpu_datap(cpu_number());
     assert(datap != NULL);
     
     datap->old_thread = old;
-    
+
     save_vfp_context(old);
     
     new_pmap = new->map->pmap;
@@ -241,10 +242,8 @@ void machine_thread_init(void)
  */
 static void save_vfp_context(thread_t thread)
 {
-    return;
-
     if(thread->machine.vfp_enable && !thread->machine.vfp_dirty) {
-        vfp_context_save(thread->machine.vfp_regs);
+        vfp_context_save(&thread->machine.vfp_regs);
         vfp_enable_exception(FALSE);
     }
 }
@@ -353,5 +352,30 @@ machine_thread_state_initialize(thread_t thread)
 void
 machine_task_terminate(task_t task)
 {
+	return;
+}
+
+void*
+find_user_regs(thread_t thread)
+{
+	return (void*)thread->machine.uss;
+}
+
+kern_return_t
+machine_thread_dup(
+	thread_t		self,
+	thread_t		target)
+{
+	save_vfp_context(self);
+	ovbcopy((void*)&self->machine.user_regs, (void*)&target->machine.user_regs, sizeof(arm_saved_state_t));
+}	
+
+void
+thread_set_child(
+	thread_t	child,
+	int			pid)
+{
+	child->machine.uss->r[0] = pid;
+	child->machine.uss->r[1] = 1;
 	return;
 }

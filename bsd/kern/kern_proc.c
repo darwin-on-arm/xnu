@@ -2703,7 +2703,7 @@ unsigned long cs_procs_killed = 0;
 unsigned long cs_procs_invalidated = 0;
 int cs_force_kill = 0;
 int cs_force_hard = 0;
-int cs_debug = 1;
+int cs_debug = 0;
 SYSCTL_INT(_vm, OID_AUTO, cs_force_kill, CTLFLAG_RW | CTLFLAG_LOCKED, &cs_force_kill, 0, "");
 SYSCTL_INT(_vm, OID_AUTO, cs_force_hard, CTLFLAG_RW | CTLFLAG_LOCKED, &cs_force_hard, 0, "");
 SYSCTL_INT(_vm, OID_AUTO, cs_debug, CTLFLAG_RW | CTLFLAG_LOCKED, &cs_debug, 0, "");

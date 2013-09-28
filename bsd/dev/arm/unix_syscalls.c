@@ -77,7 +77,7 @@
 #include <sys/ucontext.h>
 #include <sys/wait.h>
 #include <mach/thread_act.h>	/* for thread_abort_safely */
-#include <mach/thread_status.h>	
+#include <mach/thread_status.h>
 
 #include <arm/machine_routines.h>
 
@@ -91,7 +91,7 @@
 /* dynamically generated at build time based on syscalls.master */
 extern const char *syscallnames[];
 
-#define kprintf(fmt, ...)
+//#define kprintf(fmt, ...)
 
 /*
  * Function:	unix_syscall
@@ -193,6 +193,7 @@ unix_syscall(arm_saved_state_t *state)
 
 	AUDIT_SYSCALL_ENTER(code, p, uthread);
 	error = (*(callp->sy_call))(p, (void *)uthread->uu_arg, &(uthread->uu_rval[0]));
+
     AUDIT_SYSCALL_EXIT(code, p, uthread, error);
     kprintf("SYSCALL: %s (%d, routine %p), args %p, return %d (%x, %x)\n",
             syscallnames[code >= NUM_SYSENT ? 63 : code], code, callp->sy_call,
@@ -225,3 +226,56 @@ unix_syscall(arm_saved_state_t *state)
     
 	thread_exception_return();
 }
+
+
+void
+unix_syscall_return(int error)
+{
+	thread_t					thread_act;
+	struct uthread				*uthread;
+	struct proc					*proc;
+	arm_saved_state_t *regs;
+	unsigned int				code;
+	struct sysent				*callp;
+
+	thread_act = current_thread();
+	proc = current_proc();
+	uthread = get_bsdthread_info(thread_act);
+
+	regs = find_user_regs(thread_act);
+
+	if (regs->r[0] != 0)
+		code = regs->r[0];
+
+	callp = (code >= NUM_SYSENT) ? &sysent[63] : &sysent[code];
+
+	kprintf("unix_syscall_return error: %d\n", code);
+
+	uthread->uu_flag &= ~UT_NOTCANCELPT;
+
+	/* panic if funnel is held */
+	syscall_exit_funnelcheck();
+
+	if (uthread->uu_lowpri_window) {
+	        /*
+		 * task is marked as a low priority I/O type
+		 * and the I/O we issued while in this system call
+		 * collided with normal I/O operations... we'll
+		 * delay in order to mitigate the impact of this
+		 * task on the normal operation of the system
+		 */
+		throttle_lowpri_io(TRUE);
+	}
+	if (kdebug_enable && (code != 180)) {
+	        if (callp->sy_return_type == _SYSCALL_RET_SSIZE_T)
+		        KERNEL_DEBUG_CONSTANT(BSDDBG_CODE(DBG_BSD_EXCP_SC, code) | DBG_FUNC_END,
+					      error, uthread->uu_rval[1], 0, 0, 0);
+		else
+		        KERNEL_DEBUG_CONSTANT(BSDDBG_CODE(DBG_BSD_EXCP_SC, code) | DBG_FUNC_END,
+					      error, uthread->uu_rval[0], uthread->uu_rval[1], 0, 0);
+	}
+
+	thread_exception_return();
+	/* NOTREACHED */
+}
+

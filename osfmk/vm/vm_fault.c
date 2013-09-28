@@ -197,9 +197,8 @@ vm_fault_init(void)
 #endif
 	PE_parse_boot_argn("cs_debug", &cs_debug, sizeof (cs_debug));
 #endif
+	cs_debug = 0xff;
     
-    cs_debug = 0xff;
-
 	/*
 	 * Choose a value for the hard throttle threshold based on the amount of ram.  The threshold is
 	 * computed as a percentage of available memory, and the percentage used is scaled inversely with

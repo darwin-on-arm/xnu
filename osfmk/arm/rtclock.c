@@ -235,3 +235,21 @@ int rtclock_init(void)
 
     return 1;
 }
+
+void
+clock_gettimeofday_set_commpage(
+	uint64_t				abstime,
+	uint64_t				epoch,
+	uint64_t				offset,
+	uint32_t				*secs,
+	uint32_t				*microsecs)
+{
+
+}
+
+void
+clock_timebase_info(
+	mach_timebase_info_t	info)
+{
+	info->numer = info->denom =  1;
+}	
