@@ -40,9 +40,8 @@
  * Switch the current context to the thread continuation and terminate on return.
  */
 EnterARM(Call_continuation)
-    /* Get the current thread */
-    mrc     p15, 0, r9, c13, c0, 4
-    ldr     sp, [r9, TH_PCB_ISS]
+    /* Set the new stack pointer. */
+    mov     sp, r3
 
     /* Zero out frame pointer */
     mov     r7, #0
@@ -51,14 +50,15 @@ EnterARM(Call_continuation)
     mov     r6, r0
     mov     r0, r1
     mov     r1, r2
-    mov     lr, pc
 
     /* Branch to continuation. */
-    bx      r6
+    blx      r6
 
     /* Terminate thread. */
     mrc     p15, 0, r0, c13, c0, 4
-    b       _thread_terminate
+    blx     _thread_terminate
+
+    b       .
 
 /**
  * Switch_context
@@ -108,16 +108,11 @@ EnterARM(machine_load_context)
     /* Set cthread value */
     ldr     r1, [r0, MACHINE_THREAD_CTHREAD_SELF]
     mrc     p15, 0, r2, c13, c0, 3
-    and     r2, r2, #3
-    orr     r1, r1, r2
-    mcr     p15, 0, r1, c13, c0, 3
-
-    /* 64-bits */
-    ldr     r1, [r0, MACHINE_THREAD_CTHREAD_SELF + 4]
-    mcr     p15, 0, r1, c13, c0, 2
 
     /* Load registers and go. */
     ldr     r3, [r0, TH_PCB_ISS]
+    mov     r0, #0
+
     add     r3, r3, #16
     ldmia   r3!, {r4-lr}
     bx      lr

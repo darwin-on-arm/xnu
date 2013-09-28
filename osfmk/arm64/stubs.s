@@ -1169,50 +1169,6 @@
 
 
 .align 6
- .globl _machine_boot_info 
- _machine_boot_info: 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- ldr x0, ps_ptr__machine_boot_info 
- blx _Debugger 
- ps_ptr__machine_boot_info: 
- .long panicString__machine_boot_info 
- panicString__machine_boot_info: 
- .asciz "_machine_boot_info is not implemented." 
-
-.align 6
- .globl _machine_delay_until 
- _machine_delay_until: 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- ldr x0, ps_ptr__machine_delay_until 
- blx _Debugger 
- ps_ptr__machine_delay_until: 
- .long panicString__machine_delay_until 
- panicString__machine_delay_until: 
- .asciz "_machine_delay_until is not implemented." 
-
-.align 6
  .globl _machine_signal_idle 
  _machine_signal_idle: 
  nop 

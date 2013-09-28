@@ -23,6 +23,7 @@ public:
     bool getMachineName(char *name, int maxLength);
     const char * deleteList(void);
     const char * excludeList(void);
+    void registerNVRAMController(IONVRAMController * caller);
 
 };
 

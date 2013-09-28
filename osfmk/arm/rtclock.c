@@ -94,7 +94,7 @@ int setPop(uint64_t time)
 		now = 0;
 		pop = deadline_to_decrementer(0, 0);
 	} else {
-		now = pe_arm_get_timebase(NULL);	/* The time in nanoseconds */
+		now = pe_arm_get_timebase(NULL) * rtclock_scaler;	/* The time in nanoseconds */
 		pop = deadline_to_decrementer(time, now);
 	}
 

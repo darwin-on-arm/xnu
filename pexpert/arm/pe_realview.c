@@ -217,7 +217,7 @@ void RealView_handle_interrupt(void* context)
     /* Kill the timer */
     HARDWARE_REGISTER(gRealviewTimerBase + TIMER_INTCLR) = 1;
 
-    //rtclock_intr((arm_saved_state_t*) context);
+    rtclock_intr((arm_saved_state_t*) context);
     
     /* Restart timer. */
     HARDWARE_REGISTER(gRealviewTimerBase) = clock_decrementer;

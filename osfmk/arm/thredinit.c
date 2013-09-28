@@ -47,13 +47,13 @@
 thread_t CurrentThread;
 
 /* etimer is *still* broken and so are threads. :| */
-
 #define kprintf(args...)
+
 /*
  * These are defined in ctxswitch.s.
  */
 thread_t Switch_context(thread_t old_thread, thread_continue_t continuation, thread_t new_thread);
-void Call_continuation(thread_continue_t continuation, void *parameter, wait_result_t wresult);
+void Call_continuation(thread_continue_t continuation, void *parameter, wait_result_t wresult, vm_offset_t stack);
 
 static void save_vfp_context(thread_t thread);
 
@@ -130,7 +130,8 @@ kern_return_t machine_thread_create(thread_t thread, task_t task)
     /* Set the members now. */
     thread->machine.preempt_count = 0;
     thread->machine.cpu_data = cpu_datap(cpu_number());
-    
+    thread->machine.vfp_enable = 0;
+
     /* Also kernel threads */
     thread->machine.uss = thread->machine.iss;
             
@@ -150,8 +151,8 @@ thread_t machine_switch_context(thread_t old, thread_continue_t continuation, th
 
     kprintf("machine_switch_context: %p -> %p (cont: %p)\n", old, new, continuation);
 
-	if (old == new)
-        panic("machine_switch_context: old = new thread (%p %p)", old, new);
+//	if (old == new)
+//        panic("machine_switch_context: old = new thread (%p %p)", old, new);
     
     datap = cpu_datap(cpu_number());
     assert(datap != NULL);
@@ -240,7 +241,8 @@ void machine_thread_init(void)
  */
 static void save_vfp_context(thread_t thread)
 {
-    assert(thread);
+    return;
+
     if(thread->machine.vfp_enable && !thread->machine.vfp_dirty) {
         vfp_context_save(thread->machine.vfp_regs);
         vfp_enable_exception(FALSE);
@@ -263,8 +265,6 @@ void machine_stack_attach(thread_t thread, vm_offset_t stack)
     uint32_t *kstack = (uint32_t*)STACK_IKS(stack);
     
     thread->kernel_stack = stack;
-    bzero((void*)stack, KERNEL_STACK_SIZE);
-    
     thread->machine.iss = (arm_saved_state_t*)kstack;
     thread->machine.iss->r[0] = (uint32_t)thread;
     thread->machine.iss->lr = (uint32_t)thread_continue;
@@ -288,6 +288,7 @@ vm_offset_t machine_stack_detach(thread_t thread)
             thread);
     
     stack = thread->kernel_stack;
+    thread->kernel_stack = 0;
 
     return stack;
 }
@@ -312,10 +313,14 @@ void call_continuation(thread_continue_t continuation, void *parameter, wait_res
     
     assert(self->machine.iss != NULL);
     assert(self->kernel_stack);
+    assert(continuation);
     
     kprintf("call_continuation: calling continuation on thread %p\n", self);
     
-    Call_continuation(continuation, parameter, wresult);
+    uint32_t kss;
+    kss = (uint32_t)STACK_IKS(self->kernel_stack);
+
+    Call_continuation(continuation, parameter, wresult, kss);
     
     return;
 }

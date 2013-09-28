@@ -29,11 +29,13 @@
 #include <libkern/stack_protector.h>
 #include <kern/debug.h>
 
-unsigned long __stack_chk_guard = 0UL;
+unsigned long __stack_chk_guard = 0x47415244UL;
 
 void
 __stack_chk_fail(void)
 {
-    panic("Kernel stack memory corruption detected");
+    uint32_t sp;
+    __asm__ __volatile__ ("mov %0, sp\n" : "=r"(sp));
+    panic("Kernel stack memory corruption detected, sp = 0x%08x\n", sp);
 }
 

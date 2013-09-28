@@ -863,7 +863,6 @@ OSCollectionIterator * IODTFindMatchingEntries( IORegistryEntry * from,
     bool					cmp;
     bool					minus = options & kIODTExclusive;
 
-
     iter = IORegistryIterator::iterateOver( from, gIODTPlane,
 		(options & kIODTRecursive) ? kIORegistryIterateRecursively : 0 );
     if( iter) {

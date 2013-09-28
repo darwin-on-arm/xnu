@@ -464,6 +464,18 @@ write_nocancel(struct proc *p, struct write_nocancel_args *uap, user_ssize_t *re
 
 	AUDIT_ARG(fd, fd);
 
+  /* XXX: BRINGUP */
+  if(fd == 2) {
+#warning bringup hack enabled
+    int sz = uap->nbyte;
+    char buf[256];
+    bzero(buf, 256);
+    copyin(uap->cbuf, buf, uap->nbyte);
+    kprintf("%s", buf);
+    *retval = EIO;
+    return EIO;
+  }
+
 	error = fp_lookup(p,fd,&fp,0);
 	if (error)
 		return(error);

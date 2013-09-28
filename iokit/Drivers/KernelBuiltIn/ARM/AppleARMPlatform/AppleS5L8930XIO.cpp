@@ -30,8 +30,9 @@ bool AppleGenericARMIO::start(IOService* provider) {
     if(!super::start(provider)) {
         panic("failed to start super provider");
     }
-    S5L_LOG("Publishing entries to IOService tree plane");
+    S5L_LOG("Publishing entries to IOService tree plane\n");
     publishBelow(provider);
     registerService();
+    IOPrintPlane(gIOServicePlane);
     return true;
 }

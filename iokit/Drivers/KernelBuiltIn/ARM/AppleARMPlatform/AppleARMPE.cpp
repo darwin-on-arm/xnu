@@ -24,23 +24,25 @@ bool ARMPlatformExpert::init(OSDictionary *propTable) {
 
 extern const IORegistryPlane* gIODTPlane;
 
+void ARMPlatformExpert::registerNVRAMController(IONVRAMController * caller)
+{
+    publishResource("IONVRAM");
+}
+
 bool ARMPlatformExpert::start(IOService *provider) {
     PE_LOG("Starting ARM platform expert, IOService at %p\n", provider);
 
     if(!super::start(provider)) {
         panic("IOPlatformExpert failed to start");
     }
-    
+
+    removeProperty(kIOPlatformMapperPresentKey);
+    assert(IOService::getPlatform() == this);
+
     registerService();
     
-    getProvider()->publishResource("IORTC");
-    getProvider()->publishResource("IONVRAM");
-    
-    populate_model_name("CoolDevice1,1");
+    populate_model_name("Felix");
 
-    PE_LOG("Dumping current service tree\n");
-    IOPrintPlane(gIOServicePlane);
-    
     PE_LOG("Registered device with IOKit\n");
 
     return true;
@@ -61,5 +63,6 @@ IOService* ARMPlatformExpert::probe(IOService *provider, SInt32* score) {
 }
 
 bool ARMPlatformExpert::getMachineName(char *name, int maxLength) {
-    return false;
+    strncpy(name, "generic-arm", maxLength);
+    return true;
 }

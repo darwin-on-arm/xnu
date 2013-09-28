@@ -63,9 +63,7 @@ void IOKitInitializeTime( void )
 	t.tv_sec = 30;
 	t.tv_nsec = 0;
     
-#if !defined(__arm__)
 	IOService::waitForService(IOService::resourceMatching("IORTC"), &t );
-#endif
 #if defined(__i386__) || defined(__x86_64__)
 	IOService::waitForService(IOService::resourceMatching("IONVRAM"), &t );
 #endif
@@ -137,6 +135,7 @@ void StartIOKit( void * p1, void * p2, void * p3, void * p4 )
     if( PE_parse_boot_argn( "iotrace", &debugFlags, sizeof (debugFlags) ))
 		gIOKitTrace = debugFlags;
 	
+
 	// Compat for boot-args
 	gIOKitTrace |= (gIOKitDebug & kIOTraceCompatBootArgs);
 	
