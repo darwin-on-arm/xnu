@@ -29,7 +29,7 @@
 /*
  * Platform Expert for Samsung S5L8930X devices.
  *
- * Now includes S5L8920X!
+ * Now includes S5L8920X and S5L8922X!
  */
 
 #include <mach/mach_types.h>
@@ -68,7 +68,13 @@ vm_offset_t     gS5L8930XVic3Base;
 
 vm_offset_t     gS5L8930XTimerBase;
 
+#ifdef BOARD_CONFIG_S5L8930X
 static boolean_t    avoid_uarts = FALSE;
+#else
+/* Busted... */
+static boolean_t    avoid_uarts = TRUE;
+#endif
+
 static uint64_t     clock_decrementer = 0;
 static boolean_t    clock_initialized = FALSE;
 static boolean_t    clock_had_irq = FALSE;
