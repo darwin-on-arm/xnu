@@ -5,21 +5,36 @@
 #ifndef _S5L8930X_H_
 #define _S5L8930X_H_
 
+#if defined(BOARD_CONFIG_S5L8930X)
 #define UART0_BASE          0x82500000
 #define GPIO_BASE           0xBFA00000
 #define FRAMEBUFFER_BASE    0x5F700000
 #define CLOCK_GATE_BASE     0xBF101000
+#define TIMER_BASE          0xBF102000
+#elif defined(BOARD_CONFIG_S5L8920X) || defined(BOARD_CONFIG_S5L8922X)
+#define UART0_BASE          0x82500000
+#define GPIO_BASE           0x83000000
+#define FRAMEBUFFER_BASE    0x4FD00000
+#define CLOCK_GATE_BASE     0xBF100000
+#define TIMER_BASE	    0xBF100000
+#endif
 
-#define TIMER_BASE			0xBF102000
 #define TIMER0_BASE			TIMER_BASE + 0x0
 
 #define TIMER_IRQ_ENABLE	(1 << 0)
 #define TIMER_EXPIRED		(1 << 1)
 
+#ifdef BOARD_CONFIG_S5L8930X
 #define TIMER0_CLOCK_LOW	0x00
 #define TIMER0_CLOCK_HIGH	0x04
 #define TIMER0_VAL			0x08
 #define TIMER0_CTRL			0x10
+#else
+#define TIMER0_CLOCK_LOW	0x200
+#define TIMER0_CLOCK_HIGH	0x204
+#define TIMER0_VAL			0x208
+#define TIMER0_CTRL			0x220
+#endif
 
 #define CLK_REG_OFF         0x10
 

@@ -28,6 +28,8 @@
  */
 /*
  * Platform Expert for Samsung S5L8930X devices.
+ *
+ * Now includes S5L8920X!
  */
 
 #include <mach/mach_types.h>
@@ -44,8 +46,8 @@
 /*
  * This is board specific stuff.
  */
-#ifdef BOARD_CONFIG_S5L8930X
-#define KPRINTF_PREFIX  "PE_S5L8930X: "
+#if defined(BOARD_CONFIG_S5L8930X) || defined(BOARD_CONFIG_S5L8920X) || defined(BOARD_CONFIG_S5L8922X)
+#define KPRINTF_PREFIX  "PE_SamsungS5L: "
 
 #include "s5l8930x.h"
 
@@ -66,6 +68,7 @@ vm_offset_t     gS5L8930XVic3Base;
 
 vm_offset_t     gS5L8930XTimerBase;
 
+static boolean_t    avoid_uarts = FALSE;
 static uint64_t     clock_decrementer = 0;
 static boolean_t    clock_initialized = FALSE;
 static boolean_t    clock_had_irq = FALSE;
@@ -81,6 +84,12 @@ static void s5l8930x_clock_gate_switch(int gate, int state)
         return;
 
     __register = CLK_REG_OFF + (gate << 2);
+
+#if defined(BOARD_CONFIG_S5L8920X) || defined(BOARD_CONFIG_S5L8922X)
+    __register -= CLK_REG_OFF;
+    __register += 0x78;
+#endif
+
     if(state) {
         HwReg(gS5L8930XClockGateBase + __register) = HwReg(gS5L8930XClockGateBase + __register) | 0xF;
     } else {
@@ -145,6 +154,9 @@ void S5L8930X_uart_init(void)
     gS5L8930XClockGateBase = ml_io_map(CLOCK_GATE_BASE, PAGE_SIZE);
 
     assert(gS5L8930XUartBase && gS5L8930XClockGateBase);
+
+    if(avoid_uarts)
+        return;
 
     /* Enable clock gate. */
     s5l8930x_clock_gate_switch(UART_CLOCKGATE, TRUE);
@@ -327,7 +339,8 @@ static void _fb_putc(int c) {
         vcputc(0, 0, '\r');
     }
     vcputc(0, 0, c);
-    S5L8930X_putc(c);
+    if(avoid_uarts)
+        S5L8930X_putc(c);
 }
 
 void S5L8930X_framebuffer_init(void)
@@ -338,7 +351,7 @@ void S5L8930X_framebuffer_init(void)
     kprintf(KPRINTF_PREFIX "framebuffer initialized\n");
 
     /*
-     * Enable I+D cache.
+     * Enable early framebuffer.
      */
     char tempbuf[16];
     
@@ -367,6 +380,11 @@ void PE_init_SocSupport_S5L8930X(void)
     gPESocDispatch.timer_enabled = S5L8930X_timer_enabled;
     
     gPESocDispatch.framebuffer_init = S5L8930X_framebuffer_init;
+
+    char tempbuf[16];
+    if(PE_parse_boot_argn("-avoid-uarts", tempbuf, sizeof(tempbuf))) {
+        avoid_uarts = 1;
+    }
 
     S5L8930X_framebuffer_init();
     S5L8930X_uart_init();

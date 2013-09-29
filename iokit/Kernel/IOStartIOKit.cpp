@@ -62,8 +62,10 @@ void IOKitInitializeTime( void )
 
 	t.tv_sec = 30;
 	t.tv_nsec = 0;
-    
+
+#ifdef BOARD_CONFIG_ARMPBA8    
 	IOService::waitForService(IOService::resourceMatching("IORTC"), &t );
+#endif
 #if defined(__i386__) || defined(__x86_64__)
 	IOService::waitForService(IOService::resourceMatching("IONVRAM"), &t );
 #endif

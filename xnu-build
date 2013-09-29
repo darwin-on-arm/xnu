@@ -119,7 +119,7 @@ export OBJROOT="${REAL_OBJROOT/$prefix/}"
 export SYMROOT="${REAL_SYMROOT/$prefix/}"
 export DSTROOT="${REAL_DSTROOT/$prefix/}"
 
-TARGET_CONFIGS=$(cat machine_configuration)
+TARGET_CONFIGS=$(cat machine_configuration | xargs)
 
 # Hide this variable from the unset
 export -n SRCROOT OBJROOT SYMROOT DSTROOT
