@@ -23,6 +23,8 @@ else
 	XCRUN = /usr/bin/xcrun
 endif
 
+UNAME_S := $(shell uname -s)
+
 SDKROOT ?= /
 HOST_SDKROOT ?= /
 HOST_SPARSE_SDKROOT ?= /
@@ -115,7 +117,11 @@ endif
 endif
 
 # Scripts or tools we build ourselves
-SEG_HACK := $(OBJROOT)/SETUP/setsegname/setsegname
+ifneq ($(UNAME_S),Linux)
+	SEG_HACK := $(OBJROOT)/SETUP/setsegname/setsegname
+else
+	SEG_HACK := /usr/bin/setsegname
+endif
 KEXT_CREATE_SYMBOL_SET := $(OBJROOT)/SETUP/kextsymboltool/kextsymboltool
 DECOMMENT := $(OBJROOT)/SETUP/decomment/decomment
 NEWVERS = $(SRCROOT)/config/newvers.pl
