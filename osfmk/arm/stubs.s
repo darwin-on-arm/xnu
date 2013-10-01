@@ -140,7 +140,6 @@ UNIMPLEMENTED_STUB(_tempDTraceTrapHook)
 UNIMPLEMENTED_STUB(_thread_kdb_return)
 
 // SDKFASLDFLAKSDFLKASDf
-UNIMPLEMENTED_STUB(_PE_display_icon)
 UNIMPLEMENTED_STUB(_PE_initialize_console)
 UNIMPLEMENTED_STUB(__vm_commpage_init)
 UNIMPLEMENTED_STUB(_act_thread_catt)

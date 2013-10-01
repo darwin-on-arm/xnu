@@ -116,7 +116,7 @@ static void timer_configure(void)
     uint64_t hz = 32768;
     gPEClockFrequencyInfo.timebase_frequency_hz = hz;
 
-    clock_decrementer = 1000;
+    clock_decrementer = 10000;
     kprintf(KPRINTF_PREFIX "decrementer frequency = %llu\n", clock_decrementer);    
 
     rtc_configure(hz);
@@ -282,8 +282,8 @@ void S5L8930X_handle_interrupt(void* context)
         S5L8930X_timer_enabled(FALSE);
 
         /* Update absolute time */
-        clock_absolute_time += (clock_decrementer - S5L8930X_timer_value());
-    
+        clock_absolute_time += (clock_decrementer - (int64_t)S5L8930X_timer_value());
+
         /* EOI. */
         HwReg(gS5L8930XVic0Base + VICADDRESS) = 0;
 
@@ -302,7 +302,7 @@ uint64_t S5L8930X_get_timebase(void)
     
     if(!clock_initialized)
         return 0;
-    
+
     timestamp = S5L8930X_timer_value();
 
     if(timestamp) {

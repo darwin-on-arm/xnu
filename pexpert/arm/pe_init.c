@@ -116,3 +116,10 @@ int PE_current_console(PE_Video *info)
 
 	return 0;
 }
+
+/* Stub. */
+void PE_display_icon( __unused unsigned int flags, __unused const char * name )
+{
+    return;
+}
+
