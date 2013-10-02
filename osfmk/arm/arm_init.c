@@ -177,6 +177,8 @@ void arm_init(boot_args* args) {
      * If anything returns, bad things(tm) have happened.
      */
     PE_early_puts("arm_init: Still alive\n");
-    panic("why are we still here, NOO");
+
+    panic("20:02:14 <DHowett> wwwwwwwat is HAAAAAAAPPENING"\n);
+
     while(1);
 }
