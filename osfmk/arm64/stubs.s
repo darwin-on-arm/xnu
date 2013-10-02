@@ -1396,28 +1396,6 @@
  .asciz "_thread_kdb_return is not implemented." 
 
 .align 6
- .globl _PE_display_icon 
- _PE_display_icon: 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- ldr x0, ps_ptr__PE_display_icon 
- blx _Debugger 
- ps_ptr__PE_display_icon: 
- .long panicString__PE_display_icon 
- panicString__PE_display_icon: 
- .asciz "_PE_display_icon is not implemented." 
-
-.align 6
  .globl _PE_initialize_console 
  _PE_initialize_console: 
  nop 
@@ -1615,49 +1593,6 @@
  panicString__chudxnu_thread_ast: 
  .asciz "_chudxnu_thread_ast is not implemented." 
 
-.align 6
- .globl _clock_gettimeofday_set_commpage 
- _clock_gettimeofday_set_commpage: 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- ldr x0, ps_ptr__clock_gettimeofday_set_commpage 
- blx _Debugger 
- ps_ptr__clock_gettimeofday_set_commpage: 
- .long panicString__clock_gettimeofday_set_commpage 
- panicString__clock_gettimeofday_set_commpage: 
- .asciz "_clock_gettimeofday_set_commpage is not implemented." 
-
-.align 6
- .globl _clock_timebase_info 
- _clock_timebase_info: 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- ldr x0, ps_ptr__clock_timebase_info 
- blx _Debugger 
- ps_ptr__clock_timebase_info: 
- .long panicString__clock_timebase_info 
- panicString__clock_timebase_info: 
- .asciz "_clock_timebase_info is not implemented."
 
 .align 6
  .globl _commpage_text_populate 
@@ -3596,94 +3531,6 @@
  .asciz "_sigreturn is not implemented." 
 
 .align 6
- .globl _slot_subtype 
- _slot_subtype: 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- ldr x0, ps_ptr__slot_subtype 
- blx _Debugger 
- ps_ptr__slot_subtype: 
- .long panicString__slot_subtype 
- panicString__slot_subtype: 
- .asciz "_slot_subtype is not implemented." 
-
-.align 6
- .globl _slot_threadtype 
- _slot_threadtype: 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- ldr x0, ps_ptr__slot_threadtype 
- blx _Debugger 
- ps_ptr__slot_threadtype: 
- .long panicString__slot_threadtype 
- panicString__slot_threadtype: 
- .asciz "_slot_threadtype is not implemented." 
-
-.align 6
- .globl _slot_type 
- _slot_type: 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- ldr x0, ps_ptr__slot_type 
- blx _Debugger 
- ps_ptr__slot_type: 
- .long panicString__slot_type 
- panicString__slot_type: 
- .asciz "_slot_type is not implemented." 
-
-.align 6
- .globl _thread_set_child 
- _thread_set_child: 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- ldr x0, ps_ptr__thread_set_child 
- blx _Debugger 
- ps_ptr__thread_set_child: 
- .long panicString__thread_set_child 
- panicString__thread_set_child: 
- .asciz "_thread_set_child is not implemented." 
-
-.align 6
  .globl _thread_set_parent 
  _thread_set_parent: 
  nop 
@@ -3704,6 +3551,28 @@
  .long panicString__thread_set_parent 
  panicString__thread_set_parent: 
  .asciz "_thread_set_parent is not implemented." 
+
+.align 6
+ .globl _thread_set_child 
+ _thread_set_child: 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ ldr x0, ps_ptr__thread_set_child
+ blx _Debugger 
+ ps_ptr__thread_set_child: 
+ .long panicString__thread_set_child
+ panicString__thread_set_child: 
+ .asciz "_thread_set_child is not implemented." 
 
 .align 6
  .globl _thread_set_wq_state32 
