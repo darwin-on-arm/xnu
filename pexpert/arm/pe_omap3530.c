@@ -313,7 +313,7 @@ typedef struct omap_videomode {
 
 omap_videomode omap_videomodes[] = {
     /* 1280x720 @ 50Hz */
-    {NULL, 50, 720, 1280, 13468, 220, 440, 20, 5, 40, 5, 0, 0, 0},
+    {NULL, 50, 1280, 720, 13468, 220, 440, 20, 5, 40, 5, 0, 0, 0},
     /* Please put more modes in here! */
 };
 
@@ -337,7 +337,7 @@ void Omap3_framebuffer_init(void)
 
     timing_h = FLD_VAL(hsw-1, 5, 0) | FLD_VAL(hfp-1, 15, 8) | FLD_VAL(hbp-1, 27, 20);
     timing_v = FLD_VAL(vsw-1, 5, 0) | FLD_VAL(vfp, 15, 8) | FLD_VAL(vbp, 27, 20);
-    uint32_t vs = FLD_VAL(current_mode->xres - 1, 26, 16) | FLD_VAL(current_mode->yres - 1, 10, 0);
+    uint32_t vs = FLD_VAL(current_mode->yres - 1, 26, 16) | FLD_VAL(current_mode->xres - 1, 10, 0);
 
     OmapDispc->size_lcd = vs;
     OmapDispc->timing_h = timing_h;
