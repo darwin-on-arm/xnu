@@ -82,7 +82,7 @@ static uint64_t     clock_absolute_time = 0;
 
 static void timer_configure(void)
 {
-    uint64_t hz = 32768;
+    uint64_t hz = 327680;
     gPEClockFrequencyInfo.timebase_frequency_hz = hz;
 
     clock_decrementer = 1000;
@@ -228,7 +228,7 @@ void Omap3_handle_interrupt(void* context)
         HwReg(gOmapTimerBase + TISR) = 0x7;
 
         /* FFFFF */
-        //rtclock_intr((arm_saved_state_t*) context);
+        rtclock_intr((arm_saved_state_t*) context);
 
         /* Set new IRQ generation */
         HwReg(INTCPS_CONTROL) = 0x1;
