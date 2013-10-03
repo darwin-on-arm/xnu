@@ -313,14 +313,16 @@ typedef struct omap_videomode {
 
 omap_videomode omap_videomodes[] = {
     /* Note, our pixelclock runs at 96MHz. */
-
-    /* 1280x720 @ ~60Hz and friends */
+    /* 1280x720 @ ~75Hz and friends */
     {"dvi:1280x720", 60, 1280, 720, 0, 220, 440, 20, 5, 40, 5, 0, 0, 0}, 
     {"dvi:1280x768", 60, 1280, 768, 0, 220, 440, 20, 5, 40, 5, 0, 0, 0}, 
     {"dvi:1280x800", 60, 1280, 800, 0, 220, 440, 20, 5, 40, 5, 0, 0, 0}, 
 
-    /* 1024x768 @ 60Hz. */
+    /* 1024x768 @ 70Hz. */
     {"dvi:1024x768", 60, 1024, 768, 0, 331, 37, 44, 5, 202, 10, 0, 0, 0},
+
+    /* !!! EXPERIMENTAL 1080P MODE !!! MAKES SOME MONITORS GO WACKO !!! */
+    {"dvi:1920x1080", 24, 1920, 1080, 0, 440, 1024, 20, 50, 80, 5, 0, 0, 0}, 
 
     /* Please put more modes in here! */
 };
@@ -365,12 +367,11 @@ void Omap3_framebuffer_init(void)
     OmapDispc->size_lcd = vs;
     OmapDispc->timing_h = timing_h;
     OmapDispc->timing_v = timing_v;
-
     OmapDispc->pol_freq = 0x00007028;
     OmapDispc->divisor = 0x00010001;
     OmapDispc->config = (2 << 1);
-    OmapDispc->control = ((1 << 3) | (3 << 8));
     OmapDispc->default_color0 = 0xffff0000;
+    OmapDispc->control = ((1 << 3) | (3 << 8));
     
     /* Initialize display control */
     OmapDispc->control |= DISPC_ENABLE;
