@@ -206,6 +206,11 @@ rwleslow:
  */
 EnterARM(lock_done)
 EnterARM(lck_rw_done)
+#ifdef BOARD_CONFIG_OMAP3530
+    mrs         r9, cpsr
+    cpsid       if
+#endif
+_lock_done_enter:
     ldrex       r1, [r0]
     ands        r2, r1, #1
     bne         rwldpanic
@@ -234,9 +239,12 @@ rwldstore:
 #ifndef BOARD_CONFIG_OMAP3530
     strex       r2, r1, [r0]
     movs        r2, r2
-    bne         _lock_done
+    bne         _lock_done_enter
 #else
     str         r1, [r0]
+#endif
+#ifdef BOARD_CONFIG_OMAP3530
+    msr         cpsr_cf, r9
 #endif
     movs        r12, r12
     moveq       r0, r3

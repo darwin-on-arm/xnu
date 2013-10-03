@@ -392,6 +392,10 @@ void PE_init_SocSupport_S5L8930X(void)
         avoid_uarts = 1;
     }
 
+    if(PE_parse_boot_argn("-force-uarts", tempbuf, sizeof(tempbuf))) {
+        avoid_uarts = 0;
+    }
+
     S5L8930X_framebuffer_init();
     S5L8930X_uart_init();
 
