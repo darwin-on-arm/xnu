@@ -15,7 +15,6 @@
 OSDefineMetaClassAndStructors(ARMPlatformExpert, IODTPlatformExpert);
 
 bool ARMPlatformExpert::init(OSDictionary *propTable) {
-    PE_LOG("Initializing ARM platform expert.\n");
     if (!super::init(propTable)) {
         panic("IOPlatformExpert failed to initialize");
     }
@@ -30,7 +29,7 @@ void ARMPlatformExpert::registerNVRAMController(IONVRAMController * caller)
 }
 
 bool ARMPlatformExpert::start(IOService *provider) {
-    PE_LOG("Starting ARM platform expert, IOService at %p\n", provider);
+    IOLog("ARMPlatformExpert::start: Welcome to the NeXT generation.\n");
 
     if(!super::start(provider)) {
         panic("IOPlatformExpert failed to start");
@@ -40,10 +39,14 @@ bool ARMPlatformExpert::start(IOService *provider) {
     assert(IOService::getPlatform() == this);
 
     registerService();
+   
+    /* Let these time out to let everything else initialize right. */
+#if 0
+    publishResource("IONVRAM");
+    publishResource("IORTC");
+#endif
     
     populate_model_name("Felix");
-
-    PE_LOG("Registered device with IOKit\n");
 
     return true;
 }

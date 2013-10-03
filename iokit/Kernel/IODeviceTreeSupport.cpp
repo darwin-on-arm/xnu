@@ -846,7 +846,7 @@ bool IODTMatchNubWithKeys( IORegistryEntry * regEntry,
         result = regEntry->compareNames( obj );
 		obj->release();
     }
-#if DEBUG
+#if 0
     else IOLog("Couldn't unserialize %s\n", keys );
 #endif
 

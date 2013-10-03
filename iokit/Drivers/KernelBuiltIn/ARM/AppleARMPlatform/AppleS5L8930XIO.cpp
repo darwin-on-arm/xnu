@@ -18,7 +18,6 @@ bool AppleGenericARMIO::init(OSDictionary* propTable) {
     if(!super::init(propTable)) {
         panic("failed to initialize super IOService\n");
     }
-    S5L_LOG("Initializing AppleGenericARMIO service\n");
     return true;
 }
 
@@ -30,7 +29,7 @@ bool AppleGenericARMIO::start(IOService* provider) {
     if(!super::start(provider)) {
         panic("failed to start super provider");
     }
-    S5L_LOG("Publishing entries to IOService tree plane\n");
+    IOLog("AppleARMGenericIO::start: Publishing device tree entries to IOService plane...\n");
     publishBelow(provider);
     registerService();
     IOPrintPlane(gIOServicePlane);

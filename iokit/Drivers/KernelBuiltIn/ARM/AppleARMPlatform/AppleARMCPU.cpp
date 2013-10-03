@@ -12,7 +12,6 @@
 OSDefineMetaClassAndStructors(ARMCPU, IOCPU);
 
 bool ARMCPU::init(OSDictionary *propTable) {
-    PE_LOG("Initializing ARM CPU.\n");
     if (!super::init(propTable)) {
         panic("IOCPU failed to initialize");
     }
@@ -26,7 +25,7 @@ void ARMCPU::ipiHandler(void* refCon, IOService* nub, int source) {
 }
 
 bool ARMCPU::start(IOService* provider) {
-    PE_LOG("Starting ARM cpu provider\n");
+    IOLog("ARMCPU::start: Starting ARM CPU IOKit provider...\n");
     
     if(!super::start(provider)) {
         panic("Failed to start super IOCPU provider");
@@ -51,7 +50,7 @@ bool ARMCPU::start(IOService* provider) {
 }
 
 void ARMCPU::initCPU(bool boot) {
-    PE_LOG("Setting active cpu state\n");
+    IOLog("ARMCPU::initCPU(%p): we are here to serve!\n", this);
     if(gIC) {
         gIC->enableCPUInterrupt(this);
     }
@@ -59,17 +58,14 @@ void ARMCPU::initCPU(bool boot) {
 }
 
 void ARMCPU::quiesceCPU(void) {
-    PE_LOG("Quiescing processor\n");
     return;
 }
 
 kern_return_t ARMCPU::startCPU(vm_offset_t start_paddr, vm_offset_t parg_addr) {
-    PE_LOG("Starting CPU, start_paddr: 0x%08x, parg_addr: 0x%08x", start_paddr, parg_addr);
     return KERN_FAILURE;
 }
 
 void ARMCPU::haltCPU(void) {
-    PE_LOG("Halting processor\n");
     return;
 }
 

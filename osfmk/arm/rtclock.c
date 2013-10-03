@@ -182,6 +182,13 @@ clock_get_system_nanotime(
 
 void clock_get_system_microtime(clock_sec_t *secs, clock_usec_t *microsecs)
 {
+	uint64_t	now = pe_arm_get_timebase(NULL);
+	uint32_t	remain;
+
+	*secs = (now * rtclock_scaler) / (uint64_t)NSEC_PER_SEC;
+	remain = (uint32_t)((now * rtclock_scaler) % (uint64_t)NSEC_PER_SEC);
+	*microsecs = remain / NSEC_PER_USEC;
+#if 0
 	uint64_t	now, t64;
 	uint32_t	divisor;
     
@@ -189,6 +196,7 @@ void clock_get_system_microtime(clock_sec_t *secs, clock_usec_t *microsecs)
 	*secs = t64 = now / (divisor = rtclock_scaler);
 	now -= (t64 * divisor);
 	*microsecs = (now * USEC_PER_SEC) / divisor;
+#endif
 }
 
 void nanoseconds_to_absolutetime(uint64_t nanoseconds, uint64_t *result)
