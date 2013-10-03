@@ -79,6 +79,7 @@ static uint64_t     clock_absolute_time = 0;
 #define FLD_MASK(start, end)    (((1 << ((start) - (end) + 1)) - 1) << (end))
 #define FLD_VAL(val, start, end) (((val) << (end)) & FLD_MASK(start, end))
 
+
 static void timer_configure(void)
 {
     uint64_t hz = 327680;
@@ -301,18 +302,26 @@ typedef struct omap_videomode {
     uint32_t xres;
     uint32_t yres;
     uint32_t pixclock;
-    uint32_t left_margin;
-    uint32_t right_margin;
-    uint32_t upper_margin;
-    uint32_t lower_margin;
-    uint32_t hsync_len;
-    uint32_t vsync_len;
+    uint32_t left_margin; /* HBP */
+    uint32_t right_margin; /* HFP */
+    uint32_t upper_margin; /* VBP */
+    uint32_t lower_margin; /* VFP */
+    uint32_t hsync_len; /* HSW */
+    uint32_t vsync_len; /* VSW */
     uint32_t sync, vmode, flag;
 } omap_videomode;
 
 omap_videomode omap_videomodes[] = {
-    /* 1280x720 @ 50Hz */
-    {NULL, 50, 1280, 720, 13468, 220, 440, 20, 5, 40, 5, 0, 0, 0},
+    /* Note, our pixelclock runs at 96MHz. */
+
+    /* 1280x720 @ ~60Hz and friends */
+    {"dvi:1280x720", 60, 1280, 720, 0, 220, 440, 20, 5, 40, 5, 0, 0, 0}, 
+    {"dvi:1280x768", 60, 1280, 768, 0, 220, 440, 20, 5, 40, 5, 0, 0, 0}, 
+    {"dvi:1280x800", 60, 1280, 800, 0, 220, 440, 20, 5, 40, 5, 0, 0, 0}, 
+
+    /* 1024x768 @ 60Hz. */
+    {"dvi:1024x768", 60, 1024, 768, 0, 331, 37, 44, 5, 202, 10, 0, 0, 0},
+
     /* Please put more modes in here! */
 };
 
@@ -325,7 +334,19 @@ void Omap3_framebuffer_init(void)
     uint32_t timing_h, timing_v;
     uint32_t hbp, hfp, hsw, vsw, vfp, vbp;
 
+    char tmpbuf[16];
     omap_videomode* current_mode = &omap_videomodes[0];
+
+    if(PE_parse_boot_argn("omapfbres", tmpbuf, sizeof(tmpbuf))) {
+        int cur = 0;
+        while(cur != (sizeof(omap_videomodes) / sizeof(omap_videomode))) {
+            if(!strcmp(tmpbuf, omap_videomodes[cur].name)) {
+                current_mode = &omap_videomodes[cur];
+                break;
+            }
+            cur++;
+        }
+    }
 
     hbp = current_mode->left_margin;
     hfp = current_mode->right_margin;
@@ -334,8 +355,11 @@ void Omap3_framebuffer_init(void)
     hsw = current_mode->hsync_len;
     vsw = current_mode->vsync_len;
 
-    timing_h = FLD_VAL(hsw-1, 5, 0) | FLD_VAL(hfp-1, 15, 8) | FLD_VAL(hbp-1, 27, 20);
-    timing_v = FLD_VAL(vsw-1, 5, 0) | FLD_VAL(vfp, 15, 8) | FLD_VAL(vbp, 27, 20);
+    timing_h = FLD_VAL(hsw-1, 7, 0) | FLD_VAL(hfp-1, 19, 8) |
+                       FLD_VAL(hbp-1, 31, 20);
+    timing_v = FLD_VAL(vsw-1, 7, 0) | FLD_VAL(vfp, 19, 8) |
+                       FLD_VAL(vbp, 31, 20);
+
     uint32_t vs = FLD_VAL(current_mode->yres - 1, 26, 16) | FLD_VAL(current_mode->xres - 1, 10, 0);
 
     OmapDispc->size_lcd = vs;
