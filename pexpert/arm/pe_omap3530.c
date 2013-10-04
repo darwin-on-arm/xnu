@@ -313,6 +313,7 @@ typedef struct omap_videomode {
 
 omap_videomode omap_videomodes[] = {
     /* Note, our pixelclock runs at 96MHz. */
+
     /* 1280x720 @ ~75Hz and friends */
     {"dvi:1280x720", 60, 1280, 720, 0, 220, 440, 20, 5, 40, 5, 0, 0, 0}, 
     {"dvi:1280x768", 60, 1280, 768, 0, 220, 440, 20, 5, 40, 5, 0, 0, 0}, 

@@ -508,6 +508,11 @@ static volatile uint32_t config_displayed = 0;
 #define	panic_display_pal_info() do { } while(0)
 #endif
 
+#ifdef __arm__
+extern char firmware_version[32];
+extern uint32_t debug_enabled;
+#endif
+
 __private_extern__ void panic_display_system_configuration(void) {
 
 	//panic_display_process_name();
@@ -518,6 +523,10 @@ __private_extern__ void panic_display_system_configuration(void) {
 		kdb_printf("\nMac OS version:\n%s\n",
 		    (osversion[0] != 0) ? osversion : "Not yet set");
 		kdb_printf("\nKernel version:\n%s\n",version);
+#ifdef __arm__
+		kdb_printf("\niBoot version: %s\n", firmware_version);
+		kdb_printf("Secure boot?: %s\n\n", debug_enabled ? "NO" : "YES");
+#endif
 		panic_display_kernel_uuid();
 		panic_display_kernel_aslr();
 		panic_display_pal_info();

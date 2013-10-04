@@ -41,6 +41,9 @@
 /* private globals */
 PE_state_t  PE_state;
 
+char firmware_version[32];
+
+extern uint32_t debug_enabled;
 extern void pe_identify_machine(void * args);
 
 /**
@@ -81,10 +84,27 @@ void PE_init_platform(boolean_t vm_initialized, void * _args)
 	}
 	else
 	{
+        DTEntry             entry;
+        char*               fversion, map;
+        unsigned int        size;
+
         kprintf("PE_init_platform: It sure is great to get out of that bag.\n");
-        
         PE_init_SocSupport();
-	    
+
+        /* XXX: Real iOS kernel does iBoot/debug-enabled init after the DTInit call. */
+        if( kSuccess == DTLookupEntry(NULL, "/chosen", &entry)) {
+            /* What's the iBoot version on this bad boy? */
+            if( kSuccess == DTGetProperty(entry, "firmware-version", (void **) &fversion, &size)) {
+                if(size <= 32) {
+                    ovbcopy((void*)fversion, (void*)firmware_version, size);
+                }
+            }
+            /* Is the SoC debug-enabled? */
+            if( kSuccess == DTGetProperty(entry, "debug-enabled", (void **) &map, &size)) {
+                debug_enabled = 1;
+            }            
+        }
+
         pe_arm_init_interrupts(NULL);
 	}
 }
@@ -96,6 +116,8 @@ void PE_init_platform(boolean_t vm_initialized, void * _args)
  */
 void PE_init_iokit(void)
 {
+    printf("iBoot version: %s\n", firmware_version);
+
     kprintf("PE_init_iokit: starting IOKit now!\n");
 
     PE_init_printf(TRUE);

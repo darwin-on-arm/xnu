@@ -98,3 +98,24 @@ uint64_t pe_arm_get_timebase(__unused void* args)
     
     return gPESocDispatch.get_timebase();
 }
+
+/*
+ * iOS like functionality.
+ */
+uint32_t debug_enabled = 1;
+
+uint32_t PE_i_can_has_debugger(uint32_t* pe_debug) 
+{
+    if(pe_debug) {
+        if(debug_enabled)
+            *pe_debug = 1;
+        else
+            *pe_debug = 0;
+    }
+    return debug_enabled;
+}
+
+uint32_t PE_get_security_epoch(void)
+{
+    return 0;
+}
