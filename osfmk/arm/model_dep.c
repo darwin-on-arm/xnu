@@ -191,9 +191,9 @@ void Debugger(const char *message)
 
     kdp_raise_exception(EXC_BREAKPOINT, 0, 0, NULL);
 
-    kprintf("Debugger: We are hanging here.\n\n");
-    kprintf(ANSI_COLOR_YELLOW "for @b3ll: aelins!" ANSI_COLOR_RESET "\n");
-        
+    kdb_printf("Debugger: We are hanging here.\n\n");
+    kdb_printf(ANSI_COLOR_YELLOW "for @b3ll: aelins!" ANSI_COLOR_RESET "\n");
+
     hw_atomic_sub(&debug_mode, 1);
     
     return;
@@ -303,7 +303,7 @@ void print_threads(void)
 	task_t task = TASK_NULL;
 	thread_t thread = THREAD_NULL;
     
-    kprintf("\n*** Dumping all tasks and threads ***\n");
+    kdb_printf("\n*** Dumping all tasks and threads ***\n");
     
 	queue_iterate(task_list, task, task_t, tasks) {
 		char* name;
@@ -317,26 +317,26 @@ void print_threads(void)
         
         queue_iterate(&task->threads, thread, thread_t, task_threads) {
             
-            kprintf("\ntask %p, thread %p, task_name: \"%s\"\n", thread, task, name);
+            kdb_printf("\ntask %p, thread %p, task_name: \"%s\"\n", thread, task, name);
         
             assert(thread);
             
             if(thread->continuation) {
-                kprintf("      kernel continuation: %p ", thread->continuation);
+                kdb_printf("      kernel continuation: %p ", thread->continuation);
                 panic_print_symbol_name(thread->continuation);
-                kprintf("\n");
+                kdb_printf("\n");
             }
             
             if(!thread->continuation && thread->machine.iss) {
                 char crash_string[] = ANSI_COLOR_GREEN "Crashed ";
                 
                 if(!thread->continuation) {
-                    kprintf("    %sThread has ARM register state (kernel, savearea %p, kstack 0x%08x)%s:\n",
+                    kdb_printf("    %sThread has ARM register state (kernel, savearea %p, kstack 0x%08x)%s:\n",
                             (current_thread() == thread) ? crash_string : "",
                             thread->machine.iss, thread->kernel_stack,
                             ANSI_COLOR_RESET
                             );
-                    kprintf("      r0:  0x%08x  r1: 0x%08x  r2: 0x%08x  r3: 0x%08x\n"
+                    kdb_printf("      r0:  0x%08x  r1: 0x%08x  r2: 0x%08x  r3: 0x%08x\n"
                             "      r4:  0x%08x  r5: 0x%08x  r6: 0x%08x  r7: 0x%08x\n"
                             "      r8:  0x%08x  r9: 0x%08x  10: 0x%08x  11: 0x%08x\n"
                             "      12:  0x%08x  sp: 0x%08x  lr: 0x%08x  pc: 0x%08x\n"
@@ -360,9 +360,9 @@ void print_threads(void)
                             );
 
                     if(thread->machine.uss && thread->machine.uss->pc && thread->machine.uss->lr && thread->machine.uss->sp) {
-                        kprintf("    %sThread has ARM register state (user, savearea %p)%s\n", 
+                        kdb_printf("    %sThread has ARM register state (user, savearea %p)%s\n", 
                                 (current_thread() == thread) ? crash_string : "", thread->machine.uss, ANSI_COLOR_RESET);
-                        kprintf("      r0:  0x%08x  r1: 0x%08x  r2: 0x%08x  r3: 0x%08x\n"
+                        kdb_printf("      r0:  0x%08x  r1: 0x%08x  r2: 0x%08x  r3: 0x%08x\n"
                                 "      r4:  0x%08x  r5: 0x%08x  r6: 0x%08x  r7: 0x%08x\n"
                                 "      r8:  0x%08x  r9: 0x%08x  10: 0x%08x  11: 0x%08x\n"
                                 "      12:  0x%08x  sp: 0x%08x  lr: 0x%08x  pc: 0x%08x\n"
@@ -418,7 +418,7 @@ void panic_arm_backtrace(void *_frame, int nframes, const char *msg, boolean_t r
 		kdb_printf("%s", msg);
 	}
     
-    kprintf("\n*** Dumping backtrace from context ***\n");
+    kdb_printf("\n*** Dumping backtrace from context ***\n");
     
     /*
      * This is probably not thread safe, it's a boilerplate.
@@ -582,11 +582,11 @@ extern const char *mach_syscall_name_table[];
 void mach_syscall_trace(arm_saved_state_t* state)
 {
     int num = -(state->r[12]);
-    kprintf("MACH Trap: (%d/%s)\n",  num, mach_syscall_name_table[num]);
+    kdb_printf("MACH Trap: (%d/%s)\n",  num, mach_syscall_name_table[num]);
 
 #if 0
     int num = -(state->r[12]);
-    kprintf("MACH Trap: (%d/%s)\n"
+    kdb_printf("MACH Trap: (%d/%s)\n"
             "r0: 0x%08x  r1: 0x%08x  r2: 0x%08x  r3: 0x%08x\n"
             "r4: 0x%08x  r5: 0x%08x  r6: 0x%08x  r7: 0x%08x\n"
             "r8: 0x%08x  r9: 0x%08x r10: 0x%08x r11: 0x%08x\n"

@@ -26,57 +26,33 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-/*
- * PAL routine stubs
- */
 
 #include <mach/mach_types.h>
-#include <machine/pal_routines.h>
+#include <pexpert/pexpert.h>
+#include <pexpert/arm/boot.h>
 
-/* Serial routines */
-int
-pal_serial_init(void)
-{
-    return 1;
-}
+extern int pe_initialized;
 
-void
-pal_serial_putc(char c)
+void serial_putc( char c )
 {
-	serial_putc(c);
+	if(!pe_initialized)
+		return;
+
+	if(gPESocDispatch.uart_putc == NULL)
+        panic("gPESocDispatch.uart_putc was null, did you forget to set up the table?");
+    
+    gPESocDispatch.uart_putc(c);
+    
     return;
 }
 
-int
-pal_serial_getc(void)
+int serial_getc( void )
 {
-    return serial_getc();
-}
+	if(!pe_initialized)
+		return 0;
 
-/*
- * define functions below here to ensure we have symbols for these,
- * even though they're not used on this platform.
- */
-#undef pal_dbg_page_fault
-void
-pal_dbg_page_fault( thread_t thread __unused,
-		    user_addr_t vaddr __unused,
-		    kern_return_t kr __unused )
-{
-}
-
-#undef pal_dbg_set_task_name
-void
-pal_dbg_set_task_name( task_t task __unused )
-{
-}
-
-#undef pal_set_signal_delivery
-void
-pal_set_signal_delivery(thread_t thread __unused)
-{
-}
-
-void pal_ast_check(thread_t thread)
-{
+	if(gPESocDispatch.uart_getc == NULL)
+        panic("gPESocDispatch.uart_getc was null, did you forget to set up the table?");
+    
+    return gPESocDispatch.uart_getc();
 }

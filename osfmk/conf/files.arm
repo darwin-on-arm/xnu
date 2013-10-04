@@ -11,6 +11,7 @@ OPTIONS/fddi		optional fddi
 osfmk/console/panic_dialog.c	     optional  vc device-driver
 osfmk/console/video_console.c        optional  vc device-driver
 osfmk/console/arm/video_scroll.c	optional vc device-driver
+osfmk/console/arm/serial_console.c	optional vc
 
 osfmk/arm/bcopy.s	standard
 osfmk/arm/bzero.s	standard

@@ -36,11 +36,23 @@
 #include <pexpert/machine/boot.h>
 #include <machine/machine_routines.h>
 #include <kern/debug.h>
+#include <kern/simple_lock.h>
 #include <stdarg.h>
+#include <machine/pal_routines.h>
 
 #include "semihost.h"
 
+#if DEBUG
+/* DEBUG kernel starts with true serial, but
+ * may later disable or switch to video
+ * console */
+unsigned int disable_serial_output = FALSE;
+#else
+unsigned int disable_serial_output = TRUE;
+#endif
+
 void (*PE_kputc)(char c);
+decl_simple_lock_data(static, kprintf_lock)
 
 /**
  * PE_init_kprintf
@@ -49,13 +61,30 @@ void (*PE_kputc)(char c);
  */ 
 void PE_init_kprintf(boolean_t vm_initialized)
 {
+	unsigned int	boot_arg;
+
 	if (PE_state.initialized == FALSE)
 		panic("Platform Expert not initialized");
-    
-    if (!vm_initialized) {
-#warning Semihosting configuration enabled;
-        PE_kputc = PE_semihost_write_char;
-    }    
+
+	if (!vm_initialized) {
+		unsigned int new_disable_serial_output = FALSE;
+
+		simple_lock_init(&kprintf_lock, 0);
+
+		if (PE_parse_boot_argn("debug", &boot_arg, sizeof (boot_arg)))
+			if (boot_arg & DB_KPRT)
+				new_disable_serial_output = FALSE;
+
+		/* If we are newly enabling serial, make sure we only
+		 * call pal_serial_init() if our previous state was
+		 * not enabled */
+		if (!new_disable_serial_output && (!disable_serial_output || pal_serial_init()))
+			PE_kputc = PE_semihost_write_char;
+		else
+			PE_kputc = cnputc;
+
+		disable_serial_output = new_disable_serial_output;
+	}
 }
 
 /**

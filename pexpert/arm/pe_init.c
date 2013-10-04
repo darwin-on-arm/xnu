@@ -42,6 +42,7 @@
 PE_state_t  PE_state;
 
 char firmware_version[32];
+int pe_initialized = 0;
 
 extern uint32_t debug_enabled;
 extern void pe_identify_machine(void * args);
@@ -88,8 +89,13 @@ void PE_init_platform(boolean_t vm_initialized, void * _args)
         char*               fversion, map;
         unsigned int        size;
 
+        pe_initialized = 1;
+
         kprintf("PE_init_platform: It sure is great to get out of that bag.\n");
         PE_init_SocSupport();
+
+        /* Reset kputc. */
+        PE_kputc = gPESocDispatch.uart_putc;
 
         /* XXX: Real iOS kernel does iBoot/debug-enabled init after the DTInit call. */
         if( kSuccess == DTLookupEntry(NULL, "/chosen", &entry)) {

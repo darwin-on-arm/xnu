@@ -38,6 +38,7 @@
 #include <arm/armops.h>
 
 extern uint8_t* irqstack;
+extern int disableConsoleOutput, serialmode;
 
 /**
  * arm_init
@@ -152,6 +153,17 @@ void arm_init(boot_args* args) {
         kprintf("cache: initializing i+dcache\n");
         cache_initialize();
         kprintf("cache: done\n");
+    }
+
+    serialmode = 3;
+    if(PE_parse_boot_argn("serial", &serialmode, sizeof (serialmode))) {
+        /* We want a serial keyboard and/or console */
+        kprintf("Serial mode specified: %08X\n", serialmode);
+    }
+
+    if(serialmode & 1) {
+        (void)switch_to_serial_console();
+        disableConsoleOutput = FALSE;   /* Allow printfs to happen */
     }
 
     /*

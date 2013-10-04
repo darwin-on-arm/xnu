@@ -398,8 +398,6 @@ void PE_init_SocSupport_S5L8930X(void)
 
     S5L8930X_framebuffer_init();
     S5L8930X_uart_init();
-
-    PE_kputc = _fb_putc; //gPESocDispatch.uart_putc;
 }
 
 void PE_init_SocSupport_stub(void)

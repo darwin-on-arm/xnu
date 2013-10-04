@@ -59,10 +59,6 @@
 UNIMPLEMENTED_STUB(_LockTimeOut)
 
 UNIMPLEMENTED_STUB(__MachineStateCount)
-UNIMPLEMENTED_STUB(__serial_getc)
-
-UNIMPLEMENTED_STUB(__longjmp)
-UNIMPLEMENTED_STUB(__setjmp)
 
 UNIMPLEMENTED_STUB(_aout_db_init)
 UNIMPLEMENTED_STUB(_aout_db_line_at_pc)
@@ -74,9 +70,6 @@ UNIMPLEMENTED_STUB(_aout_db_search_symbol)
 UNIMPLEMENTED_STUB(_aout_db_sym_init)
 UNIMPLEMENTED_STUB(_aout_db_symbol_values)
 
-UNIMPLEMENTED_STUB(_cngetc)
-UNIMPLEMENTED_STUB(_cnmaygetc)
-UNIMPLEMENTED_STUB(_cnputc_unbuffered)
 
 UNIMPLEMENTED_STUB(_consider_machine_adjust)
 UNIMPLEMENTED_STUB(_coredumpok)
@@ -88,8 +81,6 @@ UNIMPLEMENTED_STUB(_dcache_incoherent_io_flush64)
 UNIMPLEMENTED_STUB(_dcache_incoherent_io_store64)
 
 UNIMPLEMENTED_STUB(_debug_task)
-
-UNIMPLEMENTED_STUB(_disable_serial_output)
 
 UNIMPLEMENTED_STUB(_fasttrap_pid_getarg)
 UNIMPLEMENTED_STUB(_fasttrap_pid_probe)
@@ -127,8 +118,6 @@ UNIMPLEMENTED_STUB(_mapping_set_mod)
 UNIMPLEMENTED_STUB(_ml_nofault_copydeclare_stub)
 UNIMPLEMENTED_STUB(_ml_stack_remaining)
 
-UNIMPLEMENTED_STUB(_nconsops)
-
 UNIMPLEMENTED_STUB(_pmsControl)
 
 UNIMPLEMENTED_STUB(_sdt_invop)
@@ -150,7 +139,6 @@ UNIMPLEMENTED_STUB(_allow_stack_exec)
 UNIMPLEMENTED_STUB(_bzero_phys_nc)
 UNIMPLEMENTED_STUB(_chudxnu_thread_ast)
 UNIMPLEMENTED_STUB(_commpage_text_populate)
-UNIMPLEMENTED_STUB(_cons_ops_index)
 UNIMPLEMENTED_STUB(_consider_machine_collect)
 UNIMPLEMENTED_STUB(_cpu_control)
 UNIMPLEMENTED_STUB(_cpu_data_ptr)
@@ -231,9 +219,6 @@ UNIMPLEMENTED_STUB(_segPRELINKB)
 UNIMPLEMENTED_STUB(_segSizeHIB)
 UNIMPLEMENTED_STUB(_segSizePRELINK)
 UNIMPLEMENTED_STUB(_sendsig)
-UNIMPLEMENTED_STUB(_serial_getc)
-UNIMPLEMENTED_STUB(_serial_init)
-UNIMPLEMENTED_STUB(_serial_putc)
 UNIMPLEMENTED_STUB(_sigreturn)
 UNIMPLEMENTED_STUB(_thread_set_parent)
 UNIMPLEMENTED_STUB(_thread_set_wq_state32)

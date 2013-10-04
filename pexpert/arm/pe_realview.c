@@ -347,8 +347,6 @@ void PE_init_SocSupport_realview(void)
     RealView_uart_init();
     RealView_framebuffer_init();
     
-    PE_kputc = _fb_putc; //gPESocDispatch.uart_putc;
-    
 }
 
 void PE_init_SocSupport_stub(void)

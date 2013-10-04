@@ -130,10 +130,3 @@ switch_to_old_console(int old_console)
 	} else
 		cons_ops_index = ops;
 }
-
-#ifdef __arm__
-void cnputcusr(char c)
-{
-	PE_kputc(c);
-}
-#endif

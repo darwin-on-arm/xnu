@@ -52,16 +52,3 @@ void PE_early_puts(char* s) {
     }
     return;
 }
-
-/**
- * cnputc
- *
- * Bringup function, use for semihosting. Prints to SYS_OUTPUT0.
- */
-void cnputc(char c)
-{
-    if(!PE_kputc)
-        PE_semihost_write_char(c);
-    else
-        PE_kputc(c);
-}
