@@ -306,6 +306,7 @@ OSDictionary * IOOFPathMatching( const char * path, char * buf, int maxLen )
 }
 
 static int didRam = 0;
+static int rootMountTries = 0;
 
 kern_return_t IOFindBSDRoot( char * rootName, unsigned int rootNameSize,
 				dev_t * root, u_int32_t * oflags )
@@ -493,10 +494,15 @@ kern_return_t IOFindBSDRoot( char * rootName, unsigned int rootNameSize,
         t.tv_nsec = 0;
 	matching->retain();
         service = IOService::waitForService( matching, &t );
+        rootMountTries++;
+
+        /* Give up after a while. */
+        if(rootMountTries == 30)
+            panic("Gave up trying to mount root");
+
 	if( (!service) || (mountAttempts == 10)) {
             PE_display_icon( 0, "noroot");
             IOLog( "Still waiting for root device\n" );
-
             if( !debugInfoPrintedOnce) {
                 debugInfoPrintedOnce = true;
                 if( gIOKitDebug & kIOLogDTree) {
