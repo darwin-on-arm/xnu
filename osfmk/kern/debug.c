@@ -516,7 +516,11 @@ extern uint32_t debug_enabled;
 __private_extern__ void panic_display_system_configuration(void) {
 
 	//panic_display_process_name();
+#ifdef __arm__
+	{
+#else
 	if (OSCompareAndSwap(0, 1, &config_displayed)) {
+#endif
 		char buf[256];
 		if (strlcpy(buf, PE_boot_args(), sizeof(buf)))
 			kdb_printf("Boot args: %s\n", buf);

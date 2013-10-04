@@ -60,7 +60,7 @@ EnterARM(copyinmsg)
     cmp     r2, #0
     movle   r0, #0
     movle   pc, lr
-    cmp     r1, #0xc0000000
+    cmp     r1, #0x80000000
     bcs     copyio_kernel
     stmfd   sp!,{r10,r11,lr}
     mov     r3, #0
@@ -479,7 +479,7 @@ EnterARM(copyoutmsg)
     cmp r2, #0
     movle r0, #0
     movle pc, lr
-    cmp   r1, #0xc0000000
+    cmp   r1, #0x80000000
     bcs copyio_kernel
     stmfd sp!,{r10,r11,lr}
     LoadThreadRegister(r10)

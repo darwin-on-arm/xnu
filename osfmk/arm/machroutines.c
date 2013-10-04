@@ -325,7 +325,10 @@ kvtophys(vm_offset_t addr)
 vm_size_t ml_nofault_copy(vm_offset_t virtsrc, vm_offset_t virtdst, vm_size_t size)
 {
 	/* BAD. */
+
+    /* XXX fix this soon please to make KDP happy */
     ovbcopy(virtsrc, virtdst, size);
+
     return size;
 }
 

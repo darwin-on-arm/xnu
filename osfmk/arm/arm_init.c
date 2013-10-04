@@ -155,7 +155,7 @@ void arm_init(boot_args* args) {
         kprintf("cache: done\n");
     }
 
-    serialmode = 3;
+    serialmode = 0;
     if(PE_parse_boot_argn("serial", &serialmode, sizeof (serialmode))) {
         /* We want a serial keyboard and/or console */
         kprintf("Serial mode specified: %08X\n", serialmode);

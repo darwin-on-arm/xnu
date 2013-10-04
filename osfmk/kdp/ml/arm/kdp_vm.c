@@ -39,6 +39,8 @@
 #include <mach/machine/vm_types.h>
 #include <arm/pmap.h>
 
+boolean_t kdp_trans_off;
+
 int	kdp_dump_trap(int type, arm_saved_state_t *regs);
 
 static const arm_state_hdr_t thread_flavor_array [] = {
@@ -146,7 +148,21 @@ kdp_dump_trap(
 mach_vm_size_t
 kdp_machine_vm_read( mach_vm_address_t src, caddr_t dst, mach_vm_size_t len)
 {
-    return 0;
+    vm_offset_t cur_virt_src = (vm_offset_t)src;
+    vm_offset_t cur_virt_dst = (vm_offset_t)(intptr_t)dst;
+    pmap_t src_pmap = kernel_pmap;
+    mach_vm_size_t resid = len;
+
+    /* XXX: no translation */
+    if(kdp_trans_off) {
+        return 0;
+    }
+
+    /* XXX: BAD. */    
+    if(ml_nofault_copy(src, dst, len) == resid)
+        resid = 0;
+
+    return (len - resid);
 }
 
 mach_vm_size_t

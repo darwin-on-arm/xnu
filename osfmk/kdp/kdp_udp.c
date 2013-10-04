@@ -325,12 +325,7 @@ kdp_register_send_receive(
 {
 	unsigned int	debug = 0;
 
-#ifdef __arm__
-	debug = 0x16e;
-#endif
-
 	PE_parse_boot_argn("debug", &debug, sizeof (debug));
-
 
 	if (!debug)
 		return;
@@ -1111,6 +1106,12 @@ kdp_connection_wait(void)
 	 * they will print out on headless machines but not be added to
 	 * the panic.log
 	 */
+
+#ifdef __arm__
+	 /* Serial KDP must be enabled always. */
+	 if(!KDP_SERIAL_ENABLED())
+	 	return;
+#endif
 
         if (KDP_SERIAL_ENABLED()) {
             printf("Using serial KDP.\n");

@@ -165,7 +165,7 @@ void DebuggerWithContext(__unused unsigned int reason, void *ctx, const char *me
 void Debugger(const char *message)
 {
 	void *stackptr;
-    
+
     dim_screen();
     
 	kdb_printf("============================================\n"
@@ -189,10 +189,11 @@ void Debugger(const char *message)
     panic_arm_backtrace(stackptr, 20, NULL, FALSE, NULL);
 #endif
 
-    kdp_raise_exception(EXC_BREAKPOINT, 0, 0, NULL);
+    arm_saved_state_t st;
+    bzero(&st, sizeof(st));
+    st.r[7] = stackptr;
 
-    kdb_printf("Debugger: We are hanging here.\n\n");
-    kdb_printf(ANSI_COLOR_YELLOW "for @b3ll: aelins!" ANSI_COLOR_RESET "\n");
+    kdp_raise_exception(EXC_BREAKPOINT, 0, 0, &st);
 
     hw_atomic_sub(&debug_mode, 1);
     
@@ -552,6 +553,8 @@ static void machine_conf(void)
 	machine_info.memory_size = (typeof(machine_info.memory_size))mem_size;
 }
 
+unsigned int debug_boot_arg;
+
 /**
  * machine_startup
  *
@@ -561,6 +564,28 @@ void machine_startup(void)
 {
     machine_conf();
     
+    if (PE_parse_boot_argn("debug", &debug_boot_arg, sizeof (debug_boot_arg))) {
+        panicDebugging = TRUE;
+        if (debug_boot_arg & DB_HALT) halt_in_debugger=1;
+        if (debug_boot_arg & DB_PRT) disable_debug_output=FALSE; 
+        if (debug_boot_arg & DB_SLOG) systemLogDiags=TRUE; 
+        if (debug_boot_arg & DB_LOG_PI_SCRN) logPanicDataToScreen=TRUE;
+    } else {
+        debug_boot_arg = 0;
+    }
+
+    /*
+     * Cause a breakpoint trap to the debugger before proceeding
+     * any further if the proper option bit was specified in
+     * the boot flags.
+     */
+     if (halt_in_debugger) {
+        Debugger("inline call to debugger(machine_startup)");
+        halt_in_debugger = 0;
+        active_debugger =1;
+    }
+
+
     kernel_bootstrap();
     return;
 }
@@ -599,3 +624,28 @@ void mach_syscall_trace(arm_saved_state_t* state)
 #endif
 }
 
+
+/*
+ * Halt a cpu.
+ */
+void
+halt_cpu(void)
+{
+    halt_all_cpus(FALSE);
+}
+
+int reset_mem_on_reboot = 1;
+
+/*
+ * Halt the system or reboot.
+ */
+void
+halt_all_cpus(boolean_t reboot)
+{
+    if (reboot) {
+        printf("MACH Reboot\n");
+    } else {
+        printf("CPU halted\n");
+    }
+    while(1);
+}

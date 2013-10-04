@@ -253,8 +253,8 @@ kdp_machine_hostinfo(
         hostinfo->cpus_mask |= (1 << i);
     }
 
-    hostinfo->cpu_type = cpuid_cputype();
-    hostinfo->cpu_subtype = cpuid_cpusubtype();
+    hostinfo->cpu_type = cpu_type();
+    hostinfo->cpu_subtype = cpu_subtype();
 }
 
 void
