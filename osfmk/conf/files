@@ -103,7 +103,7 @@ osfmk/UserNotification/KUNCUserNotifications.c	standard
 
 osfmk/kdp/kdp.c			optional mach_kdp
 osfmk/kdp/kdp_udp.c			optional mach_kdp
-osfmk/kdp/kdp_serial.c			optional config_serial_kdp
+osfmk/kdp/kdp_serial.c			optional mach_kdp
 osfmk/ipc/ipc_entry.c			standard
 osfmk/ipc/ipc_hash.c			standard
 osfmk/ipc/ipc_init.c			standard

@@ -149,9 +149,8 @@ void DebuggerWithContext(__unused unsigned int reason, void *ctx, const char *me
     }
 #endif
 
-    kprintf("Debugger: We are hanging here.\n");
-    while(1) {};
-        
+    kdp_raise_exception(EXC_BREAKPOINT, 0, 0, ctx);
+
     hw_atomic_sub(&debug_mode, 1);
 
     return;
@@ -190,11 +189,11 @@ void Debugger(const char *message)
     panic_arm_backtrace(stackptr, 20, NULL, FALSE, NULL);
 #endif
 
+    kdp_raise_exception(EXC_BREAKPOINT, 0, 0, NULL);
+
     kprintf("Debugger: We are hanging here.\n\n");
     kprintf(ANSI_COLOR_YELLOW "for @b3ll: aelins!" ANSI_COLOR_RESET "\n");
-    
-    while(1) {};
-    
+        
     hw_atomic_sub(&debug_mode, 1);
     
     return;

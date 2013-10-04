@@ -47,6 +47,11 @@
 #include <kdp/kdp_en_debugger.h>
 #include <kdp/kdp_callout.h>
 #include <kdp/kdp_udp.h>
+
+#ifdef __arm__
+#define CONFIG_SERIAL_KDP 1
+#endif
+
 #if CONFIG_SERIAL_KDP
 #include <kdp/kdp_serial.h>
 #endif
@@ -319,6 +324,10 @@ kdp_register_send_receive(
 	kdp_receive_t	receive)
 {
 	unsigned int	debug = 0;
+
+#ifdef __arm__
+	debug = 0x16e;
+#endif
 
 	PE_parse_boot_argn("debug", &debug, sizeof (debug));
 
@@ -2016,8 +2025,6 @@ abort_panic_transfer(void)
 	panic_block = 0;
 }
 
-#if CONFIG_SERIAL_KDP
-
 static boolean_t needs_serial_init = TRUE;
 
 static void
@@ -2091,8 +2098,6 @@ static void kdp_serial_callout(__unused void *arg, kdp_event_t event)
     }
 }
 
-#endif /* CONFIG_SERIAL_KDP */
-
 void
 kdp_init(void)
 {
@@ -2129,21 +2134,14 @@ kdp_init(void)
 	kdp_timer_callout_init();
 	kdp_crashdump_feature_mask = htonl(kdp_crashdump_feature_mask);
 
-#if CONFIG_SERIAL_KDP
 	char kdpname[80];
 	struct in_addr ipaddr;
 	struct ether_addr macaddr;
 
 
-#if CONFIG_EMBEDDED
 	//serial will be the debugger, unless match name is explicitly provided, and it's not "serial"
 	if(PE_parse_boot_argn("kdp_match_name", kdpname, sizeof(kdpname)) && strncmp(kdpname, "serial", sizeof(kdpname)) != 0)
 		return;
-#else
-	// serial must be explicitly requested
-	if(!PE_parse_boot_argn("kdp_match_name", kdpname, sizeof(kdpname)) || strncmp(kdpname, "serial", sizeof(kdpname)) != 0)
-		return;
-#endif
 	
 	kprintf("Initializing serial KDP\n");
 
@@ -2161,5 +2159,4 @@ kdp_init(void)
 	ipaddr.s_addr = KDP_SERIAL_IPADDR;
 	kdp_set_ip_and_mac_addresses(&ipaddr, &macaddr);
         
-#endif /* CONFIG_SERIAL_KDP */
 }
