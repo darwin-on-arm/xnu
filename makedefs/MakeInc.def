@@ -295,10 +295,17 @@ endif
 #
 # Default ARCH_FLAGS, for use with compiler/linker/assembler/mig drivers
 
-ARCH_FLAGS_ARM		  = -arch armv7
 ARCH_FLAGS_I386		  = -arch i386
 ARCH_FLAGS_X86_64	  = -arch x86_64
 ARCH_FLAGS_ARM64	= -arch arm64
+
+ARCH_FLAGS_ARM		  = $($(addsuffix $(MACHINE_CONFIG),ARCH_FLAGS_ARM_)) #-arch armv7
+
+ARCH_FLAGS_ARM_S5L8930X	= -arch armv7
+ARCH_FLAGS_ARM_S5L8922X	= -arch armv7
+ARCH_FLAGS_ARM_S5L8920X	= -arch armv7
+ARCH_FLAGS_ARM_OMAP3530	= -arch armv7
+ARCH_FLAGS_ARM_ARMPBA8	= -arch armv7
 
 #
 # Default CFLAGS
@@ -350,6 +357,9 @@ CFLAGS_ARM		+= -mthumb -msoft-float
 endif
 ifeq (-arch armv6,$(ARCH_FLAGS_ARM))
 CFLAGS_ARM		+= -mthumb -msoft-float
+endif
+ifeq (-arch armv5,$(ARCH_FLAGS_ARM))
+CFLAGS_ARM		+= -msoft-float
 endif
 
 

@@ -95,7 +95,7 @@ void PE_init_platform(boolean_t vm_initialized, void * _args)
         if( kSuccess == DTLookupEntry(NULL, "/chosen", &entry)) {
             /* What's the iBoot version on this bad boy? */
             if( kSuccess == DTGetProperty(entry, "firmware-version", (void **) &fversion, &size)) {
-                if(size <= 32) {
+                if(fversion && (strlen(fversion) <= 32)) {
                     ovbcopy((void*)fversion, (void*)firmware_version, size);
                 }
             }
