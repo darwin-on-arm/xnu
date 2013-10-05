@@ -135,7 +135,11 @@ void S5L8930X_putc(int c)
 
 int S5L8930X_getc(void)
 {
-    return 'A';
+    /* Wait for FIFO queue to empty. */
+    while(HwReg(gS5L8930XUartBase + UFSTAT) & UART_UFSTAT_RXFIFO_FULL)
+        barrier();
+
+    return HwReg(gS5L8930XUartBase + URXH);    
 }
 
 void S5L8930X_uart_init(void)

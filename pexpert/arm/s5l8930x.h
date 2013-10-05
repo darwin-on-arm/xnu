@@ -87,6 +87,7 @@
 #define UINTM      0x0038 /* Interrupt Mask           */
 
 #define UART_UFSTAT_TXFIFO_FULL			(0x1 << 9)
+#define UART_UFSTAT_RXFIFO_FULL			(0x1 << 8)
 #define UART_UTRSTAT_TRANSMITTEREMPTY 	0x4
 #define UART_UMSTAT_CTS 				0x1
 
