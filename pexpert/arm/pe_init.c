@@ -102,7 +102,7 @@ void PE_init_platform(boolean_t vm_initialized, void * _args)
             /* What's the iBoot version on this bad boy? */
             if( kSuccess == DTGetProperty(entry, "firmware-version", (void **) &fversion, &size)) {
                 if(fversion && (strlen(fversion) <= 32)) {
-                    ovbcopy((void*)fversion, (void*)firmware_version, size);
+                    ovbcopy((void*)fversion, (void*)firmware_version, strlen(fversion));
                 }
             }
             /* Is the SoC debug-enabled? */
