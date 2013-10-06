@@ -416,8 +416,8 @@ void arm_vm_init(uint32_t mem_limit, boot_args *args)
 					  align_up(PAGE_SIZE, 0x00100000),
                       TRUE);
     
-    kernel_pmap->ttb = phys_to_virt(cpu_ttb);
-    kernel_pmap->ttb_phys = cpu_ttb;
+    kernel_pmap->pm_l1_virt = phys_to_virt(cpu_ttb);
+    kernel_pmap->pm_l1_phys = cpu_ttb;
     
     /*
      * Mach kernel vmaddr (0x80001000) gets rebased to 0x80000000.

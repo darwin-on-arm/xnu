@@ -390,7 +390,7 @@ void Omap3_framebuffer_init(void)
     
     /* Allocate framebuffer */
     void* framebuffer = pmap_steal_memory(lcd_width * lcd_width * 4);
-    void* framebuffer_phys = pmap_get_phys(kernel_pmap, framebuffer);
+    void* framebuffer_phys = pmap_extract(kernel_pmap, framebuffer);
     bzero(framebuffer, lcd_width * lcd_height * 4);
     kprintf(KPRINTF_PREFIX "software framebuffer at %p\n", framebuffer);
     

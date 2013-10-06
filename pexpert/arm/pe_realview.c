@@ -287,7 +287,7 @@ void RealView_framebuffer_init(void)
      * in a hardware address.
      */
     void* framebuffer = pmap_steal_memory(1024 * 768 * 4);
-    void* framebuffer_phys = pmap_get_phys(kernel_pmap, framebuffer);
+    void* framebuffer_phys = pmap_extract(kernel_pmap, framebuffer);
 
     uint32_t depth = 2;
     uint32_t width = 1024;
