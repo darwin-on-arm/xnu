@@ -42,36 +42,33 @@
 kern_return_t
 copypv(addr64_t src64, addr64_t snk64, unsigned int size, int which)
 {
-	unsigned int csize;
-    vm_offset_t src_phys;
-    vm_offset_t snk_phys;
-    
-	int bothphys = 0;
+    addr64_t src64_virt, snk64_virt;
+    int bothphys = 0;
 
-    kprintf("copypv: 0x%016llx 0x%016llx %u %d\n", src64, snk64, size, which);
+    if ((which & (cppvPsrc | cppvPsnk)) == 0 )              /* Make sure that only one is virtual */
+        panic("copypv: no more than 1 parameter may be virtual\n"); /* Not allowed */
 
-	if ((which & (cppvPsrc | cppvPsnk)) == 0 )				/* Make sure that only one is virtual */
-		panic("copypv: no more than 1 parameter may be virtual\n");	/* Not allowed */
+    if ((which & (cppvPsrc | cppvPsnk)) == (cppvPsrc | cppvPsnk))
+            bothphys = 1;                           /* both are physical */
 
-	if ((which & (cppvPsrc | cppvPsnk)) == (cppvPsrc | cppvPsnk))
-	        bothphys = 1;							/* both are physical */
+#if 0
+    kprintf("copypv(%llx,%llx,%d,%x(%d))\n", src64, snk64, size, which, which);
+#endif
 
-    if(src64 > 0xFFFFFFFF) {
-        src64 >>= 12;
-    }
+    /* Do a physical copy in if requested, else, move data out. */
+    if(which & cppvPsrc)
+        src64 = phys_to_virt(src64 << PAGE_SHIFT);
 
-    if(bothphys) {
-        panic("not done yet");
-    } else {
-        if ((which & cppvPsrc)) {
-            src_phys = phys_to_virt(src64);
-            bcopy(src_phys, snk64, size);
-            return KERN_SUCCESS;
-        } else {
-            snk_phys = phys_to_virt(snk64);
-            panic("not done yet\n");
-        }
-    }
-    
-	return KERN_SUCCESS;
+    if(which & cppvPsnk)
+        snk64 = phys_to_virt(snk64 << PAGE_SHIFT);
+
+    /* If it's a kernel copy, use ovbcopy. */
+    if(!(which & (cppvKmap | cppvPsrc)))
+        copyout(src64, snk64, size);
+    else if(!(which & (cppvKmap | cppvPsrc)))
+        copyin(src64, snk64, size);
+    else
+        bcopy(src64, snk64, size);
+
+    return KERN_SUCCESS;
 }

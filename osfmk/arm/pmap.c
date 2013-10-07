@@ -63,6 +63,16 @@
 #include <vm/vm_page.h>
 #include <arm/cpu_capabilities.h>
 
+/*
+ * The pv_head_table contains a 'trunk' of mappings for each physical
+ * page, one mapping exists for each page. Pages that are mapped in
+ * multiple pmaps (i.e: nested pmaps from say, the Dyld shared region)
+ * have multiple 'pv_nexts'. These are considered leaf mappings. Code should
+ * go through the leaf mappings if accessing/modifying page entries.
+ *
+ * -- With love, winocm.
+ */
+
 #define VM_MEM_WIRED            0x4
 
 /** Core Structures */
@@ -112,6 +122,25 @@ lock_t                      pmap_system_lock;
 /** Useful Macros */
 #define pa_index(pa)        (atop(pa))
 #define pai_to_pvh(pai)     (&pv_head_table[pai - atop(gPhysBase)])
+
+/** The Free List. */
+pv_entry_t      pv_free_list;       /* The free list should be populated when the pmaps are not locked. */
+decl_simple_lock_data(,pv_free_list_lock);
+
+#define PV_ALLOC(pv_e) {                \
+    simple_lock(&pv_free_list_lock);    \
+    if((pv_e = pv_free_list) != 0) {    \
+        pv_free_list = pv_e->pv_next;   \
+    }                                   \
+    simple_unlock(&pv_free_list_lock);  \
+}
+
+#define PV_FREE(pv_e) {                 \
+    simple_lock(&pv_free_list_lock);    \
+    pv_e->pv_next = pv_free_list;       \
+    pv_free_list = pv_e;                \
+    simple_unlock(&pv_free_list_lock);  \
+}
 
 /** Functions */
 
@@ -683,8 +712,8 @@ pmap_copy_part_page(
 void pmap_common_init(pmap_t pmap)
 {
     usimple_lock_init(&pmap->lock, 0);
-    if(pmap->pm_ledger)
-        ledger_reference(pmap->pm_ledger);
+    if(pmap->ledger)
+        ledger_reference(pmap->ledger);
     pmap->pm_refcnt = 1;
     pmap->pm_nx = 0;
     pmap->pm_shared = FALSE;
@@ -700,7 +729,7 @@ void pmap_common_init(pmap_t pmap)
 void pmap_static_init(void)
 {
     kdb_printf("pmap_static_init: Bootstrapping pmap\n");
-    kernel_pmap->pm_ledger = NULL;
+    kernel_pmap->ledger = NULL;
     pmap_common_init(kernel_pmap);
     return;
 }
@@ -1068,7 +1097,7 @@ pmap_enter_options(
     /* Only low addresses are supported for user pmaps. */
     if(va > _COMM_PAGE_BASE_ADDRESS && pmap != kernel_pmap)
         panic("pmap_enter_options: low address 0x%08X is invalid for pmap %p\n", va, pmap);
-
+Retry:
     /* Set a high priority level. */
     SPLVM(spl);
 
@@ -1087,6 +1116,8 @@ pmap_enter_options(
     uint32_t old_pte = (*(uint32_t*)pte);
     
     if((old_pte & L2_ADDR_MASK) == (pa << PAGE_SHIFT)) {
+        /* !!! IMPLEMENT 'pmap_vm_prot_to_page_flags' !!! */
+    
         /* XXX protection is not implemented right now, all pages are 'RWX'. */
         uint32_t template_pte = ((pa << PAGE_SHIFT) & L2_ADDR_MASK) | L2_SMALL_PAGE | L2_ACCESS_PRW;
         if(!wired)
@@ -1102,8 +1133,11 @@ pmap_enter_options(
         ppnum_t pai;
 
         /* Get the offset... */
-        pai = pa_index(pa);
+        pai = (pa);
         pv_h = pai_to_pvh(pai);
+
+        kprintf("pai %d pa %d (%x) va %x pv_h %p pmap %p pv_h->pmap %p pv_h->pv_address_va %x\n",
+                pai, pa, pa << PAGE_SHIFT, va, pv_h, pmap, pv_h->pv_pmap, pv_h->pv_address_va);
 
         /* Check to see if it exists, if it does, then make it null. */
         if((pv_h->pv_pmap == pmap) && (pv_h->pv_address_va == va)) {
@@ -1132,14 +1166,18 @@ pmap_enter_options(
                     panic("pmap_enter_options: duplicate pv_h %p", pv_h);
                 e = e->pv_next;
             }
-            /* Add a new pv_e. */
-#if 0
+
+            /* Add a new pv_e. This is a leaf mapping. */
             if(pv_e == (pv_entry_t)0) {
+                /* No new pv_e, grab a new one from the Zone. */
                 pv_e = (pv_entry_t)zalloc(pve_zone);
                 if(!pv_e) {
                     panic("pmap_enter_options: failed to grab a leaf node\n");
                 }
+                kprintf("pmap_enter_options: PV_GRAB_LEAF(), leaf node %p, head node %p\n", pv_e, pv_h);
+                goto Retry;
             }
+
             pv_e->pv_address_va = va;
             pv_e->pv_pmap = pmap;
             pv_e->pv_next = pv_h->pv_next;
@@ -1147,14 +1185,6 @@ pmap_enter_options(
                 pv_e->pv_flags |= VM_MEM_WIRED;
             pv_h->pv_next = pv_e;
             pv_e = (pv_entry_t)0;
-#endif
-
-            /* Shortcircuit, use above definition when zalloc bug is fixed, probable issue with spl. */
-            pv_h->pv_address_va = va;
-            pv_h->pv_pmap = pmap;
-            pv_h->pv_next = (pv_entry_t)0;
-            if(wired)
-                pv_h->pv_flags |= VM_MEM_WIRED;
         }
     }
 
@@ -1162,6 +1192,8 @@ pmap_enter_options(
     pmap->pm_stats.resident_count++;
     if(wired)
         pmap->pm_stats.wired_count++;
+
+    /* !!! IMPLEMENT 'pmap_vm_prot_to_page_flags' !!! */
     
     /* XXX protection is not implemented right now, all pages are 'RWX'. */
     uint32_t template_pte = ((pa << PAGE_SHIFT) & L2_ADDR_MASK) | L2_SMALL_PAGE | L2_ACCESS_PRW;
@@ -1215,7 +1247,10 @@ pmap_init(void)
     pmap_zone = zinit((sizeof(struct pmap)), 400 * (sizeof(struct pmap)), 4096, "pmap_pmap");
 
     /* Expandable zone. */
-    pve_zone = zinit((sizeof(pv_entry)), 10000 * (sizeof(pv_entry)), 4096, "pmap_pve");
+    pve_zone = zinit((sizeof(struct __pv_entry__)), 10000 * (sizeof(struct __pv_entry__)), 4096, "pmap_pve");
+
+    /* Initialize the free list lock. */
+    simple_lock_init(&pv_free_list_lock, 0);
 
     /* Set up the core VM object. */
     pmap_object = &pmap_object_store;
@@ -1255,24 +1290,56 @@ pmap_remove_range(pmap_t pmap, vm_map_offset_t start_vaddr, pt_entry_t* spte, pt
 
         /* Get the index for the PV table. */
         ppnum_t pai = pa_index(*cpte & L2_ADDR_MASK);
+        kprintf("pmap_remove_range: cpte %x, *cpte: %x\n", cpte, *cpte);
+        kprintf("pmap_remove_range: pmap %p pai %d %x vaddr %x\n", pmap, pai, pai << PAGE_SHIFT, start_vaddr);
 
         /* Remove the entry from the PV table. */
         {
             pv_entry_t  pv_h, prev, cur;
             pv_h = pai_to_pvh(pai);
-            if(pv_h->pv_pmap == PMAP_NULL)
-                panic("pmap_remove_range: null pmap\n");
 
-            panic("pmap_remove_range: finish this path too\n");
+            /*
+             * It's possible that there were pages that were initialized before 'pmap' went up. 
+             * This hack needs to DIE.
+             */
+
+            if(pv_h->pv_pmap == PMAP_NULL) {
+                kprintf("pmap_remove_range: null pv_h->pmap (pmap %p, pv_h %p, pai %d)\n", pmap, pv_h, pai);
+                goto out;
+            }
+
+            /* XXX ARM */
+            if(pv_h->pv_address_va == vaddr && pv_h->pv_pmap == pmap) {
+                cur = pv_h->pv_next;
+                if(cur != (pv_entry_t)0) {
+                    *pv_h = *cur;
+                    zfree(pve_zone, cur);
+                } else {
+                    pv_h->pv_pmap = PMAP_NULL;
+                }
+            } else {
+                cur = pv_h;
+                while(cur->pv_address_va != vaddr || cur->pv_pmap != pmap) {
+                    prev = cur;
+                    if((cur = prev->pv_next) == (pv_entry_t)0) {
+                        panic("pmap_remove_ranges: mapping not in pv_list!\n");
+                    }
+                }
+                prev->pv_next = cur->pv_next;
+                zfree(pve_zone, cur);
+            }
         }
     }
-
+out:
     /* Invalidate all TLBs. */
     flush_mmu_tlb();
 
+
     /* Make sure the amount removed isn't... weird. */
-    assert(pmap->pm_stats.resident_count > num_removed);
+    assert(pmap->pm_stats.resident_count >= num_removed);
     OSAddAtomic(-num_removed, &pmap->pm_stats.resident_count);
+    assert(pmap->pm_stats.wired_count >= num_unwired);
+    OSAddAtomic(-num_unwired, &pmap->pm_stats.wired_count);
 
     return;
 }
@@ -1288,15 +1355,15 @@ pmap_remove(
     vm_offset_t s,
     vm_offset_t e)
 {
-    remove;
-
     spl_t spl;
     vm_offset_t tte;
-    vm_offset_t *spte, *epte, l;
+    vm_offset_t *spte, *epte, l = s;
 
     /* Verify the pages are page aligned. */
     assert(!(s & PAGE_MASK));
     assert(!(e & PAGE_MASK));
+
+    printf("pmap_remove(%p,%x,%x)\n", map, s, e);
 
     /* High Priority. */
     SPLVM(spl);
@@ -1318,9 +1385,8 @@ pmap_remove(
 
             /* Special treatment for a page table. */ 
             if((*(vm_offset_t*)tte & ARM_PAGE_MASK_VALUE) == ARM_PAGE_PAGE_TABLE) {
-                spte = (vm_offset_t*)phys_to_virt((*(vm_offset_t*)(tte)) & L1_PTE_ADDR_MASK);
-                spte = &spte[pte_offset(s)];
-                epte = &spte[pte_offset(l)];
+                spte = (vm_offset_t*)pmap_pte(map, s);
+                epte = (vm_offset_t*)pmap_pte(map, l);
                 is_sect = FALSE;
             }
 
@@ -1366,4 +1432,102 @@ pmap_create(ledger_t ledger, vm_map_size_t size, __unused boolean_t is_64bit)
 
     /* Done. */
     return our_pmap;
+}
+
+/**
+ * pmap_page_protect
+ *
+ * Lower the protections on a set of mappings.
+ */
+void
+pmap_page_protect(ppnum_t pn, vm_prot_t prot)
+{
+    boolean_t remove;
+    spl_t spl;
+    pv_entry_t pv_h, prev, pv_e;
+
+    /* Verify it's not a fictitious page. */
+    assert(pn != vm_page_fictitious_addr);
+
+    /* Verify said page is managed by us. */
+    assert(pmap_initialized);
+    if(!pmap_valid_page(pn)) {
+        return;
+    }
+
+    /* Determine the new protection. */
+    switch (prot) {
+        case VM_PROT_READ:
+        case VM_PROT_READ|VM_PROT_EXECUTE:
+            remove = FALSE;
+            break;
+        case VM_PROT_ALL:
+            return; /* nothing to do */
+        default:
+            remove = TRUE;
+            break;
+    }
+
+    /* Set a high priority level. */
+    SPLVM(spl);
+
+    /* Walk down the PV listings and remove the entries. */
+    pv_h = pai_to_pvh(pn);
+
+    if(pv_h->pv_pmap != PMAP_NULL) {
+        prev = pv_e = pv_h;
+        do {
+            vm_map_offset_t vaddr;
+            pt_entry_t pte;
+            pmap_t pmap;
+
+            pmap = pv_e->pv_pmap;
+            vaddr = pv_e->pv_address_va;
+            pte = pmap_pte(pmap, vaddr);
+            if(!pte) {
+                kprintf("pmap_page_protect pmap 0x%x pn 0x%x vaddr 0x%llx\n", pmap, pn, vaddr);
+                panic("pmap_page_protect");
+            }
+
+            /* Remove the mapping if a new protection is NONE or if write-protecting a kernel mapping. */
+            if(remove || pmap == kernel_pmap) {
+                /* Remove the mapping. */
+                *(pt_entry_t*)pte = 0;
+                flush_mmu_single(vaddr);
+                pv_h->pv_flags &= (VM_MEM_MODIFIED | VM_MEM_REFERENCED);
+
+                /* Decrement the resident count. */
+                OSAddAtomic(-1, &pmap->pm_stats.resident_count);
+
+                /* Remove the PV entry. */
+                if(pv_e == pv_h) {
+                    /* Fix up head later. */
+                    pv_h->pv_pmap = PMAP_NULL;
+                } else {
+                    /* Free the leaf node. */
+                    prev->pv_next = pv_e->pv_next;
+                    zfree(pve_zone, pv_e);
+                }
+            } else {
+                /* Write protect. */
+#if 0
+                *(pt_entry_t) |= (1 << 11);     /* XXX FIX */
+#endif
+                flush_mmu_single(vaddr);
+                prev = pv_e;
+            }
+        } while ((pv_e = prev->pv_next) != (pv_entry_t)0);
+
+        /* If the pv_head mapping was removed, fix it up. */
+        if(pv_h->pv_pmap == PMAP_NULL) {
+            pv_e = pv_h->pv_next;
+            if(pv_e != (pv_entry_t)0) {
+                *pv_e = *pv_h;
+                zfree(pve_zone, pv_e);
+            }
+        }
+    }
+
+    /* Return. */
+    SPLX(spl);
 }

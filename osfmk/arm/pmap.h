@@ -71,7 +71,7 @@ struct pmap {
     vaddr_t         pm_l2_cache;    /* L2 page tables */
     decl_simple_lock_data(,lock)    /* lock on map */
     int             pm_refcnt;      /* pmap reference count */
-    ledger_t        pm_ledger;      /* self ledger */
+    ledger_t        ledger;         /* self ledger */
     boolean_t       pm_shared;      /* nested pmap? */
     int             pm_nx;          /* protection for pmap */
     task_map_t      pm_task_map;    /* process task map */

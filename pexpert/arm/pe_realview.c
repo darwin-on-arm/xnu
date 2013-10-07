@@ -70,7 +70,7 @@ static uint64_t     clock_absolute_time = 0;
 static void timer_configure(void)
 {
     uint64_t hz = 32000;
-    clock_decrementer = (hz / 700UL);     // For 500Hz.
+    clock_decrementer = (hz / 7UL);     // For 500Hz.
     
     gPEClockFrequencyInfo.timebase_frequency_hz = hz;
     
@@ -212,11 +212,11 @@ void RealView_handle_interrupt(void* context)
     ack = HARDWARE_REGISTER(gRealviewPicBase + 0xC);
 
     /* Update absolute time */
+    RealView_timer_enabled(FALSE);
     clock_absolute_time += (clock_decrementer - RealView_timer_value());
     
     /* Kill the timer */
     HARDWARE_REGISTER(gRealviewTimerBase + TIMER_INTCLR) = 1;
-
     rtclock_intr((arm_saved_state_t*) context);
     
     /* Restart timer. */
