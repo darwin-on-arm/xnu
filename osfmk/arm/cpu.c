@@ -84,7 +84,6 @@ cpu_init(void)
 #else
     cdp->cpu_subtype = CPU_SUBTYPE_ARM_ALL;
 #endif
-
 }
 
 /**
@@ -131,13 +130,20 @@ cpu_data_t* current_cpu_datap(void)
  */
 processor_t cpu_processor_alloc(boolean_t is_boot_cpu)
 {
+    int ret;
+    processor_t proc;
+
 	if (is_boot_cpu) {
 		return &BootProcessor;
     }
 
-    /* Should now kalloc one since we have VM now */
-    
-    return NULL;
+    /* Allocate a new processor. */
+    ret = kmem_alloc(kernel_map, (vm_offset_t *) &proc, sizeof(*proc));
+    if (ret != KERN_SUCCESS)
+        return NULL;
+
+    bzero((void *) proc, sizeof(*proc));
+    return proc;
 }
 
 /**
@@ -173,38 +179,64 @@ cpu_type_t cpu_type(void)
 	return current_cpu_datap()->cpu_type;
 }
 
-
+/**
+ * slot_type
+ *
+ * Return the current cpu type for a specified processor.
+ */
 cpu_type_t
-slot_type(
-	int		slot_num)
+slot_type(int slot_num)
 {
 	return (cpu_datap(slot_num)->cpu_type);
 }
 
+/**
+ * slot_subtype
+ *
+ * Return the current cpu subtype for a specified processor.
+ */
 cpu_subtype_t
-slot_subtype(
-	int		slot_num)
+slot_subtype(int slot_num)
 {
 	return (cpu_datap(slot_num)->cpu_subtype);
 }
 
+/**
+ * slot_threadtype
+ *
+ * Return the current SMT type for a specified processor.
+ */
 cpu_threadtype_t
-slot_threadtype(
-	int		slot_num)
+slot_threadtype(int slot_num)
 {
 	return CPU_THREADTYPE_NONE;
 }
 
+/**
+ * cpu_subtype
+ *
+ * Return the current cpu type for the current processor.
+ */
 cpu_subtype_t cpu_subtype(void)
 {
 	return current_cpu_datap()->cpu_subtype;
 }
 
+/**
+ * cpu_threadtype
+ *
+ * Return the current SMT type for the current processor.
+ */
 cpu_threadtype_t cpu_threadtype(void)
 {
 	return CPU_THREADTYPE_NONE;
 }
 
+/**
+ * ast_pending
+ *
+ * Returns the current pending Asynchronous System Trap.
+ */
 ast_t* ast_pending(void)
 {
     return (&current_cpu_datap()->cpu_pending_ast);

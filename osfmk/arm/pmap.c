@@ -1054,6 +1054,8 @@ pmap_expand(pmap_t map, vm_offset_t v)
     vm_offset_t* tte = (vm_offset_t*)pmap_tte(map, v);
     vm_page_t page = pmap_grab_page();
 
+    /* xxx we need to free pages from an expanded pmap */
+
     assert(tte);
 
     if((*tte & ARM_PAGE_MASK_VALUE) == ARM_PAGE_SECTION)
@@ -1290,7 +1292,8 @@ pmap_remove_range(pmap_t pmap, vm_map_offset_t start_vaddr, pt_entry_t* spte, pt
 
         /* Get the index for the PV table. */
         ppnum_t pai = pa_index(*cpte & L2_ADDR_MASK);
-        kprintf("pmap_remove_range: cpte %x, *cpte: %x\n", cpte, *cpte);
+
+        kprintf("pmap_remove_range: cpte %x, *cpte: %x, epte %x\n", cpte, *cpte, epte);
         kprintf("pmap_remove_range: pmap %p pai %d %x vaddr %x\n", pmap, pai, pai << PAGE_SHIFT, start_vaddr);
 
         /* Remove the entry from the PV table. */
@@ -1363,7 +1366,10 @@ pmap_remove(
     assert(!(s & PAGE_MASK));
     assert(!(e & PAGE_MASK));
 
+    /* XXX if the address to remove is greater than 1MB this is broken */
+#if 0
     printf("pmap_remove(%p,%x,%x)\n", map, s, e);
+#endif
 
     /* High Priority. */
     SPLVM(spl);
@@ -1372,7 +1378,7 @@ pmap_remove(
         /* Grab the TTE. */
         tte = pmap_tte(map, l);
 
-        /* 1MB section size. */
+        /* 1MB section size. eeeeee */
         l = (s + (1 * 1024 * 1024));
 
         /* Make sure the TTE isn't a fault one. */
@@ -1386,7 +1392,7 @@ pmap_remove(
             /* Special treatment for a page table. */ 
             if((*(vm_offset_t*)tte & ARM_PAGE_MASK_VALUE) == ARM_PAGE_PAGE_TABLE) {
                 spte = (vm_offset_t*)pmap_pte(map, s);
-                epte = (vm_offset_t*)pmap_pte(map, l);
+                epte = (vm_offset_t*)pmap_pte(map, e);
                 is_sect = FALSE;
             }
 
@@ -1510,6 +1516,7 @@ pmap_page_protect(ppnum_t pn, vm_prot_t prot)
                 }
             } else {
                 /* Write protect. */
+                Debugger("pmap_page_protect: Write protect mapping");
 #if 0
                 *(pt_entry_t) |= (1 << 11);     /* XXX FIX */
 #endif
@@ -1530,4 +1537,92 @@ pmap_page_protect(ppnum_t pn, vm_prot_t prot)
 
     /* Return. */
     SPLX(spl);
+}
+
+/**
+ * pmap_deallocate_l1
+ *
+ * Deallocate the allocated L1 translation table.
+ */
+void
+pmap_deallocate_l1(pmap_t pmap)
+{
+    uint32_t    ttb_base = pmap->pm_l1_phys;
+    vm_page_t   m;
+
+    /* Lock the VM object. */
+    vm_object_lock(pmap_object);
+
+    /* Look up the page. */
+    m = vm_page_lookup(pmap_object, (vm_object_offset_t)((ttb_base >> PAGE_SHIFT) - (gPhysBase >> PAGE_SHIFT)));
+    assert(m);
+
+    /* Got it, now free it. */
+    VM_PAGE_FREE(m);
+
+    /* Done. */
+    vm_object_unlock(pmap_object);
+
+    /* Invalidation of the entire pmap should be done. */
+    return;
+}
+
+/**
+ * pmap_destroy
+ *
+ * Destroy the current physical map.
+ */
+void
+pmap_destroy(pmap_t pmap)
+{
+    spl_t spl;
+    int refcnt;
+
+    /* Some necessary prerequisites. */
+    assert(pmap_initialized);
+
+    /* NEVER EVER EVER DESTROY THE KERNEL PMAP */
+    if(pmap == kernel_pmap) 
+        panic("pmap_destroy: attempting to destroy kernel_pmap");
+
+    SPLVM(spl);
+
+    /* Okay, decrease the reference count. */
+    refcnt = --pmap->pm_refcnt;
+    if(refcnt == 0) {
+        /* We might be using this pmap, invalidate all TLBs. */
+        flush_mmu_tlb();
+    }
+
+    /* Unlock the pmap system. */
+    SPLX(spl);
+
+    /* If the pmap still has a reference count, we don't kill it. */
+    if(refcnt != 0) {
+        return;
+    }
+
+    /* xxx we need to free pages from an expanded pmap */
+
+    /* Free the associated objects with the pmap first. */
+    pmap_deallocate_l1(pmap);
+    ledger_dereference(pmap->ledger);
+
+    /* Free the actual pmap. */
+    zfree(pmap_zone, pmap);
+
+    /* Done. */
+    return;
+}
+
+/**
+ * pmap_protect
+ *
+ * Lower the specified protections on a certain map from sva to eva using prot prot.
+ */
+void
+pmap_protect(pmap_t map, vm_map_offset_t sva, vm_map_offset_t eva, vm_prot_t prot)
+{
+    /* xxx finish */
+    return;
 }

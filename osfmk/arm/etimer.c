@@ -185,9 +185,9 @@ mpqueue_head_t* timer_queue_assign(uint64_t deadline)
 		if (deadline < cdp->rt_timer.deadline) {
 			etimer_set_deadline(deadline);
         }
-	}
-	else
+	} else {
 		queue = &cpu_datap(master_cpu)->rt_timer.queue;
+	}
 
 	return (queue);
 }
@@ -213,7 +213,8 @@ uint64_t timer_call_slop(uint64_t deadline)
 void timer_queue_cancel(mpqueue_head_t *queue, uint64_t deadline, uint64_t new_deadline)
 {
     if (queue == &current_cpu_datap()->rt_timer.queue) {
-        if (deadline < new_deadline)
+        if (deadline < new_deadline) {
             etimer_set_deadline(new_deadline); 
+        }
     }
 }

@@ -42,7 +42,7 @@
 char* PE_boot_args(void)
 {
 #ifdef BOARD_CONFIG_ARMPBA8
-    return "serial=3 kextlog=0xffffffff debug=0x16e"; 
+    return "serial=3 kextlog=0xffffffff debug=0xffffe"; 
 #else
     return ((boot_args *)PE_state.bootArgs)->CommandLine;
 #endif

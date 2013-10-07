@@ -51,6 +51,8 @@
 #include <libkern/OSByteOrder.h>
 #include <arm/armops.h>
 
+/* xxx prot flags are broken so they're all VM_PROT_READ */
+
 typedef enum {
     SLEH_ABORT_TYPE_PREFETCH_ABORT = 3,
     SLEH_ABORT_TYPE_DATA_ABORT = 4,
@@ -60,6 +62,16 @@ void
 arm_mach_do_exception(void)
 {
     exception_triage(0, 0, 0);
+}
+
+void
+doexception(int exc, mach_exception_code_t code, mach_exception_subcode_t sub)
+{
+    mach_exception_data_type_t   codes[EXCEPTION_CODE_MAX];
+
+    codes[0] = code;    
+    codes[1] = sub;
+    exception_triage(exc, codes, 2);
 }
 
 /**
@@ -118,7 +130,7 @@ static inline uint32_t __arm_get_ifar(void)
 static int __abort_count = 0;
 void sleh_abort(void* context, int reason)
 {
-    uint32_t    dfsr, dfar, ifsr, ifar, cpsr;
+    uint32_t    dfsr, dfar, ifsr, ifar, cpsr, exception_type = 0, exception_subcode = 0;
     arm_saved_state_t* arm_ctx = (arm_saved_state_t*)context;
     thread_t thread = current_thread();
 
@@ -222,12 +234,102 @@ void sleh_abort(void* context, int reason)
         }
     /* User mode (ARM User) */
     } else if(cpsr == 0x10) {
-        panic("FIX THIS\n");
+        switch(reason) {
+            /* User prefetch abort */
+            case SLEH_ABORT_TYPE_PREFETCH_ABORT: {
+                /* Attempt to fault it. Same as data except address comes from IFAR. */
+                vm_map_t map;
+                kern_return_t code;
+
+                /* Get the current thread map. */
+                map = thread->map;
+
+                /* Attempt to fault the page. */
+                code = vm_fault(map, vm_map_trunc_page(ifar), (VM_PROT_READ), FALSE, THREAD_UNINT, NULL, vm_map_trunc_page(0));
+
+                if((code != KERN_SUCCESS) && (code != KERN_ABORTED)) {
+                    exception_type = EXC_BAD_ACCESS;
+                    exception_subcode = ifar;
+
+                    /* Debug only. */
+                    printf("%s[%d]: usermode prefetch abort, EXC_BAD_ACCESS at 0x%08x in map %p (pmap %p) (ifsr: 0x%08x)\n",
+                           proc_name_address(thread->task->bsd_info), proc_pid(thread->task->bsd_info),
+                           ifar, map, map->pmap, ifsr);
+                    printf("Thread has ARM register state:\n"
+                           "    r0: 0x%08x  r1: 0x%08x  r2: 0x%08x  r3: 0x%08x\n"
+                           "    r4: 0x%08x  r5: 0x%08x  r6: 0x%08x  r7: 0x%08x\n"
+                           "    r8: 0x%08x  r9: 0x%08x r10: 0x%08x r11: 0x%08x\n"
+                           "   r12: 0x%08x  sp: 0x%08x  lr: 0x%08x  pc: 0x%08x\n"
+                           "  cpsr: 0x%08x\n", arm_ctx->r[0], arm_ctx->r[1], arm_ctx->r[2], arm_ctx->r[3],
+                           arm_ctx->r[4], arm_ctx->r[5], arm_ctx->r[6], arm_ctx->r[7], arm_ctx->r[8],
+                           arm_ctx->r[9], arm_ctx->r[10], arm_ctx->r[11], arm_ctx->r[12], arm_ctx->sp,
+                           arm_ctx->lr, arm_ctx->pc, arm_ctx->cpsr
+                           );
+                    /* Even more debug. */
+                    panic("sleh_abort: USER DEBUG");
+                } else {
+                    /* Retry execution of instruction. */
+                    __abort_count--;
+                    return;
+                }
+                break;
+            }
+            /* User Data Abort */
+            case SLEH_ABORT_TYPE_DATA_ABORT: {
+                /* Attempt to fault it. Same as instruction except address comes from DFAR. */
+                vm_map_t map;
+                kern_return_t code;
+
+                /* Get the current thread map. */
+                map = thread->map;
+
+                /* Attempt to fault the page. */
+                code = vm_fault(map, vm_map_trunc_page(dfar), (VM_PROT_READ), FALSE, THREAD_UNINT, NULL, vm_map_trunc_page(0));
+
+                if((code != KERN_SUCCESS) && (code != KERN_ABORTED)) {
+                    exception_type = EXC_BAD_ACCESS;
+                    exception_subcode = dfar;
+
+                    /* Only for debug. */
+                    printf("%s[%d]: usermode data abort, EXC_BAD_ACCESS at 0x%08x in map %p (pmap %p) (dfsr: 0x%08x)\n",
+                           proc_name_address(thread->task->bsd_info), proc_pid(thread->task->bsd_info),
+                           dfar, map, map->pmap, dfsr);
+                    printf("Thread has ARM register state:\n"
+                           "    r0: 0x%08x  r1: 0x%08x  r2: 0x%08x  r3: 0x%08x\n"
+                           "    r4: 0x%08x  r5: 0x%08x  r6: 0x%08x  r7: 0x%08x\n"
+                           "    r8: 0x%08x  r9: 0x%08x r10: 0x%08x r11: 0x%08x\n"
+                           "   r12: 0x%08x  sp: 0x%08x  lr: 0x%08x  pc: 0x%08x\n"
+                           "  cpsr: 0x%08x\n", arm_ctx->r[0], arm_ctx->r[1], arm_ctx->r[2], arm_ctx->r[3],
+                           arm_ctx->r[4], arm_ctx->r[5], arm_ctx->r[6], arm_ctx->r[7], arm_ctx->r[8],
+                           arm_ctx->r[9], arm_ctx->r[10], arm_ctx->r[11], arm_ctx->r[12], arm_ctx->sp,
+                           arm_ctx->lr, arm_ctx->pc, arm_ctx->cpsr
+                           );
+                    panic("sleh_abort: USER DEBUG");
+                } else {
+                    /* Retry execution of instruction. */
+                    __abort_count--;
+                    return;
+                }
+                break;
+            }
+            default:
+                exception_type = EXC_BREAKPOINT;
+                exception_subcode = 0;
+                break;
+        }
     /* Unknown mode. */
     } else {
         panic("sleh_abort: Abort in unknown mode, cpsr: 0x%08x\n", cpsr);
     }
 
+    /* If there was a user exception, handle it. */
+    if(exception_type) {
+        __abort_count--;
+        doexception(exception_type, 0, exception_subcode);
+    }
+
+    /* Done. */
+    return;
 }
 
 /**
