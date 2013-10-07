@@ -1138,9 +1138,6 @@ Retry:
         pai = (pa);
         pv_h = pai_to_pvh(pai);
 
-        kprintf("pai %d pa %d (%x) va %x pv_h %p pmap %p pv_h->pmap %p pv_h->pv_address_va %x\n",
-                pai, pa, pa << PAGE_SHIFT, va, pv_h, pmap, pv_h->pv_pmap, pv_h->pv_address_va);
-
         /* Check to see if it exists, if it does, then make it null. */
         if((pv_h->pv_pmap == pmap) && (pv_h->pv_address_va == va)) {
             pv_entry_t cur;
@@ -1188,6 +1185,10 @@ Retry:
             pv_h->pv_next = pv_e;
             pv_e = (pv_entry_t)0;
         }
+#ifdef DEBUG_PMAP
+    kprintf("pmap_enter: pai %d pa %d (%x) va %x pv_h %p pmap %p pv_h->pmap %p pv_h->pv_address_va %x\n",
+            pai, pa, pa << PAGE_SHIFT, va, pv_h, pmap, pv_h->pv_pmap, pv_h->pv_address_va);
+#endif
     }
 
     /* Enter and count the mapping. */
@@ -1267,7 +1268,7 @@ pmap_init(void)
 /**
  * pmap_remove_range
  *
- * Remove a range of hardware page-table entries.
+ * Remove a range of hardware page-table entries. (This function does not support section mappings.)
  */
 void
 pmap_remove_range(pmap_t pmap, vm_map_offset_t start_vaddr, pt_entry_t* spte, pt_entry_t *epte, boolean_t is_sect)
@@ -1277,13 +1278,23 @@ pmap_remove_range(pmap_t pmap, vm_map_offset_t start_vaddr, pt_entry_t* spte, pt
     vm_size_t       our_page_size = (is_sect) ? (1 * 1024 * 1024) : PAGE_SIZE;
     int             num_removed = 0, num_unwired = 0;
 
+    /* Make sure the Cpte/Epte are within sane boundaries. (256 entries, one L2 area size.) */
+    if(((vm_offset_t)epte - (vm_offset_t)cpte) > L2_SIZE)
+        panic("pmap_remove_range: attempting to remove more ptes than 256!\n");
+
     for(cpte = spte, vaddr = start_vaddr; cpte < epte; cpte++, vaddr += our_page_size) {
         /* Start nuking the range. */
         pt_entry_t *p = cpte;
         if(!*cpte & L2_ADDR_MASK)
             continue;
 
+        /* We only support 4kB pages right now. */
+        if(!(*cpte & ARM_PTE_DESCRIPTOR_4K))
+            panic("pmap_remove_range: attempting to remove non page, what the hell?");
+
         num_removed++;
+
+        /* xxx we might be on the range being destroyed??? */
 
         /* If the pmap subsystem isn't initialized, just go on. (Remove mappings?) */
         if(!pmap_initialized) {
@@ -1293,8 +1304,10 @@ pmap_remove_range(pmap_t pmap, vm_map_offset_t start_vaddr, pt_entry_t* spte, pt
         /* Get the index for the PV table. */
         ppnum_t pai = pa_index(*cpte & L2_ADDR_MASK);
 
+#ifdef DEBUG_PMAP
         kprintf("pmap_remove_range: cpte %x, *cpte: %x, epte %x\n", cpte, *cpte, epte);
         kprintf("pmap_remove_range: pmap %p pai %d %x vaddr %x\n", pmap, pai, pai << PAGE_SHIFT, start_vaddr);
+#endif
 
         /* Remove the entry from the PV table. */
         {
@@ -1307,7 +1320,9 @@ pmap_remove_range(pmap_t pmap, vm_map_offset_t start_vaddr, pt_entry_t* spte, pt
              */
 
             if(pv_h->pv_pmap == PMAP_NULL) {
+#ifdef DEBUG_PMAP
                 kprintf("pmap_remove_range: null pv_h->pmap (pmap %p, pv_h %p, pai %d)\n", pmap, pv_h, pai);
+#endif
                 goto out;
             }
 
@@ -1319,6 +1334,7 @@ pmap_remove_range(pmap_t pmap, vm_map_offset_t start_vaddr, pt_entry_t* spte, pt
                     zfree(pve_zone, cur);
                 } else {
                     pv_h->pv_pmap = PMAP_NULL;
+                    pv_h->pv_address_va = 0;
                 }
             } else {
                 cur = pv_h;
@@ -1336,7 +1352,6 @@ pmap_remove_range(pmap_t pmap, vm_map_offset_t start_vaddr, pt_entry_t* spte, pt
 out:
     /* Invalidate all TLBs. */
     flush_mmu_tlb();
-
 
     /* Make sure the amount removed isn't... weird. */
     assert(pmap->pm_stats.resident_count >= num_removed);
@@ -1366,9 +1381,9 @@ pmap_remove(
     assert(!(s & PAGE_MASK));
     assert(!(e & PAGE_MASK));
 
+#ifdef DEBUG_PMAP
     /* XXX if the address to remove is greater than 1MB this is broken */
-#if 0
-    printf("pmap_remove(%p,%x,%x)\n", map, s, e);
+    kprintf("pmap_remove(%p,%x,%x)\n", map, s, e);
 #endif
 
     /* High Priority. */

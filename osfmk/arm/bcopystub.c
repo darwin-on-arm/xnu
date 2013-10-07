@@ -51,16 +51,14 @@ copypv(addr64_t src64, addr64_t snk64, unsigned int size, int which)
     if ((which & (cppvPsrc | cppvPsnk)) == (cppvPsrc | cppvPsnk))
             bothphys = 1;                           /* both are physical */
 
-#if 0
     kprintf("copypv(%llx,%llx,%d,%x(%d))\n", src64, snk64, size, which, which);
-#endif
 
     /* Do a physical copy in if requested, else, move data out. */
     if(which & cppvPsrc)
-        src64 = phys_to_virt(src64 << PAGE_SHIFT);
+        src64 = phys_to_virt(src64);
 
     if(which & cppvPsnk)
-        snk64 = phys_to_virt(snk64 << PAGE_SHIFT);
+        snk64 = phys_to_virt(snk64);
 
     /* If it's a kernel copy, use ovbcopy. */
     if(!(which & (cppvKmap | cppvPsrc)))

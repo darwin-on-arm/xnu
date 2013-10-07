@@ -123,6 +123,51 @@ static inline uint32_t __arm_get_ifar(void)
 }
 
 /**
+ * ifsr_to_human
+ *
+ * Return a human readable representation of the IFSR bits.
+ */
+static char* ifsr_to_human(uint32_t ifsr) {
+    switch((ifsr & 0xF)) {
+        case 0:
+            return "No function, reset value";
+        case 1:
+            return "Alignment fault";
+        case 2:
+            return "Debug event fault";
+        case 3:
+            return "Access flag fault on section";
+        case 4:
+            return "No function";
+        case 5:
+            return "Translation fault on section";
+        case 6:
+            return "Access flag fault on page";
+        case 7:
+            return "Translation fault on page";
+        case 8:
+            return "Precise external abort";
+        case 9:
+            return "Domain fault on section";
+        case 10:
+            return "No function";
+        case 11:
+            return "Domain fault on page";
+        case 12:
+            return "External abort on translation, level one";
+        case 13:
+            return "Permission fault on section";
+        case 14:
+            return "External abort on translation, level two";
+        case 15:
+            return "Permission fault on page";
+        default:
+            return "Unknown";
+    }
+    return "Unknown";
+}
+
+/**
  * sleh_abort
  *
  * Handle prefetch and data aborts. (EXC_BAD_ACCESS IS NOT HERE YET)
@@ -252,9 +297,9 @@ void sleh_abort(void* context, int reason)
                     exception_subcode = ifar;
 
                     /* Debug only. */
-                    printf("%s[%d]: usermode prefetch abort, EXC_BAD_ACCESS at 0x%08x in map %p (pmap %p) (ifsr: 0x%08x)\n",
+                    printf("%s[%d]: usermode prefetch abort, EXC_BAD_ACCESS at 0x%08x in map %p (pmap %p) (%s)\n",
                            proc_name_address(thread->task->bsd_info), proc_pid(thread->task->bsd_info),
-                           ifar, map, map->pmap, ifsr);
+                           ifar, map, map->pmap, ifsr_to_human(ifsr));
                     printf("Thread has ARM register state:\n"
                            "    r0: 0x%08x  r1: 0x%08x  r2: 0x%08x  r3: 0x%08x\n"
                            "    r4: 0x%08x  r5: 0x%08x  r6: 0x%08x  r7: 0x%08x\n"
@@ -291,9 +336,9 @@ void sleh_abort(void* context, int reason)
                     exception_subcode = dfar;
 
                     /* Only for debug. */
-                    printf("%s[%d]: usermode data abort, EXC_BAD_ACCESS at 0x%08x in map %p (pmap %p) (dfsr: 0x%08x)\n",
+                    printf("%s[%d]: usermode data abort, EXC_BAD_ACCESS at 0x%08x in map %p (pmap %p) (%s)\n",
                            proc_name_address(thread->task->bsd_info), proc_pid(thread->task->bsd_info),
-                           dfar, map, map->pmap, dfsr);
+                           dfar, map, map->pmap, ifsr_to_human(dfsr));
                     printf("Thread has ARM register state:\n"
                            "    r0: 0x%08x  r1: 0x%08x  r2: 0x%08x  r3: 0x%08x\n"
                            "    r4: 0x%08x  r5: 0x%08x  r6: 0x%08x  r7: 0x%08x\n"

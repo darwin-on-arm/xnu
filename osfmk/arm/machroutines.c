@@ -164,7 +164,7 @@ void ovbcopy(void *from, void *to, vm_size_t bytes)
 void bzero_phys(addr64_t src64, uint32_t bytes)
 {
 #ifndef __LP64__
-    bzero(phys_to_virt((uint32_t)src64 << PAGE_SHIFT), bytes);
+    bzero(phys_to_virt((uint32_t)src64), bytes);
 #else
     bzero(phys_to_virt((uint64_t)src64), bytes);
 #endif
@@ -179,7 +179,7 @@ void bzero_phys(addr64_t src64, uint32_t bytes)
 void bcopy_phys(addr64_t src64, addr64_t dst64, vm_size_t bytes)
 {
 #ifndef __LP64__
-    bcopy(phys_to_virt((uint32_t)src64 << PAGE_SHIFT), phys_to_virt((uint32_t)dst64 << PAGE_SHIFT), bytes);
+    bcopy(phys_to_virt((uint32_t)src64), phys_to_virt((uint32_t)dst64), bytes);
 #else
     bcopy(phys_to_virt((uint64_t)src64), phys_to_virt((uint64_t)dst64), bytes);
 #endif
@@ -324,12 +324,31 @@ kvtophys(vm_offset_t addr)
 
 vm_size_t ml_nofault_copy(vm_offset_t virtsrc, vm_offset_t virtdst, vm_size_t size)
 {
-	/* BAD. */
+	addr64_t cur_phys_dst, cur_phys_src;
+	uint32_t count, nbytes = 0;
 
-    /* XXX fix this soon please to make KDP happy */
-    ovbcopy(virtsrc, virtdst, size);
+	while (size > 0) {
+		if (!(cur_phys_src = kvtophys(virtsrc)))
+			break;
+		if (!(cur_phys_dst = kvtophys(virtdst)))
+			break;
+		if (!pmap_valid_page(atop(cur_phys_dst)) || !pmap_valid_page(atop(cur_phys_src)))
+			break;
+		count = (uint32_t)(PAGE_SIZE - (cur_phys_src & PAGE_MASK));
+		if (count > (PAGE_SIZE - (cur_phys_dst & PAGE_MASK)))
+			count = (uint32_t)(PAGE_SIZE - (cur_phys_dst & PAGE_MASK));
+		if (count > size)
+			count = (uint32_t)size;
 
-    return size;
+		bcopy_phys(cur_phys_src, cur_phys_dst, count);
+
+		nbytes += count;
+		virtsrc += count;
+		virtdst += count;
+		size -= count;
+	}
+
+	return nbytes;
 }
 
 /*

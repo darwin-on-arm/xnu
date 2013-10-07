@@ -430,8 +430,11 @@ void panic_arm_backtrace(void *_frame, int nframes, const char *msg, boolean_t r
 	for (frame_index = 0; frame_index < nframes; frame_index++) {
 		vm_offset_t curframep = (vm_offset_t) frame;
         
-        if(frame <= VM_MIN_KERNEL_ADDRESS)
-            break;
+        if (!kvtophys(curframep) ||
+            !kvtophys(curframep + sizeof(cframe_t) - 1)) {
+            kdb_printf("No mapping exists for frame pointer\n");
+            goto invalid;
+        }
         
 		if (!curframep)
 			break;
@@ -503,11 +506,14 @@ void panic_arm_thread_backtrace(void *_frame, int nframes, const char *msg, bool
 	for (frame_index = 0; frame_index < nframes; frame_index++) {
 		vm_offset_t curframep = (vm_offset_t) frame;
         
-        if(frame <= VM_MIN_KERNEL_ADDRESS)
-            break;
-        
 		if (!curframep)
 			break;
+        
+        if (!kvtophys(curframep) ||
+            !kvtophys(curframep + sizeof(cframe_t) - 1)) {
+            kdb_printf("          No mapping exists for frame pointer\n");
+            goto invalid;
+        }
         
 		if (curframep & 0x3) {
 			kdb_printf("          Unaligned frame\n");
