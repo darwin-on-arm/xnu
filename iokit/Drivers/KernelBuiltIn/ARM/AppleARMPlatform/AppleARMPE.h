@@ -14,8 +14,8 @@
 #include <IOKit/IODeviceTreeSupport.h>
 #include "IOCPU.h"
 
-class ARMPlatformExpert : public IODTPlatformExpert {
-    OSDeclareDefaultStructors(ARMPlatformExpert);
+class AppleARMPE : public IODTPlatformExpert {
+    OSDeclareDefaultStructors(AppleARMPE);
 public:
     bool init(OSDictionary *propTable);
     IOService * probe(IOService *provider, SInt32 *score);

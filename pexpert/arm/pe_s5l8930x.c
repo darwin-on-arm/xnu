@@ -113,10 +113,10 @@ static void s5l8930x_clock_gate_switch(int gate, int state)
 static void timer_configure(void)
 {
     /* DUMMY */
-    uint64_t hz = 327680;
+    uint64_t hz = 24000000;
     gPEClockFrequencyInfo.timebase_frequency_hz = hz;
 
-    clock_decrementer = 24000;
+    clock_decrementer = 10000;
     kprintf(KPRINTF_PREFIX "decrementer frequency = %llu\n", clock_decrementer);    
 
     rtc_configure(hz);

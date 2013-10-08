@@ -9,29 +9,29 @@
 #include "AppleARMCPU.h"
 
 #define super IOCPU
-OSDefineMetaClassAndStructors(ARMCPU, IOCPU);
+OSDefineMetaClassAndStructors(AppleARMCPU, IOCPU);
 
-bool ARMCPU::init(OSDictionary *propTable) {
+bool AppleARMCPU::init(OSDictionary *propTable) {
     if (!super::init(propTable)) {
         panic("IOCPU failed to initialize");
     }
     return true;
 }
 
-void ARMCPU::ipiHandler(void* refCon, IOService* nub, int source) {
+void AppleARMCPU::ipiHandler(void* refCon, IOService* nub, int source) {
     if(ipi_handler)
         ipi_handler();
     return;
 }
 
-bool ARMCPU::start(IOService* provider) {
-    IOLog("ARMCPU::start: Starting ARM CPU IOKit provider...\n");
+bool AppleARMCPU::start(IOService* provider) {
+    IOLog("AppleARMCPU::start: Starting ARM CPU IOKit provider...\n");
     
     if(!super::start(provider)) {
         panic("Failed to start super IOCPU provider");
     }
     
-    gIC = new ARMDumbInterruptController;
+    gIC = new AppleARMGrandCentral;
     if(!gIC) {
         panic("Failed to alloc class for dumb interrupt controller, we suck hard");
     }
@@ -49,27 +49,27 @@ bool ARMCPU::start(IOService* provider) {
     return true;
 }
 
-void ARMCPU::initCPU(bool boot) {
-    IOLog("ARMCPU::initCPU(%p): we are here to serve!\n", this);
+void AppleARMCPU::initCPU(bool boot) {
+    IOLog("AppleARMCPU::initCPU(%p): we are here to serve!\n", this);
     if(gIC) {
         gIC->enableCPUInterrupt(this);
     }
     setCPUState(kIOCPUStateRunning);
 }
 
-void ARMCPU::quiesceCPU(void) {
+void AppleARMCPU::quiesceCPU(void) {
     return;
 }
 
-kern_return_t ARMCPU::startCPU(vm_offset_t start_paddr, vm_offset_t parg_addr) {
+kern_return_t AppleARMCPU::startCPU(vm_offset_t start_paddr, vm_offset_t parg_addr) {
     return KERN_FAILURE;
 }
 
-void ARMCPU::haltCPU(void) {
+void AppleARMCPU::haltCPU(void) {
     return;
 }
 
-const OSSymbol* ARMCPU::getCPUName(void) {
+const OSSymbol* AppleARMCPU::getCPUName(void) {
     return OSSymbol::withCStringNoCopy("Primary0");
 }
 
@@ -78,9 +78,9 @@ const OSSymbol* ARMCPU::getCPUName(void) {
  */
 #undef super
 #define super IOCPUInterruptController
-OSDefineMetaClassAndStructors(ARMDumbInterruptController, IOCPUInterruptController);
+OSDefineMetaClassAndStructors(AppleARMGrandCentral, IOCPUInterruptController);
 
-IOReturn ARMDumbInterruptController::handleInterrupt(void *refCon, IOService* nub, int source) {
+IOReturn AppleARMGrandCentral::handleInterrupt(void *refCon, IOService* nub, int source) {
     PE_LOG("Attempting to dispatch an interrupt! (%p, %p, %d)\n", refCon, nub, source);
     return super::handleInterrupt(refCon, nub, source);
 }

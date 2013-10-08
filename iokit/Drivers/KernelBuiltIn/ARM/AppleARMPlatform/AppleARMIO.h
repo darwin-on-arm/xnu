@@ -15,9 +15,12 @@
  * Very plaigirized from xnu-1228
  */
 
-class ARMIODevice : public IOService
+#define ARMIODevice AppleARMIODevice
+#define ARMIO AppleARMIOBus
+
+class AppleARMIODevice : public IOService
 {
-    OSDeclareDefaultStructors(ARMIODevice);
+    OSDeclareDefaultStructors(AppleARMIODevice);
     
 private:
     struct ExpansionData { };
@@ -28,16 +31,16 @@ public:
     virtual IOService *matchLocation(IOService *client);
     virtual IOReturn getResources( void );
     
-    OSMetaClassDeclareReservedUnused(ARMIODevice,  0);
-    OSMetaClassDeclareReservedUnused(ARMIODevice,  1);
-    OSMetaClassDeclareReservedUnused(ARMIODevice,  2);
-    OSMetaClassDeclareReservedUnused(ARMIODevice,  3);
+    OSMetaClassDeclareReservedUnused(AppleARMIODevice,  0);
+    OSMetaClassDeclareReservedUnused(AppleARMIODevice,  1);
+    OSMetaClassDeclareReservedUnused(AppleARMIODevice,  2);
+    OSMetaClassDeclareReservedUnused(AppleARMIODevice,  3);
 };
 
 
-class ARMIO : public IOService
+class AppleARMIOBus : public IOService
 {
-    OSDeclareAbstractStructors(ARMIO);
+    OSDeclareAbstractStructors(AppleARMIOBus);
     
     IOService *		fNub;
     IOMemoryMap *	fMemory;
@@ -62,10 +65,10 @@ public:
     
     virtual IOReturn getNubResources( IOService * nub );
     
-    OSMetaClassDeclareReservedUnused(ARMIO,  0);
-    OSMetaClassDeclareReservedUnused(ARMIO,  1);
-    OSMetaClassDeclareReservedUnused(ARMIO,  2);
-    OSMetaClassDeclareReservedUnused(ARMIO,  3);
+    OSMetaClassDeclareReservedUnused(AppleARMIOBus,  0);
+    OSMetaClassDeclareReservedUnused(AppleARMIOBus,  1);
+    OSMetaClassDeclareReservedUnused(AppleARMIOBus,  2);
+    OSMetaClassDeclareReservedUnused(AppleARMIOBus,  3);
 };
 
 

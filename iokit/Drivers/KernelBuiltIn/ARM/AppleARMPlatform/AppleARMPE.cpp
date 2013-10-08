@@ -13,9 +13,9 @@
 #define HIGH_SCORE  100000
 #define super IOPlatformExpert
 
-OSDefineMetaClassAndStructors(ARMPlatformExpert, IODTPlatformExpert);
+OSDefineMetaClassAndStructors(AppleARMPE, IODTPlatformExpert);
 
-bool ARMPlatformExpert::init(OSDictionary *propTable) {
+bool AppleARMPE::init(OSDictionary *propTable) {
     if (!super::init(propTable)) {
         panic("IOPlatformExpert failed to initialize");
     }
@@ -24,17 +24,17 @@ bool ARMPlatformExpert::init(OSDictionary *propTable) {
 
 extern const IORegistryPlane* gIODTPlane;
 
-void ARMPlatformExpert::registerNVRAMController(IONVRAMController * caller)
+void AppleARMPE::registerNVRAMController(IONVRAMController * caller)
 {
     publishResource("IONVRAM");
 }
 
-bool ARMPlatformExpert::start(IOService *provider) {
+bool AppleARMPE::start(IOService *provider) {
     DTEntry             entry;
     char*               dtype;
     unsigned int        size;
 
-    IOLog("ARMPlatformExpert::start: Welcome to the NeXT generation.\n");
+    IOLog("AppleARMPE::start: Welcome to the NeXT generation.\n");
 
     if(!super::start(provider)) {
         panic("IOPlatformExpert failed to start");
@@ -65,21 +65,21 @@ bool ARMPlatformExpert::start(IOService *provider) {
     return true;
 }
 
-const char * ARMPlatformExpert::deleteList ( void )
+const char * AppleARMPE::deleteList ( void )
 {
     return "";
 }
 
-const char * ARMPlatformExpert::excludeList( void )
+const char * AppleARMPE::excludeList( void )
 {
     return("'chosen', 'memory', 'options', 'aliases'");
 }
 
-IOService* ARMPlatformExpert::probe(IOService *provider, SInt32* score) {
+IOService* AppleARMPE::probe(IOService *provider, SInt32* score) {
     return this;
 }
 
-bool ARMPlatformExpert::getMachineName(char *name, int maxLength) {
+bool AppleARMPE::getMachineName(char *name, int maxLength) {
     strncpy(name, "generic-arm", maxLength);
     return true;
 }

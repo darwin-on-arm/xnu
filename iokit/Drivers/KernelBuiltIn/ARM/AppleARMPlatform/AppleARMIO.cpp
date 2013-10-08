@@ -15,17 +15,17 @@
 
 #define super IOService
 
-OSDefineMetaClassAndAbstractStructors(ARMIO, IOService);
-OSMetaClassDefineReservedUnused(ARMIO,  0);
-OSMetaClassDefineReservedUnused(ARMIO,  1);
-OSMetaClassDefineReservedUnused(ARMIO,  2);
-OSMetaClassDefineReservedUnused(ARMIO,  3);
+OSDefineMetaClassAndAbstractStructors(AppleARMIOBus, IOService);
+OSMetaClassDefineReservedUnused(AppleARMIOBus,  0);
+OSMetaClassDefineReservedUnused(AppleARMIOBus,  1);
+OSMetaClassDefineReservedUnused(AppleARMIOBus,  2);
+OSMetaClassDefineReservedUnused(AppleARMIOBus,  3);
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
 extern const IORegistryPlane* gIODTPlane;
 
-bool ARMIO::start( IOService * provider )
+bool AppleARMIOBus::start( IOService * provider )
 {
     if( !super::start( provider))
         return( false);
@@ -40,7 +40,7 @@ bool ARMIO::start( IOService * provider )
     return( true);
 }
 
-IOService * ARMIO::createNub( IORegistryEntry * from )
+IOService * AppleARMIOBus::createNub( IORegistryEntry * from )
 {
     IOService *	nub;
     
@@ -54,21 +54,21 @@ IOService * ARMIO::createNub( IORegistryEntry * from )
     return( nub);
 }
 
-void ARMIO::processNub(IOService * /*nub*/)
+void AppleARMIOBus::processNub(IOService * /*nub*/)
 {
 }
 
-const char * ARMIO::deleteList ( void )
+const char * AppleARMIOBus::deleteList ( void )
 {
     return( "('sd', 'st', 'disk', 'tape', 'pram', 'rtc', 'mouse')" );
 }
 
-const char * ARMIO::excludeList( void )
+const char * AppleARMIOBus::excludeList( void )
 {
     return( 0 );
 }
 
-void ARMIO::publishBelow( IORegistryEntry * root )
+void AppleARMIOBus::publishBelow( IORegistryEntry * root )
 {
     OSCollectionIterator *	kids;
     IORegistryEntry *		next;
@@ -102,14 +102,14 @@ void ARMIO::publishBelow( IORegistryEntry * root )
     }
 }
 
-bool ARMIO::compareNubName( const IOService * nub,
+bool AppleARMIOBus::compareNubName( const IOService * nub,
                                 OSString * name, OSString ** matched ) const
 {
     return( IODTCompareNubName( nub, name, matched )
            ||  nub->IORegistryEntry::compareName( name, matched ) );
 }
 
-IOReturn ARMIO::getNubResources( IOService * nub )
+IOReturn AppleARMIOBus::getNubResources( IOService * nub )
 {
     if( nub->getDeviceMemory())
         return( kIOReturnSuccess );
@@ -124,27 +124,27 @@ IOReturn ARMIO::getNubResources( IOService * nub )
 #undef super
 #define super IOService
 
-OSDefineMetaClassAndStructors(ARMIODevice, IOService);
-OSMetaClassDefineReservedUnused(ARMIODevice,  0);
-OSMetaClassDefineReservedUnused(ARMIODevice,  1);
-OSMetaClassDefineReservedUnused(ARMIODevice,  2);
-OSMetaClassDefineReservedUnused(ARMIODevice,  3);
+OSDefineMetaClassAndStructors(AppleARMIODevice, IOService);
+OSMetaClassDefineReservedUnused(AppleARMIODevice,  0);
+OSMetaClassDefineReservedUnused(AppleARMIODevice,  1);
+OSMetaClassDefineReservedUnused(AppleARMIODevice,  2);
+OSMetaClassDefineReservedUnused(AppleARMIODevice,  3);
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
-bool ARMIODevice::compareName( OSString * name,
+bool AppleARMIODevice::compareName( OSString * name,
                                    OSString ** matched ) const
 {
     return (IODTCompareNubName(this, name, matched) ||
             IORegistryEntry::compareName(name, matched));
 }
 
-IOService * ARMIODevice::matchLocation( IOService * /* client */ )
+IOService * AppleARMIODevice::matchLocation( IOService * /* client */ )
 {
     return this;
 }
 
-IOReturn ARMIODevice::getResources( void )
+IOReturn AppleARMIODevice::getResources( void )
 {
     IOService *macIO = this;
 
@@ -156,7 +156,7 @@ IOReturn ARMIODevice::getResources( void )
     if (macIO == 0) return kIOReturnError;
     
     IODTResolveAddressing(this, "reg", macIO->getDeviceMemoryWithIndex(0));
-    
+
     return kIOReturnSuccess;
 }
 

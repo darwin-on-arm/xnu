@@ -16,8 +16,8 @@
 #define PE_LOG \
     IOLog("[%s]: ", __PRETTY_FUNCTION__), IOLog
 
-class ARMCPU : public IOCPU {
-    OSDeclareDefaultStructors(ARMCPU);
+class AppleARMCPU : public IOCPU {
+    OSDeclareDefaultStructors(AppleARMCPU);
 private:
     IOCPUInterruptController* gIC;
 public:
@@ -32,12 +32,12 @@ public:
 };
 
 /*
- * DumbInterruptController (DIC)
+ * AppleARMGrandCentral
  */
 
-class ARMDumbInterruptController : public IOCPUInterruptController
+class AppleARMGrandCentral : public IOCPUInterruptController
 {
-    OSDeclareDefaultStructors(ARMDumbInterruptController);
+    OSDeclareDefaultStructors(AppleARMGrandCentral);
 public:
     IOReturn handleInterrupt(void* refCon, IOService* nub, int source);
 };

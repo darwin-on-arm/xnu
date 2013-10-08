@@ -14,8 +14,8 @@
 #include <IOKit/IOLib.h>
 #include "AppleARMIO.h"
 
-class AppleGenericARMIO : public ARMIO {
-    OSDeclareDefaultStructors(AppleGenericARMIO);
+class AppleARMIO : public ARMIO {
+    OSDeclareDefaultStructors(AppleARMIO);
 public:
     bool init(OSDictionary *propTable);
     IOService * probe(IOService *provider, SInt32 *score);
