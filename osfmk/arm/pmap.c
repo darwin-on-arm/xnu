@@ -1034,7 +1034,7 @@ pmap_extract(pmap_t pmap, vm_offset_t virt) {
         /* Done. */
         goto extract_out;
     } else {
-        kprintf("pmap_extract: invalid TTE!\n");
+        kprintf("pmap_extract: invalid tte (ttep %x tte %x)\n", ttep, tte);
     }
 
 extract_out:

@@ -212,7 +212,7 @@ debug_log_init(void)
 #define panic_safe()	pmSafeMode(x86_lcpu(), PM_SAFE_FL_SAFE)
 #define panic_normal()	pmSafeMode(x86_lcpu(), PM_SAFE_FL_NORMAL)
 #else
-#define panic_stop()	{ while (1) ; }
+#define panic_stop()	Halt_system()
 #define panic_safe()
 #define panic_normal()
 #endif

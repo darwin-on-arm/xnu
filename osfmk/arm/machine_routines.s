@@ -219,3 +219,22 @@ EnterARM(set_mmu_ttbcr)
  */
 EnterThumb(ml_cause_interrupt)
     bx      lr
+
+/**
+ * Halt_system
+ *
+ * Halt the system entirely.
+ */
+EnterARM(Halt_system) 
+    /* Disable interruptions. */
+    cpsid    if
+
+.L_deadloop:
+    /* Drain write buffer. */
+    dsb      sy
+
+    /* Wait for interrupts, reduce voltage and power state. */
+    wfi
+
+    /* Try again for a halt. */
+    b        .L_deadloop
