@@ -403,7 +403,7 @@ kern_return_t IOFindBSDRoot( char * rootName, unsigned int rootNameSize,
 //
 
 #ifdef __arm__
-#ifndef BOARD_CONFIG_OMAP3530
+#ifdef BOARD_CONFIG_ARMPBA8
     rdBootVar = "md0";
 #endif
 #endif

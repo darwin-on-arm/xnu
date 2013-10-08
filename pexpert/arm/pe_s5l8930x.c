@@ -113,10 +113,10 @@ static void s5l8930x_clock_gate_switch(int gate, int state)
 static void timer_configure(void)
 {
     /* DUMMY */
-    uint64_t hz = 32768;
+    uint64_t hz = 327680;
     gPEClockFrequencyInfo.timebase_frequency_hz = hz;
 
-    clock_decrementer = 10000;
+    clock_decrementer = 24000;
     kprintf(KPRINTF_PREFIX "decrementer frequency = %llu\n", clock_decrementer);    
 
     rtc_configure(hz);
@@ -288,6 +288,9 @@ void S5L8930X_handle_interrupt(void* context)
         /* Update absolute time */
         clock_absolute_time += (clock_decrementer - (int64_t)S5L8930X_timer_value());
 
+        /* Resynchronize deadlines. */
+        rtclock_intr((arm_saved_state_t*)context);
+
         /* EOI. */
         HwReg(gS5L8930XVic0Base + VICADDRESS) = 0;
 
@@ -321,7 +324,13 @@ uint64_t S5L8930X_get_timebase(void)
 
 uint64_t S5L8930X_timer_value(void)
 {
-    return HwReg(gS5L8930XTimerBase + TIMER0_VAL);
+    uint64_t ret = (uint64_t)((uint32_t)0xFFFFFFFF - (uint32_t)HwReg(gS5L8930XTimerBase + TIMER0_VAL));
+
+    /* HACK */
+    if(ret >= clock_decrementer)
+       ret = 0;
+
+    return ret;
 }
 
 void S5L8930X_timer_enabled(int enable)
