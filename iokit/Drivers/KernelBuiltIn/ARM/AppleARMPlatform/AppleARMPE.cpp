@@ -8,6 +8,7 @@
 
 #include "AppleARMPE.h"
 #include <kern/debug.h>
+#include <pexpert/device_tree.h>
 
 #define HIGH_SCORE  100000
 #define super IOPlatformExpert
@@ -29,6 +30,10 @@ void ARMPlatformExpert::registerNVRAMController(IONVRAMController * caller)
 }
 
 bool ARMPlatformExpert::start(IOService *provider) {
+    DTEntry             entry;
+    char*               dtype;
+    unsigned int        size;
+
     IOLog("ARMPlatformExpert::start: Welcome to the NeXT generation.\n");
 
     if(!super::start(provider)) {
@@ -46,7 +51,16 @@ bool ARMPlatformExpert::start(IOService *provider) {
     publishResource("IORTC");
 #endif
     
-    populate_model_name("Felix");
+    if( kSuccess == DTLookupEntry(NULL, "/", &entry)) {
+        /* What's the device name? */
+        if( kSuccess == DTGetProperty(entry, "compatible", (void **) &dtype, &size)) {
+            populate_model_name(dtype);
+        } else {
+            populate_model_name("Generic ARM Device");            
+        }
+    } else {
+        populate_model_name("Generic ARM Device");
+    }
 
     return true;
 }

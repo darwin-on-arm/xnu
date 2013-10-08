@@ -136,7 +136,8 @@ void DebuggerWithContext(__unused unsigned int reason, void *ctx, const char *me
     hw_atomic_add(&debug_mode, 1);
     
 #ifndef __LP64__
-    print_threads();
+    if(panicDebugging)
+        print_threads();
     
     /* Disable preemption, and dump information. */
 	if (panicstr) {
@@ -182,7 +183,8 @@ void Debugger(const char *message)
     }
 
 #ifndef __LP64__
-    print_threads();
+    if(panicDebugging)
+        print_threads();
     
     /* Just print a backtrace anyways, useful for bringup. */
     __asm__ __volatile("mov %0, r7" : "=r"(stackptr));
@@ -318,7 +320,7 @@ void print_threads(void)
         
         queue_iterate(&task->threads, thread, thread_t, task_threads) {
             
-            kdb_printf("\ntask %p, thread %p, task_name: \"%s\"\n", thread, task, name);
+            kdb_printf("\ntask %p, thread %p, task_name: \"%s\"\n", task, thread, name);
         
             assert(thread);
             
