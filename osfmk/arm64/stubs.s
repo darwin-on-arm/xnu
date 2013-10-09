@@ -120,28 +120,6 @@
  .asciz "__longjmp is not implemented." 
 
 .align 6
- .globl __serial_getc 
- __serial_getc: 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- ldr x0, ps_ptr___serial_getc 
- blx _Debugger 
- ps_ptr___serial_getc: 
- .long panicString___serial_getc 
- panicString___serial_getc: 
- .asciz "__serial_getc is not implemented." 
-
-.align 6
  .globl __setjmp 
  __setjmp: 
  nop 
@@ -385,74 +363,6 @@
  panicString__atomic_add_64: 
  .asciz "_atomic_add_64 is not implemented." 
 
-
-.align 6
- .globl _cngetc 
- _cngetc: 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- ldr x0, ps_ptr__cngetc 
- blx _Debugger 
- ps_ptr__cngetc: 
- .long panicString__cngetc 
- panicString__cngetc: 
- .asciz "_cngetc is not implemented." 
-
-.align 6
- .globl _cnmaygetc 
- _cnmaygetc: 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- ldr x0, ps_ptr__cnmaygetc 
- blx _Debugger 
- ps_ptr__cnmaygetc: 
- .long panicString__cnmaygetc 
- panicString__cnmaygetc: 
- .asciz "_cnmaygetc is not implemented." 
-
-.align 6
- .globl _cnputc_unbuffered 
- _cnputc_unbuffered: 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- ldr x0, ps_ptr__cnputc_unbuffered 
- blx _Debugger 
- ps_ptr__cnputc_unbuffered: 
- .long panicString__cnputc_unbuffered 
- panicString__cnputc_unbuffered: 
- .asciz "_cnputc_unbuffered is not implemented." 
-
-
 .align 6
  .globl _consider_machine_adjust 
  _consider_machine_adjust: 
@@ -609,29 +519,6 @@
  .long panicString__debug_task 
  panicString__debug_task: 
  .asciz "_debug_task is not implemented." 
-
-
-.align 6
- .globl _disable_serial_output 
- _disable_serial_output: 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- ldr x0, ps_ptr__disable_serial_output 
- blx _Debugger 
- ps_ptr__disable_serial_output: 
- .long panicString__disable_serial_output 
- panicString__disable_serial_output: 
- .asciz "_disable_serial_output is not implemented." 
 
 
 .align 6
@@ -1259,29 +1146,6 @@
 
 
 .align 6
- .globl _nconsops 
- _nconsops: 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- ldr x0, ps_ptr__nconsops 
- blx _Debugger 
- ps_ptr__nconsops: 
- .long panicString__nconsops 
- panicString__nconsops: 
- .asciz "_nconsops is not implemented." 
-
-
-.align 6
  .globl _pmsControl 
  _pmsControl: 
  nop 
@@ -1617,28 +1481,6 @@
  .asciz "_commpage_text_populate is not implemented." 
 
 .align 6
- .globl _cons_ops_index 
- _cons_ops_index: 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- ldr x0, ps_ptr__cons_ops_index 
- blx _Debugger 
- ps_ptr__cons_ops_index: 
- .long panicString__cons_ops_index 
- panicString__cons_ops_index: 
- .asciz "_cons_ops_index is not implemented." 
-
-.align 6
  .globl _consider_machine_collect 
  _consider_machine_collect: 
  nop 
@@ -1835,28 +1677,6 @@
  .long panicString__cpuid_cputype 
  panicString__cpuid_cputype: 
  .asciz "_cpuid_cputype is not implemented." 
-
-.align 6
- .globl _debug_boot_arg 
- _debug_boot_arg: 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- ldr x0, ps_ptr__debug_boot_arg 
- blx _Debugger 
- ps_ptr__debug_boot_arg: 
- .long panicString__debug_boot_arg 
- panicString__debug_boot_arg: 
- .asciz "_debug_boot_arg is not implemented." 
 
 .align 6
  .globl _disable_preemption 
@@ -2099,28 +1919,6 @@
  .long panicString__get_useraddr 
  panicString__get_useraddr: 
  .asciz "_get_useraddr is not implemented." 
-
-.align 6
- .globl _halt_all_cpus 
- _halt_all_cpus: 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- nop 
- ldr x0, ps_ptr__halt_all_cpus 
- blx _Debugger 
- ps_ptr__halt_all_cpus: 
- .long panicString__halt_all_cpus 
- panicString__halt_all_cpus: 
- .asciz "_halt_all_cpus is not implemented." 
 
 .align 6
  .globl _handle_pending_TLB_flushes 
@@ -2407,6 +2205,28 @@
  .long panicString__lockstat_probemap 
  panicString__lockstat_probemap: 
  .asciz "_lockstat_probemap is not implemented." 
+
+.align 6
+ .globl _Halt_system
+ _Halt_system: 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ nop 
+ ldr x0, ps_ptr__Halt_system
+ blx _Debugger 
+ ps_ptr__Halt_system: 
+ .long panicString__Halt_system 
+ panicString__Halt_system: 
+ .asciz "_Halt_system is not implemented." 
 
 .align 6
  .globl _machine_callstack 
