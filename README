@@ -34,7 +34,7 @@ A. How to build XNU:
 
   (The other broken ones are: S5L8930X and SUN4I)
 
-  For arm64 enter the following in "machine_configuration":
+  For arm64 enter the following in "machine_configuration" (this requires Xcode 5.0):
     debug arm64 vexpress
 	
   Examples:
