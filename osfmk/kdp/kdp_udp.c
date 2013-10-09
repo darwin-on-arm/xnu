@@ -1149,6 +1149,10 @@ kdp_connection_wait(void)
 	printf("\nWaiting for remote debugger connection.\n");
 	kprintf("\nWaiting for remote debugger connection.\n");
 
+#ifdef __arm__
+	printf("\nPlease go to http://github.com/winocm/xnu to report this panic.\n");
+	kprintf("\nPlease go to http://github.com/winocm/xnu to report this panic.\n");
+#endif
 
 	if (reattach_wait == 0) {
 		if((kdp_flag & KDP_GETC_ENA) && (0 != kdp_getc()))

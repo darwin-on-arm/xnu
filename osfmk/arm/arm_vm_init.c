@@ -120,7 +120,7 @@ extern void* ExceptionVectorsBase;
 
 #define LOWGLO_BASE     0xFFFF0040
 #define VECTORS_BASE    0xFFFF0000
-#define MANAGED_BASE    0xA0000000
+#define MANAGED_BASE    0xC0000000          /* Can also be 0xA0000000, but iPhone OS 5 uses this address. */
 
 /*
  * These both represent the first physical page we can use in the system,

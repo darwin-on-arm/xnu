@@ -57,7 +57,7 @@ void arm_init(boot_args* args) {
     /* We are in. */
     PE_early_puts("arm_init: starting up\n");
     
-    /* arm_init is only called on processor #0, the others will enter using arm_slave_init. /
+    /* arm_init is only called on processor #0, the others will enter using arm_slave_init. */
     bootProcessor = cpu_processor_alloc(TRUE);
     if(!bootProcessor) {
         panic("cpu_processor_alloc failed\n");
