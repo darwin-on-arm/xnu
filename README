@@ -33,6 +33,9 @@ A. How to build XNU:
 	OMAP3530 ARMPBA8
 
   (The other broken ones are: S5L8930X and SUN4I)
+
+  For arm64 enter the following in "machine_configuration":
+    debug arm64 vexpress
 	
   Examples:
 	/* make a debug kernel for OMAP3530 arm board */
