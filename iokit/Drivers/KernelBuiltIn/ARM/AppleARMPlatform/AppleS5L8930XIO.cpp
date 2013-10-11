@@ -31,8 +31,8 @@ bool AppleARMIO::start(IOService* provider) {
         panic("failed to start super provider");
     }
     IOLog("AppleARMIO::start: Publishing device tree entries to IOService plane...\n");
+    IOPrintPlane(gIOServicePlane);
     publishBelow(provider);
     registerService();
-    IOPrintPlane(gIOServicePlane);
     return true;
 }

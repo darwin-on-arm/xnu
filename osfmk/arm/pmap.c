@@ -1205,11 +1205,14 @@ Retry:
 
     /* XXX add cacheability flags */
     if(flags & VM_MEM_NOT_CACHEABLE) {
+        /* xxx arm */
         template_pte |= mmu_texcb_small(MMU_DMA);
     } else if(flags & VM_MEM_COHERENT) {
+        /* Writethrough cache by default. */
         template_pte |= mmu_texcb_small(MMU_CODE);
     } else {
-        template_pte |= mmu_texcb_small(MMU_DATA);
+        /* Writethrough cache by default. */
+        template_pte |= mmu_texcb_small(MMU_DMA);
     }
     *(uint32_t*)pte = template_pte;
 
@@ -1290,7 +1293,7 @@ pmap_remove_range(pmap_t pmap, vm_map_offset_t start_vaddr, pt_entry_t* spte, pt
 
         /* We only support 4kB pages right now. */
         if(!(*cpte & ARM_PTE_DESCRIPTOR_4K))
-            panic("pmap_remove_range: attempting to remove non page, what the hell?");
+            panic("pmap_remove_range: attempting to remove non page, what the hell? cptep %x cpte %x vaddr %x", cpte, *cpte, vaddr);
 
         num_removed++;
 

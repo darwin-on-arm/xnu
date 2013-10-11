@@ -1057,3 +1057,27 @@ copyio_no_perms:
     str     r3, [r12, TH_RECOVER]
     mov     r0, #0xE
     bx      lr
+
+
+/**
+ * copyinframe
+ *
+ * Safely copy in a fp and lr.
+ */
+EnterARM(copyinframe)
+	stmfd	sp!,{r4}
+	adr 	r3, _copyinframe_error
+	LoadThreadRegister(r12)
+	ldr 	r4, [r12, TH_RECOVER]
+	str 	r3, [r12, TH_RECOVER]
+	ldmia	r0, {r2,r3}
+	stmia 	r1, {r2,r3}
+_copyinframe_success:
+	mov 	r0, #0
+	LoadThreadRegister(r12)
+	ldmfd 	sp!, {r4}
+	bx 		lr
+_copyinframe_error:
+	mov 	r0, #0xE
+	bx 		lr
+

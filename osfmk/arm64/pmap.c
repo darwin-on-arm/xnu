@@ -163,8 +163,7 @@ void pmap_common_init(pmap_t pmap)
 {
     usimple_lock_init(&pmap->lock, 0);
     ledger_reference(pmap->ledger);
-    pmap->ref_count = 1;
-    pmap->nx_enabled = 0;
+    pmap->pm_refcnt = 1;
 }
 
 /**
@@ -231,7 +230,7 @@ void
 pmap_reference(pmap_t pmap)
 {
     if (pmap != PMAP_NULL)
-        (void)hw_atomic_add(&pmap->ref_count, 1); /* Bump the count */
+        (void)hw_atomic_add(&pmap->pm_refcnt, 1); /* Bump the count */
 }
 
 /**
@@ -440,7 +439,7 @@ pmap_destroy(pmap_t pmap)
     assert(pmap != NULL);
     
     PMAP_LOCK(pmap);
-    refcount = --(pmap->ref_count);
+    refcount = --(pmap->pm_refcnt);
     PMAP_UNLOCK(pmap);
     
     if(refcount) {
@@ -461,7 +460,7 @@ pmap_destroy(pmap_t pmap)
 int pmap_resident_count(pmap_t pmap)
 {
     assert(pmap);
-    return (pmap)->stats.resident_count;
+    return (pmap)->pm_stats.resident_count;
 }
 
 /**
