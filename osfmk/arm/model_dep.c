@@ -86,6 +86,8 @@
 #include <libkern/kernel_mach_header.h>
 #include <libkern/OSKextLibPrivate.h>
 
+#include <IOKit/IOPlatformExpert.h>
+
 extern struct timeval gIOLastSleepTime;
 extern struct timeval gIOLastWakeTime;
 extern char firmware_version[32];
@@ -205,15 +207,28 @@ void DebuggerCommon(__unused unsigned int reason, void *ctx, const char *message
         bzero(&st, sizeof(st));
         st.r[7] = stackptr;
         panic_backlog(stackptr);
+
+        /* Reboot if not debugging. */
+        if(PE_reboot_on_panic() || !panicDebugging) {
+            halt_all_cpus(TRUE);
+        }
+
         /* Go into the debugger with a dummy state. */
         kdp_raise_exception(EXC_BREAKPOINT, 0, 0, &st);
     } else {
         arm_saved_state_t* st = (arm_saved_state_t*)ctx;
         panic_backlog(st->r[7]);
+
+        /* Reboot if not debugging. */
+        if(PE_reboot_on_panic() || !panicDebugging) {
+            halt_all_cpus(TRUE);
+        }
+
         /* Go into the debugger. */
         kdp_raise_exception(EXC_BREAKPOINT, 0, 0, &ctx);
     }
 #endif
+
 } 
 
 /**
@@ -659,8 +674,11 @@ halt_all_cpus(boolean_t reboot)
 {
     if (reboot) {
         printf("MACH Reboot\n");
+        PEHaltRestart( kPERestartCPU );
     } else {
         printf("CPU halted\n");
+        PEHaltRestart( kPEHaltCPU );
     }
     while(1);
 }
+

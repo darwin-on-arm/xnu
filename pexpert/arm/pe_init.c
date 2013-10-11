@@ -150,3 +150,18 @@ void PE_display_icon( __unused unsigned int flags, __unused const char * name )
     return;
 }
 
+boolean_t
+PE_reboot_on_panic(void)
+{
+    /*
+     * Enable reboot-on-panic
+     */
+    char tempbuf[16];
+    
+    if(PE_parse_boot_argn("-panic-reboot", tempbuf, sizeof(tempbuf))) {
+        return TRUE;
+    } else {
+        return FALSE;
+    }
+}
+

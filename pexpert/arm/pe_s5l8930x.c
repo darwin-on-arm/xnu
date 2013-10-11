@@ -33,6 +33,8 @@
  */
 
 #include <mach/mach_types.h>
+ 
+#include <IOKit/IOPlatformExpert.h>
 
 #include <pexpert/pexpert.h>
 #include <pexpert/arm/protos.h>
@@ -59,6 +61,8 @@ extern void rtc_configure(uint64_t hz);
 #define uart_base   gS5L8930XUartBase
 vm_offset_t     gS5L8930XUartBase;
 vm_offset_t     gS5L8930XClockGateBase;
+
+vm_offset_t     gS5L8930XPmgrBase;
 
 /* The 8930 has 4 PL192 compatible VICs. */
 vm_offset_t     gS5L8930XVic0Base;
@@ -145,6 +149,12 @@ int S5L8930X_getc(void)
 void S5L8930X_uart_init(void)
 {
     uint32_t divisorValue;
+    /* xxx map pmgr */
+#ifdef BOARD_CONFIG_S5L8930X
+    gS5L8930XPmgrBase = ml_io_map(0xBF102000, PAGE_SIZE);
+    assert(gS5L8930XPmgrBase);
+#endif
+
     /* XXX: The UART init routine is also the Core Platform mapping routine... */
     gS5L8930XVic0Base = ml_io_map(VIC(0), PAGE_SIZE);
     gS5L8930XVic1Base = ml_io_map(VIC(1), PAGE_SIZE);
@@ -382,6 +392,22 @@ void S5L8930X_framebuffer_init(void)
     return;
 }
 
+#ifdef BOARD_CONFIG_S5L8930X
+int S5L8930X_halt_restart(int type)
+{
+    /* Just reboot. */
+    assert(gS5L8930XPmgrBase);
+    HwReg(gS5L8930XPmgrBase + 0x2C) = 0;
+    HwReg(gS5L8930XPmgrBase + 0x24) = 1;
+    HwReg(gS5L8930XPmgrBase + 0x20) = 0x80000000;
+    HwReg(gS5L8930XPmgrBase + 0x2C) = 4;
+    HwReg(gS5L8930XPmgrBase + 0x20) = 0;
+
+    /* xxx never reached */
+    return 0;
+}
+#endif
+
 void PE_init_SocSupport_S5L8930X(void)
 {
     gPESocDispatch.uart_getc = S5L8930X_getc;
@@ -411,6 +437,10 @@ void PE_init_SocSupport_S5L8930X(void)
 
     S5L8930X_framebuffer_init();
     S5L8930X_uart_init();
+
+#ifdef BOARD_CONFIG_S5L8930X
+    PE_halt_restart = S5L8930X_halt_restart;
+#endif
 }
 
 void PE_init_SocSupport_stub(void)
