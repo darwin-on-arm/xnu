@@ -190,7 +190,7 @@ void arm_init(boot_args* args) {
      */
     PE_early_puts("arm_init: Still alive\n");
 
-    panic("20:02:14 <DHowett> wwwwwwwat is HAAAAAAAPPENING"\n);
+    panic("20:02:14 <DHowett> wwwwwwwat is HAAAAAAAPPENING\n");
 
     while(1);
 }

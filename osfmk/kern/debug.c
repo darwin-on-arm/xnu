@@ -524,7 +524,7 @@ __private_extern__ void panic_display_system_configuration(void) {
 		char buf[256];
 		if (strlcpy(buf, PE_boot_args(), sizeof(buf)))
 			kdb_printf("Boot args: %s\n", buf);
-		kdb_printf("\nMac OS version:\n%s\n",
+		kdb_printf("\nOpenXNU version:\n%s\n", //OpenXNU is a good name i suppose...
 		    (osversion[0] != 0) ? osversion : "Not yet set");
 		kdb_printf("\nKernel version:\n%s\n",version);
 #ifdef __arm__
