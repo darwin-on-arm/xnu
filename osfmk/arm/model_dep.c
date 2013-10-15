@@ -114,7 +114,7 @@ typedef struct _cframe_t {
 
 unsigned int nosym = 0;
 
-void print_threads(void);
+void print_threads(uint32_t stackptr);
 void panic_arm_thread_backtrace(void *_frame, int nframes, const char *msg, boolean_t regdump, arm_saved_state_t *regs, int crashed);
 
 /**
@@ -159,14 +159,7 @@ void panic_display_time(void)
 void panic_backlog(uint32_t stackptr)
 {
 #ifndef __LP64__
-    if(panicDebugging)
-        print_threads();
-
-    if(stackptr) {
-        kdb_printf("panic context:\n");
-        kdb_printf("\tkernel backtrace from context: %x\n", "", stackptr);
-        panic_arm_thread_backtrace(stackptr, 20, NULL, FALSE, NULL, FALSE);
-    }
+    print_threads(stackptr);
 #endif
 }
 
@@ -350,7 +343,7 @@ static void panic_print_symbol_name(vm_address_t search)
  *
  * Dump all running tasks and threads.
  */
-void print_threads(void)
+void print_threads(uint32_t stackptr)
 {
     if(!kernel_task)
         return;
@@ -384,6 +377,13 @@ void print_threads(void)
                 if(!nosym)
                     panic_print_symbol_name(thread->continuation);
                 kdb_printf("\n");
+            }
+
+            if(stackptr && (current_thread() == thread)) {
+                kdb_printf("%s\tkernel backtrace: %x\n", ((current_thread() == thread) ? crashed : "\t"), stackptr);
+                panic_arm_thread_backtrace(stackptr, 20, NULL, FALSE, NULL, TRUE);
+                kdb_printf("\n");
+                continue;
             }
             
             if(!thread->continuation && thread->machine.iss) {
@@ -526,17 +526,14 @@ void panic_arm_thread_backtrace(void *_frame, int nframes, const char *msg, bool
         
         if (!kvtophys(curframep) ||
             !kvtophys(curframep + sizeof(cframe_t) - 1)) {
-            kdb_printf("%s\tNo mapping exists for frame pointer\n", (crashed ? crashstr : "\t"));
             goto invalid;
         }
         
 		if (curframep & 0x3) {
-			kdb_printf("%s\tUnaligned frame\n", (crashed ? crashstr : "\t"));
 			goto invalid;
 		}
         
         if((frame_index >= 1) && (frame == frame->prev)) {
-            kdb_printf("%s\tLooping frame\n", (crashed ? crashstr : "\t"));
             goto invalid;
         }
         
@@ -551,25 +548,14 @@ void panic_arm_thread_backtrace(void *_frame, int nframes, const char *msg, bool
         
 		frame = frame->prev;
     }
-    
-	if (frame_index >= nframes)
-		kdb_printf("%s\tBacktrace continues...\n", (crashed ? crashstr : "\t"));
-    
+
 	goto out;
     
 invalid:
-	kdb_printf("%s\tBacktrace terminated-invalid frame pointer %p\n", (crashed ? crashstr : "\t"),frame);
 out:
     
     if(nosym)
-        return;
-
-    kdb_printf("%s\tFlat caller information: [ ", (crashed ? crashstr : "\t"));
-    for(i = 0; i < frame_index; i++) {
-        kdb_printf("0x%08x ", raddrs[i]);
-    }
-    kdb_printf("]\n");
-    
+        return;    
 }
 
 
