@@ -153,6 +153,9 @@ void S5L8930X_uart_init(void)
 #ifdef BOARD_CONFIG_S5L8930X
     gS5L8930XPmgrBase = ml_io_map(0xBF102000, PAGE_SIZE);
     assert(gS5L8930XPmgrBase);
+#elif defined(BOARD_CONFIG_S5L8922X) || defined(BOARD_CONFIG_S5L8920X)
+    gS5L8930XPmgrBase = ml_io_map(0xBF100000, PAGE_SIZE);
+    assert(gS5L8930XPmgrBase);
 #endif
 
     /* XXX: The UART init routine is also the Core Platform mapping routine... */
@@ -392,9 +395,9 @@ void S5L8930X_framebuffer_init(void)
     return;
 }
 
-#ifdef BOARD_CONFIG_S5L8930X
 int S5L8930X_halt_restart(int type)
 {
+#ifdef BOARD_CONFIG_S5L8930X
     /* Just reboot. */
     assert(gS5L8930XPmgrBase);
     HwReg(gS5L8930XPmgrBase + 0x2C) = 0;
@@ -402,11 +405,24 @@ int S5L8930X_halt_restart(int type)
     HwReg(gS5L8930XPmgrBase + 0x20) = 0x80000000;
     HwReg(gS5L8930XPmgrBase + 0x2C) = 4;
     HwReg(gS5L8930XPmgrBase + 0x20) = 0;
-
+#elif defined(BOARD_CONFIG_S5L8920X)
+    assert(gS5L8930XPmgrBase);
+    HwReg(gS5L8930XPmgrBase + 0x21C) = 0;
+    HwReg(gS5L8930XPmgrBase + 0x214) = 1;
+    HwReg(gS5L8930XPmgrBase + 0x210) = 0x80000000;
+    HwReg(gS5L8930XPmgrBase + 0x21C) = 4;
+    HwReg(gS5L8930XPmgrBase + 0x210) = 0;
+#elif defined(BOARD_CONFIG_S5L8922X)
+    assert(gS5L8930XPmgrBase);
+    HwReg(gS5L8930XPmgrBase + 0x21C) = 0;
+    HwReg(gS5L8930XPmgrBase + 0x214) = 1;
+    HwReg(gS5L8930XPmgrBase + 0x210) = 0x80000000;
+    HwReg(gS5L8930XPmgrBase + 0x21C) = 4;
+    HwReg(gS5L8930XPmgrBase + 0x210) = 0;
+#endif
     /* xxx never reached */
     return 0;
 }
-#endif
 
 void PE_init_SocSupport_S5L8930X(void)
 {
@@ -438,9 +454,7 @@ void PE_init_SocSupport_S5L8930X(void)
     S5L8930X_framebuffer_init();
     S5L8930X_uart_init();
 
-#ifdef BOARD_CONFIG_S5L8930X
     PE_halt_restart = S5L8930X_halt_restart;
-#endif
 }
 
 void PE_init_SocSupport_stub(void)
