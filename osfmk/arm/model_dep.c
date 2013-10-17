@@ -112,10 +112,10 @@ typedef struct _cframe_t {
     uintptr_t caller;
 } cframe_t;
 
-unsigned int nosym = 0;
+unsigned int nosym = 1;
 
 void print_threads(uint32_t stackptr);
-void panic_arm_thread_backtrace(void *_frame, int nframes, const char *msg, boolean_t regdump, arm_saved_state_t *regs, int crashed);
+void panic_arm_thread_backtrace(void *_frame, int nframes, const char *msg, boolean_t regdump, arm_saved_state_t *regs, int crashed, char* crashstr);
 
 /**
  * machine_init
@@ -159,7 +159,27 @@ void panic_display_time(void)
 void panic_backlog(uint32_t stackptr)
 {
 #ifndef __LP64__
-    print_threads(stackptr);
+    thread_t currthr = current_thread();
+    assert(currthr);
+
+    task_t task = currthr->task;
+    char* name;
+
+    if (task->bsd_info && (name = proc_name_address(task->bsd_info))) {
+        /* */
+    } else {
+       name = (char*)"unknown task";
+    }
+
+    kdb_printf("\nPanicked task %p: %d pages, %d threads: pid %d: %s\n"
+               "panicked thread: %p, backtrace: 0x%08x\n",
+               task, task->all_image_info_size, task->thread_count, proc_pid(task->bsd_info), name,
+               currthr, stackptr);
+    panic_arm_thread_backtrace(stackptr, 32, NULL, FALSE, NULL, TRUE, "");
+
+    if(panicDebugging)
+        print_threads(stackptr);
+
 #endif
 }
 
@@ -381,7 +401,7 @@ void print_threads(uint32_t stackptr)
 
             if(stackptr && (current_thread() == thread)) {
                 kdb_printf("%s\tkernel backtrace: %x\n", ((current_thread() == thread) ? crashed : "\t"), stackptr);
-                panic_arm_thread_backtrace(stackptr, 20, NULL, FALSE, NULL, TRUE);
+                panic_arm_thread_backtrace(stackptr, 32, NULL, FALSE, NULL, TRUE, ">>>>>>>>");
                 kdb_printf("\n");
                 continue;
             }
@@ -400,7 +420,7 @@ void print_threads(uint32_t stackptr)
                            ((current_thread() == thread) ? crashed : "\t"), thread->machine.iss->cpsr, 0, 0);
                 if(thread->machine.iss->r[7]) {
                     kdb_printf("%s\tkernel backtrace: %x\n", ((current_thread() == thread) ? crashed : "\t"), thread->machine.iss->r[7]);
-                    panic_arm_thread_backtrace(thread->machine.iss->r[7], 20, NULL, FALSE, NULL, ((current_thread() == thread) ? TRUE : FALSE));
+                    panic_arm_thread_backtrace(thread->machine.iss->r[7], 32, NULL, FALSE, NULL, ((current_thread() == thread) ? TRUE : FALSE), "\t");
                 }
             }
 
@@ -497,15 +517,14 @@ out:
 
 /* Formatting difference */
 #define DUMPFRAMES 32
-void panic_arm_thread_backtrace(void *_frame, int nframes, const char *msg, boolean_t regdump, arm_saved_state_t *regs, int crashed)
+void panic_arm_thread_backtrace(void *_frame, int nframes, const char *msg, boolean_t regdump, arm_saved_state_t *regs, int crashed, char* crashstr)
 {
 	int frame_index, i;
     int cpu = cpu_number();
     cframe_t	*frame = (cframe_t *)_frame;
 	vm_offset_t raddrs[DUMPFRAMES];
 	vm_offset_t PC = 0;
-    char crashstr[] = ">>>>>>>>";
-
+ 
     /*
      * Print out a backtrace of symbols.
      */
@@ -586,8 +605,8 @@ void machine_startup(void)
     }
 
     char nosym_temp[16];
-    if (PE_parse_boot_argn("nosym", &nosym_temp, sizeof (nosym_temp))) {
-        nosym = 1;
+    if (PE_parse_boot_argn("symbolicate-panics", &nosym_temp, sizeof (nosym_temp))) {
+        nosym = 0;
     }
 
     /*
