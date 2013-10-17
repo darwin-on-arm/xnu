@@ -160,9 +160,18 @@ void panic_backlog(uint32_t stackptr)
 {
 #ifndef __LP64__
     thread_t currthr = current_thread();
-    assert(currthr);
+
+    /* Make sure the crash is after we set the first thread. */
+    if(!currthr) {
+        return;
+    }
 
     task_t task = currthr->task;
+    /* If the task is null, return... */
+    if(!task) {
+       return;
+    }
+
     char* name;
 
     if (task->bsd_info && (name = proc_name_address(task->bsd_info))) {
@@ -179,7 +188,6 @@ void panic_backlog(uint32_t stackptr)
 
     if(panicDebugging)
         print_threads(stackptr);
-
 #endif
 }
 
@@ -252,7 +260,9 @@ void DebuggerCommon(__unused unsigned int reason, void *ctx, const char *message
  */
 void DebuggerWithContext(__unused unsigned int reason, void *ctx, const char *message)
 {
+    hw_atomic_add(&debug_mode, 1);
     DebuggerCommon(reason, ctx, message);
+    hw_atomic_sub(&debug_mode, 1);   
     return;
 }
 
@@ -264,7 +274,9 @@ void DebuggerWithContext(__unused unsigned int reason, void *ctx, const char *me
  */
 void Debugger(const char *message)
 {
+    hw_atomic_add(&debug_mode, 1);
     DebuggerCommon(EXC_BREAKPOINT, NULL, message);
+    hw_atomic_sub(&debug_mode, 1);   
     return;
 }
 
@@ -619,7 +631,6 @@ void machine_startup(void)
         halt_in_debugger = 0;
         active_debugger =1;
     }
-
 
     kernel_bootstrap();
     return;
