@@ -92,7 +92,15 @@ void RealView_putc(int c)
 
 int RealView_getc(void)
 {
-    return 'A';
+    unsigned char c;
+    if(!gRealviewUartBase)
+        return -1;
+  
+    while(AMBA_UART_FR(gRealviewUartBase) & (1 << 4))
+        barrier();
+  
+    c = AMBA_UART_DR(gRealviewUartBase);
+    return c;
 }
 
 void RealView_uart_init(void)
