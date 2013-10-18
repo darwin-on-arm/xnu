@@ -180,9 +180,9 @@ void panic_backlog(uint32_t stackptr)
        name = (char*)"unknown task";
     }
 
-    kdb_printf("\nPanicked task %p: %d pages, %d threads: pid %d: %s\n"
+    kdb_printf("Panicked task %p: %d pages, %d threads: pid %d: %s\n"
                "panicked thread: %p, backtrace: 0x%08x\n",
-               task, task->all_image_info_size, task->thread_count, proc_pid(task->bsd_info), name,
+               task, task->all_image_info_size, task->thread_count, (task->bsd_info != NULL) ? proc_pid(task->bsd_info) : 0, name,
                currthr, stackptr);
     panic_arm_thread_backtrace(stackptr, 32, NULL, FALSE, NULL, TRUE, "");
 
@@ -231,7 +231,7 @@ void DebuggerCommon(__unused unsigned int reason, void *ctx, const char *message
 
         /* Reboot if not debugging. */
         if(PE_reboot_on_panic() || !panicDebugging) {
-            halt_all_cpus(TRUE);
+	    halt_all_cpus(TRUE);
         }
 
         /* Go into the debugger with a dummy state. */
@@ -396,7 +396,7 @@ void print_threads(uint32_t stackptr)
 			name = (char*)"unknown task";
 		}
         
-        kdb_printf("Task 0x%x: %d pages, %d threads: pid %d: %s\n", task, task->all_image_info_size, task->thread_count, proc_pid(task->bsd_info), name);
+        kdb_printf("Task 0x%x: %d pages, %d threads: pid %d: %s\n", task, task->all_image_info_size, task->thread_count, (task->bsd_info != NULL) ? proc_pid(task->bsd_info) : 0, name);
         
         queue_iterate(&task->threads, thread, thread_t, task_threads) {
             char crashed[] = ">>>>>>>>";
@@ -690,10 +690,12 @@ halt_all_cpus(boolean_t reboot)
 {
     if (reboot) {
         printf("MACH Reboot\n");
-        PEHaltRestart( kPERestartCPU );
+        if (PE_halt_restart)
+                (*PE_halt_restart)(kPERestartCPU);
     } else {
         printf("CPU halted\n");
-        PEHaltRestart( kPEHaltCPU );
+        if (PE_halt_restart)
+                (*PE_halt_restart)(kPEHaltCPU);
     }
     while(1);
 }
