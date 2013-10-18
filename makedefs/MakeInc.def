@@ -122,7 +122,7 @@ endif
 #
 export SUPPORTED_I386_MACHINE_CONFIGS := DEFAULT
 export SUPPORTED_X86_64_MACHINE_CONFIGS := DEFAULT
-export SUPPORTED_ARM_MACHINE_CONFIGS := S5L8920X S5L8922X S5L8930X ARMPBA8 SUN4I OMAP3530
+export SUPPORTED_ARM_MACHINE_CONFIGS := S5L8920X S5L8922X S5L8930X ARMPBA8 SUN4I OMAP3530 RASPBERRYPI
 export SUPPORTED_ARM64_MACHINE_CONFIGS := DEFAULT VEXPRESS
 
 #
@@ -299,13 +299,14 @@ ARCH_FLAGS_I386		  = -arch i386
 ARCH_FLAGS_X86_64	  = -arch x86_64
 ARCH_FLAGS_ARM64	= -arch arm64
 
+ARCH_FLAGS_ARM		  = $($(addsuffix $(MACHINE_CONFIG),ARCH_FLAGS_ARM_))
+
 ARCH_FLAGS_ARM_S5L8930X	= -arch armv7
 ARCH_FLAGS_ARM_S5L8922X	= -arch armv7
 ARCH_FLAGS_ARM_S5L8920X	= -arch armv7
 ARCH_FLAGS_ARM_OMAP3530	= -arch armv7
 ARCH_FLAGS_ARM_ARMPBA8	= -arch armv7
-
-ARCH_FLAGS_ARM		  = $($(addsuffix $(MACHINE_CONFIG),ARCH_FLAGS_ARM_)) #-arch armv7
+ARCH_FLAGS_ARM_RASPBERRYPI	= -arch armv6
 
 #
 # Default CFLAGS
@@ -348,9 +349,16 @@ export CFLAGS_X86_64	= -Dx86_64 -DX86_64 -D__X86_64__ -DLP64 \
 				-integrated-as
 export CFLAGS_ARM 	= -Darm -DARM -D__ARM__ -DPAGE_SIZE_FIXED \
 				-fno-strict-aliasing -fno-keep-inline-functions \
-				-mthumb -msoft-float
+				-msoft-float
 export CFLAGS_ARM64	= -Darm -DARM64 -D__arm__ -DARM -D__ARM64__ -DPAGE_SIZE_FIXED \
 				-fno-strict-aliasing -fno-keep-inline-functions -DLP64 -integrated-as
+
+ifeq (-arch armv6,$(ARCH_FLAGS_ARM))
+CFLAGS_ARM		+= -mno-thumb
+endif
+ifeq (-arch armv7,$(ARCH_FLAGS_ARM))
+CFLAGS_ARM		+= -mthumb
+endif
 
 export CFLAGS_RELEASEARM64 = -O2
 export CFLAGS_DEVELOPMENTARM64 = -O2

@@ -30,9 +30,15 @@
  * OSAtomic operations.
  */
 
+#include <arm/arch.h>
+
 .code 32
 .arm
 .syntax unified
+
+#if __ARM_ARCH == 6
+#define NO_EXCLUSIVES 1
+#endif
 
 #ifdef BOARD_CONFIG_OMAP3530
 #define NO_EXCLUSIVES 1
@@ -91,8 +97,10 @@ loop:
     mov     r1, r5
     ldmfd   sp!, {r4-r9,pc}
 
+#ifndef _ARM_ARCH_6
 .code 16
 .thumb_func _OSCompareAndSwapPtr
+#endif
 .align 4
 .globl _OSCompareAndSwapPtr
 _OSCompareAndSwapPtr:
@@ -101,8 +109,10 @@ _OSCompareAndSwapPtr:
     ldmfd   sp!,{r7,lr}
     bx      lr
 
+#ifndef _ARM_ARCH_6
 .align 4
 .thumb_func _OSAddAtomicLong
+#endif
 .globl _OSAddAtomicLong
 _OSAddAtomicLong:
     stmfd   sp!,{r7,lr}

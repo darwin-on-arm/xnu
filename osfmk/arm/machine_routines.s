@@ -38,6 +38,11 @@
  * This is ARMv6 and later ONLY.
  */
 
+#if __ARM_ARCH == 7
+#undef EnterThumb
+#define EnterThumb EnterARM
+#endif
+
 /**
  * lck_mtx_ilk_unlock
  */
@@ -210,8 +215,13 @@ EnterARM(set_mmu_ttbcr)
     mov     r0, r0, lsl #12
     /* Clean it */
     mcr     p15, 0, r0, c8, c7, 1
-    dsb     sy
+#if __ARM_ARCH == 7
     isb     sy
+    dsb     sy
+#else
+    mcr     p15, 0, r0, c7, c5, 4
+    mcr     p15, 0, r0, c7, c10, 4
+#endif
     bx      lr
 
 /*
@@ -231,10 +241,20 @@ EnterARM(Halt_system)
 
 .L_deadloop:
     /* Drain write buffer. */
+#if __ARM_ARCH == 7
     dsb      sy
+#else
+    mov      r0, #0
+    mcr      p15, 0, r0, c7, c10, 4
+#endif
 
     /* Wait for interrupts, reduce voltage and power state. */
+#if __ARM_ARCH == 7
     wfi
+#else
+    mov      r0, #0
+    mcr      p15, 0, r0, c7, c0, 4
+#endif
 
     /* Try again for a halt. */
     b        .L_deadloop

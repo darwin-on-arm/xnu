@@ -33,6 +33,13 @@
 #include <arm/arch.h>
 #include <arm/asm_help.h>
 
+#if __ARM_ARCH == 6
+#undef EnterThumb
+#undef EnterThumb_NoAlign
+#define EnterThumb_NoAlign EnterARM_NoAlign
+#define EnterThumb EnterARM
+#endif
+
 /**
  * flush_dcache
  *
@@ -79,8 +86,13 @@ EnterThumb(flush_mmu_tlb)
     mov     r0, #0
     mcr     p15, 0, r0, c8, c7, 0
     mcr     p15, 0, r0, c7, c5, 0
+#if __ARM_ARCH == 7
     isb     sy
     dsb     sy
+#else
+    mcr     p15, 0, r0, c7, c5, 4
+    mcr     p15, 0, r0, c7, c10, 4
+#endif
     bx      lr
 
 /**
@@ -89,6 +101,12 @@ EnterThumb(flush_mmu_tlb)
  * Start and initialize ARM caches.
  */
 EnterARM(cache_initialize)
+#if __ARM_ARCH == 6
+    mcr     p15, 0, r0, c7, c5, 4
+    mcr     p15, 0, r0, c7, c10, 4
+    bx      lr
+#endif
+
     /* Enable L2 cache */
     mrc     p15, 0, r0, c1, c0, 1
     orr     r0, r0, #(1 << 1)
@@ -109,8 +127,13 @@ EnterARM(cache_initialize)
     mov     r0, #0
     mcr     p15, 0, r0, c7, c5, 4
 
+#if __ARM_ARCH == 7
     isb     sy
     dsb     sy
+#else
+    mcr     p15, 0, r0, c7, c5, 4
+    mcr     p15, 0, r0, c7, c10, 4
+#endif
 
     bx      lr
 
@@ -120,27 +143,4 @@ EnterARM(cache_initialize)
  * Deinitialize ARM caches.
  */
 EnterARM(cache_deinitialize)
-    /* Enable L2 cache */
-    mrc     p15, 0, r0, c1, c0, 1
-    bic     r0, r0, #(1 << 1)
-    mcr     p15, 0, r0, c1, c0, 1
-
-    /* Enable caching. */
-    mrc     p15, 0, r0, c1, c0, 0
-    bic     r0, r0, #(1 << 11)
-    bic     r0, r0, #(1 << 12)
-    bic     r0, r0, #(1 << 2)
-    mcr     p15, 0, r0, c1, c0, 0
-
-    /* Clear caches */
-    mov     r0, #0
-    mcr     p15, 0, r0, c7, c5, 0
-
-    /* Clear prefetch buffer */
-    mov     r0, #0
-    mcr     p15, 0, r0, c7, c5, 4
-
-    isb     sy
-    dsb     sy
-
     bx      lr

@@ -403,5 +403,5 @@ boolean_t irq_handler(void* context)
  */
 void sleh_undef(arm_saved_state_t* state)
 {
-    panic("sleh_undef");
+    panic("sleh_undef pc %x lr %x cpsr %x\n", state->pc, state->lr, state->cpsr);
 }

@@ -23,6 +23,11 @@
 #define ldrex           ldr
 #endif
 
+#if __ARM_ARCH == 6
+#undef EnterThumb
+#define EnterThumb EnterARM
+#endif
+
 /*
  * Lock bit definitions are not defined here. Please don't touch. Thanks.
  */

@@ -1,2 +1,6 @@
 # pain.
 bcopyinout.o_SFLAGS_ADD += -no-integrated-as
+
+ifeq (-arch armv6,$(ARCH_FLAGS_ARM))
+vm_pageout.o_CFLAGS_ADD += -Os
+endif

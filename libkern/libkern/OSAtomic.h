@@ -644,7 +644,12 @@ static inline void OSMemoryBarrier(void) {
 #if defined(__arm__)
 #ifndef __LP64__
 static inline void OSMemoryBarrier(void) {
+#ifdef _ARM_ARCH_7
 	__asm__ volatile("dsb" ::: "memory");
+#else
+	UInt32 temp = 0;
+	__asm__ volatile("mcr p15, 0, %0, c7, c10, 4" : : "r" (temp));
+#endif
 }
 #else
 static inline void OSMemoryBarrier(void) {

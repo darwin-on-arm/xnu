@@ -58,7 +58,7 @@ _semihost_buffer_ptr_ptr:
  * Writes character output to debugger standard out.
  */
 #ifndef __LP64__
-EnterThumb(PE_semihost_write_char)
+EnterARM(PE_semihost_write_char)
 #ifndef BOARD_CONFIG_ARMPBA8
     ldr     r1, _semihost_buffer_ptr
     strb    r0, [r1]
@@ -69,7 +69,7 @@ EnterThumb(PE_semihost_write_char)
     ldr     r1, _semihost_buffer_ptr
     strb    r0, [r1]
     mov     r0, #0x03       // SYS_WRITEC
-    svc     0xab
+    svc     0x123456
 #endif
     bx      lr
 #else
