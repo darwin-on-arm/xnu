@@ -230,9 +230,13 @@ void DebuggerCommon(__unused unsigned int reason, void *ctx, const char *message
         panic_backlog(stackptr);
 
         /* Reboot if not debugging. */
-        if(PE_reboot_on_panic() || !panicDebugging) {
-	    halt_all_cpus(TRUE);
+        if(PE_reboot_on_panic() && !panicDebugging) {
+    	    halt_all_cpus(TRUE);
         }
+
+        /* Draw the panic dialog. */
+        if(!PE_reboot_on_panic())
+            draw_panic_dialog();
 
         /* Go into the debugger with a dummy state. */
         kdp_raise_exception(EXC_BREAKPOINT, 0, 0, &st);
@@ -241,9 +245,13 @@ void DebuggerCommon(__unused unsigned int reason, void *ctx, const char *message
         panic_backlog(st->r[7]);
 
         /* Reboot if not debugging. */
-        if(PE_reboot_on_panic() || !panicDebugging) {
+        if(PE_reboot_on_panic() && !panicDebugging) {
             halt_all_cpus(TRUE);
         }
+
+        /* Draw the panic dialog. */
+        if(!PE_reboot_on_panic())
+            draw_panic_dialog();
 
         /* Go into the debugger. */
         kdp_raise_exception(EXC_BREAKPOINT, 0, 0, &ctx);

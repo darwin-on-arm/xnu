@@ -391,7 +391,11 @@ void S5L8930X_framebuffer_init(void)
         initialize_screen((void*)&PE_state.video, kPEAcquireScreen);
     }
     
-    initialize_screen((void*)&PE_state.video, kPEEnableScreen);
+    if(PE_parse_boot_argn("-graphics-mode", tempbuf, sizeof(tempbuf))) {
+        initialize_screen((void*)&PE_state.video, kPEGraphicsMode);
+    } else {
+        initialize_screen((void*)&PE_state.video, kPETextMode);
+    }
     return;
 }
 

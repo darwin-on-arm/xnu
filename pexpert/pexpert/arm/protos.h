@@ -14,8 +14,8 @@ void serial_putc(char);
 void uart_putc(char);
 int uart_getc(void);
 
-void vc_progress_initialize(void *, const unsigned char *, const unsigned char *);
-void vc_display_icon(void *, const unsigned char *);
+//void vc_progress_initialize(void *, const unsigned char *, const unsigned char *);
+//void vc_display_icon(void *, const unsigned char *);
 
 int switch_to_serial_console(void);
 void switch_to_old_console(int);

@@ -30,13 +30,17 @@
  * Platform expert initialization module.
  */
 
-#include <mach/mach_types.h>
-#include <pexpert/pexpert.h>
-#include <pexpert/machine/protos.h>
-#include <pexpert/machine/boot.h>
-#include <kern/debug.h>
+#include <sys/types.h>
 #include <mach/vm_param.h>
+#include <machine/machine_routines.h>
+#include <pexpert/protos.h>
+#include <pexpert/pexpert.h>
+#include <pexpert/boot.h>
 #include <pexpert/device_tree.h>
+#include <pexpert/pe_images.h>
+#include <kern/sched_prim.h>
+#include <kern/debug.h>
+#include "boot_images.h"
 
 /* private globals */
 PE_state_t  PE_state;
@@ -122,6 +126,51 @@ void PE_init_platform(boolean_t vm_initialized, void * _args)
  */
 void PE_init_iokit(void)
 {
+    enum { kMaxBootVar = 128 };
+        
+    typedef struct {
+        char            name[32];
+        unsigned long   length;
+        unsigned long   value[2];
+    } DriversPackageProp;
+
+    boolean_t bootClutInitialized = FALSE;
+    boolean_t noroot_rle_Initialized = FALSE;
+
+    DTEntry             entry;
+    unsigned int    size;
+    uint32_t        *map;
+    boot_progress_element *bootPict;
+
+    kprintf("Kernel boot args: '%s'\n", PE_boot_args());
+
+    /*
+     * Fetch the CLUT and the noroot image.
+     */
+    if( kSuccess == DTLookupEntry(NULL, "/chosen/memory-map", &entry)) {
+        if( kSuccess == DTGetProperty(entry, "BootCLUT", (void **) &map, &size)) {
+            if (sizeof(appleClut8) <= map[1]) {
+                bcopy( (void *)(map[0]), appleClut8, sizeof(appleClut8) );
+                bootClutInitialized = TRUE;
+            }
+        }
+    }
+
+    if (!bootClutInitialized) {
+        bcopy( (void *) (uintptr_t) bootClut, (void *) appleClut8, sizeof(appleClut8) );
+    }
+
+    /*
+     * Initialize the panic UI
+     */
+    panic_ui_initialize( (unsigned char *) appleClut8 );
+
+    /*
+     * Initialize the spinning wheel (progress indicator).
+     */
+    vc_progress_initialize( &default_progress, default_progress_data1x, default_progress_data2x,
+                            (unsigned char *) appleClut8 );
+
     printf("iBoot version: %s\n", firmware_version);
 
     kprintf("PE_init_iokit: starting IOKit now!\n");

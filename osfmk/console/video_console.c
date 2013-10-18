@@ -125,7 +125,7 @@
 struct vc_info vinfo;
 
 void noroot_icon_test(void);
-
+boolean_t panicDialogDesired;
 
 extern int       disableConsoleOutput;
 static boolean_t gc_enabled     = FALSE;
@@ -2691,11 +2691,13 @@ initialize_screen(PE_Video * boot_vinfo, unsigned int op)
 	switch ( op )
 	{
 		case kPEGraphicsMode:
+            panicDialogDesired = TRUE;
 			gc_graphics_boot = TRUE;
 			gc_desire_text = FALSE;
 			break;
 
 		case kPETextMode:
+			panicDialogDesired = FALSE;
 			disable_debug_output = FALSE;
 			gc_graphics_boot = FALSE;
 			break;
