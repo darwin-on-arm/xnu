@@ -198,8 +198,10 @@ void panic_backlog(uint32_t stackptr)
  */
 void DebuggerCommon(__unused unsigned int reason, void *ctx, const char *message)
 {
+#if 0
     /* Dim the screen. */
     dim_screen();
+#endif
 
     /* Print out debugger messages. */
     kdb_printf("Debugger message: %s\n", message);

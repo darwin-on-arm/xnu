@@ -135,7 +135,7 @@ void PE_init_iokit(void)
     } DriversPackageProp;
 
     boolean_t bootClutInitialized = FALSE;
-    boolean_t noroot_rle_Initialized = FALSE;
+    boolean_t norootInitialized = FALSE;
 
     DTEntry             entry;
     unsigned int    size;
@@ -158,6 +158,14 @@ void PE_init_iokit(void)
 
     if (!bootClutInitialized) {
         bcopy( (void *) (uintptr_t) bootClut, (void *) appleClut8, sizeof(appleClut8) );
+    }
+
+    if (!norootInitialized) {
+    default_noroot.width  = kFailedBootWidth;
+    default_noroot.height = kFailedBootHeight;
+    default_noroot.dx     = 0;
+    default_noroot.dy     = kFailedBootOffset;
+    default_noroot_data   = failedBootPict;
     }
 
     /*
@@ -196,7 +204,8 @@ int PE_current_console(PE_Video *info)
 /* Stub. */
 void PE_display_icon( __unused unsigned int flags, __unused const char * name )
 {
-    return;
+    if ( default_noroot_data )
+        vc_display_icon( &default_noroot, default_noroot_data );
 }
 
 boolean_t

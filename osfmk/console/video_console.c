@@ -234,6 +234,9 @@ enum vt100state_e {
 	ESignore		/* Ignore this sequence                    */
 } gc_vt100state = ESnormal;
 
+#ifdef __arm__
+#define CONFIG_VC_PROGRESS_WHITE 1
+#endif
 
 #ifdef CONFIG_VC_PROGRESS_WHITE
 enum { kProgressAcquireDelay = 0 /* secs */ };
@@ -2576,8 +2579,11 @@ initialize_screen(PE_Video * boot_vinfo, unsigned int op)
             else if (scale == kPEScaleFactor2x)
                 new_vinfo.v_scale = kPEScaleFactor2x;
             else /* Scale factor not set, default to 1x */
+#ifdef __arm__
+                new_vinfo.v_scale = kPEScaleFactor2x;
+#else
                 new_vinfo.v_scale = kPEScaleFactor1x;
-
+#endif
 		}
      
 		if (!lastVideoMapped)

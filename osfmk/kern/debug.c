@@ -253,9 +253,10 @@ panic_prologue(const char *str)
 
 	panic_safe();
 
+#ifndef __arm__ 	/* xxx show all panic output for now. */
 	if( logPanicDataToScreen )
+#endif		
 		disable_debug_output = FALSE;
-		
 	debug_mode = TRUE;
 
 restart:
