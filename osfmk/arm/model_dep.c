@@ -448,6 +448,21 @@ void print_threads(uint32_t stackptr)
                 }
             }
 
+            /* Make sure it's a Upcb if it's a user program. */
+            if(!thread->continuation && (thread->machine.uss != thread->machine.iss)) {
+                kdb_printf("%s\tuser state:\n", ((current_thread() == thread) ? crashed : "\t"));
+                kdb_printf("%s\t  r0: 0x%08x  r1: 0x%08x  r2: 0x%08x  r3: 0x%08x\n"
+                           "%s\t  r4: 0x%08x  r5: 0x%08x  r6: 0x%08x  r7: 0x%08x\n"
+                           "%s\t  r8: 0x%08x  r9: 0x%08x r10: 0x%08x r11: 0x%08x\n"
+                           "%s\t r12: 0x%08x  sp: 0x%08x  lr: 0x%08x  pc: 0x%08x\n"
+                           "%s\tcpsr: 0x%08x fsr: 0x%08x far: 0x%08x\n",
+                           ((current_thread() == thread) ? crashed : "\t"), thread->machine.uss->r[0], thread->machine.uss->r[1], thread->machine.uss->r[2], thread->machine.uss->r[3], 
+                           ((current_thread() == thread) ? crashed : "\t"), thread->machine.uss->r[4], thread->machine.uss->r[5], thread->machine.uss->r[6], thread->machine.uss->r[7],
+                           ((current_thread() == thread) ? crashed : "\t"), thread->machine.uss->r[8], thread->machine.uss->r[9], thread->machine.uss->r[10], thread->machine.uss->r[11],
+                           ((current_thread() == thread) ? crashed : "\t"), thread->machine.uss->r[12], thread->machine.uss->sp, thread->machine.uss->lr, thread->machine.uss->pc,
+                           ((current_thread() == thread) ? crashed : "\t"), thread->machine.uss->cpsr, 0, 0);
+            }
+
             kdb_printf("\n");
         }
     }

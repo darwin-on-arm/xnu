@@ -192,7 +192,7 @@ void sleh_abort(void* context, int reason)
 
     /* We do not want anything entering sleh_abort recursively. */
     if(__abort_count != 0) {
-        panic("sleh_abort: recursive abort! (dfar: 0x%08x)", dfar);
+        panic("sleh_abort: recursive abort! (pc %x lr %x sp %x cpsr %x dfar 0x%08x abort count %d)", arm_ctx->pc, arm_ctx->lr, arm_ctx->sp, arm_ctx->cpsr, dfar, __abort_count);
     }
     __abort_count++;
 
@@ -293,16 +293,16 @@ void sleh_abort(void* context, int reason)
                 map = thread->map;
 
                 /* Attempt to fault the page. */
-                code = vm_fault(map, vm_map_trunc_page(ifar), (VM_PROT_READ), FALSE, THREAD_UNINT, NULL, vm_map_trunc_page(0));
+                code = vm_fault(map, vm_map_trunc_page(arm_ctx->pc), (VM_PROT_READ), FALSE, THREAD_UNINT, NULL, vm_map_trunc_page(0));
 
                 if((code != KERN_SUCCESS) && (code != KERN_ABORTED)) {
                     exception_type = EXC_BAD_ACCESS;
-                    exception_subcode = ifar;
+                    exception_subcode = arm_ctx->pc;
 
                     /* Debug only. */
                     printf("%s[%d]: usermode prefetch abort, EXC_BAD_ACCESS at 0x%08x in map %p (pmap %p) (%s)\n",
                            proc_name_address(thread->task->bsd_info), proc_pid(thread->task->bsd_info),
-                           ifar, map, map->pmap, ifsr_to_human(ifsr));
+                           arm_ctx->pc, map, map->pmap, ifsr_to_human(ifsr));
                     printf("Thread has ARM register state:\n"
                            "    r0: 0x%08x  r1: 0x%08x  r2: 0x%08x  r3: 0x%08x\n"
                            "    r4: 0x%08x  r5: 0x%08x  r6: 0x%08x  r7: 0x%08x\n"
@@ -440,7 +440,6 @@ void sleh_undef(arm_saved_state_t* state)
                       arm_ctx->lr, arm_ctx->pc, arm_ctx->cpsr);
     } else if(cpsr == 0x10) {
         vm_map_t map;
-        __abort_count--;
         /* Get the current thread map. */
         map = thread->map;
         printf("%s[%d]: usermode undefined instruction, EXC_BREAKPOINT at 0x%08x in map %p (pmap %p)\n",
@@ -459,6 +458,7 @@ void sleh_undef(arm_saved_state_t* state)
         /* xxx gate */
         exception_type = EXC_BREAKPOINT;
         exception_subcode = 0xBEEF;
+        panic("sleh_undef: undefined user instruction\n");
     } else if(cpsr == 0x17) {
         panic("sleh_undef: undefined instruction in system mode");
     }

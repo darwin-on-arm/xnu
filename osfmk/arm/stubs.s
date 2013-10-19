@@ -204,4 +204,3 @@ UNIMPLEMENTED_STUB(_thread_setsinglestep)
 UNIMPLEMENTED_STUB(_thread_syscall_return)
 
 UNIMPLEMENTED_STUB(_pmap_copy)
-UNIMPLEMENTED_STUB(_pmap_disconnect)

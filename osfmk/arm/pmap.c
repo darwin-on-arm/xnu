@@ -1049,10 +1049,14 @@ pmap_expand(pmap_t map, vm_offset_t v)
 {
     vm_offset_t* tte = (vm_offset_t*)pmap_tte(map, v);
     vm_page_t page = pmap_grab_page();
+    spl_t spl;
 
-    /* xxx we need to free pages from an expanded pmap */
+    /* High priority. */
+    SPLVM(spl);
 
-    assert(tte);
+    /* Do not extend past the commpage. */
+    if(v > _COMM_PAGE_BASE_ADDRESS)
+        panic("attempting to expand pmap past maximum address of %x\n", _COMM_PAGE_BASE_ADDRESS);
 
     if((*tte & ARM_PAGE_MASK_VALUE) == ARM_PAGE_SECTION)
         panic("cannot expand current map into L1 sections");
@@ -1060,8 +1064,10 @@ pmap_expand(pmap_t map, vm_offset_t v)
     /* Overwrite the old mapping in this region. */
     *tte = ((page->phys_page << PAGE_SHIFT) & L1_PTE_ADDR_MASK) | L1_TYPE_PTE | (1 << 4);
 
+Out:
     /* Flush the TLBs */
     flush_mmu_tlb();
+    SPLX(spl);
 
     return;
 }
@@ -1630,7 +1636,32 @@ pmap_protect(pmap_t map, vm_map_offset_t sva, vm_map_offset_t eva, vm_prot_t pro
  */
 kern_return_t
 pmap_nest(pmap_t grand, pmap_t subord, addr64_t va_start, addr64_t nstart, uint64_t size) {
-    panic("pmap_nest");
+    int copied;
+
+    /* Anounce ourselves. */
+    kprintf("pmap_nest: %p[0x%08llx] => %p[0x%08llx], %d tte entries\n", 
+           grand, va_start, subord, nstart, size >> 20);
+
+    /* Sanity checks. */
+    if(size == 0) {
+        panic("pmap_nest: size is invalid - %016llX\n", size);
+    }
+
+    if(va_start != nstart)
+        panic("pmap_nest: va_start(0x%llx) != nstart(0x%llx)\n", va_start, nstart);
+
+    /* Start the copy operations. */
+    spl_t spl;
+    SPLVM(spl);
+
+    /* Mark the surbodinate pmap as shared. */
+    subord->pm_shared = TRUE;
+    bcopy(grand->pm_l1_virt + tte_offset(va_start), subord->pm_l1_virt + tte_offset(nstart), (size >> 20) * sizeof(uint32_t));
+
+    /* Out. */
+    flush_mmu_tlb();
+    SPLX(spl);
+    return KERN_SUCCESS;
 }
 
 /**
@@ -1641,4 +1672,17 @@ pmap_nest(pmap_t grand, pmap_t subord, addr64_t va_start, addr64_t nstart, uint6
 kern_return_t
 pmap_unnest(pmap_t grand, addr64_t vaddr, uint64_t size) {
     panic("pmap_unnest");
+}
+
+
+/**
+ * pmap_disconnect
+ *
+ * Remove a page and return the referenced bits.
+ */
+unsigned int
+pmap_disconnect(ppnum_t pa)
+{
+    pmap_page_protect(pa, 0);       /* disconnect the page */
+    return pmap_get_refmod(pa);
 }
