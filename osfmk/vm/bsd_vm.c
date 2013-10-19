@@ -472,14 +472,8 @@ memory_object_control_uiomove(
 			if ((xsize = PAGE_SIZE - start_offset) > io_requested)
 			        xsize = io_requested;
 
-			/* xxx hack fix pmap/vm */
-#ifndef __arm__
 			if ( (retval = uiomove64((addr64_t)(((addr64_t)(dst_page->phys_page) << 12) + start_offset), xsize, uio)) )
 			        break;
-#else
-			if ( (retval = uiomove64((addr64_t)(((addr64_t)(dst_page->phys_page)) + start_offset), xsize, uio)) )
-			        break;
-#endif
 			    
 			io_requested -= xsize;
 			start_offset = 0;

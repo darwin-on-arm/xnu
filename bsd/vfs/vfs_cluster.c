@@ -795,7 +795,8 @@ cluster_zero(upl_t upl, upl_offset_t upl_offset, int size, buf_t bp)
 	        pl = ubc_upl_pageinfo(upl);
 
 		if (upl_device_page(pl) == TRUE) {
-            zero_addr = ((addr64_t)upl_phys_page(pl, 0)) + upl_offset;
+		        zero_addr = ((addr64_t)upl_phys_page(pl, 0) << 12) + upl_offset;
+
 			bzero_phys_nc(zero_addr, size);
 		} else {
 		        while (size) {
@@ -806,9 +807,8 @@ cluster_zero(upl_t upl, upl_offset_t upl_offset, int size, buf_t bp)
 				page_index  = upl_offset / PAGE_SIZE;
 				page_offset = upl_offset & PAGE_MASK;
 
-                zero_addr = ((addr64_t)upl_phys_page(pl, page_index)) + page_offset;
-                    
-                zero_cnt  = min(PAGE_SIZE - page_offset, size);
+				zero_addr = ((addr64_t)upl_phys_page(pl, page_index) << 12) + page_offset;
+				zero_cnt  = min(PAGE_SIZE - page_offset, size);
 
 				bzero_phys(zero_addr, zero_cnt);
 
@@ -2583,7 +2583,7 @@ next_cwrite:
 	}
 	pl = ubc_upl_pageinfo(upl[cur_upl]);
 
-	src_paddr = ((addr64_t)upl_phys_page(pl, 0)) + (addr64_t)upl_offset;
+	src_paddr = ((addr64_t)upl_phys_page(pl, 0) << 12) + (addr64_t)upl_offset;
 
 	while (((uio->uio_offset & (devblocksize - 1)) || io_size < devblocksize) && io_size) {
 	        u_int32_t   head_size;
@@ -4626,7 +4626,7 @@ next_cread:
 	}
 	pl = ubc_upl_pageinfo(upl[cur_upl]);
 
-	dst_paddr = ((addr64_t)upl_phys_page(pl, 0)) + (addr64_t)upl_offset;
+	dst_paddr = ((addr64_t)upl_phys_page(pl, 0) << 12) + (addr64_t)upl_offset;
 
 	while (((uio->uio_offset & (devblocksize - 1)) || io_size < devblocksize) && io_size) {
 	        u_int32_t   head_size;
@@ -5655,8 +5655,7 @@ cluster_align_phys_io(vnode_t vp, struct uio *uio, addr64_t usr_paddr, u_int32_t
                 }
 		did_read = 1;
         }
-
-        ubc_paddr = ((addr64_t)upl_phys_page(pl, 0)) + (addr64_t)(uio->uio_offset & PAGE_MASK_64);
+        ubc_paddr = ((addr64_t)upl_phys_page(pl, 0) << 12) + (addr64_t)(uio->uio_offset & PAGE_MASK_64);
 
 /*
  *	NOTE:  There is no prototype for the following in BSD. It, and the definitions
@@ -5742,7 +5741,7 @@ cluster_copy_upl_data(struct uio *uio, upl_t upl, int upl_offset, int *io_resid)
 	while (xsize && retval == 0) {
 	        addr64_t  paddr;
 
-		paddr = ((addr64_t)upl_phys_page(pl, pg_index)) + pg_offset;        
+		paddr = ((addr64_t)upl_phys_page(pl, pg_index) << 12) + pg_offset;
 
 		retval = uiomove64(paddr, csize, uio);
 
