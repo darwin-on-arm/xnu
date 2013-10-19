@@ -51,7 +51,7 @@ extern void rtclock_intr(arm_saved_state_t * regs);
 extern void rtc_configure(uint64_t hz);
 
 #define uart_base   gRaspberryPiUartBase
-vm_offset_t gRaspberryPiUartBase;
+vm_offset_t     gRaspberryPiUartBase;
 
 static uint64_t clock_decrementer = 0;
 static boolean_t clock_initialized = FALSE;
@@ -65,17 +65,49 @@ static void timer_configure(void)
 
 void RaspberryPi_putc(int c)
 {
-    return;
+    while(!GET32(uart_reg) & 0x20)
+        barrier();
+    PUT32(uart_io, c);
 }
 
 int RaspberryPi_getc(void)
 {
-    return 'A';
+    while(!GET32(uart_reg) & 0x01)
+        barrier();
+    return GET32(uart_io);
 }
 
 void RaspberryPi_uart_init(void)
 {
-    return;
+    unsigned int i;
+    PUT32_phy(AUX_ENABLES, 1);
+    PUT32_phy(AUX_MU_IER_REG, 0);
+    PUT32_phy(AUX_MU_CNTL_REG, 0);
+    PUT32_phy(AUX_MU_LCR_REG, 3);
+    PUT32_phy(AUX_MU_MCR_REG, 0);
+    PUT32_phy(AUX_MU_IER_REG, 0);
+    PUT32_phy(AUX_MU_IIR_REG, 0xC6);
+    PUT32_phy(AUX_MU_BAUD_REG, 270); // 115200 bps
+
+    i = GET32_phy(GPFSEL1);
+    i &= ~(7<<12); // Configure GPIO14 as..
+    i |= 2<<12; // ..TXD for UART
+    i &= ~(7<<15); // Configure GPIO15 as..
+    i |= 2<<15; // ..RXD for UART
+    PUT32_phy(GPFSEL1, i);
+
+    PUT32_phy(GPPUD, 0);
+    for(i = 0; i<150; i++) barrier();
+    PUT32_phy(GPPUDCLK0, (1<<14) | (1<<15));
+    for(i = 0; i<150; i++) barrier();
+    PUT32_phy(GPPUDCLK0, 0);
+
+    PUT32_phy(AUX_MU_CNTL_REG, 3);
+
+    gRaspberryPiUartReg = ml_io_map(AUX_MU_LSR_REG, PAGE_SIZE);
+    gRaspberryPiUartIO = ml_io_map(AUX_MU_IO_REG, PAGE_SIZE);
+
+    kprintf(KPRINTF_PREFIX "serial is up\n");
 }
 
 void RaspberryPi_interrupt_init(void)
@@ -85,7 +117,7 @@ void RaspberryPi_interrupt_init(void)
 
 void RaspberryPi_timebase_init(void)
 {
-    return;
+    gRaspberryPiSysClk = ml_io_map(SYSTIMERCLK, PAGE_SIZE);
 }
 
 void RaspberryPi_handle_interrupt(void *context)
@@ -100,7 +132,7 @@ uint64_t RaspberryPi_get_timebase(void)
 
 uint64_t RaspberryPi_timer_value(void)
 {
-    return 0;
+    return GET64(systimer_val); // free-running 64 bit timer, about 1 MHz
 }
 
 void RaspberryPi_timer_enabled(int enable)
@@ -118,9 +150,55 @@ static void _fb_putc(int c)
     RaspberryPi_putc(c);
 }
 
+void mb_send(uint8_t num, uint32_t msg)
+{
+    while(!GET32(mb_base + MB_STATUS) & 0x80000000)
+        barrier();
+    PUT32(mb_base + MB_WRITE, num & 0xf | msg & 0xfffffff0);
+    //  0  1  2  3  4  5  6  ..  31
+    // [0  1  2  3][4  5  6  ..  31] Like this..
+    // [0  1  2  3][0  1  2  ..  27] ..but not like this
+    // [    num   ][      msg      ]
+}
+
+uint32_t mb_read(uint8_t num)
+{
+    while(1)
+    {
+        while(!GET32(mb_base + MB_STATUS) & 0x40000000)
+            barrier();
+        if(GET32(mb_base + MB_READ) & 0xf == num & 0xf)
+            return GET32(mb_base + MB_READ) & 0xfffffff0;
+    }
+}
+
 void RaspberryPi_framebuffer_init(void)
 {
-    return;
+    gRaspberryPiMailboxBase = ml_io_map(MAILBOX_BASE, PAGE_SIZE);
+    gFBInfo.phys_w = 1280;
+    gFBInfo.phys_h = 768;
+    gFBInfo.virt_w = gFBInfo.phys_w;
+    gFBInfo.virt_h = gFBInfo.phys_h;
+    gFBInfo.bpp = 4 * (8); // 32bpp
+
+    mb_write(1, pmap_extract(kernel_pmap, &gFBInfo) + 0x40000000);
+    if(mb_read(1) == 0)
+    {
+        PE_state.video.v_baseAddr = (unsigned long) ml_io_map(gFBInfo.gpu_ptr, PAGE_SIZE);
+        PE_state.video.v_rowBytes = gFBInfo.phys_w * (gFBInfo.bpp / 8);
+        PE_state.video.v_width = gFBInfo.phys_w;
+        PE_state.video.v_height = gFBInfo.phys_h;
+        PE_state.video.v_depth = gFBInfo.bpp;
+
+        kprintf(KPRINTF_PREFIX "framebuffer initialized\n");
+
+        initialize_screen((void*)&PE_state.video, kPEAcquireScreen);
+        initialize_screen((void*)&PE_state.video, kPEEnableScreen);
+    }
+    else
+    {
+        kprintf(KPRINTF_PREFIX "Failed to get frambuffer :-/\n");
+    }
 }
 
 void PE_init_SocSupport_raspberrypi(void)
@@ -143,9 +221,9 @@ void PE_init_SocSupport_raspberrypi(void)
 
     RaspberryPi_framebuffer_init();
     RaspberryPi_uart_init();
-
-    PE_kputc = _fb_putc;        //gPESocDispatch.uart_putc;
-
+    
+    PE_kputc = _fb_putc; //gPESocDispatch.uart_putc;
+    
 }
 
 void PE_init_SocSupport_stub(void)
