@@ -48,16 +48,16 @@
 #define MB_WRITE  0x20
 
 struct fb_info {
-    u32 phys_w;
-    u32 phys_h;
-    u32 virt_w;
-    u32 virt_h;
-    u32 gpu_pitch;
-    u32 bpp;
-    u32 x;
-    u32 y;
+    uint32_t phys_w;
+    uint32_t phys_h;
+    uint32_t virt_w;
+    uint32_t virt_h;
+    uint32_t gpu_pitch;
+    uint32_t bpp;
+    uint32_t x;
+    uint32_t y;
     void *gpu_ptr;
-    u32 gpu_size;
+    uint32_t gpu_size;
 };
 
 #endif

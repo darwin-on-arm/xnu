@@ -41,6 +41,8 @@
 #include <vm/pmap.h>
 #include <arm/pmap.h>
 
+#include "raspberrypi.h"
+
 /*
  * This is board specific stuff.
  */
@@ -50,8 +52,18 @@
 extern void rtclock_intr(arm_saved_state_t * regs);
 extern void rtc_configure(uint64_t hz);
 
-#define uart_base   gRaspberryPiUartBase
-vm_offset_t     gRaspberryPiUartBase;
+#define uart_io   gRaspberryPiUartIO
+vm_offset_t     gRaspberryPiUartIO;
+#define uart_reg   gRaspberryPiUartReg
+vm_offset_t     gRaspberryPiUartReg;
+
+#define systimer_val   gRaspberryPiSysClk
+vm_offset_t     gRaspberryPiSysClk;
+
+#define mb_base   gRaspberryPiMailboxBase
+vm_offset_t       gRaspberryPiMailboxBase;
+
+struct fb_info gFBInfo;
 
 static uint64_t clock_decrementer = 0;
 static boolean_t clock_initialized = FALSE;
@@ -167,7 +179,7 @@ uint32_t mb_read(uint8_t num)
     {
         while(!GET32(mb_base + MB_STATUS) & 0x40000000)
             barrier();
-        if(GET32(mb_base + MB_READ) & 0xf == num & 0xf)
+        if((GET32(mb_base + MB_READ) & 0xf) == (num & 0xf))
             return GET32(mb_base + MB_READ) & 0xfffffff0;
     }
 }
@@ -181,10 +193,10 @@ void RaspberryPi_framebuffer_init(void)
     gFBInfo.virt_h = gFBInfo.phys_h;
     gFBInfo.bpp = 4 * (8); // 32bpp
 
-    mb_write(1, pmap_extract(kernel_pmap, &gFBInfo) + 0x40000000);
+    mb_send(1, pmap_extract(kernel_pmap, &gFBInfo) + 0x40000000);
     if(mb_read(1) == 0)
     {
-        PE_state.video.v_baseAddr = (unsigned long) ml_io_map(gFBInfo.gpu_ptr, PAGE_SIZE);
+        PE_state.video.v_baseAddr = (unsigned long) ml_io_map((void*) gFBInfo.gpu_ptr, PAGE_SIZE);
         PE_state.video.v_rowBytes = gFBInfo.phys_w * (gFBInfo.bpp / 8);
         PE_state.video.v_width = gFBInfo.phys_w;
         PE_state.video.v_height = gFBInfo.phys_h;
