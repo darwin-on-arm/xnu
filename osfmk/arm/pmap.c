@@ -326,10 +326,6 @@ pmap_pte(pmap_t pmap, vm_offset_t virt)
     /* Return the virtual mapped PTE. */
     ptep = (uint32_t*)((phys_to_virt(pte) + pte_offset(virt)));
 
-    /* Only 4kB pages are supported. */
-    if(*ptep & ARM_PTE_DESCRIPTOR_64K)
-        return 0;
-
     return (ptep);
 }
 
@@ -1099,6 +1095,7 @@ pmap_enter_options(
     /* Only low addresses are supported for user pmaps. */
     if(va > _COMM_PAGE_BASE_ADDRESS && pmap != kernel_pmap)
         panic("pmap_enter_options: low address 0x%08X is invalid for pmap %p\n", va, pmap);
+
 Retry:
     /* Set a high priority level. */
     SPLVM(spl);
@@ -1185,7 +1182,7 @@ Retry:
             pv_h->pv_next = pv_e;
             pv_e = (pv_entry_t)0;
         }
-#ifdef DEBUG_PMAP
+#if 0
     kprintf("pmap_enter: pai %d pa %d (%x) va %x pv_h %p pmap %p pv_h->pmap %p pv_h->pv_address_va %x\n",
             pai, pa, pa << PAGE_SHIFT, va, pv_h, pmap, pv_h->pv_pmap, pv_h->pv_address_va);
 #endif
@@ -1288,29 +1285,17 @@ pmap_remove_range(pmap_t pmap, vm_map_offset_t start_vaddr, pt_entry_t* spte, pt
     for(cpte = spte, vaddr = start_vaddr; cpte < epte; cpte++, vaddr += our_page_size) {
         /* Start nuking the range. */
         pt_entry_t *p = cpte;
-        if(!*cpte & L2_ADDR_MASK)
-            continue;
-
-        /* We only support 4kB pages right now. */
-        if(!(*cpte & ARM_PTE_DESCRIPTOR_4K))
-            panic("pmap_remove_range: attempting to remove non page, what the hell? cptep %x cpte %x vaddr %x", cpte, *cpte, vaddr);
-
-        num_removed++;
-
-        /* xxx we might be on the range being destroyed??? */
-
-        /* If the pmap subsystem isn't initialized, just go on. (Remove mappings?) */
-        if(!pmap_initialized) {
-            continue;
-        }
 
         /* Get the index for the PV table. */
         ppnum_t pai = pa_index(*cpte & L2_ADDR_MASK);
+        num_removed++;
 
-#ifdef DEBUG_PMAP
-        kprintf("pmap_remove_range: cpte %x, *cpte: %x, epte %x\n", cpte, *cpte, epte);
-        kprintf("pmap_remove_range: pmap %p pai %d %x vaddr %x\n", pmap, pai, pai << PAGE_SHIFT, start_vaddr);
-#endif
+        /* Nuke it. */
+        *cpte = 0; 
+
+        /* Continue onwards if pmap isn't up yet.. */
+        if(!pmap_initialized)
+            continue;
 
         /* Remove the entry from the PV table. */
         {
@@ -1323,9 +1308,7 @@ pmap_remove_range(pmap_t pmap, vm_map_offset_t start_vaddr, pt_entry_t* spte, pt
              */
 
             if(pv_h->pv_pmap == PMAP_NULL) {
-#ifdef DEBUG_PMAP
-                kprintf("pmap_remove_range: null pv_h->pmap (pmap %p, pv_h %p, pai %d)\n", pmap, pv_h, pai);
-#endif
+                panic("pmap_remove_range: null pv_h->pmap (pmap %p, pv_h %p, pai %d, vaddr %x, cpte %x)\n", pmap, pv_h, pai, vaddr, cpte);
                 goto out;
             }
 
@@ -1383,11 +1366,6 @@ pmap_remove(
     /* Verify the pages are page aligned. */
     assert(!(s & PAGE_MASK));
     assert(!(e & PAGE_MASK));
-
-#ifdef DEBUG_PMAP
-    /* XXX if the address to remove is greater than 1MB this is broken */
-    kprintf("pmap_remove(%p,%x,%x)\n", map, s, e);
-#endif
 
     /* High Priority. */
     SPLVM(spl);
@@ -1643,4 +1621,24 @@ pmap_protect(pmap_t map, vm_map_offset_t sva, vm_map_offset_t eva, vm_prot_t pro
 {
     /* xxx finish */
     return;
+}
+
+/**
+ * pmap_nest
+ *
+ * Nest a pmap with new mappings into a master pmap.
+ */
+kern_return_t
+pmap_nest(pmap_t grand, pmap_t subord, addr64_t va_start, addr64_t nstart, uint64_t size) {
+    panic("pmap_nest");
+}
+
+/**
+ * pmap_unnest
+ *
+ * Remove a nested pmap.
+ */
+kern_return_t
+pmap_unnest(pmap_t grand, addr64_t vaddr, uint64_t size) {
+    panic("pmap_unnest");
 }

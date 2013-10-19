@@ -105,10 +105,6 @@
 #include <vm/vm_shared_region.h>
 #include <vm/vm_map_store.h>
 
-#ifdef __arm__
-#define NO_NESTED_PMAP 1
-#endif
-
 extern u_int32_t random(void);	/* from <libkern/libkern.h> */
 /* Internal prototypes
  */

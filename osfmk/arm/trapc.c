@@ -250,25 +250,28 @@ void sleh_abort(void* context, int reason)
                 /* Attempt to fault the page. */
                 code = vm_fault(map, vm_map_trunc_page(dfar), (VM_PROT_READ), FALSE, THREAD_UNINT, NULL, vm_map_trunc_page(0));
                 if(code != KERN_SUCCESS) {
-
                     /* Still, die in a fire. */
-                    if(!thread->recover) {
-                        panic_context(0, (void*)arm_ctx, 
-                                     "sleh_abort: data abort in kernel mode: fault_addr=0x%x\n"
-                                     "r0: 0x%08x  r1: 0x%08x  r2: 0x%08x  r3: 0x%08x\n"
-                                     "r4: 0x%08x  r5: 0x%08x  r6: 0x%08x  r7: 0x%08x\n"
-                                     "r8: 0x%08x  r9: 0x%08x r10: 0x%08x r11: 0x%08x\n"
-                                     "12: 0x%08x  sp: 0x%08x  lr: 0x%08x  pc: 0x%08x\n"
-                                     "cpsr: 0x%08x fsr: 0x%08x far: 0x%08x\n",
-                                     dfar, arm_ctx->r[0], arm_ctx->r[1], arm_ctx->r[2], arm_ctx->r[3],
-                                     arm_ctx->r[4], arm_ctx->r[5], arm_ctx->r[6], arm_ctx->r[7], arm_ctx->r[8],
-                                     arm_ctx->r[9], arm_ctx->r[10], arm_ctx->r[11], arm_ctx->r[12], arm_ctx->sp,
-                                     arm_ctx->lr, arm_ctx->pc, arm_ctx->cpsr, dfsr, dfar);
-                    } else {
-                        /* If there's a recovery routine, use it. */
-                        kprintf("[trap] data abort in kernel mode, transferring control to RecoveryRoutine %p, dfsr %x, dfar %x\n", thread->recover, dfsr, dfar);
-                        arm_ctx->pc = thread->recover;
-                        thread->recover = NULL;
+                    code = vm_fault(kernel_map, vm_map_trunc_page(dfar), (VM_PROT_READ), FALSE, THREAD_UNINT, NULL, vm_map_trunc_page(0));
+                    if(code != KERN_SUCCESS) {
+                        /* Attempt to fault the page against the kernel map. */
+                        if(!thread->recover) {
+                            panic_context(0, (void*)arm_ctx, 
+                                         "sleh_abort: data abort in kernel mode: fault_addr=0x%x\n"
+                                         "r0: 0x%08x  r1: 0x%08x  r2: 0x%08x  r3: 0x%08x\n"
+                                         "r4: 0x%08x  r5: 0x%08x  r6: 0x%08x  r7: 0x%08x\n"
+                                         "r8: 0x%08x  r9: 0x%08x r10: 0x%08x r11: 0x%08x\n"
+                                         "12: 0x%08x  sp: 0x%08x  lr: 0x%08x  pc: 0x%08x\n"
+                                         "cpsr: 0x%08x fsr: 0x%08x far: 0x%08x\n",
+                                         dfar, arm_ctx->r[0], arm_ctx->r[1], arm_ctx->r[2], arm_ctx->r[3],
+                                         arm_ctx->r[4], arm_ctx->r[5], arm_ctx->r[6], arm_ctx->r[7], arm_ctx->r[8],
+                                         arm_ctx->r[9], arm_ctx->r[10], arm_ctx->r[11], arm_ctx->r[12], arm_ctx->sp,
+                                         arm_ctx->lr, arm_ctx->pc, arm_ctx->cpsr, dfsr, dfar);
+                        } else {
+                            /* If there's a recovery routine, use it. */
+                            kprintf("[trap] data abort in kernel mode, transferring control to RecoveryRoutine %p, dfsr %x, dfar %x, pc %x, map %p pmap %p\n", thread->recover, dfsr, dfar, arm_ctx->pc, map, map->pmap);
+                            arm_ctx->pc = thread->recover;
+                            thread->recover = NULL;
+                        }
                     }
                 }
                 __abort_count--;
@@ -403,5 +406,69 @@ boolean_t irq_handler(void* context)
  */
 void sleh_undef(arm_saved_state_t* state)
 {
-    panic("sleh_undef pc %x lr %x cpsr %x\n", state->pc, state->lr, state->cpsr);
+    uint32_t cpsr, exception_type = 0, exception_subcode = 0;
+    arm_saved_state_t* arm_ctx = (arm_saved_state_t*)state;
+    thread_t thread = current_thread();
+
+    /* We do not want anything entering undefined recursively. */
+    if(__abort_count != 0) {
+        panic("sleh_undef: recursive abort!");
+    }
+    __abort_count++;
+
+    if(!thread) {
+        panic("sleh_undef: current thread is NULL\n");
+    }
+
+    /* See if the abort was in Kernel or User mode. */
+    cpsr = arm_ctx->cpsr & 0x1F;
+
+    /* Kernel mode. (ARM Supervisor) */
+    if(cpsr == 0x13) {
+        /* xxx handle if it's a NEON/VFP instruction. */
+
+        /* Fall through to bad kernel handler. */
+        panic_context(0, (void*)arm_ctx, "sleh_undef: undefined kernel instruction\n"
+                      "r0: 0x%08x  r1: 0x%08x  r2: 0x%08x  r3: 0x%08x\n"
+                      "r4: 0x%08x  r5: 0x%08x  r6: 0x%08x  r7: 0x%08x\n"
+                      "r8: 0x%08x  r9: 0x%08x r10: 0x%08x r11: 0x%08x\n"
+                      "12: 0x%08x  sp: 0x%08x  lr: 0x%08x  pc: 0x%08x\n"
+                      "cpsr: 0x%08x\n",
+                      arm_ctx->r[0], arm_ctx->r[1], arm_ctx->r[2], arm_ctx->r[3],
+                      arm_ctx->r[4], arm_ctx->r[5], arm_ctx->r[6], arm_ctx->r[7], arm_ctx->r[8],
+                      arm_ctx->r[9], arm_ctx->r[10], arm_ctx->r[11], arm_ctx->r[12], arm_ctx->sp,
+                      arm_ctx->lr, arm_ctx->pc, arm_ctx->cpsr);
+    } else if(cpsr == 0x10) {
+        vm_map_t map;
+        __abort_count--;
+        /* Get the current thread map. */
+        map = thread->map;
+        printf("%s[%d]: usermode undefined instruction, EXC_BREAKPOINT at 0x%08x in map %p (pmap %p)\n",
+               proc_name_address(thread->task->bsd_info), proc_pid(thread->task->bsd_info),
+               arm_ctx->pc, map, map->pmap);
+        printf("Thread has ARM register state:\n"
+               "    r0: 0x%08x  r1: 0x%08x  r2: 0x%08x  r3: 0x%08x\n"
+               "    r4: 0x%08x  r5: 0x%08x  r6: 0x%08x  r7: 0x%08x\n"
+               "    r8: 0x%08x  r9: 0x%08x r10: 0x%08x r11: 0x%08x\n"
+               "   r12: 0x%08x  sp: 0x%08x  lr: 0x%08x  pc: 0x%08x\n"
+               "  cpsr: 0x%08x\n", arm_ctx->r[0], arm_ctx->r[1], arm_ctx->r[2], arm_ctx->r[3],
+               arm_ctx->r[4], arm_ctx->r[5], arm_ctx->r[6], arm_ctx->r[7], arm_ctx->r[8],
+               arm_ctx->r[9], arm_ctx->r[10], arm_ctx->r[11], arm_ctx->r[12], arm_ctx->sp,
+               arm_ctx->lr, arm_ctx->pc, arm_ctx->cpsr
+               );
+        /* xxx gate */
+        exception_type = EXC_BREAKPOINT;
+        exception_subcode = 0xBEEF;
+    } else if(cpsr == 0x17) {
+        panic("sleh_undef: undefined instruction in system mode");
+    }
+
+    /* If there was a user exception, handle it. */
+    if(exception_type) {
+        __abort_count--;
+        doexception(exception_type, 0, exception_subcode);
+    }
+
+    /* Done. */
+    return;
 }

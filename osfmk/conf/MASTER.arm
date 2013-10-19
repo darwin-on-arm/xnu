@@ -61,3 +61,6 @@ options		CONFIG_MACF		# Mandatory Access Control Framework
 #options	CONFIG_MACF_MACH	# MACF applied to Mach services
 options		CONFIG_AUDIT		# Kernel auditing
 
+options     NO_NESTED_PMAP                  # <no_nested_pmap>
+options     CONFIG_NO_NESTED_PMAP           # <no_nested_pmap>
+options     CONFIG_NESTED_PMAP              # <!no_nested_pmap>

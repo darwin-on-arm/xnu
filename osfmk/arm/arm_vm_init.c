@@ -191,7 +191,7 @@ void l2_map_linear_range_no_cache(uint32_t pa_cache_start, uint32_t phys_start, 
     pte_iter = phys_to_virt(pa_cache_start);
     page_iter = (phys_end - phys_start) >> PAGE_SHIFT;
     phys_iter = phys_start;
-    
+
     for (unsigned int i = 0; i < page_iter; i++)
     {
         unsigned int* ptv = (unsigned int*)pte_iter;
@@ -285,20 +285,15 @@ static void verify_lowGlo(void)
 void arm_vm_init(uint32_t mem_limit, boot_args *args)
 {
     uint32_t    gMemSize;
-    
-    /*
-     * The use of kdb_printf is because kprintf is not initialized at this state.
-     */
-    
-    kdb_printf("arm_vm_init: Bootstrapping, mem-limit: 0x%08x boot-args: %p\n",
-               mem_limit, args);
-    
-    if(!args) {
-        panic("Boot-args may not be null for arm_vm_init, sorry\n");
-    }
 
-    if(mem_limit)
-        args->memSize = mem_limit;
+    /* ARM vm init starting up. */
+    kdb_printf("\tboot_args:               0x%08x\n"
+               "\tboot_args->virtBase:     0x%08x\n"
+               "\tboot_args->physBase:     0x%08x\n"
+               "\tboot_args->topOfKernel:  0x%08x\n"
+               "\tboot_args->memSize:      0x%08x\n",
+               args, args->virtBase, args->physBase,
+               args->topOfKernelData, args->memSize);
 
     /* WARNING WARNING WARNING THE CODE BLOCK BELOW IS A VERY BAD IDEA */
 #ifdef BOARD_CONFIG_S5L8930X
@@ -311,204 +306,107 @@ void arm_vm_init(uint32_t mem_limit, boot_args *args)
 #endif
     /* WARNING WARNING WARNING THE CODE BLOCK ABOVE IS A VERY BAD IDEA */
     
+
+    /* Set up some globals. */
     gPhysBase = args->physBase;
     gVirtBase = args->virtBase;
     gMemSize = args->memSize;
     gTopOfKernel = args->topOfKernelData;
-    
-    /*
-     * Set global memory size.
-     */
-    max_mem = gMemSize;
-    mem_size = gMemSize;
-    sane_size = gMemSize;
-    
-    kdb_printf("arm_vm_init: gPhysBase: 0x%08x gVirtBase: 0x%08x\n",
-               gPhysBase, gVirtBase);
-    
-    kdb_printf("arm_vm_init: gTopOfKernel: 0x%08x gMemSize: 0x%08x\n",
-               gTopOfKernel, gMemSize);
-    
-    /*
-     * Cap top of memory using maxmem.
-     */
-    
-    /*
-     * Map L2 tables for identity and managed.
-     */
+    max_mem = mem_size = sane_size = gMemSize;
 
-    cpu_ttb = gTopOfKernel + (L1_SIZE);
-    bzero(phys_to_virt(cpu_ttb), L1_SIZE);
-
-    /*
-     * Set up cache region for identity.
-     */
+    /* Map L2 tables for identity. The initial bootloader sets up section maps for one L1, so we are next. */
+    cpu_ttb = gTopOfKernel + L1_SIZE;
+ 
     identityBaseVA = gVirtBase;
-    identityCachePA = cpu_ttb + l2_size(gMemSize);
-    
-    /*
-     * Set up cache region for managed.
-     */
+    identityCachePA = cpu_ttb + L1_SIZE; /* After the first initial TTB. */
+    kdb_printf("arm_vm_init: L2 address for identity mappings...\n"
+               "\tmapping VA: 0x%08x\n"
+               "\tmapping PA: 0x%08x\n",
+               identityBaseVA, identityCachePA);
+
     managedBaseVA = MANAGED_BASE;
-#if 0
-    if(sectionOffset)
-        managedBaseVA -= 0x1000;
-#endif
+    managedCachePA = identityCachePA + l2_size(gMemSize);
+    kdb_printf("arm_vm_init: L2 address for kernel managed mappings...\n"
+               "\tmapping VA: 0x%08x\n"
+               "\tmapping PA: 0x%08x\n",
+               managedBaseVA, managedCachePA);
+
+    /* Bit generous.. */
+    first_avail = managedCachePA + l2_size(0x40000000);
     
-    managedCachePA = identityCachePA + (L1_SIZE);
-    
-    /*
-     * Set up cache region for exception vector.
-     */
-    exceptionVectVA = VECTORS_BASE;
-    exceptionCachePA = managedCachePA + l2_size(gMemSize);
-    
-    /*
-     * Set up first page parameters.
-     */
-    
-    first_avail = exceptionCachePA + L1_SIZE;
-    avail_end = gPhysBase + gMemSize;
-    
-    kdb_printf("arm_vm_init: Mappings:\n"
-               "\t identity base VA:    0x%08x\n"
-               "\t identity cache PA:   0x%08x\n"
-               "\t managed base VA:     0x%08x\n"
-               "\t managed cache PA:    0x%08x\n"
-               "\t exception base VA:   0x%08x\n"
-               "\t exception cache PA:  0x%08x\n",
-               identityBaseVA, identityCachePA,
-               managedBaseVA, managedCachePA,
-               exceptionVectVA, exceptionCachePA);
-    
-    kdb_printf("arm_vm_init: l1 base at 0x%08x\n", cpu_ttb);
-    
-    /*
-     * Configure tables for identity and managed mappings.
-     */
-    pmap_static_init();
-    if(!kernel_pmap) {
-        panic("Why is kernel_pmap null?");
-    }
-    
-    /*
-     * Configure tables for mapping.
-     */
-    
-    kdb_printf("arm_vm_init: Configuring tables for identity mapping.\n");
+    /* Configure tables for identity mapping.. */
+    kdb_printf("arm_vm_init: configuring tables for identity mapping...\n");
     l2_cache_to_range(identityCachePA,
-					  identityBaseVA,
-					  phys_to_virt(cpu_ttb),
-					  gMemSize,
+                      identityBaseVA,
+                      phys_to_virt(cpu_ttb),
+                      gMemSize,
                       TRUE);
 
-    kdb_printf("arm_vm_init: Configuring tables for managed mapping.\n");
     l2_cache_to_range(managedCachePA,
-					  managedBaseVA,
-					  phys_to_virt(cpu_ttb),
-					  gMemSize,
+                      managedBaseVA,
+                      phys_to_virt(cpu_ttb),
+                      gMemSize,
                       TRUE);
-    
-    kdb_printf("arm_vm_init: Configuring tables for exception mapping.\n");
-    l2_cache_to_range(exceptionCachePA,
-					  exceptionVectVA,
-					  phys_to_virt(cpu_ttb),
-					  align_up(PAGE_SIZE, 0x00100000),
-                      TRUE);
-    
-    kernel_pmap->pm_l1_virt = phys_to_virt(cpu_ttb);
-    kernel_pmap->pm_l1_phys = cpu_ttb;
-    
-    /*
-     * Mach kernel vmaddr (0x80001000) gets rebased to 0x80000000.
-     */
-    
-    /*
-     * Create main identity mapping.
-     */
-    kdb_printf("arm_vm_init: Creating main identity mapping (0x%08x).\n", sectionOffset);
+
+    /* Create the first identity mappings. */
+    kdb_printf("arm_vm_init: creating main identity mapping (section offset is 0x%x).\n", sectionOffset);
     l2_map_linear_range(identityCachePA,
                         gPhysBase - sectionOffset, gPhysBase + gMemSize);
 
-    /*
-     * Map high exception vectors. Technically, we could also use the VBAR
-     * register instead of mapping high...
-     */
-    kdb_printf("arm_vm_init: Mapping exception vectors.\n");
-    if (!pmap_map_bd(exceptionVectVA, virt_to_phys(&ExceptionVectorsBase),
-                     virt_to_phys(&ExceptionVectorsBase) + PAGE_SIZE, 0, 0))
-	{
-		panic("arm_vm_init: failed to map %x to %x\n", &ExceptionVectorsBase, exceptionVectVA);
-	}
-    
-    kdb_printf("arm_vm_init: arm_ttbr: 0x%08x, going to set NOW.\n", cpu_ttb);
+    /* Set high exception vectors.. Steal one page from first_avail. */
+    kdb_printf("arm_vm_init: exception vectors are at 0x%08x.\n", &ExceptionVectorsBase);
 
-    /*
-     * Clean caches and flush TLB to allow new memory accesses.
-     */
+    /* Map them... */
+    uint32_t *vecpt_start = (first_avail), *vectp, *va_vecpt;
+    vectp = (uint32_t*)addr_to_tte(phys_to_virt(cpu_ttb), VECTORS_BASE);
+    *vectp = (((uint32_t)vecpt_start) | L1_TYPE_PTE);
+    va_vecpt = phys_to_virt(vecpt_start) + pte_offset(VECTORS_BASE);
+    *va_vecpt = virt_to_phys(&ExceptionVectorsBase) | L2_ACCESS_PRW | L2_SMALL_PAGE;
+
+    /* Burn it away... */
+    first_avail += L1_SIZE;
+    avail_end = gPhysBase + gMemSize;
+
+    /* Clean caches and flush TLBs.. */
+    kdb_printf("arm_vm_init: switching translation-tables now...\n");
     set_mmu_ttb(cpu_ttb);
-    flush_mmu_tlb();
-
     set_mmu_ttb_alt(cpu_ttb);
-    flush_mmu_tlb();
-
     set_mmu_ttbcr(2);
     flush_mmu_tlb();
 
-    /*
-     * Set up PMAP regions.
-     */
+    /* Set settings for pmap. */
+    kernel_pmap->pm_l1_phys = cpu_ttb;
+    kernel_pmap->pm_l1_virt = phys_to_virt(cpu_ttb);
 
-    /*
-     * Get segment information from the Mach-O header.
-     */
-    kdb_printf("arm_vm_init: Initializing VM parameters\n");
-    sectTEXTB = (vm_offset_t)(uint32_t *)getsegdatafromheader(
-		&_mh_execute_header, "__TEXT", &sectSizeTEXT);
-	sectDATAB = (vm_offset_t)(uint32_t *)getsegdatafromheader(
-		&_mh_execute_header, "__DATA", &sectSizeDATA);
-	sectLINKB = (vm_offset_t)(uint32_t *)getsegdatafromheader(
-		&_mh_execute_header, "__LINKEDIT", &sectSizeLINK);
-	sectKLDB = (vm_offset_t)(uint32_t *)getsegdatafromheader(
-		&_mh_execute_header, "__KLD", &sectSizeKLD);
-	sectHIBB = (vm_offset_t)(uint32_t *)getsegdatafromheader(
-		&_mh_execute_header, "__HIB", &sectSizeHIB);
-	sectPRELINKB = (vm_offset_t)(uint32_t *)getsegdatafromheader(
-		&_mh_execute_header, "__PRELINK_TEXT", &sectSizePRELINK);
-
-	etext = (vm_offset_t) sectTEXTB + sectSizeTEXT;
-	edata = (vm_offset_t) sectDATAB + sectSizeDATA;
-    end = round_page(getlastaddr());					/* Force end to next page */
-	
-    /*
-     * Set up internal VM parameters.
-     */
-    kdb_printf("arm_vm_init: lol, kaslr. Not doing anything for it.\n");
+    /* Set up segment information. */
+    kdb_printf("arm_vm_init: setting up segment information...\n");
+    sectTEXTB = (vm_offset_t)(uint32_t *)getsegdatafromheader(&_mh_execute_header, "__TEXT", &sectSizeTEXT);
+    sectDATAB = (vm_offset_t)(uint32_t *)getsegdatafromheader(&_mh_execute_header, "__DATA", &sectSizeDATA);
+    sectLINKB = (vm_offset_t)(uint32_t *)getsegdatafromheader(&_mh_execute_header, "__LINKEDIT", &sectSizeLINK);
+    sectKLDB = (vm_offset_t)(uint32_t *)getsegdatafromheader(&_mh_execute_header, "__KLD", &sectSizeKLD);
+    sectHIBB = (vm_offset_t)(uint32_t *)getsegdatafromheader(&_mh_execute_header, "__HIB", &sectSizeHIB);
+    sectPRELINKB = (vm_offset_t)(uint32_t *)getsegdatafromheader(&_mh_execute_header, "__PRELINK_TEXT", &sectSizePRELINK);
+    etext = (vm_offset_t) sectTEXTB + sectSizeTEXT;
+    edata = (vm_offset_t) sectDATAB + sectSizeDATA;
+    end = round_page(getlastaddr());                                        /* Force end to next page */
     vm_kernel_slide = 0;
-    
     vm_kernel_etext = etext;
     vm_kernel_stext = sectTEXTB;
     vm_kernel_top = phys_to_virt(gTopOfKernel);
     vm_kernel_base = gVirtBase;
+
+    /* Bootstrap pmap. */
+    uint32_t bootstrap_addr = managedBaseVA + 0x1000;
+    pmap_bootstrap(gMemSize, (vm_offset_t*)&bootstrap_addr, 0);
     
-    /*
-     * Kick off pmap.
-     */
-    uint8_t* managedBase = (uint8_t*)managedBaseVA + 0x1000;    /* Unlucky page. */
-    pmap_bootstrap(gMemSize, (vm_offset_t*)&managedBase, 0);
-    
-    /*
-     * Subsystems.
-     */
+    /* Subsystems. */
     printf_init();
     panic_init();
     
     PE_init_kprintf(TRUE);
     kprintf("kprintf initialized!\n");
     
-    /*
-     * Verify vectors are in the right place.
-     */
+    /* Verify vectors are in the right place. */
     verify_lowGlo();
     
     return;

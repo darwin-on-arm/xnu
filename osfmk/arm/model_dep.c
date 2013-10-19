@@ -163,13 +163,17 @@ void panic_backlog(uint32_t stackptr)
 
     /* Make sure the crash is after we set the first thread. */
     if(!currthr) {
+        kprintf("panicked thread: %p, backtrace: 0x%08x\n", currthr, stackptr);
+        panic_arm_thread_backtrace(stackptr, 32, NULL, FALSE, NULL, TRUE, "");
         return;
     }
 
     task_t task = currthr->task;
     /* If the task is null, return... */
     if(!task) {
-       return;
+        kprintf("panicked thread: %p, backtrace: 0x%08x\n", currthr, stackptr);
+        panic_arm_thread_backtrace(stackptr, 32, NULL, FALSE, NULL, TRUE, "");
+        return;
     }
 
     char* name;
@@ -198,10 +202,8 @@ void panic_backlog(uint32_t stackptr)
  */
 void DebuggerCommon(__unused unsigned int reason, void *ctx, const char *message)
 {
-#if 0
     /* Dim the screen. */
     dim_screen();
-#endif
 
     /* Print out debugger messages. */
     kdb_printf("Debugger message: %s\n", message);
