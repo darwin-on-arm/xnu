@@ -30,7 +30,7 @@
 #include <kern/debug.h>
 
 #if defined(__arm__)
-unsigned long __stack_chk_guard = 0x47415244UL;
+unsigned long __stack_chk_guard = 0x59414E41UL;
 #else
 unsigned long __stack_chk_guard = 0x0UL;
 #endif
