@@ -92,7 +92,7 @@ thread_userstack(
     return KERN_SUCCESS;
 }
 
-static uint32_t sanitise_cpsr(uint32_t cpsr)
+uint32_t sanitise_cpsr(uint32_t cpsr)
 {
     uint32_t final_cpsr;
     
@@ -142,6 +142,74 @@ thread_userstackdefault(
 {
     *default_user_stack = USRSTACK;
     return (KERN_SUCCESS);
+}
+
+
+/*
+ *  thread_getstatus:
+ *
+ *  Get the status of the specified thread.
+ */
+
+kern_return_t
+machine_thread_get_state(
+    thread_t thr_act,
+    thread_flavor_t flavor,
+    thread_state_t tstate,
+    mach_msg_type_number_t *count)
+{
+    switch (flavor)  {
+         case THREAD_STATE_FLAVOR_LIST:
+        {
+        if (*count < 3)
+                return (KERN_INVALID_ARGUMENT);
+
+            tstate[0] = ARM_THREAD_STATE;
+        tstate[1] = ARM_VFP_STATE;
+        tstate[2] = ARM_EXCEPTION_STATE;
+        *count = 3;
+        break;
+        }
+
+        case THREAD_STATE_FLAVOR_LIST_NEW:
+        {
+        if (*count < 4)
+                return (KERN_INVALID_ARGUMENT);
+
+            tstate[0] = ARM_THREAD_STATE;
+        tstate[1] = ARM_VFP_STATE;
+        tstate[2] = ARM_EXCEPTION_STATE;
+        tstate[3] = ARM_DEBUG_STATE;
+
+        *count = 4;
+        break;
+        }
+
+        case ARM_THREAD_STATE:
+        {
+        struct arm_thread_state *state;
+        struct arm_thread_state *saved_state;
+
+        if (*count < ARM_THREAD_STATE_COUNT)
+                return(KERN_INVALID_ARGUMENT);
+
+        state = (struct arm_thread_state *) tstate;
+        saved_state = (struct arm_thread_state*)thr_act->machine.uss;
+
+        /*
+         * First, copy everything:
+         */
+        *state = *saved_state;
+
+        *count = ARM_THREAD_STATE_COUNT;
+        break;
+        }
+
+    default:
+        return(KERN_INVALID_ARGUMENT);
+    }
+
+    return(KERN_SUCCESS);
 }
 
 

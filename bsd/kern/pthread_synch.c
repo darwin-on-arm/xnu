@@ -225,7 +225,6 @@ bsdthread_create(__unused struct proc *p, struct bsdthread_create_args  *uap, us
 	stackaddr = 0xB0000000;
 #elif defined(__arm__)
     stackaddr = 0xB0000000;
-    #warning - This may be incorrect
 #else
 #error Need to define a stack address hint for this architecture
 #endif
@@ -349,14 +348,21 @@ bsdthread_create(__unused struct proc *p, struct bsdthread_create_args  *uap, us
 	}
 #elif defined(__arm__) 
 	{
-        arm_thread_state_t s;
-		arm_thread_state_t *ts = &s;
+	int flavor=0, count=0;
+	void * state;
 
-		ts->pc = (int)p->p_threadstart;
-        ts->sp = (int)((vm_offset_t)(th_stack-C_32_STK_ALIGN));
+	kret = thread_getstatus(th, flavor, (thread_state_t)&state, &count);
+	if (kret != KERN_SUCCESS) {
+		error = EINVAL;
+		goto out1;
+	}
 
-        kprintf("bsdthread_create: warning, incomplete implementation\n");
-		thread_set_wq_state32(th, (thread_state_t)ts);
+	/* XXX ARM TODO */
+
+	kret = thread_setstatus(th, flavor, (thread_state_t)&state, count);
+	if (kret != KERN_SUCCESS)
+		error = EINVAL;
+		goto out1;
 	}
 #else
 #error bsdthread_create  not defined for this architecture
@@ -2271,15 +2277,14 @@ setup_wqthread(proc_t p, thread_t th, boolean_t overcommit, uint32_t priority, i
      * Set up ARM registers and call.
      */
     {
-        arm_thread_state_t s;
-        arm_thread_state_t *ts = &s;
-        
-        ts->pc = (int)p->p_wqthread;
-        ts->sp = (int)((vm_offset_t)((tl->th_stackaddr + PTH_DEFAULT_STACKSIZE + PTH_DEFAULT_GUARDSIZE) - C_32_STK_ALIGN));
-        
-        panic("setup_wqthread: I am incomplete\n");
-        
-        thread_set_wq_state32(th, (thread_state_t)ts);
+	arm_thread_state_t state;
+	arm_thread_state_t *ts = &state;
+
+	/* XXX ARM add more */
+	ts->pc = p->p_wqthread;
+	ts->sp = tl->th_stackaddr + PTH_DEFAULT_GUARDSIZE;
+
+	thread_set_wq_state32(th, (thread_state_t)ts);
     }
 #else
 #error setup_wqthread  not defined for this architecture

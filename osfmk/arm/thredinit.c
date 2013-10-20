@@ -379,3 +379,44 @@ thread_set_child(
 	child->machine.uss->r[1] = 1;
 	return;
 }
+
+void
+thread_set_wq_state32(thread_t thread, thread_state_t tstate)
+{
+        arm_thread_state_t        *state;
+        arm_saved_state_t        *saved_state;
+        thread_t curth = current_thread();
+        spl_t                        s=0;
+
+        saved_state = thread->machine.iss;
+
+        state = (arm_thread_state_t *)tstate;
+        
+        if (curth != thread) {
+                s = splsched();
+                thread_lock(thread);
+        }
+
+        saved_state->r[0] = state->r[0];
+        saved_state->r[1] = state->r[1];
+        saved_state->r[2] = state->r[2];
+        saved_state->r[3] = state->r[3];
+        saved_state->r[4] = state->r[4];
+        saved_state->r[5] = state->r[5];
+        saved_state->r[6] = state->r[6];
+        saved_state->r[7] = state->r[7];
+        saved_state->r[8] = state->r[8];
+        saved_state->r[9] = state->r[9];
+        saved_state->r[10] = state->r[10];
+        saved_state->r[11] = state->r[11];
+        saved_state->r[12] = state->r[12];
+        saved_state->sp = state->sp;
+        saved_state->lr = state->lr;
+        saved_state->pc = state->pc;
+        saved_state->cpsr = sanitise_cpsr(state->cpsr);
+
+        if (curth != thread) {
+                thread_unlock(thread);
+                splx(s);
+        }
+}

@@ -79,7 +79,6 @@ static uint64_t     clock_absolute_time = 0;
 #define FLD_MASK(start, end)    (((1 << ((start) - (end) + 1)) - 1) << (end))
 #define FLD_VAL(val, start, end) (((val) << (end)) & FLD_MASK(start, end))
 
-
 static void timer_configure(void)
 {
     uint64_t hz = 327680;

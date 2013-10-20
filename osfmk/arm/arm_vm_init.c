@@ -305,7 +305,6 @@ void arm_vm_init(uint32_t mem_limit, boot_args *args)
     args->memSize = 0xf000000;
 #endif
     /* WARNING WARNING WARNING THE CODE BLOCK ABOVE IS A VERY BAD IDEA */
-    
 
     /* Set up some globals. */
     gPhysBase = args->physBase;

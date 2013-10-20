@@ -16,7 +16,7 @@
  * and not use them. It doesn't matter as this SoC is uniprocessor.
  */
 #ifdef BOARD_CONFIG_OMAP3530
-#define NO_EXCLUSIVES   1
+#undef BOARD_CONFIG_OMAP3530
 #endif
 
 #ifdef NO_EXCLUSIVES
@@ -159,7 +159,6 @@ rwlsloopres:
     movs    r2, r2
     bxeq    lr
     b       rwlsloop
-#else
     str     r1, [r0]
     bx      lr
 #endif

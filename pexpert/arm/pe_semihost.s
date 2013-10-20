@@ -59,7 +59,7 @@ _semihost_buffer_ptr_ptr:
  */
 #ifndef __LP64__
 EnterARM(PE_semihost_write_char)
-#ifndef BOARD_CONFIG_ARMPBA8
+#ifndef SEMIHOSTING_ONLY
     ldr     r1, _semihost_buffer_ptr
     strb    r0, [r1]
     add     r1, r1, #1

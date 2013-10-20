@@ -159,6 +159,8 @@ mmu_initialized:
 
     /* Enable unaligned memory access and caching */
     mrc     p15, 0, r4, c1, c0, 0
+    orr     r4, r4, #(1 << 22)  /* Force unaligned accesses, fixes OMAP boot. */
+    bic     r4, r4, #(1 << 1)
     orr     r4, r4, #(1 << 23)  /* Unaligned memory access */
     orr     r4, r4, #(1 << 12)  /* Enable I-cache */
     mcr     p15, 0, r4, c1, c0, 0

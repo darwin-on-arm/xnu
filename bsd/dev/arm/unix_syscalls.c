@@ -91,7 +91,7 @@
 /* dynamically generated at build time based on syscalls.master */
 extern const char *syscallnames[];
 
-//#define kprintf(fmt, ...)
+#define kprintf(fmt, ...)
 
 /*
  * Function:	unix_syscall

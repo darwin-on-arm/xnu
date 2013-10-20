@@ -401,7 +401,7 @@ bsd_init(void)
 	boolean_t       netboot = FALSE;
 #endif
 
-#define bsd_init_kprintf(x...) /* kprintf("bsd_init: " x) */
+#define bsd_init_kprintf(x...) // kprintf("bsd_init: " x)
 
 	throttle_init();
 

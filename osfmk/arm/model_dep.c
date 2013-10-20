@@ -112,7 +112,7 @@ typedef struct _cframe_t {
     uintptr_t caller;
 } cframe_t;
 
-unsigned int nosym = 1;
+unsigned int nosym = 0;
 
 void print_threads(uint32_t stackptr);
 void panic_arm_thread_backtrace(void *_frame, int nframes, const char *msg, boolean_t regdump, arm_saved_state_t *regs, int crashed, char* crashstr);
@@ -426,8 +426,7 @@ void print_threads(uint32_t stackptr)
             if(stackptr && (current_thread() == thread)) {
                 kdb_printf("%s\tkernel backtrace: %x\n", ((current_thread() == thread) ? crashed : "\t"), stackptr);
                 panic_arm_thread_backtrace(stackptr, 32, NULL, FALSE, NULL, TRUE, ">>>>>>>>");
-                kdb_printf("\n");
-                continue;
+                goto printUserState;
             }
             
             if(!thread->continuation && thread->machine.iss) {
@@ -448,8 +447,9 @@ void print_threads(uint32_t stackptr)
                 }
             }
 
+printUserState:
             /* Make sure it's a Upcb if it's a user program. */
-            if(!thread->continuation && (thread->machine.uss != thread->machine.iss)) {
+            if(!thread->continuation && (thread->machine.uss != thread->machine.iss) && thread->machine.uss->pc) {
                 kdb_printf("%s\tuser state:\n", ((current_thread() == thread) ? crashed : "\t"));
                 kdb_printf("%s\t  r0: 0x%08x  r1: 0x%08x  r2: 0x%08x  r3: 0x%08x\n"
                            "%s\t  r4: 0x%08x  r5: 0x%08x  r6: 0x%08x  r7: 0x%08x\n"
@@ -679,9 +679,10 @@ char *machine_boot_info(char *buf, vm_size_t size)
 extern const char *mach_syscall_name_table[];
 void mach_syscall_trace(arm_saved_state_t* state)
 {
+#if 0
     int num = -(state->r[12]);
     kdb_printf("MACH Trap: (%d/%s)\n",  num, mach_syscall_name_table[num]);
-
+#endif
 #if 0
     int num = -(state->r[12]);
     kdb_printf("MACH Trap: (%d/%s)\n"

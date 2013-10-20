@@ -41,7 +41,7 @@
 #endif
 
 #ifdef BOARD_CONFIG_OMAP3530
-#define NO_EXCLUSIVES 1
+//#define NO_EXCLUSIVES 1
 #endif
 
 .align 4

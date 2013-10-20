@@ -1284,9 +1284,11 @@ pmap_remove_range(pmap_t pmap, vm_map_offset_t start_vaddr, pt_entry_t* spte, pt
     vm_size_t       our_page_size = (is_sect) ? (1 * 1024 * 1024) : PAGE_SIZE;
     int             num_removed = 0, num_unwired = 0;
 
+    /* PLEASE FIX THIS FIX FIX FIX FIX */
+
     /* Make sure the Cpte/Epte are within sane boundaries. (256 entries, one L2 area size.) */
     if(((vm_offset_t)epte - (vm_offset_t)cpte) > L2_SIZE)
-        panic("pmap_remove_range: attempting to remove more ptes than 256!\n");
+        kprintf("pmap_remove_range: attempting to remove more ptes than 256!\n");
 
     for(cpte = spte, vaddr = start_vaddr; cpte < epte; cpte++, vaddr += our_page_size) {
         /* Start nuking the range. */
@@ -1314,7 +1316,7 @@ pmap_remove_range(pmap_t pmap, vm_map_offset_t start_vaddr, pt_entry_t* spte, pt
              */
 
             if(pv_h->pv_pmap == PMAP_NULL) {
-                panic("pmap_remove_range: null pv_h->pmap (pmap %p, pv_h %p, pai %d, vaddr %x, cpte %x)\n", pmap, pv_h, pai, vaddr, cpte);
+                kprintf("pmap_remove_range: null pv_h->pmap (pmap %p, pv_h %p, pai %d, vaddr %x, cpte %x)\n", pmap, pv_h, pai, vaddr, cpte);
                 goto out;
             }
 

@@ -69,8 +69,8 @@ static uint64_t     clock_absolute_time = 0;
 
 static void timer_configure(void)
 {
-    uint64_t hz = 32000;
-    clock_decrementer = (hz / 7UL);     // For 500Hz.
+    uint64_t hz = 320000;
+    clock_decrementer = 1000;     // For 500Hz.
     
     gPEClockFrequencyInfo.timebase_frequency_hz = hz;
     
@@ -330,8 +330,8 @@ void RealView_framebuffer_init(void)
     kprintf(KPRINTF_PREFIX "framebuffer initialized\n");
     bzero(framebuffer, (pitch * height));
     
-    initialize_screen((void*)&PE_state.video, kPEAcquireScreen);
-    initialize_screen((void*)&PE_state.video, kPEEnableScreen);
+    char tempbuf[16];
+    initialize_screen((void*)&PE_state.video, kPETextScreen);
 }
 
 void PE_init_SocSupport_realview(void)

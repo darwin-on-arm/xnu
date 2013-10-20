@@ -51,8 +51,6 @@ copypv(addr64_t src64, addr64_t snk64, unsigned int size, int which)
     if ((which & (cppvPsrc | cppvPsnk)) == (cppvPsrc | cppvPsnk))
             bothphys = 1;                           /* both are physical */
 
-    kprintf("copypv(%llx,%llx,%d,%x(%d))\n", src64, snk64, size, which, which);
-
     /* Do a physical copy in if requested, else, move data out. */
     if(which & cppvPsrc)
         src64 = phys_to_virt(src64);

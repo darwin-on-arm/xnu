@@ -34,7 +34,7 @@
 #include <arm/asm_help.h>
 
 #ifdef BOARD_CONFIG_OMAP3530
-#define ldrex    ldr
+//#define ldrex    ldr
 #endif
 
 /**
@@ -51,24 +51,14 @@ loop:
     mov     r0, #0
     cmp     r3, r12
     bxne    lr
-#ifndef BOARD_CONFIG_OMAP3530
     strex   r0, r1, [r2]
     eors    r0, r0, #1
     bxne    lr
-#else
-    streq   r1, [r2]
-    moveq   r0, #1
-    bx      lr
-#endif
     b       loop
 
 /*
  * Atomic functions
  */
-#ifdef BOARD_CONFIG_OMAP3530
-#undef AtomicMachine
-#define AtomicMachine AtomicMachineNoExclusive
-#endif
     AtomicMachine(sub, sub)
     AtomicMachine(add, add)
     AtomicMachine(and_noret, and)
