@@ -45,14 +45,14 @@
  * pe_arm_init_interrupts
  *
  * Initialize the SoC dependent interrrupt controller.
- */ 
-uint32_t pe_arm_init_interrupts(__unused void* args)
+ */
+uint32_t pe_arm_init_interrupts(__unused void *args)
 {
-    if(gPESocDispatch.interrupt_init == NULL)
+    if (gPESocDispatch.interrupt_init == NULL)
         panic("gPESocDispatch.interrupt_init was null, did you forget to set up the table?");
-    
+
     gPESocDispatch.interrupt_init();
-    
+
     return 0;
 }
 
@@ -61,13 +61,13 @@ uint32_t pe_arm_init_interrupts(__unused void* args)
  *
  * Initialize the SoC dependent interrrupt controller.
  */
-uint32_t pe_arm_init_timebase(__unused void* args)
+uint32_t pe_arm_init_timebase(__unused void *args)
 {
-    if(gPESocDispatch.timebase_init == NULL)
+    if (gPESocDispatch.timebase_init == NULL)
         panic("gPESocDispatch.interrupt_init was null, did you forget to set up the table?");
-    
+
     gPESocDispatch.timebase_init();
-    
+
     return 0;
 }
 
@@ -76,13 +76,13 @@ uint32_t pe_arm_init_timebase(__unused void* args)
  *
  * Dispatch IRQ requests to the SoC specific handler.
  */
-boolean_t pe_arm_dispatch_interrupt(void* context)
+boolean_t pe_arm_dispatch_interrupt(void *context)
 {
-    if(gPESocDispatch.handle_interrupt == NULL)
+    if (gPESocDispatch.handle_interrupt == NULL)
         panic("gPESocDispatch.handle_interrupt was null, did you forget to set up the table?");
-    
+
     gPESocDispatch.handle_interrupt(context);
-    
+
     return TRUE;
 }
 
@@ -91,11 +91,11 @@ boolean_t pe_arm_dispatch_interrupt(void* context)
  *
  * Get current system timebase from the SoC handler.
  */
-uint64_t pe_arm_get_timebase(__unused void* args)
+uint64_t pe_arm_get_timebase(__unused void *args)
 {
-    if(gPESocDispatch.get_timebase == NULL)
+    if (gPESocDispatch.get_timebase == NULL)
         panic("gPESocDispatch.interrupt_init was null, did you forget to set up the table?");
-    
+
     return gPESocDispatch.get_timebase();
 }
 
@@ -104,10 +104,10 @@ uint64_t pe_arm_get_timebase(__unused void* args)
  */
 uint32_t debug_enabled = 1;
 
-uint32_t PE_i_can_has_debugger(uint32_t* pe_debug) 
+uint32_t PE_i_can_has_debugger(uint32_t * pe_debug)
 {
-    if(pe_debug) {
-        if(debug_enabled)
+    if (pe_debug) {
+        if (debug_enabled)
             *pe_debug = 1;
         else
             *pe_debug = 0;

@@ -55,7 +55,7 @@
 #include <sys/proc.h>
 #include <sys/uio.h>
 
-struct tty	*constty;		/* current console device */
+struct tty *constty;            /* current console device */
 
 /*
  * The km driver supplied the default console device for the systems
@@ -71,79 +71,67 @@ int cnclose(__unused dev_t dev, int flag, int mode, proc_t pp);
 int cnread(__unused dev_t dev, struct uio *uio, int ioflag);
 int cnwrite(__unused dev_t dev, struct uio *uio, int ioflag);
 int cnioctl(__unused dev_t dev, u_long cmd, caddr_t addr, int flg, proc_t p);
-int cnselect(__unused dev_t dev, int flag, void * wql, proc_t p);
+int cnselect(__unused dev_t dev, int flag, void *wql, proc_t p);
 
-static dev_t
-cndev(void)
+static dev_t cndev(void)
 {
-	if (constty)
-		return constty->t_dev;
-	else
-		return km_tty[0]->t_dev;
+    if (constty)
+        return constty->t_dev;
+    else
+        return km_tty[0]->t_dev;
 }
 
-int
-cnopen(__unused dev_t dev, int flag, int devtype, struct proc *pp)
+int cnopen(__unused dev_t dev, int flag, int devtype, struct proc *pp)
 {
-	dev = cndev();
-	return ((*cdevsw[major(dev)].d_open)(dev, flag, devtype, pp));
+    dev = cndev();
+    return ((*cdevsw[major(dev)].d_open) (dev, flag, devtype, pp));
 }
 
-
-int
-cnclose(__unused dev_t dev, int flag, int mode, struct proc *pp)
+int cnclose(__unused dev_t dev, int flag, int mode, struct proc *pp)
 {
-	dev = cndev();
-	return ((*cdevsw[major(dev)].d_close)(dev, flag, mode, pp));
+    dev = cndev();
+    return ((*cdevsw[major(dev)].d_close) (dev, flag, mode, pp));
 }
 
-
-int
-cnread(__unused dev_t dev, struct uio *uio, int ioflag)
+int cnread(__unused dev_t dev, struct uio *uio, int ioflag)
 {
-	dev = cndev();
-	return ((*cdevsw[major(dev)].d_read)(dev, uio, ioflag));
+    dev = cndev();
+    return ((*cdevsw[major(dev)].d_read) (dev, uio, ioflag));
 }
 
-
-int
-cnwrite(__unused dev_t dev, struct uio *uio, int ioflag)
+int cnwrite(__unused dev_t dev, struct uio *uio, int ioflag)
 {
-	dev = cndev();
-	return ((*cdevsw[major(dev)].d_write)(dev, uio, ioflag));
+    dev = cndev();
+    return ((*cdevsw[major(dev)].d_write) (dev, uio, ioflag));
 }
 
-
-int
-cnioctl(__unused dev_t dev, u_long cmd, caddr_t addr, int flag, struct proc *p)
+int cnioctl(__unused dev_t dev, u_long cmd, caddr_t addr, int flag, struct proc *p)
 {
-	dev = cndev();
+    dev = cndev();
 #if 0
-	/*
-	 * Superuser can always use this to wrest control of console
-	 * output from the "virtual" console.
-	 *
-	 * XXX Unfortunately, this code doesn't do what the author thougt
-	 * XXX it did; use of the console device, a TIOCCONS would always
-	 * XXX disassociate the console from a virtual terminal and send
-	 * XXX it back to the fake tty.
-	 */
-	if ((unsigned) cmd == TIOCCONS && constty) {
-		int error = proc_suser(p);
-		if (!error) {
-			constty = NULL;
-		}
-		return(error);
-	}
-#endif	/* 0 */
+    /*
+     * Superuser can always use this to wrest control of console
+     * output from the "virtual" console.
+     *
+     * XXX Unfortunately, this code doesn't do what the author thougt
+     * XXX it did; use of the console device, a TIOCCONS would always
+     * XXX disassociate the console from a virtual terminal and send
+     * XXX it back to the fake tty.
+     */
+    if ((unsigned) cmd == TIOCCONS && constty) {
+        int error = proc_suser(p);
+        if (!error) {
+            constty = NULL;
+        }
+        return (error);
+    }
+#endif                          /* 0 */
 
-	return ((*cdevsw[major(dev)].d_ioctl)(dev, cmd, addr, flag, p));
+    return ((*cdevsw[major(dev)].d_ioctl) (dev, cmd, addr, flag, p));
 }
 
-
-int
-cnselect(__unused dev_t dev, int flag, void *wql, struct proc *p)
+int cnselect(__unused dev_t dev, int flag, void *wql, struct proc *p)
 {
-	dev = cndev();
-	return ((*cdevsw[major(dev)].d_select)(dev, flag, wql, p));
+    dev = cndev();
+    return ((*cdevsw[major(dev)].d_select) (dev, flag, wql, p));
 }

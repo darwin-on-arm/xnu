@@ -33,26 +33,26 @@
 
 extern int pe_initialized;
 
-void serial_putc( char c )
+void serial_putc(char c)
 {
-	if(!pe_initialized)
-		return;
+    if (!pe_initialized)
+        return;
 
-	if(gPESocDispatch.uart_putc == NULL)
+    if (gPESocDispatch.uart_putc == NULL)
         panic("gPESocDispatch.uart_putc was null, did you forget to set up the table?");
-    
+
     gPESocDispatch.uart_putc(c);
-    
+
     return;
 }
 
-int serial_getc( void )
+int serial_getc(void)
 {
-	if(!pe_initialized)
-		return 0;
+    if (!pe_initialized)
+        return 0;
 
-	if(gPESocDispatch.uart_getc == NULL)
+    if (gPESocDispatch.uart_getc == NULL)
         panic("gPESocDispatch.uart_getc was null, did you forget to set up the table?");
-    
+
     return gPESocDispatch.uart_getc();
 }

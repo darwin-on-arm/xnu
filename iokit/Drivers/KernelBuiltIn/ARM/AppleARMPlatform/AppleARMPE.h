@@ -14,15 +14,15 @@
 #include <IOKit/IODeviceTreeSupport.h>
 #include "IOCPU.h"
 
-class AppleARMPE : public IODTPlatformExpert {
+class AppleARMPE:public IODTPlatformExpert {
     OSDeclareDefaultStructors(AppleARMPE);
-public:
-    bool init(OSDictionary *propTable);
-    IOService * probe(IOService *provider, SInt32 *score);
+ public:
+    bool init(OSDictionary * propTable);
+    IOService *probe(IOService * provider, SInt32 * score);
     bool start(IOService * provider);
     bool getMachineName(char *name, int maxLength);
-    const char * deleteList(void);
-    const char * excludeList(void);
+    const char *deleteList(void);
+    const char *excludeList(void);
     void registerNVRAMController(IONVRAMController * caller);
 
 };
@@ -30,4 +30,4 @@ public:
 #define PE_LOG \
     IOLog("[%s]: ", __PRETTY_FUNCTION__), IOLog
 
-#endif /* defined(__AppleARMPlatform__AppleARMPE__) */
+#endif                          /* defined(__AppleARMPlatform__AppleARMPE__) */

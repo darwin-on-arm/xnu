@@ -47,16 +47,16 @@
 #ifdef BOARD_CONFIG_RASPBERRYPI
 #define KPRINTF_PREFIX  "PE_RaspberryPi: "
 
-extern void rtclock_intr(arm_saved_state_t* regs);
+extern void rtclock_intr(arm_saved_state_t * regs);
 extern void rtc_configure(uint64_t hz);
 
 #define uart_base   gRaspberryPiUartBase
-vm_offset_t     gRaspberryPiUartBase;
+vm_offset_t gRaspberryPiUartBase;
 
-static uint64_t     clock_decrementer = 0;
-static boolean_t    clock_initialized = FALSE;
-static boolean_t    clock_had_irq = FALSE;
-static uint64_t     clock_absolute_time = 0;
+static uint64_t clock_decrementer = 0;
+static boolean_t clock_initialized = FALSE;
+static boolean_t clock_had_irq = FALSE;
+static uint64_t clock_absolute_time = 0;
 
 static void timer_configure(void)
 {
@@ -88,7 +88,7 @@ void RaspberryPi_timebase_init(void)
     return;
 }
 
-void RaspberryPi_handle_interrupt(void* context)
+void RaspberryPi_handle_interrupt(void *context)
 {
     return;
 }
@@ -113,7 +113,8 @@ void RaspberryPi_timer_enabled(int enable)
  */
 void vcputc(__unused int l, __unused int u, int c);
 
-static void _fb_putc(int c) {
+static void _fb_putc(int c)
+{
     RaspberryPi_putc(c);
 }
 
@@ -127,24 +128,24 @@ void PE_init_SocSupport_raspberrypi(void)
     gPESocDispatch.uart_getc = RaspberryPi_getc;
     gPESocDispatch.uart_putc = RaspberryPi_putc;
     gPESocDispatch.uart_init = RaspberryPi_uart_init;
-    
+
     gPESocDispatch.interrupt_init = RaspberryPi_interrupt_init;
     gPESocDispatch.timebase_init = RaspberryPi_timebase_init;
-    
+
     gPESocDispatch.get_timebase = RaspberryPi_get_timebase;
-    
+
     gPESocDispatch.handle_interrupt = RaspberryPi_handle_interrupt;
-    
+
     gPESocDispatch.timer_value = RaspberryPi_timer_value;
     gPESocDispatch.timer_enabled = RaspberryPi_timer_enabled;
-    
+
     gPESocDispatch.framebuffer_init = RaspberryPi_framebuffer_init;
-    
+
     RaspberryPi_framebuffer_init();
     RaspberryPi_uart_init();
-    
-    PE_kputc = _fb_putc; //gPESocDispatch.uart_putc;
-    
+
+    PE_kputc = _fb_putc;        //gPESocDispatch.uart_putc;
+
 }
 
 void PE_init_SocSupport_stub(void)

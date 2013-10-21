@@ -41,7 +41,7 @@
 
 #include <machine/machine_routines.h>
 
-SocDeviceDispatch    gPESocDispatch;
+SocDeviceDispatch gPESocDispatch;
 
 extern void PE_init_SocSupport_stub(void);
 

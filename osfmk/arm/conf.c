@@ -25,9 +25,11 @@
  * 
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
+
 /*
  * @OSF_COPYRIGHT@
  */
+
 /* 
  * Mach Operating System
  * Copyright (c) 1991,1990,1989 Carnegie Mellon University
@@ -53,6 +55,7 @@
  * any improvements or extensions that they make and grant Carnegie Mellon
  * the rights to redistribute these changes.
  */
+
 /* 
  */
 
@@ -70,18 +73,22 @@
  * the system.
  */
 
-extern	struct clock_ops	sysclk_ops, calend_ops;
+extern struct clock_ops sysclk_ops, calend_ops;
 
 /*
  * List of clock devices.
  */
-struct	clock	clock_list[] = {
+struct clock clock_list[] = {
 
-	/* SYSTEM_CLOCK */
-	{ &sysclk_ops, 0, 0 },
+    /*
+     * SYSTEM_CLOCK 
+     */
+    {&sysclk_ops, 0, 0},
 
-	/* CALENDAR_CLOCK */
-	{ &calend_ops, 0, 0 }
+    /*
+     * CALENDAR_CLOCK 
+     */
+    {&calend_ops, 0, 0}
 };
-int	clock_count = sizeof(clock_list) / sizeof(clock_list[0]);
 
+int clock_count = sizeof(clock_list) / sizeof(clock_list[0]);

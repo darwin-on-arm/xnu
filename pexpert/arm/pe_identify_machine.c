@@ -53,27 +53,31 @@ clock_frequency_info_t gPEClockFrequencyInfo;
  *
  * Fill out machine dependent timer information. Will actually also be refilled
  * during actual SoC dependent init.
- */ 
-void pe_identify_machine(__unused boot_args *args)
+ */
+void pe_identify_machine(__unused boot_args * args)
 {
     PE_early_puts("pe_identify_machine: Dummying out gPEClockFrequencyInfo (for now)\n");
-    
-    /* Clear the gPEClockFrequencyInfo struct */
-    bzero((void *)&gPEClockFrequencyInfo, sizeof(clock_frequency_info_t));
-    
-    /* Start with default values that were blatantly stolen from i386. */
+
+    /*
+     * Clear the gPEClockFrequencyInfo struct 
+     */
+    bzero((void *) &gPEClockFrequencyInfo, sizeof(clock_frequency_info_t));
+
+    /*
+     * Start with default values that were blatantly stolen from i386. 
+     */
     gPEClockFrequencyInfo.timebase_frequency_hz = 1000000000;
-    gPEClockFrequencyInfo.bus_frequency_hz      =  100000000;
-    gPEClockFrequencyInfo.cpu_frequency_hz      =  300000000;
-    
+    gPEClockFrequencyInfo.bus_frequency_hz = 100000000;
+    gPEClockFrequencyInfo.cpu_frequency_hz = 300000000;
+
     gPEClockFrequencyInfo.bus_frequency_min_hz = gPEClockFrequencyInfo.bus_frequency_hz;
     gPEClockFrequencyInfo.bus_frequency_max_hz = gPEClockFrequencyInfo.bus_frequency_hz;
     gPEClockFrequencyInfo.cpu_frequency_min_hz = gPEClockFrequencyInfo.cpu_frequency_hz;
     gPEClockFrequencyInfo.cpu_frequency_max_hz = gPEClockFrequencyInfo.cpu_frequency_hz;
-    
+
     gPEClockFrequencyInfo.dec_clock_rate_hz = gPEClockFrequencyInfo.timebase_frequency_hz;
     gPEClockFrequencyInfo.bus_clock_rate_hz = gPEClockFrequencyInfo.bus_frequency_hz;
     gPEClockFrequencyInfo.cpu_clock_rate_hz = gPEClockFrequencyInfo.cpu_frequency_hz;
-    
+
     // Fill out the info from DeviceTree.
 }

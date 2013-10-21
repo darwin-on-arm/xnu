@@ -45,8 +45,9 @@
  *
  * Bringup function, use for semihosting. Prints to SYS_OUTPUT0.
  */
-void PE_early_puts(char* s) {
-    while(*s != '\0') {
+void PE_early_puts(char *s)
+{
+    while (*s != '\0') {
         PE_semihost_write_char(*s);
         s++;
     }

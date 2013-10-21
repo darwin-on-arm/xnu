@@ -235,7 +235,9 @@ enum vt100state_e {
 } gc_vt100state = ESnormal;
 
 #ifdef __arm__
+#ifndef BOARD_CONFIG_OMAP3530
 #define CONFIG_VC_PROGRESS_WHITE 1
+#endif
 #endif
 
 #ifdef CONFIG_VC_PROGRESS_WHITE
@@ -2579,7 +2581,7 @@ initialize_screen(PE_Video * boot_vinfo, unsigned int op)
             else if (scale == kPEScaleFactor2x)
                 new_vinfo.v_scale = kPEScaleFactor2x;
             else /* Scale factor not set, default to 1x */
-#ifdef __arm__
+#ifdef BOARD_CONFIG_S5L8930X
                 new_vinfo.v_scale = kPEScaleFactor2x;
 #else
                 new_vinfo.v_scale = kPEScaleFactor1x;

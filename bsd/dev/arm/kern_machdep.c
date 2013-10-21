@@ -48,27 +48,22 @@
  *		for which we are actually capable of executing the
  *		binary, either directly or via an imputed interpreter.
  **********************************************************************/
-int
-grade_binary(cpu_type_t exectype, __unused cpu_subtype_t execsubtype)
+int grade_binary(cpu_type_t exectype, __unused cpu_subtype_t execsubtype)
 {
-	switch(exectype) {
+    switch (exectype) {
     case CPU_TYPE_ARM:
-		return 1;
+        return 1;
 #ifdef __LP64__
-	case CPU_TYPE_ARM64:
-		return 1;
+    case CPU_TYPE_ARM64:
+        return 1;
 #endif
-	default:			/* all other binary types */
-		return 0;
-	}
+    default:                   /* all other binary types */
+        return 0;
+    }
 }
 
 extern void md_prepare_for_shutdown(int, int, char *);
 
-void
-md_prepare_for_shutdown(
-	__unused int paniced,
-	__unused int howto,
-	__unused char * command)
+void md_prepare_for_shutdown(__unused int paniced, __unused int howto, __unused char *command)
 {
 }

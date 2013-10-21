@@ -15,28 +15,30 @@
 
 OSDefineMetaClassAndStructors(AppleARMPE, IODTPlatformExpert);
 
-bool AppleARMPE::init(OSDictionary *propTable) {
+bool AppleARMPE::init(OSDictionary * propTable)
+{
     if (!super::init(propTable)) {
         panic("IOPlatformExpert failed to initialize");
     }
     return true;
 }
 
-extern const IORegistryPlane* gIODTPlane;
+extern const IORegistryPlane *gIODTPlane;
 
 void AppleARMPE::registerNVRAMController(IONVRAMController * caller)
 {
     publishResource("IONVRAM");
 }
 
-bool AppleARMPE::start(IOService *provider) {
-    DTEntry             entry;
-    char*               dtype;
-    unsigned int        size;
+bool AppleARMPE::start(IOService * provider)
+{
+    DTEntry entry;
+    char *dtype;
+    unsigned int size;
 
     IOLog("AppleARMPE::start: Welcome to the NeXT generation.\n");
 
-    if(!super::start(provider)) {
+    if (!super::start(provider)) {
         panic("IOPlatformExpert failed to start");
     }
 
@@ -44,19 +46,23 @@ bool AppleARMPE::start(IOService *provider) {
     assert(IOService::getPlatform() == this);
 
     registerService();
-   
-    /* Let these time out to let everything else initialize right. */
+
+    /*
+     * Let these time out to let everything else initialize right. 
+     */
 #if 0
     publishResource("IONVRAM");
     publishResource("IORTC");
 #endif
-    
-    if( kSuccess == DTLookupEntry(NULL, "/", &entry)) {
-        /* What's the device name? */
-        if( kSuccess == DTGetProperty(entry, "compatible", (void **) &dtype, &size)) {
+
+    if (kSuccess == DTLookupEntry(NULL, "/", &entry)) {
+        /*
+         * What's the device name? 
+         */
+        if (kSuccess == DTGetProperty(entry, "compatible", (void **) &dtype, &size)) {
             populate_model_name(dtype);
         } else {
-            populate_model_name("Generic ARM Device");            
+            populate_model_name("Generic ARM Device");
         }
     } else {
         populate_model_name("Generic ARM Device");
@@ -65,21 +71,23 @@ bool AppleARMPE::start(IOService *provider) {
     return true;
 }
 
-const char * AppleARMPE::deleteList ( void )
+const char *AppleARMPE::deleteList(void)
 {
     return "";
 }
 
-const char * AppleARMPE::excludeList( void )
+const char *AppleARMPE::excludeList(void)
 {
-    return("'chosen', 'memory', 'options', 'aliases'");
+    return ("'chosen', 'memory', 'options', 'aliases'");
 }
 
-IOService* AppleARMPE::probe(IOService *provider, SInt32* score) {
+IOService *AppleARMPE::probe(IOService * provider, SInt32 * score)
+{
     return this;
 }
 
-bool AppleARMPE::getMachineName(char *name, int maxLength) {
+bool AppleARMPE::getMachineName(char *name, int maxLength)
+{
     strncpy(name, "generic-arm", maxLength);
     return true;
 }

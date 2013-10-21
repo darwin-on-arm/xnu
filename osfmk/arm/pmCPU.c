@@ -26,6 +26,7 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
+
 /*
  * ARM processor power management.
  */
@@ -37,22 +38,21 @@
 #include <kern/thread.h>
 #include <arm/misc_protos.h>
 
-void
-thread_tell_urgency(int urgency,
-                    uint64_t rt_period,
-                    uint64_t rt_deadline)
+void thread_tell_urgency(int urgency, uint64_t rt_period, uint64_t rt_deadline)
 {
     return;
 }
 
 boolean_t machine_processor_is_inactive(processor_t processor)
 {
-	return(FALSE);
+    return (FALSE);
 }
 
 void machine_idle(void)
 {
     ml_set_interrupts_enabled(FALSE);
-    /* can use wfi? */
+    /*
+     * can use wfi? 
+     */
     ml_set_interrupts_enabled(TRUE);
 }

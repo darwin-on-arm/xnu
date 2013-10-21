@@ -26,6 +26,7 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
+
 /*
  * ARM event timer.
  */
@@ -46,13 +47,15 @@
 #include <machine/machine_routines.h>
 
 #ifndef __LP64__
+
 /**
  * timer_grab
  *
  * Return the raw timer value from the timer.
  */
-uint64_t timer_grab(timer_t timer) {
-    return *(uint64_t*)timer;
+uint64_t timer_grab(timer_t timer)
+{
+    return *(uint64_t *) timer;
 }
 #endif
 
@@ -61,9 +64,10 @@ uint64_t timer_grab(timer_t timer) {
  *
  * Update the raw timer value.
  */
-void timer_update(timer_t timer, uint32_t new_high, uint32_t new_low) {
-    uint64_t *ptr = (uint64_t*)timer;
-    *ptr = ((uint64_t)(new_high) << 32) | new_low;
+void timer_update(timer_t timer, uint32_t new_high, uint32_t new_low)
+{
+    uint64_t *ptr = (uint64_t *) timer;
+    *ptr = ((uint64_t) (new_high) << 32) | new_low;
 }
 
 /**
@@ -73,19 +77,19 @@ void timer_update(timer_t timer, uint32_t new_high, uint32_t new_low) {
  */
 void etimer_set_deadline(uint64_t deadline)
 {
-	rtclock_timer_t		*mytimer;
-	spl_t			s;
-	cpu_data_t		*pp;
+    rtclock_timer_t *mytimer;
+    spl_t s;
+    cpu_data_t *pp;
 
-	s = splclock();                     /* no interruptions */
-	pp = current_cpu_datap();
+    s = splclock();             /* no interruptions */
+    pp = current_cpu_datap();
 
-	mytimer = &pp->rt_timer;			/* Point to the timer itself */
-	mytimer->deadline = deadline;		/* Set the new expiration time */
+    mytimer = &pp->rt_timer;    /* Point to the timer itself */
+    mytimer->deadline = deadline;   /* Set the new expiration time */
 
-	etimer_resync_deadlines();
+    etimer_resync_deadlines();
 
-	splx(s);
+    splx(s);
 }
 
 /**
@@ -94,46 +98,44 @@ void etimer_set_deadline(uint64_t deadline)
  * Resynchronize the timer deadlines, called from the interrupt routine.
  */
 
-void
-etimer_resync_deadlines(void)
+void etimer_resync_deadlines(void)
 {
-	uint64_t		deadline;
-	uint64_t		pmdeadline;
-	rtclock_timer_t		*mytimer;
-	spl_t			s = splclock();
-	cpu_data_t		*pp;
-	uint32_t		decr;
+    uint64_t deadline;
+    uint64_t pmdeadline;
+    rtclock_timer_t *mytimer;
+    spl_t s = splclock();
+    cpu_data_t *pp;
+    uint32_t decr;
 
-	pp = current_cpu_datap();
-	deadline = EndOfAllTime;
+    pp = current_cpu_datap();
+    deadline = EndOfAllTime;
 
-	/*
-	 * If we have a clock timer set, pick that.
-	 */
-	mytimer = &pp->rt_timer;
-	if (!mytimer->has_expired &&
-	    0 < mytimer->deadline && mytimer->deadline < EndOfAllTime)
-		deadline = mytimer->deadline;
+    /*
+     * If we have a clock timer set, pick that.
+     */
+    mytimer = &pp->rt_timer;
+    if (!mytimer->has_expired && 0 < mytimer->deadline && mytimer->deadline < EndOfAllTime)
+        deadline = mytimer->deadline;
 
-	/*
-	 * Go and set the "pop" event.
-	 */
+    /*
+     * Go and set the "pop" event.
+     */
 
-	if (deadline > 0 && deadline <= pp->rtcPop) {
-		int     decr;
-		uint64_t now;
+    if (deadline > 0 && deadline <= pp->rtcPop) {
+        int decr;
+        uint64_t now;
 
-		now = mach_absolute_time();
-		decr = setPop(deadline);
+        now = mach_absolute_time();
+        decr = setPop(deadline);
 
-		if (deadline < now) {
-		        pp->rtcPop = now + decr;
-		} else {
-		        pp->rtcPop = deadline;
+        if (deadline < now) {
+            pp->rtcPop = now + decr;
+        } else {
+            pp->rtcPop = deadline;
         }
     }
-    
-	splx(s);
+
+    splx(s);
 }
 
 /**
@@ -142,54 +144,57 @@ etimer_resync_deadlines(void)
  * Timer interrupt routine, called from the realtime clock interrupt
  * routine.
  */
-void
-etimer_intr(int inuser, uint64_t iaddr)
+void etimer_intr(int inuser, uint64_t iaddr)
 {
-	uint64_t		abstime;
-	rtclock_timer_t		*mytimer;
-	cpu_data_t		*pp;
-	int32_t			latency;
+    uint64_t abstime;
+    rtclock_timer_t *mytimer;
+    cpu_data_t *pp;
+    int32_t latency;
 
-	pp = current_cpu_datap();
+    pp = current_cpu_datap();
 
-	SCHED_STATS_TIMER_POP(current_processor());
+    SCHED_STATS_TIMER_POP(current_processor());
 
-	abstime = mach_absolute_time();		/* Get the time now */
+    abstime = mach_absolute_time(); /* Get the time now */
 
-	/* has a pending clock timer expired? */
-	mytimer = &pp->rt_timer;		/* Point to the event timer */
-	if (mytimer->deadline <= abstime) {
-		mytimer->has_expired = TRUE;	/* Remember that we popped */
-		mytimer->deadline = timer_queue_expire(&mytimer->queue, abstime);
-		mytimer->has_expired = FALSE;
-	}
-    
-    pp->rtcPop = EndOfAllTime;				/* any real deadline will be earlier */
-	/* schedule our next deadline */
-    
-	etimer_resync_deadlines();
+    /*
+     * has a pending clock timer expired? 
+     */
+    mytimer = &pp->rt_timer;    /* Point to the event timer */
+    if (mytimer->deadline <= abstime) {
+        mytimer->has_expired = TRUE;    /* Remember that we popped */
+        mytimer->deadline = timer_queue_expire(&mytimer->queue, abstime);
+        mytimer->has_expired = FALSE;
+    }
+
+    pp->rtcPop = EndOfAllTime;  /* any real deadline will be earlier */
+    /*
+     * schedule our next deadline 
+     */
+
+    etimer_resync_deadlines();
 }
-                    
+
 /**
  * timer_queue_assign
  *
  * Assign a deadline and return the current processor's timer queue.
  */
-mpqueue_head_t* timer_queue_assign(uint64_t deadline)
+mpqueue_head_t *timer_queue_assign(uint64_t deadline)
 {
-	cpu_data_t			*cdp = current_cpu_datap();
-	mpqueue_head_t		*queue;
+    cpu_data_t *cdp = current_cpu_datap();
+    mpqueue_head_t *queue;
 
-	if (cdp->cpu_running) {
-		queue = &cdp->rt_timer.queue;
-		if (deadline < cdp->rt_timer.deadline) {
-			etimer_set_deadline(deadline);
+    if (cdp->cpu_running) {
+        queue = &cdp->rt_timer.queue;
+        if (deadline < cdp->rt_timer.deadline) {
+            etimer_set_deadline(deadline);
         }
-	} else {
-		queue = &cpu_datap(master_cpu)->rt_timer.queue;
-	}
+    } else {
+        queue = &cpu_datap(master_cpu)->rt_timer.queue;
+    }
 
-	return (queue);
+    return (queue);
 }
 
 /**
@@ -199,10 +204,10 @@ mpqueue_head_t* timer_queue_assign(uint64_t deadline)
  */
 uint64_t timer_call_slop(uint64_t deadline)
 {
-	uint64_t now = mach_absolute_time();
-	if (deadline > now) {
-		return MIN((deadline - now) >> 3, NSEC_PER_MSEC); /* Min of 12.5% and 1ms */
-	}
+    uint64_t now = mach_absolute_time();
+    if (deadline > now) {
+        return MIN((deadline - now) >> 3, NSEC_PER_MSEC);   /* Min of 12.5% and 1ms */
+    }
 }
 
 /**
@@ -210,11 +215,11 @@ uint64_t timer_call_slop(uint64_t deadline)
  *
  * Remove a timer from the queue.
  */
-void timer_queue_cancel(mpqueue_head_t *queue, uint64_t deadline, uint64_t new_deadline)
+void timer_queue_cancel(mpqueue_head_t * queue, uint64_t deadline, uint64_t new_deadline)
 {
     if (queue == &current_cpu_datap()->rt_timer.queue) {
         if (deadline < new_deadline) {
-            etimer_set_deadline(new_deadline); 
+            etimer_set_deadline(new_deadline);
         }
     }
 }

@@ -40,55 +40,54 @@
 
 extern "C" {
 #include <pexpert/pexpert.h>
-}
-
-bool RootRegistered( OSObject * us, void *, IOService * yourDevice );
+} bool RootRegistered(OSObject * us, void *, IOService * yourDevice);
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
 #define super IOService
 
 OSDefineMetaClassAndStructors(AppleARMNMI, IOService);
-OSMetaClassDefineReservedUnused(AppleARMNMI,  0);
-OSMetaClassDefineReservedUnused(AppleARMNMI,  1);
-OSMetaClassDefineReservedUnused(AppleARMNMI,  2);
-OSMetaClassDefineReservedUnused(AppleARMNMI,  3);
+OSMetaClassDefineReservedUnused(AppleARMNMI, 0);
+OSMetaClassDefineReservedUnused(AppleARMNMI, 1);
+OSMetaClassDefineReservedUnused(AppleARMNMI, 2);
+OSMetaClassDefineReservedUnused(AppleARMNMI, 3);
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
-bool AppleARMNMI::start(IOService *provider)
+bool AppleARMNMI::start(IOService * provider)
 {
-  if (!super::start(provider)) return false;
+    if (!super::start(provider))
+        return false;
 
-  enable_debugger = FALSE;
-  mask_NMI = FALSE;
+    enable_debugger = FALSE;
+    mask_NMI = FALSE;
 
-  if (provider->getProperty("enable_debugger"))
-      enable_debugger = TRUE;  // Flag to automatically jump to debugger at NMI press
+    if (provider->getProperty("enable_debugger"))
+        enable_debugger = TRUE; // Flag to automatically jump to debugger at NMI press
 
-  if (provider->getProperty("mask_NMI"))
-      mask_NMI = TRUE;         // Flag to mask/unmask NMI @ sleep/wake
+    if (provider->getProperty("mask_NMI"))
+        mask_NMI = TRUE;        // Flag to mask/unmask NMI @ sleep/wake
 
-  // Register the interrupt.
-  IOInterruptAction handler = OSMemberFunctionCast(IOInterruptAction,
-	  				this, &AppleARMNMI::handleInterrupt);
-  provider->registerInterrupt(0, this, handler, 0);
-  provider->enableInterrupt(0);
+    // Register the interrupt.
+    IOInterruptAction handler = OSMemberFunctionCast(IOInterruptAction,
+                                                     this, &AppleARMNMI::handleInterrupt);
+    provider->registerInterrupt(0, this, handler, 0);
+    provider->enableInterrupt(0);
 
-  return true;
+    return true;
 }
 
-IOReturn AppleARMNMI::initNMI(IOInterruptController *parentController, OSData *parentSource)
+IOReturn AppleARMNMI::initNMI(IOInterruptController * parentController, OSData * parentSource)
 {
-  return kIOReturnSuccess;
+    return kIOReturnSuccess;
 }
 
-IOReturn AppleARMNMI::handleInterrupt(void * /*refCon*/, IOService * /*nub*/, int /*source*/)
+IOReturn AppleARMNMI::handleInterrupt(void * /*refCon */ , IOService * /*nub */ , int /*source */ )
 {
-    if(enable_debugger == TRUE)
-        Debugger("NMI");                         // This is a direct call to the Debugger
+    if (enable_debugger == TRUE)
+        Debugger("NMI");        // This is a direct call to the Debugger
     else
-        PE_enter_debugger("NMI");                // This is a indirect call the Debugger that is dependent on the debug flag
+        PE_enter_debugger("NMI");   // This is a indirect call the Debugger that is dependent on the debug flag
 
     return kIOReturnSuccess;
 }

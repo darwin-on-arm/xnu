@@ -26,6 +26,7 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
+
 /*
  * ARM thread support
  */
@@ -62,8 +63,9 @@ static void save_vfp_context(thread_t thread);
  *
  * Set current thread identifier to the cthread identifier.
  */
-void arm_set_threadpid_user_readonly(uint32_t* address) {
-    __asm__ __volatile__("mcr p15, 0, %0, c13, c0, 3" :: "r"(address));
+void arm_set_threadpid_user_readonly(uint32_t * address)
+{
+    __asm__ __volatile__("mcr p15, 0, %0, c13, c0, 3"::"r"(address));
 }
 
 /**
@@ -71,8 +73,9 @@ void arm_set_threadpid_user_readonly(uint32_t* address) {
  *
  * Set current thread identifier to the specified thread_t.
  */
-void arm_set_threadpid_priv_readwrite(uint32_t* address) {
-    __asm__ __volatile__("mcr p15, 0, %0, c13, c0, 4" :: "r"(address));
+void arm_set_threadpid_priv_readwrite(uint32_t * address)
+{
+    __asm__ __volatile__("mcr p15, 0, %0, c13, c0, 4"::"r"(address));
 }
 
 /**
@@ -82,24 +85,24 @@ void arm_set_threadpid_priv_readwrite(uint32_t* address) {
  */
 void machine_set_current_thread(thread_t thread)
 {
-    /* Set the current thread. */
+    /*
+     * Set the current thread. 
+     */
     CurrentThread = thread;
-    
-    arm_set_threadpid_user_readonly((uint32_t*)thread->machine.cthread_self);
-    arm_set_threadpid_priv_readwrite((uint32_t*)thread);
+
+    arm_set_threadpid_user_readonly((uint32_t *) thread->machine.cthread_self);
+    arm_set_threadpid_priv_readwrite((uint32_t *) thread);
 }
 
-void
-thread_set_cthread_self(uint32_t cthr)
+void thread_set_cthread_self(uint32_t cthr)
 {
     thread_t curthr = current_thread();
     assert(curthr);
     curthr->machine.cthread_self = cthr;
-    arm_set_threadpid_user_readonly((uint32_t*)curthr->machine.cthread_self);
+    arm_set_threadpid_user_readonly((uint32_t *) curthr->machine.cthread_self);
 }
 
-uint64_t
-thread_get_cthread_self(void)
+uint64_t thread_get_cthread_self(void)
 {
     thread_t curthr = current_thread();
     assert(curthr);
@@ -111,7 +114,7 @@ thread_get_cthread_self(void)
  */
 kern_return_t machine_thread_inherit_taskwide(thread_t thread, task_t parent_task)
 {
-	return KERN_FAILURE;
+    return KERN_FAILURE;
 }
 
 /**
@@ -121,21 +124,27 @@ kern_return_t machine_thread_inherit_taskwide(thread_t thread, task_t parent_tas
  */
 kern_return_t machine_thread_create(thread_t thread, task_t task)
 {
-    arm_saved_state_t*  sv = NULL;
-    
-    /* Create a thread and set the members in the pcb. */
+    arm_saved_state_t *sv = NULL;
+
+    /*
+     * Create a thread and set the members in the pcb. 
+     */
     assert(thread != NULL);
     assert(thread->machine.iss == NULL);
-    
-    /* Set the members now. */
+
+    /*
+     * Set the members now. 
+     */
     thread->machine.preempt_count = 0;
     thread->machine.cpu_data = cpu_datap(cpu_number());
     thread->machine.vfp_enable = 0;
     thread->machine.vfp_dirty = 0;
 
-    /* Also kernel threads */
+    /*
+     * Also kernel threads 
+     */
     thread->machine.uss = &thread->machine.user_regs;
-            
+
     return KERN_SUCCESS;
 }
 
@@ -143,88 +152,87 @@ kern_return_t machine_thread_create(thread_t thread, task_t task)
  * machine_switch_context
  *
  * Switch the current executing machine context to a new one.
- */ 
+ */
 thread_t machine_switch_context(thread_t old, thread_continue_t continuation, thread_t new)
 {
     pmap_t new_pmap;
-    cpu_data_t* datap;
+    cpu_data_t *datap;
     register thread_t retval;
 
     kprintf("machine_switch_context: %p -> %p (cont: %p)\n", old, new, continuation);
 
     if (old == new)
         panic("machine_switch_context: old = new thread (%p %p)", old, new);
-    
+
     datap = cpu_datap(cpu_number());
     assert(datap != NULL);
-    
+
     datap->old_thread = old;
 
     save_vfp_context(old);
-    
+
     new_pmap = new->map->pmap;
     if ((old->map->pmap != new_pmap)) {
-        if(new_pmap != NULL) {
-             pmap_switch(new_pmap);
-        }
-    }
-       
-    /* VFP save needed */
-        
-	retval = Switch_context(old, continuation, new);
-	assert(retval != NULL);
-
-	return retval;
-}
-
-
-void
-machine_stack_handoff(thread_t old,
-                      thread_t new)
-{
-	vm_offset_t     stack;
-    pmap_t          new_pmap;
-    
-	assert(new);
-	assert(old);
-    
-	if (old == new)
-		panic("machine_stack_handoff");
-    
-    kprintf("machine_stack_handoff: %p = old, %p = new\n", old, new);
-    
-	save_vfp_context(old);
-    
-	stack = machine_stack_detach(old);
-	new->kernel_stack = stack;
-    
-    uint32_t *kstack = (uint32_t*)STACK_IKS(stack);
-    new->machine.iss = (arm_saved_state_t*)kstack;
-    new->machine.iss->sp = (uint32_t)kstack - sizeof(arm_saved_state_t);
-    
-    old->machine.iss = 0;
-    
-	if (stack == old->reserved_stack) {
-		assert(new->reserved_stack);
-		old->reserved_stack = new->reserved_stack;
-		new->reserved_stack = stack;
-	}
-    
-	/*
-	 * A full call to machine_stack_attach() is unnecessry
-	 * because old stack is already initialized.
-	 */
-    
-    new_pmap = new->map->pmap;
-    if ((old->map->pmap != new_pmap)) {
-        if(new_pmap != NULL) {
+        if (new_pmap != NULL) {
             pmap_switch(new_pmap);
         }
     }
-    
-	machine_set_current_thread(new);
-    
-	return;
+
+    /*
+     * VFP save needed 
+     */
+
+    retval = Switch_context(old, continuation, new);
+    assert(retval != NULL);
+
+    return retval;
+}
+
+void machine_stack_handoff(thread_t old, thread_t new)
+{
+    vm_offset_t stack;
+    pmap_t new_pmap;
+
+    assert(new);
+    assert(old);
+
+    if (old == new)
+        panic("machine_stack_handoff");
+
+    kprintf("machine_stack_handoff: %p = old, %p = new\n", old, new);
+
+    save_vfp_context(old);
+
+    stack = machine_stack_detach(old);
+    new->kernel_stack = stack;
+
+    uint32_t *kstack = (uint32_t *) STACK_IKS(stack);
+    new->machine.iss = (arm_saved_state_t *) kstack;
+    new->machine.iss->sp = (uint32_t) kstack - sizeof(arm_saved_state_t);
+
+    old->machine.iss = 0;
+
+    if (stack == old->reserved_stack) {
+        assert(new->reserved_stack);
+        old->reserved_stack = new->reserved_stack;
+        new->reserved_stack = stack;
+    }
+
+    /*
+     * A full call to machine_stack_attach() is unnecessry
+     * because old stack is already initialized.
+     */
+
+    new_pmap = new->map->pmap;
+    if ((old->map->pmap != new_pmap)) {
+        if (new_pmap != NULL) {
+            pmap_switch(new_pmap);
+        }
+    }
+
+    machine_set_current_thread(new);
+
+    return;
 }
 
 /**
@@ -242,7 +250,7 @@ void machine_thread_init(void)
  */
 static void save_vfp_context(thread_t thread)
 {
-    if(thread->machine.vfp_enable && !thread->machine.vfp_dirty) {
+    if (thread->machine.vfp_enable && !thread->machine.vfp_dirty) {
         vfp_context_save(&thread->machine.vfp_regs);
         vfp_enable_exception(FALSE);
     }
@@ -257,17 +265,16 @@ void machine_stack_attach(thread_t thread, vm_offset_t stack)
 {
     assert(stack != NULL);
     assert(thread != NULL);
-    
-    kprintf("machine_stack_attach: setting stack %p for thread %p\n",
-            stack, thread);
-    
-    uint32_t *kstack = (uint32_t*)STACK_IKS(stack);
-    
+
+    kprintf("machine_stack_attach: setting stack %p for thread %p\n", stack, thread);
+
+    uint32_t *kstack = (uint32_t *) STACK_IKS(stack);
+
     thread->kernel_stack = stack;
-    thread->machine.iss = (arm_saved_state_t*)kstack;
-    thread->machine.iss->r[0] = (uint32_t)thread;
-    thread->machine.iss->lr = (uint32_t)thread_continue;
-    thread->machine.iss->sp = (uint32_t)kstack - sizeof(arm_saved_state_t);
+    thread->machine.iss = (arm_saved_state_t *) kstack;
+    thread->machine.iss->r[0] = (uint32_t) thread;
+    thread->machine.iss->lr = (uint32_t) thread_continue;
+    thread->machine.iss->sp = (uint32_t) kstack - sizeof(arm_saved_state_t);
 
     return;
 }
@@ -280,12 +287,11 @@ void machine_stack_attach(thread_t thread, vm_offset_t stack)
 vm_offset_t machine_stack_detach(thread_t thread)
 {
     vm_offset_t stack;
-    
+
     assert(thread != NULL);
-    
-    kprintf("machine_stack_detach: killing stack for thread %p\n",
-            thread);
-    
+
+    kprintf("machine_stack_detach: killing stack for thread %p\n", thread);
+
     stack = thread->kernel_stack;
     thread->kernel_stack = 0;
 
@@ -309,18 +315,18 @@ processor_t machine_choose_processor(processor_set_t pset, processor_t preferred
 void call_continuation(thread_continue_t continuation, void *parameter, wait_result_t wresult)
 {
     thread_t self = current_thread();
-    
+
     assert(self->machine.iss != NULL);
     assert(self->kernel_stack);
     assert(continuation);
-    
+
     kprintf("call_continuation: calling continuation on thread %p\n", self);
-    
+
     uint32_t kss;
-    kss = (uint32_t)STACK_IKS(self->kernel_stack);
+    kss = (uint32_t) STACK_IKS(self->kernel_stack);
 
     Call_continuation(continuation, parameter, wresult, kss);
-    
+
     return;
 }
 
@@ -329,8 +335,7 @@ void call_continuation(thread_continue_t continuation, void *parameter, wait_res
  *
  * Destroy the machine specific thread context block.
  */
-void
-machine_thread_destroy(thread_t thread)
+void machine_thread_destroy(thread_t thread)
 {
     return;
 }
@@ -339,8 +344,7 @@ machine_thread_destroy(thread_t thread)
  * This is where registers that are not normally specified by the mach-o
  * file on an execve would be nullified, perhaps to avoid a covert channel.
  */
-kern_return_t
-machine_thread_state_initialize(thread_t thread)
+kern_return_t machine_thread_state_initialize(thread_t thread)
 {
     return KERN_SUCCESS;
 }
@@ -349,74 +353,65 @@ machine_thread_state_initialize(thread_t thread)
  * This is called when a task is terminated, and also on exec().
  * Clear machine-dependent state that is stored on the task.
  */
-void
-machine_task_terminate(task_t task)
+void machine_task_terminate(task_t task)
 {
-	return;
+    return;
 }
 
-void*
-find_user_regs(thread_t thread)
+void *find_user_regs(thread_t thread)
 {
-	return (void*)thread->machine.uss;
+    return (void *) thread->machine.uss;
 }
 
-kern_return_t
-machine_thread_dup(
-	thread_t		self,
-	thread_t		target)
+kern_return_t machine_thread_dup(thread_t self, thread_t target)
 {
-	save_vfp_context(self);
-	ovbcopy((void*)&self->machine.user_regs, (void*)&target->machine.user_regs, sizeof(arm_saved_state_t));
-}	
-
-void
-thread_set_child(
-	thread_t	child,
-	int			pid)
-{
-	child->machine.uss->r[0] = pid;
-	child->machine.uss->r[1] = 1;
-	return;
+    save_vfp_context(self);
+    ovbcopy((void *) &self->machine.user_regs, (void *) &target->machine.user_regs, sizeof(arm_saved_state_t));
 }
 
-void
-thread_set_wq_state32(thread_t thread, thread_state_t tstate)
+void thread_set_child(thread_t child, int pid)
 {
-        arm_thread_state_t        *state;
-        arm_saved_state_t        *saved_state;
-        thread_t curth = current_thread();
-        spl_t                        s=0;
+    child->machine.uss->r[0] = pid;
+    child->machine.uss->r[1] = 1;
+    return;
+}
 
-        saved_state = thread->machine.iss;
+void thread_set_wq_state32(thread_t thread, thread_state_t tstate)
+{
+    arm_thread_state_t *state;
+    arm_saved_state_t *saved_state;
+    thread_t curth = current_thread();
+    spl_t s = 0;
 
-        state = (arm_thread_state_t *)tstate;
-        
-        if (curth != thread) {
-                s = splsched();
-                thread_lock(thread);
-        }
+    saved_state = thread->machine.iss;
 
-        saved_state->r[0] = state->r[0];
-        saved_state->r[1] = state->r[1];
-        saved_state->r[2] = state->r[2];
-        saved_state->r[3] = state->r[3];
-        saved_state->r[4] = state->r[4];
-        saved_state->r[5] = state->r[5];
-        saved_state->r[6] = state->r[6];
-        saved_state->r[7] = state->r[7];
-        saved_state->r[8] = state->r[8];
-        saved_state->r[9] = state->r[9];
-        saved_state->r[10] = state->r[10];
-        saved_state->r[11] = state->r[11];
-        saved_state->r[12] = state->r[12];
-        saved_state->sp = state->sp;
-        saved_state->lr = state->lr;
-        saved_state->pc = state->pc;
-        saved_state->cpsr = sanitise_cpsr(state->cpsr);
+    state = (arm_thread_state_t *) tstate;
 
-        if (curth != thread) {
-                thread_unlock(thread);
-                splx(s);
-        }
+    if (curth != thread) {
+        s = splsched();
+        thread_lock(thread);
+    }
+
+    saved_state->r[0] = state->r[0];
+    saved_state->r[1] = state->r[1];
+    saved_state->r[2] = state->r[2];
+    saved_state->r[3] = state->r[3];
+    saved_state->r[4] = state->r[4];
+    saved_state->r[5] = state->r[5];
+    saved_state->r[6] = state->r[6];
+    saved_state->r[7] = state->r[7];
+    saved_state->r[8] = state->r[8];
+    saved_state->r[9] = state->r[9];
+    saved_state->r[10] = state->r[10];
+    saved_state->r[11] = state->r[11];
+    saved_state->r[12] = state->r[12];
+    saved_state->sp = state->sp;
+    saved_state->lr = state->lr;
+    saved_state->pc = state->pc;
+    saved_state->cpsr = sanitise_cpsr(state->cpsr);
+
+    if (curth != thread) {
+        thread_unlock(thread);
+        splx(s);
+    }
 }

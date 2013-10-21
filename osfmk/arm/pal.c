@@ -26,6 +26,7 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
+
 /*
  * PAL routine stubs
  */
@@ -34,21 +35,18 @@
 #include <machine/pal_routines.h>
 
 /* Serial routines */
-int
-pal_serial_init(void)
+int pal_serial_init(void)
 {
     return 1;
 }
 
-void
-pal_serial_putc(char c)
+void pal_serial_putc(char c)
 {
-	serial_putc(c);
+    serial_putc(c);
     return;
 }
 
-int
-pal_serial_getc(void)
+int pal_serial_getc(void)
 {
     return serial_getc();
 }
@@ -58,22 +56,17 @@ pal_serial_getc(void)
  * even though they're not used on this platform.
  */
 #undef pal_dbg_page_fault
-void
-pal_dbg_page_fault( thread_t thread __unused,
-		    user_addr_t vaddr __unused,
-		    kern_return_t kr __unused )
+void pal_dbg_page_fault(thread_t thread __unused, user_addr_t vaddr __unused, kern_return_t kr __unused)
 {
 }
 
 #undef pal_dbg_set_task_name
-void
-pal_dbg_set_task_name( task_t task __unused )
+void pal_dbg_set_task_name(task_t task __unused)
 {
 }
 
 #undef pal_set_signal_delivery
-void
-pal_set_signal_delivery(thread_t thread __unused)
+void pal_set_signal_delivery(thread_t thread __unused)
 {
 }
 

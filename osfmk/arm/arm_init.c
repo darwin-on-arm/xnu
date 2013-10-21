@@ -26,6 +26,7 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
+
 /*
  * ARM processor init
  */
@@ -37,7 +38,8 @@
 #include <pexpert/arm/protos.h>
 #include <arm/armops.h>
 
-extern uint8_t* irqstack;
+extern uint8_t *irqstack;
+
 extern int disableConsoleOutput, serialmode;
 
 /**
@@ -47,29 +49,38 @@ extern int disableConsoleOutput, serialmode;
  * boot loader. A basic identity mapping is created in __start, however,
  * arm_vm_init will create new mappings.
  */
-void arm_init(boot_args* args) {
-    cpu_data_t*     bootProcessorData;
-    processor_t     bootProcessor;
-    uint32_t        baMaxMem;
-    uint64_t        maxMem;
-    thread_t        thread;
+void arm_init(boot_args * args)
+{
+    cpu_data_t *bootProcessorData;
+    processor_t bootProcessor;
+    uint32_t baMaxMem;
+    uint64_t maxMem;
+    thread_t thread;
 
-    /* We are in. */
+    /*
+     * We are in. 
+     */
     PE_early_puts("arm_init: starting up\n");
-    
-    /* arm_init is only called on processor #0, the others will enter using arm_slave_init. */
+
+    /*
+     * arm_init is only called on processor #0, the others will enter using arm_slave_init. 
+     */
     bootProcessor = cpu_processor_alloc(TRUE);
-    if(!bootProcessor) {
+    if (!bootProcessor) {
         panic("cpu_processor_alloc failed\n");
     }
-    
-    /* Pin the processor information to CPU #0. */
+
+    /*
+     * Pin the processor information to CPU #0. 
+     */
     PE_early_puts("arm_init: calling cpu_bootstrap\n");
     cpu_bootstrap();
-    
-    /* Initialize core processor data. */
+
+    /*
+     * Initialize core processor data. 
+     */
     bootProcessorData = current_cpu_datap();
-    
+
     bootProcessorData->cpu_number = 0;
     bootProcessorData->cpu_active_stack = &irqstack;
     bootProcessorData->cpu_phys_number = 0;
@@ -77,7 +88,7 @@ void arm_init(boot_args* args) {
     bootProcessorData->cpu_interrupt_level = 0;
     bootProcessorData->cpu_running = 1;
     bootProcessorData->cpu_pending_ast = AST_NONE;
-    
+
     /*
      * Initialize the core thread subsystem (This sets up a template
      * which will then be used to initialize the rest of the thread
@@ -89,40 +100,58 @@ void arm_init(boot_args* args) {
     PE_early_puts("arm_init: calling thread_bootstrap\n");
     thread_bootstrap();
 
-    /* CPU initialization. */
+    /*
+     * CPU initialization. 
+     */
     PE_early_puts("arm_init: calling cpu_init\n");
     cpu_init();
-    
-    /* Mach processor bootstrap. */
+
+    /*
+     * Mach processor bootstrap. 
+     */
     PE_early_puts("arm_init: calling processor_bootstrap\n");
     processor_bootstrap();
 
-    /* Initialize the ARM platform expert. */
+    /*
+     * Initialize the ARM platform expert. 
+     */
     PE_early_puts("arm_init: calling PE_init_platform\n");
-    PE_init_platform(FALSE, (void*)args);
-    
-    /* Initialize kprintf, but no VM is running yet. */
+    PE_init_platform(FALSE, (void *) args);
+
+    /*
+     * Initialize kprintf, but no VM is running yet. 
+     */
     PE_init_kprintf(FALSE);
-    
-    /* Set maximum memory size based on boot-args. */
-    if(!PE_parse_boot_argn("maxmem", &baMaxMem, sizeof(baMaxMem)))
+
+    /*
+     * Set maximum memory size based on boot-args. 
+     */
+    if (!PE_parse_boot_argn("maxmem", &baMaxMem, sizeof(baMaxMem)))
         maxMem = 0;
     else
-        maxMem = (uint64_t)baMaxMem * (1024 * 1024);
-    
-    /* After this, we'll no longer be using physical mappings created by the bootloader. */
+        maxMem = (uint64_t) baMaxMem *(1024 * 1024);
+
+    /*
+     * After this, we'll no longer be using physical mappings created by the bootloader. 
+     */
     arm_vm_init(maxMem, args);
 
-    /* Kernel early bootstrap. */
+    /*
+     * Kernel early bootstrap. 
+     */
     kernel_early_bootstrap();
-    
-    /* PE platform init. */
-    PE_init_platform(TRUE, (void*)args);
 
-    /* Enable I+D cache. */
+    /*
+     * PE platform init. 
+     */
+    PE_init_platform(TRUE, (void *) args);
+
+    /*
+     * Enable I+D cache. 
+     */
     char tempbuf[16];
-    
-    if(PE_parse_boot_argn("-no-cache", tempbuf, sizeof(tempbuf))) {
+
+    if (PE_parse_boot_argn("-no-cache", tempbuf, sizeof(tempbuf))) {
         kprintf("cache: No caching enabled (I+D).\n");
     } else {
         kprintf("cache: initializing i+dcache\n");
@@ -130,34 +159,48 @@ void arm_init(boot_args* args) {
         kprintf("cache: done\n");
     }
 
-    /* Specify serial mode. */
+    /*
+     * Specify serial mode. 
+     */
     serialmode = 0;
-    if(PE_parse_boot_argn("serial", &serialmode, sizeof (serialmode))) {
-        /* We want a serial keyboard and/or console */
+    if (PE_parse_boot_argn("serial", &serialmode, sizeof(serialmode))) {
+        /*
+         * We want a serial keyboard and/or console 
+         */
         kprintf("Serial mode specified: %08X\n", serialmode);
     }
 
-    if(serialmode & 1) {
-        (void)switch_to_serial_console();
+    if (serialmode & 1) {
+        (void) switch_to_serial_console();
         disableConsoleOutput = FALSE;   /* Allow printfs to happen */
     }
 
-    /* Start system timers. */
+    /*
+     * Start system timers. 
+     */
     thread = current_thread();
     thread->machine.preempt_count = 1;
     thread->machine.cpu_data = cpu_datap(cpu_number());
     thread->kernel_stack = irqstack;
     timer_start(&thread->system_timer, mach_absolute_time());
-    
-    /* VFP/float initialization. */
+
+    /*
+     * VFP/float initialization. 
+     */
     init_vfp();
-    
-    /* Machine startup. */
+
+    /*
+     * Machine startup. 
+     */
     machine_startup();
 
-    /* If we return, something very bad is happening. */    
-    panic("20:02:14 <DHowett> wwwwwwwat is HAAAAAAAPPENING"\n);
+    /*
+     * If we return, something very bad is happening. 
+     */
+    panic("20:02:14 <DHowett> wwwwwwwat is HAAAAAAAPPENING" \ n);
 
-    /* Last chance. */
-    while(1);
+    /*
+     * Last chance. 
+     */
+    while (1) ;
 }

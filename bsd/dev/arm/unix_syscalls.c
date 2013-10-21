@@ -76,7 +76,7 @@
 #include <sys/sysent.h>
 #include <sys/ucontext.h>
 #include <sys/wait.h>
-#include <mach/thread_act.h>	/* for thread_abort_safely */
+#include <mach/thread_act.h>    /* for thread_abort_safely */
 #include <mach/thread_status.h>
 
 #include <arm/machine_routines.h>
@@ -100,182 +100,191 @@ extern const char *syscallnames[];
  *
  * Outputs:	none
  */
-void
-unix_syscall(arm_saved_state_t *state)
+void unix_syscall(arm_saved_state_t * state)
 {
-	thread_t		thread;
-	void			*vt;
-	unsigned int    code;
-	struct sysent   *callp;
-	int             error;
-	vm_offset_t		params;
-	struct proc		*p;
-	struct uthread  *uthread;
-	boolean_t		args_in_uthread;
-	boolean_t		is_vfork;
+    thread_t thread;
+    void *vt;
+    unsigned int code;
+    struct sysent *callp;
+    int error;
+    vm_offset_t params;
+    struct proc *p;
+    struct uthread *uthread;
+    boolean_t args_in_uthread;
+    boolean_t is_vfork;
 
     assert(state != NULL);
-	thread = current_thread();
-	uthread = get_bsdthread_info(thread);
+    thread = current_thread();
+    uthread = get_bsdthread_info(thread);
 
-	/* Get the approriate proc; may be different from task's for vfork() */
-	is_vfork = uthread->uu_flag & UT_VFORK;
-	if (__improbable(is_vfork != 0))
-		p = current_proc();
-	else 
-		p = (struct proc *)get_bsdtask_info(current_task());
-    
-	/* Verify that we are not being called from a task without a proc */
-	if (__improbable(p == NULL)) {
-		state->r[0] = EPERM;
-		task_terminate_internal(current_task());
-		thread_exception_return();
-		/* NOTREACHED */
-	}
-    
-    /* Current syscall number is in r12 on ARM */
+    /*
+     * Get the approriate proc; may be different from task's for vfork() 
+     */
+    is_vfork = uthread->uu_flag & UT_VFORK;
+    if (__improbable(is_vfork != 0))
+        p = current_proc();
+    else
+        p = (struct proc *) get_bsdtask_info(current_task());
+
+    /*
+     * Verify that we are not being called from a task without a proc 
+     */
+    if (__improbable(p == NULL)) {
+        state->r[0] = EPERM;
+        task_terminate_internal(current_task());
+        thread_exception_return();
+        /*
+         * NOTREACHED 
+         */
+    }
+
+    /*
+     * Current syscall number is in r12 on ARM 
+     */
     boolean_t shift_args = 0;
-    
+
     code = state->r[12];
-    if(!code) {
+    if (!code) {
         shift_args = 1;
         code = state->r[0];
     }
-    
-	/*
-	 * Delayed binding of thread credential to process credential, if we
-	 * are not running with an explicitly set thread credential.
-	 */
-	kauth_cred_uthread_update(uthread, p);
-        
+
+    /*
+     * Delayed binding of thread credential to process credential, if we
+     * are not running with an explicitly set thread credential.
+     */
+    kauth_cred_uthread_update(uthread, p);
+
     callp = (code >= NUM_SYSENT) ? &sysent[63] : &sysent[code];
 
-    if(callp->sy_narg) {
+    if (callp->sy_narg) {
         int arg_count = callp->sy_narg;
-        /* "Falsemunge" arguments. */
-        if(shift_args) {
+        /*
+         * "Falsemunge" arguments. 
+         */
+        if (shift_args) {
             int i;
-            for(i = 0; i < 11; i++) {
+            for (i = 0; i < 11; i++) {
                 uthread->uu_arg[i] = state->r[i + 1];
-                if(i == (arg_count))
+                if (i == (arg_count))
                     break;
             }
         } else {
             int i;
-            for(i = 0; i < 12; i++) {
+            for (i = 0; i < 12; i++) {
                 uthread->uu_arg[i] = state->r[i];
-                if(i == (arg_count))
+                if (i == (arg_count))
                     break;
             }
         }
     }
 
-    /* Set return values */
+    /*
+     * Set return values 
+     */
     uthread->uu_flag |= UT_NOTCANCELPT;
     uthread->uu_rval[0] = 0;
     uthread->uu_rval[1] = 0;
-    
-    /* TODO: Change to CPSR definition! */
+
+    /*
+     * TODO: Change to CPSR definition! 
+     */
     state->cpsr |= (1 << 29);
 
 #if 0
-        kprintf( "syscall: called bsd\n"
-                                                "r0: 0x%08x  r1: 0x%08x  r2: 0x%08x  r3: 0x%08x\n"
-                                                "r4: 0x%08x  r5: 0x%08x  r6: 0x%08x  r7: 0x%08x\n"
-                                                "r8: 0x%08x  r9: 0x%08x r10: 0x%08x r11: 0x%08x\n"
-                                                "12: 0x%08x  sp: 0x%08x  lr: 0x%08x  pc: 0x%08x\n"
-                                                "cpsr: 0x%08x\n",
-                                                state->r[0], state->r[1], state->r[2], state->r[3],
-                                                state->r[4], state->r[5], state->r[6], state->r[7],
-                                                state->r[8], state->r[9], state->r[10], state->r[11],
-                                                state->r[12], state->sp, state->lr, state->pc, state->cpsr);
+    kprintf("syscall: called bsd\n"
+            "r0: 0x%08x  r1: 0x%08x  r2: 0x%08x  r3: 0x%08x\n"
+            "r4: 0x%08x  r5: 0x%08x  r6: 0x%08x  r7: 0x%08x\n"
+            "r8: 0x%08x  r9: 0x%08x r10: 0x%08x r11: 0x%08x\n"
+            "12: 0x%08x  sp: 0x%08x  lr: 0x%08x  pc: 0x%08x\n" "cpsr: 0x%08x\n", state->r[0], state->r[1], state->r[2], state->r[3], state->r[4], state->r[5], state->r[6], state->r[7], state->r[8], state->r[9], state->r[10], state->r[11], state->r[12], state->sp, state->lr, state->pc, state->cpsr);
 #endif
 
-	AUDIT_SYSCALL_ENTER(code, p, uthread);
-	error = (*(callp->sy_call))(p, (void *)uthread->uu_arg, &(uthread->uu_rval[0]));
+    AUDIT_SYSCALL_ENTER(code, p, uthread);
+    error = (*(callp->sy_call)) (p, (void *) uthread->uu_arg, &(uthread->uu_rval[0]));
 
     AUDIT_SYSCALL_EXIT(code, p, uthread, error);
-    kprintf("SYSCALL: %s (%d, routine %p), args %p, return %d (%x, %x)\n",
-            syscallnames[code >= NUM_SYSENT ? 63 : code], code, callp->sy_call,
-            (void*)uthread->uu_arg, error, uthread->uu_rval[0], uthread->uu_rval[1]);
+    kprintf("SYSCALL: %s (%d, routine %p), args %p, return %d (%x, %x)\n", syscallnames[code >= NUM_SYSENT ? 63 : code], code, callp->sy_call, (void *) uthread->uu_arg, error, uthread->uu_rval[0], uthread->uu_rval[1]);
 
-    if(error) {
+    if (error) {
         state->r[0] = error;
     } else {
-        /* Not an error, like stat64() */
+        /*
+         * Not an error, like stat64() 
+         */
         state->r[0] = uthread->uu_rval[0];
         state->r[1] = uthread->uu_rval[1];
-        state->cpsr &= ~(1 << 29);          /* C-bit IIRC, turn this into a Define */
+        state->cpsr &= ~(1 << 29);  /* C-bit IIRC, turn this into a Define */
     }
 
     uthread->uu_flag &= ~UT_NOTCANCELPT;
 
-    /* panic if funnel is held */
+    /*
+     * panic if funnel is held 
+     */
     syscall_exit_funnelcheck();
 
-	if (uthread->uu_lowpri_window) {
-	        /*
-		 * task is marked as a low priority I/O type
-		 * and the I/O we issued while in this system call
-		 * collided with normal I/O operations... we'll
-		 * delay in order to mitigate the impact of this
-		 * task on the normal operation of the system
-		 */
-		throttle_lowpri_io(TRUE);
-	}
-    
-	thread_exception_return();
+    if (uthread->uu_lowpri_window) {
+        /*
+         * task is marked as a low priority I/O type
+         * and the I/O we issued while in this system call
+         * collided with normal I/O operations... we'll
+         * delay in order to mitigate the impact of this
+         * task on the normal operation of the system
+         */
+        throttle_lowpri_io(TRUE);
+    }
+
+    thread_exception_return();
 }
 
-
-void
-unix_syscall_return(int error)
+void unix_syscall_return(int error)
 {
-	thread_t					thread_act;
-	struct uthread				*uthread;
-	struct proc					*proc;
-	arm_saved_state_t *regs;
-	unsigned int				code;
-	struct sysent				*callp;
+    thread_t thread_act;
+    struct uthread *uthread;
+    struct proc *proc;
+    arm_saved_state_t *regs;
+    unsigned int code;
+    struct sysent *callp;
 
-	thread_act = current_thread();
-	proc = current_proc();
-	uthread = get_bsdthread_info(thread_act);
+    thread_act = current_thread();
+    proc = current_proc();
+    uthread = get_bsdthread_info(thread_act);
 
-	regs = find_user_regs(thread_act);
+    regs = find_user_regs(thread_act);
 
-	if (regs->r[0] != 0)
-		code = regs->r[0];
+    if (regs->r[0] != 0)
+        code = regs->r[0];
 
-	callp = (code >= NUM_SYSENT) ? &sysent[63] : &sysent[code];
+    callp = (code >= NUM_SYSENT) ? &sysent[63] : &sysent[code];
 
-	kprintf("unix_syscall_return error: %d\n", code);
+    kprintf("unix_syscall_return error: %d\n", code);
 
-	uthread->uu_flag &= ~UT_NOTCANCELPT;
+    uthread->uu_flag &= ~UT_NOTCANCELPT;
 
-	/* panic if funnel is held */
-	syscall_exit_funnelcheck();
+    /*
+     * panic if funnel is held 
+     */
+    syscall_exit_funnelcheck();
 
-	if (uthread->uu_lowpri_window) {
-	        /*
-		 * task is marked as a low priority I/O type
-		 * and the I/O we issued while in this system call
-		 * collided with normal I/O operations... we'll
-		 * delay in order to mitigate the impact of this
-		 * task on the normal operation of the system
-		 */
-		throttle_lowpri_io(TRUE);
-	}
-	if (kdebug_enable && (code != 180)) {
-	        if (callp->sy_return_type == _SYSCALL_RET_SSIZE_T)
-		        KERNEL_DEBUG_CONSTANT(BSDDBG_CODE(DBG_BSD_EXCP_SC, code) | DBG_FUNC_END,
-					      error, uthread->uu_rval[1], 0, 0, 0);
-		else
-		        KERNEL_DEBUG_CONSTANT(BSDDBG_CODE(DBG_BSD_EXCP_SC, code) | DBG_FUNC_END,
-					      error, uthread->uu_rval[0], uthread->uu_rval[1], 0, 0);
-	}
+    if (uthread->uu_lowpri_window) {
+        /*
+         * task is marked as a low priority I/O type
+         * and the I/O we issued while in this system call
+         * collided with normal I/O operations... we'll
+         * delay in order to mitigate the impact of this
+         * task on the normal operation of the system
+         */
+        throttle_lowpri_io(TRUE);
+    }
+    if (kdebug_enable && (code != 180)) {
+        if (callp->sy_return_type == _SYSCALL_RET_SSIZE_T)
+            KERNEL_DEBUG_CONSTANT(BSDDBG_CODE(DBG_BSD_EXCP_SC, code) | DBG_FUNC_END, error, uthread->uu_rval[1], 0, 0, 0);
+        else
+            KERNEL_DEBUG_CONSTANT(BSDDBG_CODE(DBG_BSD_EXCP_SC, code) | DBG_FUNC_END, error, uthread->uu_rval[0], uthread->uu_rval[1], 0, 0);
+    }
 
-	thread_exception_return();
-	/* NOTREACHED */
+    thread_exception_return();
+    /*
+     * NOTREACHED 
+     */
 }
-

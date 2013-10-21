@@ -25,9 +25,11 @@
  * 
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
+
 /*
  * @OSF_COPYRIGHT@
  */
+
 /*
  * Copyright 2013, winocm. <winocm@icloud.com>
  * All rights reserved.
@@ -56,6 +58,7 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
+
 /*
  * Loose ends for ARM.
  */
@@ -72,7 +75,7 @@
  */
 void setbit(int bitno, int *s)
 {
-	s[bitno / INT_SIZE] |= 1 << (bitno % INT_SIZE);
+    s[bitno / INT_SIZE] |= 1 << (bitno % INT_SIZE);
 }
 
 /**
@@ -82,7 +85,7 @@ void setbit(int bitno, int *s)
  */
 void clrbit(int bitno, int *s)
 {
-	s[bitno / INT_SIZE] &= ~(1 << (bitno % INT_SIZE));
+    s[bitno / INT_SIZE] &= ~(1 << (bitno % INT_SIZE));
 }
 
 /**
@@ -92,7 +95,7 @@ void clrbit(int bitno, int *s)
  */
 int testbit(int bitno, int *s)
 {
-	return s[bitno / INT_SIZE] & (1 << (bitno % INT_SIZE));
+    return s[bitno / INT_SIZE] & (1 << (bitno % INT_SIZE));
 }
 
 /*
@@ -102,10 +105,10 @@ int testbit(int bitno, int *s)
  */
 int ffsbit(int *s)
 {
-	int             offset;
+    int offset;
 
-	for (offset = 0; !*s; offset += (int)INT_SIZE, ++s);
-	return offset + __builtin_ctz(*s);
+    for (offset = 0; !*s; offset += (int) INT_SIZE, ++s) ;
+    return offset + __builtin_ctz(*s);
 }
 
 /**
@@ -125,14 +128,14 @@ uint64_t early_random(void)
  */
 int ffs(unsigned int mask)
 {
-	if (mask == 0)
-		return 0;
+    if (mask == 0)
+        return 0;
 
-	/*
-	 * NOTE: cannot use __builtin_ffs because it generates a call to
-	 * 'ffs'
-	 */
-	return 1 + __builtin_ctz(mask);
+    /*
+     * NOTE: cannot use __builtin_ffs because it generates a call to
+     * 'ffs'
+     */
+    return 1 + __builtin_ctz(mask);
 }
 
 /**
@@ -142,11 +145,11 @@ int ffs(unsigned int mask)
  */
 size_t strlen(register const char *string)
 {
-	register const char *ret = string;
-    
-	while (*string++ != '\0')
-		continue;
-	return string - 1 - ret;
+    register const char *ret = string;
+
+    while (*string++ != '\0')
+        continue;
+    return string - 1 - ret;
 }
 
 /**
@@ -158,5 +161,3 @@ void fillPage(ppnum_t pa, unsigned int fill)
 {
     return;
 }
-
-

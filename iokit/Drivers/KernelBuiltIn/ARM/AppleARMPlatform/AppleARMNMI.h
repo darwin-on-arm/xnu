@@ -39,35 +39,33 @@
 #include <IOKit/IOInterrupts.h>
 
 // NMI Interrupt Constants
-enum
-{
-    kExtInt9_NMIIntSource      = 0x800506E0,
-    kNMIIntLevelMask           = 0x00004000,
-    kNMIIntMask                = 0x00000080
+enum {
+    kExtInt9_NMIIntSource = 0x800506E0,
+    kNMIIntLevelMask = 0x00004000,
+    kNMIIntMask = 0x00000080
 };
 
+class AppleARMNMI:public IOService {
+    OSDeclareDefaultStructors(AppleARMNMI);
 
-class AppleARMNMI : public IOService
-{
-  OSDeclareDefaultStructors(AppleARMNMI);
+ private:
+    bool enable_debugger;
+    bool mask_NMI;
 
-private:
-  bool enable_debugger;
-  bool mask_NMI;
+    struct ExpansionData {
+    };
+    ExpansionData *reserved;    // Reserved for future use
 
-  struct ExpansionData { };
-  ExpansionData * reserved;	// Reserved for future use
+ public:
+     IOService * rootDomain;
+    virtual bool start(IOService * provider);
+    virtual IOReturn initNMI(IOInterruptController * parentController, OSData * parentSource);
+    virtual IOReturn handleInterrupt(void *refCon, IOService * nub, int source);
 
-public:
-  IOService *rootDomain;
-  virtual bool start(IOService *provider);
-  virtual IOReturn initNMI(IOInterruptController *parentController, OSData *parentSource);
-  virtual IOReturn handleInterrupt(void *refCon, IOService *nub, int source);
-
-  OSMetaClassDeclareReservedUnused(AppleARMNMI,  0);
-  OSMetaClassDeclareReservedUnused(AppleARMNMI,  1);
-  OSMetaClassDeclareReservedUnused(AppleARMNMI,  2);
-  OSMetaClassDeclareReservedUnused(AppleARMNMI,  3);
+     OSMetaClassDeclareReservedUnused(AppleARMNMI, 0);
+     OSMetaClassDeclareReservedUnused(AppleARMNMI, 1);
+     OSMetaClassDeclareReservedUnused(AppleARMNMI, 2);
+     OSMetaClassDeclareReservedUnused(AppleARMNMI, 3);
 };
 
-#endif /* ! _IOKIT_APPLENMI_H */
+#endif                          /* ! _IOKIT_APPLENMI_H */

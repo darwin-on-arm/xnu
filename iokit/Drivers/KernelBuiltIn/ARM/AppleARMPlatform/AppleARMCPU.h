@@ -16,31 +16,29 @@
 #define PE_LOG \
     IOLog("[%s]: ", __PRETTY_FUNCTION__), IOLog
 
-class AppleARMCPU : public IOCPU {
+class AppleARMCPU:public IOCPU {
     OSDeclareDefaultStructors(AppleARMCPU);
-private:
-    IOCPUInterruptController* gIC;
-public:
-    bool start(IOService *provider);
+ private:
+    IOCPUInterruptController * gIC;
+ public:
+    bool start(IOService * provider);
     void initCPU(bool boot);
     void quiesceCPU(void);
     kern_return_t startCPU(vm_offset_t start_paddr, vm_offset_t parg_addr);
     void haltCPU(void);
-    const OSSymbol* getCPUName(void);
-    bool init(OSDictionary *propTable);
-    void ipiHandler(void* refCon, IOService* nub, int source);
+    const OSSymbol *getCPUName(void);
+    bool init(OSDictionary * propTable);
+    void ipiHandler(void *refCon, IOService * nub, int source);
 };
 
 /*
  * AppleARMGrandCentral
  */
 
-class AppleARMGrandCentral : public IOCPUInterruptController
-{
+class AppleARMGrandCentral:public IOCPUInterruptController {
     OSDeclareDefaultStructors(AppleARMGrandCentral);
-public:
-    IOReturn handleInterrupt(void* refCon, IOService* nub, int source);
+ public:
+    IOReturn handleInterrupt(void *refCon, IOService * nub, int source);
 };
 
-
-#endif /* defined(__AppleARMPlatform__AppleARMCPU__) */
+#endif                          /* defined(__AppleARMPlatform__AppleARMCPU__) */

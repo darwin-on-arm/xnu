@@ -20,6 +20,7 @@
  * 
  * @APPLE_LICENSE_HEADER_END@
  */
+
 /*
  * Copyright 2013, winocm. <winocm@icloud.com>
  * All rights reserved.
@@ -48,6 +49,7 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
+
 /*
  * ARM machine startup functions
  */
@@ -94,6 +96,7 @@ extern char firmware_version[32];
 extern uint32_t debug_enabled;
 extern const char version[];
 extern char osversion[];
+extern boolean_t panicDialogDesired;
 
 #define ANSI_COLOR_RED     "\x1b[31m"
 #define ANSI_COLOR_GREEN   "\x1b[32m"
@@ -112,10 +115,10 @@ typedef struct _cframe_t {
     uintptr_t caller;
 } cframe_t;
 
-unsigned int nosym = 0;
+unsigned int nosym = 1;
 
 void print_threads(uint32_t stackptr);
-void panic_arm_thread_backtrace(void *_frame, int nframes, const char *msg, boolean_t regdump, arm_saved_state_t *regs, int crashed, char* crashstr);
+void panic_arm_thread_backtrace(void *_frame, int nframes, const char *msg, boolean_t regdump, arm_saved_state_t * regs, int crashed, char *crashstr);
 
 /**
  * machine_init
@@ -124,8 +127,8 @@ void panic_arm_thread_backtrace(void *_frame, int nframes, const char *msg, bool
  */
 void machine_init(void)
 {
-	debug_log_init();
-	clock_config();
+    debug_log_init();
+    clock_config();
     return;
 }
 
@@ -137,16 +140,22 @@ void panic_display_time(void)
     clock_sec_t secs;
     clock_usec_t usecs;
 
-    /* Header. */
+    /*
+     * Header. 
+     */
     kdb_printf("Epoch Time:        sec       usec\n");
 
-    /* Boot. */
+    /*
+     * Boot. 
+     */
     clock_get_boottime_nanotime(&secs, &usecs);
     kdb_printf("  Boot    : 0x%08x 0x%08x\n", secs, usecs);
     kdb_printf("  Sleep   : 0x%08x 0x%08x\n", gIOLastSleepTime.tv_sec, gIOLastSleepTime.tv_usec);
     kdb_printf("  Wake    : 0x%08x 0x%08x\n", gIOLastWakeTime.tv_sec, gIOLastWakeTime.tv_usec);
 
-    /* Uptime. */
+    /*
+     * Uptime. 
+     */
     clock_get_calendar_microtime(&secs, &secs);
     kdb_printf("  Calendar: 0x%08x 0x%08x\n\n", secs, usecs);
 
@@ -161,37 +170,62 @@ void panic_backlog(uint32_t stackptr)
 #ifndef __LP64__
     thread_t currthr = current_thread();
 
-    /* Make sure the crash is after we set the first thread. */
-    if(!currthr) {
+    /*
+     * Make sure the crash is after we set the first thread. 
+     */
+    if (!currthr) {
         kprintf("panicked thread: %p, backtrace: 0x%08x\n", currthr, stackptr);
         panic_arm_thread_backtrace(stackptr, 32, NULL, FALSE, NULL, TRUE, "");
         return;
     }
 
     task_t task = currthr->task;
-    /* If the task is null, return... */
-    if(!task) {
+    /*
+     * If the task is null, return... 
+     */
+    if (!task) {
         kprintf("panicked thread: %p, backtrace: 0x%08x\n", currthr, stackptr);
         panic_arm_thread_backtrace(stackptr, 32, NULL, FALSE, NULL, TRUE, "");
         return;
     }
 
-    char* name;
+    char *name;
 
     if (task->bsd_info && (name = proc_name_address(task->bsd_info))) {
-        /* */
+        /*
+         */
     } else {
-       name = (char*)"unknown task";
+        name = (char *) "unknown task";
     }
 
-    kdb_printf("Panicked task %p: %d pages, %d threads: pid %d: %s\n"
-               "panicked thread: %p, backtrace: 0x%08x\n",
-               task, task->all_image_info_size, task->thread_count, (task->bsd_info != NULL) ? proc_pid(task->bsd_info) : 0, name,
-               currthr, stackptr);
+    kdb_printf("Panicked task %p: %d pages, %d threads: pid %d: %s\n" "panicked thread: %p, backtrace: 0x%08x\n", task, task->all_image_info_size, task->thread_count, (task->bsd_info != NULL) ? proc_pid(task->bsd_info) : 0, name, currthr, stackptr);
     panic_arm_thread_backtrace(stackptr, 32, NULL, FALSE, NULL, TRUE, "");
 
-    if(panicDebugging)
+    if (panicDebugging) {
         print_threads(stackptr);
+    } else {
+        kdb_printf("\n");
+
+        queue_head_t *task_list = &tasks;
+        task_t task = TASK_NULL;
+
+        queue_iterate(task_list, task, task_t, tasks) {
+            char *name;
+
+            if (task->bsd_info && (name = proc_name_address(task->bsd_info))) {
+                /*
+                 */
+            } else {
+                name = (char *) "unknown task";
+            }
+
+            if (task == currthr->task)
+                continue;
+
+            kdb_printf("Task 0x%x: %d pages, %d threads: pid %d: %s\n", task, task->all_image_info_size, task->thread_count, (task->bsd_info != NULL) ? proc_pid(task->bsd_info) : 0, name);
+        }
+    }
+
 #endif
 }
 
@@ -202,67 +236,90 @@ void panic_backlog(uint32_t stackptr)
  */
 void DebuggerCommon(__unused unsigned int reason, void *ctx, const char *message)
 {
-    /* Dim the screen. */
-    dim_screen();
+    /*
+     * Dim the screen. 
+     */
+    if (!panicDialogDesired)
+        dim_screen();
 
-    /* Print out debugger messages. */
+    /*
+     * Print out debugger messages. 
+     */
     kdb_printf("Debugger message: %s\n", message);
     kdb_printf("OS version: %s\n", (osversion[0] != 0) ? osversion : "Not yet set");
-    kdb_printf("Kernel version: %s\n",version);
+    kdb_printf("Kernel version: %s\n", version);
     kdb_printf("iBoot version: %s\n", firmware_version);
     kdb_printf("secure boot?: %s\n", debug_enabled ? "NO" : "YES");
 
-    /* iOS compatibility :) */
+    /*
+     * iOS compatibility :) 
+     */
     kdb_printf("Paniclog version: %d\n", 1);
 
-    /* Display panic information. */
+    /*
+     * Display panic information. 
+     */
     panic_display_time();
     panic_display_zprint();
 #if CONFIG_ZLEAKS
     panic_display_ztrace();
-#endif /* CONFIG_ZLEAKS */
+#endif                          /* CONFIG_ZLEAKS */
 
 #ifndef __LP64__
-    /* Anyway. */
+    /*
+     * Anyway. 
+     */
     uint32_t stackptr;
     arm_saved_state_t st;
-    __asm__ __volatile("mov %0, r7" : "=r"(stackptr));
+    __asm__ __volatile("mov %0, r7":"=r"(stackptr));
 
-    if(!ctx) {
+    if (!ctx) {
         bzero(&st, sizeof(st));
         st.r[7] = stackptr;
         panic_backlog(stackptr);
 
-        /* Reboot if not debugging. */
-        if(PE_reboot_on_panic() && !panicDebugging) {
-    	    halt_all_cpus(TRUE);
-        }
-
-        /* Draw the panic dialog. */
-        if(!PE_reboot_on_panic())
-            draw_panic_dialog();
-
-        /* Go into the debugger with a dummy state. */
-        kdp_raise_exception(EXC_BREAKPOINT, 0, 0, &st);
-    } else {
-        arm_saved_state_t* st = (arm_saved_state_t*)ctx;
-        panic_backlog(st->r[7]);
-
-        /* Reboot if not debugging. */
-        if(PE_reboot_on_panic() && !panicDebugging) {
+        /*
+         * Reboot if not debugging. 
+         */
+        if (PE_reboot_on_panic() && !panicDebugging) {
             halt_all_cpus(TRUE);
         }
 
-        /* Draw the panic dialog. */
-        if(!PE_reboot_on_panic())
+        /*
+         * Draw the panic dialog. 
+         */
+        if (!PE_reboot_on_panic())
             draw_panic_dialog();
 
-        /* Go into the debugger. */
+        /*
+         * Go into the debugger with a dummy state. 
+         */
+        kdp_raise_exception(EXC_BREAKPOINT, 0, 0, &st);
+    } else {
+        arm_saved_state_t *st = (arm_saved_state_t *) ctx;
+        panic_backlog(st->r[7]);
+
+        /*
+         * Reboot if not debugging. 
+         */
+        if (PE_reboot_on_panic() && !panicDebugging) {
+            halt_all_cpus(TRUE);
+        }
+
+        /*
+         * Draw the panic dialog. 
+         */
+        if (!PE_reboot_on_panic())
+            draw_panic_dialog();
+
+        /*
+         * Go into the debugger. 
+         */
         kdp_raise_exception(EXC_BREAKPOINT, 0, 0, &ctx);
     }
 #endif
 
-} 
+}
 
 /**
  * DebuggerWithContext
@@ -274,7 +331,7 @@ void DebuggerWithContext(__unused unsigned int reason, void *ctx, const char *me
 {
     hw_atomic_add(&debug_mode, 1);
     DebuggerCommon(reason, ctx, message);
-    hw_atomic_sub(&debug_mode, 1);   
+    hw_atomic_sub(&debug_mode, 1);
     return;
 }
 
@@ -288,7 +345,7 @@ void Debugger(const char *message)
 {
     hw_atomic_add(&debug_mode, 1);
     DebuggerCommon(EXC_BREAKPOINT, NULL, message);
-    hw_atomic_sub(&debug_mode, 1);   
+    hw_atomic_sub(&debug_mode, 1);
     return;
 }
 
@@ -299,54 +356,55 @@ void Debugger(const char *message)
  * the symbol section may be jettisoned. Use the "keepsyms" boot-arg to prevent
  * that.
  */
-static int panic_print_macho_symbol_name(kernel_mach_header_t *mh, vm_address_t search, const char *module_name)
+static int panic_print_macho_symbol_name(kernel_mach_header_t * mh, vm_address_t search, const char *module_name)
 {
-    kernel_nlist_t	*sym = NULL;
-    struct load_command		*cmd;
-    kernel_segment_command_t	*orig_ts = NULL, *orig_le = NULL;
-    struct symtab_command	*orig_st = NULL;
-    unsigned int			i;
-    char					*strings, *bestsym = NULL;
-    vm_address_t			bestaddr = 0, diff, curdiff;
-    
-    /* Assume that if it's loaded and linked into the kernel, it's a valid Mach-O */
-    
+    kernel_nlist_t *sym = NULL;
+    struct load_command *cmd;
+    kernel_segment_command_t *orig_ts = NULL, *orig_le = NULL;
+    struct symtab_command *orig_st = NULL;
+    unsigned int i;
+    char *strings, *bestsym = NULL;
+    vm_address_t bestaddr = 0, diff, curdiff;
+
+    /*
+     * Assume that if it's loaded and linked into the kernel, it's a valid Mach-O 
+     */
+
     cmd = (struct load_command *) &mh[1];
     for (i = 0; i < mh->ncmds; i++) {
         if (cmd->cmd == LC_SEGMENT_KERNEL) {
             kernel_segment_command_t *orig_sg = (kernel_segment_command_t *) cmd;
-            
-            if (strncmp(SEG_TEXT, orig_sg->segname,
-                        sizeof(orig_sg->segname)) == 0)
+
+            if (strncmp(SEG_TEXT, orig_sg->segname, sizeof(orig_sg->segname)) == 0)
                 orig_ts = orig_sg;
-            else if (strncmp(SEG_LINKEDIT, orig_sg->segname,
-                             sizeof(orig_sg->segname)) == 0)
+            else if (strncmp(SEG_LINKEDIT, orig_sg->segname, sizeof(orig_sg->segname)) == 0)
                 orig_le = orig_sg;
-        }
-        else if (cmd->cmd == LC_SYMTAB)
+        } else if (cmd->cmd == LC_SYMTAB)
             orig_st = (struct symtab_command *) cmd;
-        
+
         cmd = (struct load_command *) ((uintptr_t) cmd + cmd->cmdsize);
     }
-    
+
     if ((orig_ts == NULL) || (orig_st == NULL) || (orig_le == NULL))
         return 0;
-    
-    if ((search < orig_ts->vmaddr) ||
-        (search >= orig_ts->vmaddr + orig_ts->vmsize)) {
-        /* search out of range for this mach header */
+
+    if ((search < orig_ts->vmaddr) || (search >= orig_ts->vmaddr + orig_ts->vmsize)) {
+        /*
+         * search out of range for this mach header 
+         */
         return 0;
     }
-    
-    sym = (kernel_nlist_t *)(uintptr_t)(orig_le->vmaddr + orig_st->symoff - orig_le->fileoff);
-    strings = (char *)(uintptr_t)(orig_le->vmaddr + orig_st->stroff - orig_le->fileoff);
+
+    sym = (kernel_nlist_t *) (uintptr_t) (orig_le->vmaddr + orig_st->symoff - orig_le->fileoff);
+    strings = (char *) (uintptr_t) (orig_le->vmaddr + orig_st->stroff - orig_le->fileoff);
     diff = search;
-    
+
     for (i = 0; i < orig_st->nsyms; i++) {
-        if (sym[i].n_type & N_STAB) continue;
-        
+        if (sym[i].n_type & N_STAB)
+            continue;
+
         if (sym[i].n_value <= search) {
-            curdiff = search - (vm_address_t)sym[i].n_value;
+            curdiff = search - (vm_address_t) sym[i].n_value;
             if (curdiff < diff) {
                 diff = curdiff;
                 bestaddr = sym[i].n_value;
@@ -354,10 +412,10 @@ static int panic_print_macho_symbol_name(kernel_mach_header_t *mh, vm_address_t 
             }
         }
     }
-    
+
     if (bestsym != NULL) {
         if (diff != 0) {
-            kdb_printf(" (%s: " ANSI_COLOR_RED "%s" ANSI_COLOR_RESET " + 0x%lx)", module_name, bestsym, (unsigned long)diff);
+            kdb_printf(" (%s: " ANSI_COLOR_RED "%s" ANSI_COLOR_RESET " + 0x%lx)", module_name, bestsym, (unsigned long) diff);
         } else {
             kdb_printf(" (%s: " ANSI_COLOR_RED "%s" ANSI_COLOR_RESET ")", module_name, bestsym);
         }
@@ -374,14 +432,19 @@ static int panic_print_macho_symbol_name(kernel_mach_header_t *mh, vm_address_t 
  */
 static void panic_print_symbol_name(vm_address_t search)
 {
-    /* try searching in the kernel */
+    /*
+     * try searching in the kernel 
+     */
     if (panic_print_macho_symbol_name(&_mh_execute_header, search, "mach_kernel") == 0) {
-        /* oh well */
+        /*
+         * oh well 
+         */
         return;
     }
 }
 
 #ifndef __LP64__
+
 /**
  * print_threads
  *
@@ -389,78 +452,78 @@ static void panic_print_symbol_name(vm_address_t search)
  */
 void print_threads(uint32_t stackptr)
 {
-    if(!kernel_task)
+    if (!kernel_task)
         return;
-    
-	queue_head_t *task_list = &tasks;
-	task_t task = TASK_NULL;
-	thread_t thread = THREAD_NULL;
-    
-    kdb_printf("\n*********  Dumping thread state and stacks *********\n");
-    
-	queue_iterate(task_list, task, task_t, tasks) {
-		char* name;
 
-		if (task->bsd_info && (name = proc_name_address(task->bsd_info))) {
-			/* */
-		}
-		else {
-			name = (char*)"unknown task";
-		}
-        
+    queue_head_t *task_list = &tasks;
+    task_t task = TASK_NULL;
+    thread_t thread = THREAD_NULL;
+
+    kdb_printf("\n*********  Dumping thread state and stacks *********\n");
+
+    queue_iterate(task_list, task, task_t, tasks) {
+        char *name;
+
+        if (task->bsd_info && (name = proc_name_address(task->bsd_info))) {
+            /*
+             */
+        } else {
+            name = (char *) "unknown task";
+        }
+
         kdb_printf("Task 0x%x: %d pages, %d threads: pid %d: %s\n", task, task->all_image_info_size, task->thread_count, (task->bsd_info != NULL) ? proc_pid(task->bsd_info) : 0, name);
-        
+
         queue_iterate(&task->threads, thread, thread_t, task_threads) {
             char crashed[] = ">>>>>>>>";
 
             kdb_printf("\tthread %p\n", thread);
             assert(thread);
 
-            if(thread->continuation) {
+            if (thread->continuation) {
                 kdb_printf("%s\tkernel continuation: %p ", ((current_thread() == thread) ? crashed : "\t"), thread->continuation);
-                if(!nosym)
+                if (!nosym)
                     panic_print_symbol_name(thread->continuation);
                 kdb_printf("\n");
             }
 
-            if(stackptr && (current_thread() == thread)) {
+            if (stackptr && (current_thread() == thread)) {
                 kdb_printf("%s\tkernel backtrace: %x\n", ((current_thread() == thread) ? crashed : "\t"), stackptr);
                 panic_arm_thread_backtrace(stackptr, 32, NULL, FALSE, NULL, TRUE, ">>>>>>>>");
                 goto printUserState;
             }
-            
-            if(!thread->continuation && thread->machine.iss) {
+
+            if (!thread->continuation && thread->machine.iss) {
                 kdb_printf("%s\tkernel state:\n", ((current_thread() == thread) ? crashed : "\t"));
                 kdb_printf("%s\t  r0: 0x%08x  r1: 0x%08x  r2: 0x%08x  r3: 0x%08x\n"
                            "%s\t  r4: 0x%08x  r5: 0x%08x  r6: 0x%08x  r7: 0x%08x\n"
                            "%s\t  r8: 0x%08x  r9: 0x%08x r10: 0x%08x r11: 0x%08x\n"
                            "%s\t r12: 0x%08x  sp: 0x%08x  lr: 0x%08x  pc: 0x%08x\n"
                            "%s\tcpsr: 0x%08x fsr: 0x%08x far: 0x%08x\n",
-                           ((current_thread() == thread) ? crashed : "\t"), thread->machine.iss->r[0], thread->machine.iss->r[1], thread->machine.iss->r[2], thread->machine.iss->r[3], 
+                           ((current_thread() == thread) ? crashed : "\t"), thread->machine.iss->r[0], thread->machine.iss->r[1], thread->machine.iss->r[2], thread->machine.iss->r[3],
                            ((current_thread() == thread) ? crashed : "\t"), thread->machine.iss->r[4], thread->machine.iss->r[5], thread->machine.iss->r[6], thread->machine.iss->r[7],
                            ((current_thread() == thread) ? crashed : "\t"), thread->machine.iss->r[8], thread->machine.iss->r[9], thread->machine.iss->r[10], thread->machine.iss->r[11],
-                           ((current_thread() == thread) ? crashed : "\t"), thread->machine.iss->r[12], thread->machine.iss->sp, thread->machine.iss->lr, thread->machine.iss->pc,
-                           ((current_thread() == thread) ? crashed : "\t"), thread->machine.iss->cpsr, 0, 0);
-                if(thread->machine.iss->r[7]) {
+                           ((current_thread() == thread) ? crashed : "\t"), thread->machine.iss->r[12], thread->machine.iss->sp, thread->machine.iss->lr, thread->machine.iss->pc, ((current_thread() == thread) ? crashed : "\t"), thread->machine.iss->cpsr, 0, 0);
+                if (thread->machine.iss->r[7]) {
                     kdb_printf("%s\tkernel backtrace: %x\n", ((current_thread() == thread) ? crashed : "\t"), thread->machine.iss->r[7]);
                     panic_arm_thread_backtrace(thread->machine.iss->r[7], 32, NULL, FALSE, NULL, ((current_thread() == thread) ? TRUE : FALSE), "\t");
                 }
             }
 
-printUserState:
-            /* Make sure it's a Upcb if it's a user program. */
-            if(!thread->continuation && (thread->machine.uss != thread->machine.iss) && thread->machine.uss->pc) {
+ printUserState:
+            /*
+             * Make sure it's a Upcb if it's a user program. 
+             */
+            if (!thread->continuation && (thread->machine.uss != thread->machine.iss) && thread->machine.uss->pc) {
                 kdb_printf("%s\tuser state:\n", ((current_thread() == thread) ? crashed : "\t"));
                 kdb_printf("%s\t  r0: 0x%08x  r1: 0x%08x  r2: 0x%08x  r3: 0x%08x\n"
                            "%s\t  r4: 0x%08x  r5: 0x%08x  r6: 0x%08x  r7: 0x%08x\n"
                            "%s\t  r8: 0x%08x  r9: 0x%08x r10: 0x%08x r11: 0x%08x\n"
                            "%s\t r12: 0x%08x  sp: 0x%08x  lr: 0x%08x  pc: 0x%08x\n"
                            "%s\tcpsr: 0x%08x fsr: 0x%08x far: 0x%08x\n",
-                           ((current_thread() == thread) ? crashed : "\t"), thread->machine.uss->r[0], thread->machine.uss->r[1], thread->machine.uss->r[2], thread->machine.uss->r[3], 
+                           ((current_thread() == thread) ? crashed : "\t"), thread->machine.uss->r[0], thread->machine.uss->r[1], thread->machine.uss->r[2], thread->machine.uss->r[3],
                            ((current_thread() == thread) ? crashed : "\t"), thread->machine.uss->r[4], thread->machine.uss->r[5], thread->machine.uss->r[6], thread->machine.uss->r[7],
                            ((current_thread() == thread) ? crashed : "\t"), thread->machine.uss->r[8], thread->machine.uss->r[9], thread->machine.uss->r[10], thread->machine.uss->r[11],
-                           ((current_thread() == thread) ? crashed : "\t"), thread->machine.uss->r[12], thread->machine.uss->sp, thread->machine.uss->lr, thread->machine.uss->pc,
-                           ((current_thread() == thread) ? crashed : "\t"), thread->machine.uss->cpsr, 0, 0);
+                           ((current_thread() == thread) ? crashed : "\t"), thread->machine.uss->r[12], thread->machine.uss->sp, thread->machine.uss->lr, thread->machine.uss->pc, ((current_thread() == thread) ? crashed : "\t"), thread->machine.uss->cpsr, 0, 0);
             }
 
             kdb_printf("\n");
@@ -477,149 +540,146 @@ printUserState:
  */
 
 #define DUMPFRAMES 32
-void panic_arm_backtrace(void *_frame, int nframes, const char *msg, boolean_t regdump, arm_saved_state_t *regs)
+void panic_arm_backtrace(void *_frame, int nframes, const char *msg, boolean_t regdump, arm_saved_state_t * regs)
 {
-	int frame_index, i;
+    int frame_index, i;
     int cpu = cpu_number();
-    cframe_t	*frame = (cframe_t *)_frame;
-	vm_offset_t raddrs[DUMPFRAMES];
-	vm_offset_t PC = 0;
-	
-    /* 
+    cframe_t *frame = (cframe_t *) _frame;
+    vm_offset_t raddrs[DUMPFRAMES];
+    vm_offset_t PC = 0;
+
+    /*
      * Print out a backtrace of symbols.
      */
-    
+
     if (msg != NULL) {
-		kdb_printf("%s", msg);
-	}
-    
+        kdb_printf("%s", msg);
+    }
+
     kdb_printf("\n*** Dumping backtrace from context ***\n");
-    
+
     /*
      * This is probably not thread safe, it's a boilerplate.
      */
-    
-    kdb_printf("Backtrace (cpu %d, fp 0x%08x):\n", cpu, (uint32_t)_frame);
-    
-	for (frame_index = 0; frame_index < nframes; frame_index++) {
-		vm_offset_t curframep = (vm_offset_t) frame;
-        
-        if (!kvtophys(curframep) ||
-            !kvtophys(curframep + sizeof(cframe_t) - 1)) {
+
+    kdb_printf("Backtrace (cpu %d, fp 0x%08x):\n", cpu, (uint32_t) _frame);
+
+    for (frame_index = 0; frame_index < nframes; frame_index++) {
+        vm_offset_t curframep = (vm_offset_t) frame;
+
+        if (!kvtophys(curframep) || !kvtophys(curframep + sizeof(cframe_t) - 1)) {
             kdb_printf("No mapping exists for frame pointer\n");
             goto invalid;
         }
-        
-		if (!curframep)
-			break;
-        
-        if((frame_index >= 1) && (frame == frame->prev)) {
+
+        if (!curframep)
+            break;
+
+        if ((frame_index >= 1) && (frame == frame->prev)) {
             kdb_printf("Looping frame\n");
             goto invalid;
         }
-        
-		if (curframep & 0x3) {
-			kdb_printf("Unaligned frame\n");
-			goto invalid;
-		}
-        
-		kdb_printf("      fp: %p   lr: 0x%lx ", frame, frame->caller);
-		if (frame_index < DUMPFRAMES)
-			raddrs[frame_index] = frame->caller;
-        
-        if(!nosym)
-            panic_print_symbol_name((vm_address_t)frame->caller);
 
-		kdb_printf("\n");
-        
-		frame = frame->prev;
+        if (curframep & 0x3) {
+            kdb_printf("Unaligned frame\n");
+            goto invalid;
+        }
+
+        kdb_printf("      fp: %p   lr: 0x%lx ", frame, frame->caller);
+        if (frame_index < DUMPFRAMES)
+            raddrs[frame_index] = frame->caller;
+
+        if (!nosym)
+            panic_print_symbol_name((vm_address_t) frame->caller);
+
+        kdb_printf("\n");
+
+        frame = frame->prev;
     }
-    
-	if (frame_index >= nframes)
-		kdb_printf("    Backtrace continues...\n");
-    
-	goto out;
-    
-invalid:
-	kdb_printf("Backtrace terminated-invalid frame pointer %p\n",frame);
-out:
-    
+
+    if (frame_index >= nframes)
+        kdb_printf("    Backtrace continues...\n");
+
+    goto out;
+
+ invalid:
+    kdb_printf("Backtrace terminated-invalid frame pointer %p\n", frame);
+ out:
+
     kdb_printf("Flat caller information: [ ");
-    for(i = 0; i < frame_index; i++) {
+    for (i = 0; i < frame_index; i++) {
         kdb_printf("0x%08x ", raddrs[i]);
     }
     kdb_printf("]\n");
-    
-	panic_display_system_configuration();
+
+    panic_display_system_configuration();
 
 }
 
 /* Formatting difference */
 #define DUMPFRAMES 32
-void panic_arm_thread_backtrace(void *_frame, int nframes, const char *msg, boolean_t regdump, arm_saved_state_t *regs, int crashed, char* crashstr)
+void panic_arm_thread_backtrace(void *_frame, int nframes, const char *msg, boolean_t regdump, arm_saved_state_t * regs, int crashed, char *crashstr)
 {
-	int frame_index, i;
+    int frame_index, i;
     int cpu = cpu_number();
-    cframe_t	*frame = (cframe_t *)_frame;
-	vm_offset_t raddrs[DUMPFRAMES];
-	vm_offset_t PC = 0;
- 
+    cframe_t *frame = (cframe_t *) _frame;
+    vm_offset_t raddrs[DUMPFRAMES];
+    vm_offset_t PC = 0;
+
     /*
      * Print out a backtrace of symbols.
      */
-    
+
     if (msg != NULL) {
-		kdb_printf("%s", msg);
-	}
-    
+        kdb_printf("%s", msg);
+    }
+
     /*
      * This is probably not thread safe, it's a boilerplate.
      */
-    
-	for (frame_index = 0; frame_index < nframes; frame_index++) {
-		vm_offset_t curframep = (vm_offset_t) frame;
-        
-		if (!curframep)
-			break;
-        
-        if (!kvtophys(curframep) ||
-            !kvtophys(curframep + sizeof(cframe_t) - 1)) {
+
+    for (frame_index = 0; frame_index < nframes; frame_index++) {
+        vm_offset_t curframep = (vm_offset_t) frame;
+
+        if (!curframep)
+            break;
+
+        if (!kvtophys(curframep) || !kvtophys(curframep + sizeof(cframe_t) - 1)) {
             goto invalid;
         }
-        
-		if (curframep & 0x3) {
-			goto invalid;
-		}
-        
-        if((frame_index >= 1) && (frame == frame->prev)) {
+
+        if (curframep & 0x3) {
             goto invalid;
         }
-        
-		kdb_printf("%s\t  lr: 0x%08x  fp: 0x%08x ", (crashed ? crashstr : "\t"), frame->caller, frame);
-		if (frame_index < DUMPFRAMES)
-			raddrs[frame_index] = frame->caller;
-    
-        if(!nosym)
-            panic_print_symbol_name((vm_address_t)frame->caller);
-        
-		kdb_printf("\n");
-        
-		frame = frame->prev;
+
+        if ((frame_index >= 1) && (frame == frame->prev)) {
+            goto invalid;
+        }
+
+        kdb_printf("%s\t  lr: 0x%08x  fp: 0x%08x ", (crashed ? crashstr : "\t"), frame->caller, frame);
+        if (frame_index < DUMPFRAMES)
+            raddrs[frame_index] = frame->caller;
+
+        if (!nosym)
+            panic_print_symbol_name((vm_address_t) frame->caller);
+
+        kdb_printf("\n");
+
+        frame = frame->prev;
     }
 
-	goto out;
-    
-invalid:
-out:
-    
-    if(nosym)
-        return;    
-}
+    goto out;
 
+ invalid:
+ out:
+
+    if (nosym)
+        return;
+}
 
 static void machine_conf(void)
 {
-	machine_info.memory_size = (typeof(machine_info.memory_size))mem_size;
+    machine_info.memory_size = (typeof(machine_info.memory_size)) mem_size;
 }
 
 unsigned int debug_boot_arg;
@@ -632,19 +692,23 @@ unsigned int debug_boot_arg;
 void machine_startup(void)
 {
     machine_conf();
-    
-    if (PE_parse_boot_argn("debug", &debug_boot_arg, sizeof (debug_boot_arg))) {
+
+    if (PE_parse_boot_argn("debug", &debug_boot_arg, sizeof(debug_boot_arg))) {
         panicDebugging = TRUE;
-        if (debug_boot_arg & DB_HALT) halt_in_debugger=1;
-        if (debug_boot_arg & DB_PRT) disable_debug_output=FALSE; 
-        if (debug_boot_arg & DB_SLOG) systemLogDiags=TRUE; 
-        if (debug_boot_arg & DB_LOG_PI_SCRN) logPanicDataToScreen=TRUE;
+        if (debug_boot_arg & DB_HALT)
+            halt_in_debugger = 1;
+        if (debug_boot_arg & DB_PRT)
+            disable_debug_output = FALSE;
+        if (debug_boot_arg & DB_SLOG)
+            systemLogDiags = TRUE;
+        if (debug_boot_arg & DB_LOG_PI_SCRN)
+            logPanicDataToScreen = TRUE;
     } else {
         debug_boot_arg = 0;
     }
 
     char nosym_temp[16];
-    if (PE_parse_boot_argn("symbolicate-panics", &nosym_temp, sizeof (nosym_temp))) {
+    if (PE_parse_boot_argn("symbolicate-panics", &nosym_temp, sizeof(nosym_temp))) {
         nosym = 0;
     }
 
@@ -653,10 +717,10 @@ void machine_startup(void)
      * any further if the proper option bit was specified in
      * the boot flags.
      */
-     if (halt_in_debugger) {
+    if (halt_in_debugger) {
         Debugger("inline call to debugger(machine_startup)");
         halt_in_debugger = 0;
-        active_debugger =1;
+        active_debugger = 1;
     }
 
     kernel_bootstrap();
@@ -670,40 +734,34 @@ void machine_startup(void)
  */
 char *machine_boot_info(char *buf, vm_size_t size)
 {
-	return(PE_boot_args());
+    return (PE_boot_args());
 }
 
 /**
  * mach_syscall_trace
  */
 extern const char *mach_syscall_name_table[];
-void mach_syscall_trace(arm_saved_state_t* state)
+void mach_syscall_trace(arm_saved_state_t * state)
 {
 #if 0
     int num = -(state->r[12]);
-    kdb_printf("MACH Trap: (%d/%s)\n",  num, mach_syscall_name_table[num]);
+    kdb_printf("MACH Trap: (%d/%s)\n", num, mach_syscall_name_table[num]);
 #endif
 #if 0
     int num = -(state->r[12]);
     kdb_printf("MACH Trap: (%d/%s)\n"
-            "r0: 0x%08x  r1: 0x%08x  r2: 0x%08x  r3: 0x%08x\n"
-            "r4: 0x%08x  r5: 0x%08x  r6: 0x%08x  r7: 0x%08x\n"
-            "r8: 0x%08x  r9: 0x%08x r10: 0x%08x r11: 0x%08x\n"
-            "12: 0x%08x  sp: 0x%08x  lr: 0x%08x  pc: 0x%08x\n"
-            "cpsr: 0x%08x\n", num, mach_syscall_name_table[num],
-            state->r[0], state->r[1], state->r[2], state->r[3],
-            state->r[4], state->r[5], state->r[6], state->r[7],
-            state->r[8], state->r[9], state->r[10], state->r[11],
-            state->r[12], state->sp, state->lr, state->pc, state->cpsr);
+               "r0: 0x%08x  r1: 0x%08x  r2: 0x%08x  r3: 0x%08x\n"
+               "r4: 0x%08x  r5: 0x%08x  r6: 0x%08x  r7: 0x%08x\n"
+               "r8: 0x%08x  r9: 0x%08x r10: 0x%08x r11: 0x%08x\n"
+               "12: 0x%08x  sp: 0x%08x  lr: 0x%08x  pc: 0x%08x\n"
+               "cpsr: 0x%08x\n", num, mach_syscall_name_table[num], state->r[0], state->r[1], state->r[2], state->r[3], state->r[4], state->r[5], state->r[6], state->r[7], state->r[8], state->r[9], state->r[10], state->r[11], state->r[12], state->sp, state->lr, state->pc, state->cpsr);
 #endif
 }
-
 
 /*
  * Halt a cpu.
  */
-void
-halt_cpu(void)
+void halt_cpu(void)
 {
     halt_all_cpus(FALSE);
 }
@@ -713,18 +771,16 @@ int reset_mem_on_reboot = 1;
 /*
  * Halt the system or reboot.
  */
-void
-halt_all_cpus(boolean_t reboot)
+void halt_all_cpus(boolean_t reboot)
 {
     if (reboot) {
         printf("MACH Reboot\n");
         if (PE_halt_restart)
-                (*PE_halt_restart)(kPERestartCPU);
+            (*PE_halt_restart) (kPERestartCPU);
     } else {
         printf("CPU halted\n");
         if (PE_halt_restart)
-                (*PE_halt_restart)(kPEHaltCPU);
+            (*PE_halt_restart) (kPEHaltCPU);
     }
-    while(1);
+    while (1) ;
 }
-

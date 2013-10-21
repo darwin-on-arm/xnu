@@ -61,7 +61,7 @@ uint64_t Omap3_get_timebase(void);
 
 #define KPRINTF_PREFIX  "PE_omap3530: "
 
-extern void rtclock_intr(arm_saved_state_t* regs);
+extern void rtclock_intr(arm_saved_state_t * regs);
 extern void rtc_configure(uint64_t hz);
 
 vm_offset_t gOmapSerialUartBase = 0x0;
@@ -70,10 +70,10 @@ vm_offset_t gOmapTimerBase = 0x0;
 vm_offset_t gOmapDisplayControllerBase = 0x0;
 vm_offset_t gOmapPrcmBase = 0x0;
 
-static uint64_t     clock_decrementer = 0;
-static boolean_t    clock_initialized = FALSE;
-static boolean_t    clock_had_irq = FALSE;
-static uint64_t     clock_absolute_time = 0;
+static uint64_t clock_decrementer = 0;
+static boolean_t clock_initialized = FALSE;
+static boolean_t clock_had_irq = FALSE;
+static uint64_t clock_absolute_time = 0;
 
 #define FLD_VAL(val, start, end) (((val) << (end)) & FLD_MASK(start, end))
 #define FLD_MASK(start, end)    (((1 << ((start) - (end) + 1)) - 1) << (end))
@@ -81,11 +81,14 @@ static uint64_t     clock_absolute_time = 0;
 
 static void timer_configure(void)
 {
-    uint64_t hz = 327680;
+    /*
+     * xxx hack for etimer since it does not know time yet 
+     */
+    uint64_t hz = 3276800;
     gPEClockFrequencyInfo.timebase_frequency_hz = hz;
 
     clock_decrementer = 1000;
-    kprintf(KPRINTF_PREFIX "decrementer frequency = %llu\n", clock_decrementer);    
+    kprintf(KPRINTF_PREFIX "decrementer frequency = %llu\n", clock_decrementer);
 
     rtc_configure(hz);
     return;
@@ -93,52 +96,54 @@ static void timer_configure(void)
 
 void Omap3_early_putc(int c)
 {
-    if(c == '\n')
+    if (c == '\n')
         Omap3_early_putc('\r');
 
-    while(!(HwReg(OMAP3_UART_BASE + LSR) & LSR_THRE))
+    while (!(HwReg(OMAP3_UART_BASE + LSR) & LSR_THRE))
         barrier();
-    
+
     HwReg(OMAP3_UART_BASE + THR) = c;
 }
 
 void Omap3_putc(int c)
 {
-    if(!gOmapSerialUartBase)
+    if (!gOmapSerialUartBase)
         return;
 
-    if(c == '\n')
+    if (c == '\n')
         Omap3_putc('\r');
-    
-    while(!(HwReg(gOmapSerialUartBase + LSR) & LSR_THRE))
+
+    while (!(HwReg(gOmapSerialUartBase + LSR) & LSR_THRE))
         barrier();
-    
+
     HwReg(gOmapSerialUartBase + THR) = c;
 }
 
 int Omap3_getc(void)
 {
-    while(!(HwReg(gOmapSerialUartBase + LSR) & LSR_DR))
+    while (!(HwReg(gOmapSerialUartBase + LSR) & LSR_DR))
         barrier();
-    
+
     return (HwReg(gOmapSerialUartBase + RBR));
 }
 
 void Omap3_uart_init(void)
 {
     gOmapTimerBase = ml_io_map(OMAP3_TIMER0_BASE, PAGE_SIZE);
-    gOmapInterruptControllerBase = ml_io_map(OMAP3_GIC_BASE, PAGE_SIZE);  
+    gOmapInterruptControllerBase = ml_io_map(OMAP3_GIC_BASE, PAGE_SIZE);
     gOmapDisplayControllerBase = ml_io_map(OMAP3_DSS_BASE - 0x40, PAGE_SIZE);
 
-    /* XXX: God. */
+    /*
+     * XXX: God. 
+     */
     gOmapPrcmBase = ml_io_map(0x48004000, PAGE_SIZE);
 
     int baudDivisor;
     gOmapSerialUartBase = ml_io_map(OMAP3_UART_BASE, PAGE_SIZE);
-    
+
     assert(OMAP3_UART_BAUDRATE != 0);
     baudDivisor = (OMAP3_UART_CLOCK / 16 / OMAP3_UART_BAUDRATE);
-    
+
     HwReg(gOmapSerialUartBase + IER) = 0x00;
     HwReg(gOmapSerialUartBase + LCR) = LCR_BKSE | LCRVAL;
     HwReg(gOmapSerialUartBase + DLL) = baudDivisor & 0xFF;
@@ -152,18 +157,26 @@ void Omap3_interrupt_init(void)
 {
     int i;
 
-    /* Disable interrupts */
+    /*
+     * Disable interrupts 
+     */
     ml_set_interrupts_enabled(FALSE);
 
-    /* Set MIR bits to enable all interrupts */
+    /*
+     * Set MIR bits to enable all interrupts 
+     */
     HwReg(INTCPS_MIR(0)) = 0xffffffff;
     HwReg(INTCPS_MIR(1)) = 0xffffffff;
     HwReg(INTCPS_MIR(2)) = 0xffffffff;
 
-    /* Set the true bits */
+    /*
+     * Set the true bits 
+     */
     mmio_write(INTCPS_MIR_CLEAR(37 >> 5), 1 << (37 & 0x1f));
 
-    /* Set enable new IRQs/FIQs */
+    /*
+     * Set enable new IRQs/FIQs 
+     */
     HwReg(INTCPS_CONTROL) = (1 << 0);
 
     barrier();
@@ -172,16 +185,24 @@ void Omap3_interrupt_init(void)
 
 void Omap3_timebase_init(void)
 {
-    /* Stop the timer. */
+    /*
+     * Stop the timer. 
+     */
     Omap3_timer_enabled(FALSE);
 
-    /* Enable interrupts */
+    /*
+     * Enable interrupts 
+     */
     ml_set_interrupts_enabled(TRUE);
 
-    /* Set rtclock stuff */
+    /*
+     * Set rtclock stuff 
+     */
     timer_configure();
 
-    /* Set timer decrementer defaults */
+    /*
+     * Set timer decrementer defaults 
+     */
     HwReg(gOmapTimerBase + TLDR) = 0xffffffe0;
     HwReg(gOmapTimerBase + TCRR) = 0xffffffe0;
 
@@ -193,20 +214,28 @@ void Omap3_timebase_init(void)
 
     HwReg(gOmapTimerBase + TCLR) = (1 << 6);
 
-    /* !!! SET INTERRUPTS ENABLED ON OVERFLOW */
+    /*
+     * !!! SET INTERRUPTS ENABLED ON OVERFLOW 
+     */
     HwReg(gOmapTimerBase + TISR) = 0x7;
     HwReg(gOmapTimerBase + TIER) = 0x7;
 
-    /* Set to 32KHz */
+    /*
+     * Set to 32KHz 
+     */
     mmio_set(gOmapPrcmBase + 0xc40, 0x40);
 
-    /* Arm the timer */
+    /*
+     * Arm the timer 
+     */
     HwReg(gOmapTimerBase + TCLR) = (1 << 0) | (1 << 1) | (2 << 10);
 
-    /* Wait for it. */
+    /*
+     * Wait for it. 
+     */
     clock_initialized = TRUE;
 
-    while(!clock_had_irq)
+    while (!clock_had_irq)
         barrier();
 
     kprintf(KPRINTF_PREFIX "timer is now up, ticks %llu\n", Omap3_timer_value());
@@ -214,28 +243,39 @@ void Omap3_timebase_init(void)
     return;
 }
 
-void Omap3_handle_interrupt(void* context)
+void Omap3_handle_interrupt(void *context)
 {
     uint32_t irq_number = (HwReg(INTCPS_SIR_IRQ)) & 0x7F;
 
-    if(irq_number == 37)  /* GPTimer1 IRQ */
-    {
-        /* Stop the timer */
+    if (irq_number == 37) {     /* GPTimer1 IRQ */
+        /*
+         * Stop the timer 
+         */
         Omap3_timer_enabled(FALSE);
 
-        /* Clear interrupt status */
+        /*
+         * Clear interrupt status 
+         */
         HwReg(gOmapTimerBase + TISR) = 0x7;
 
-        /* FFFFF */
-        rtclock_intr((arm_saved_state_t*) context);
+        /*
+         * FFFFF 
+         */
+        rtclock_intr((arm_saved_state_t *) context);
 
-        /* Set new IRQ generation */
+        /*
+         * Set new IRQ generation 
+         */
         HwReg(INTCPS_CONTROL) = 0x1;
 
-        /* ARM IT. */
+        /*
+         * ARM IT. 
+         */
         Omap3_timer_enabled(TRUE);
 
-        /* Update absolute time */
+        /*
+         * Update absolute time 
+         */
         clock_absolute_time += (clock_decrementer - Omap3_timer_value());
 
         clock_had_irq = 1;
@@ -248,15 +288,15 @@ void Omap3_handle_interrupt(void* context)
 uint64_t Omap3_get_timebase(void)
 {
     uint32_t timestamp;
-    
-    if(!clock_initialized)
+
+    if (!clock_initialized)
         return 0;
-    
+
     timestamp = Omap3_timer_value();
 
-    if(timestamp) {
+    if (timestamp) {
         uint64_t v = clock_absolute_time;
-        v += (uint64_t)(((uint64_t)clock_decrementer) - (uint64_t)(timestamp));
+        v += (uint64_t) (((uint64_t) clock_decrementer) - (uint64_t) (timestamp));
         return v;
     } else {
         clock_absolute_time += clock_decrementer;
@@ -266,14 +306,18 @@ uint64_t Omap3_get_timebase(void)
 
 uint64_t Omap3_timer_value(void)
 {
-    /* Return overflow value minus the counter */
+    /*
+     * Return overflow value minus the counter 
+     */
     return 0xffffffff - (HwReg(gOmapTimerBase + TCRR));
 }
 
 void Omap3_timer_enabled(int enable)
 {
-    /* Clear the TCLR [ST] bit */
-    if(enable)
+    /*
+     * Clear the TCLR [ST] bit 
+     */
+    if (enable)
         HwReg(gOmapTimerBase + TCLR) |= (1 << 0);
     else
         HwReg(gOmapTimerBase + TCLR) &= ~(1 << 0);
@@ -286,8 +330,9 @@ void Omap3_timer_enabled(int enable)
  */
 void vcputc(__unused int l, __unused int u, int c);
 
-static void _fb_putc(int c) {
-    if(c == '\n') {
+static void _fb_putc(int c)
+{
+    if (c == '\n') {
         vcputc(0, 0, '\r');
     }
     vcputc(0, 0, c);
@@ -296,53 +341,67 @@ static void _fb_putc(int c) {
 
 /* ModeDB inspired by Linux kernel. */
 typedef struct omap_videomode {
-    const char* name;
+    const char *name;
     uint32_t refresh;
     uint32_t xres;
     uint32_t yres;
     uint32_t pixclock;
-    uint32_t left_margin; /* HBP */
-    uint32_t right_margin; /* HFP */
-    uint32_t upper_margin; /* VBP */
-    uint32_t lower_margin; /* VFP */
-    uint32_t hsync_len; /* HSW */
-    uint32_t vsync_len; /* VSW */
+    uint32_t left_margin;       /* HBP */
+    uint32_t right_margin;      /* HFP */
+    uint32_t upper_margin;      /* VBP */
+    uint32_t lower_margin;      /* VFP */
+    uint32_t hsync_len;         /* HSW */
+    uint32_t vsync_len;         /* VSW */
     uint32_t sync, vmode, flag;
 } omap_videomode;
 
 omap_videomode omap_videomodes[] = {
-    /* Note, our pixelclock runs at 96MHz. */
+    /*
+     * Note, our pixelclock runs at 96MHz. 
+     */
 
-    /* 1280x720 @ ~75Hz and friends */
-    {"dvi:1280x720", 60, 1280, 720, 0, 220, 440, 20, 5, 40, 5, 0, 0, 0}, 
-    {"dvi:1280x768", 60, 1280, 768, 0, 220, 440, 20, 5, 40, 5, 0, 0, 0}, 
-    {"dvi:1280x800", 60, 1280, 800, 0, 220, 440, 20, 5, 40, 5, 0, 0, 0}, 
+    /*
+     * 1280x720 @ ~75Hz and friends 
+     */
+    {"dvi:1280x720", 60, 1280, 720, 0, 220, 440, 20, 5, 40, 5, 0, 0, 0},
+    {"dvi:1280x768", 60, 1280, 768, 0, 220, 440, 20, 5, 40, 5, 0, 0, 0},
+    {"dvi:1280x800", 60, 1280, 800, 0, 220, 440, 20, 5, 40, 5, 0, 0, 0},
 
-    /* 1024x768 @ 70Hz. */
+    /*
+     * 1024x768 @ 70Hz. 
+     */
     {"dvi:1024x768", 60, 1024, 768, 0, 331, 37, 44, 5, 202, 10, 0, 0, 0},
 
-    /* !!! EXPERIMENTAL 1080P MODE !!! MAKES SOME MONITORS GO WACKO !!! */
-    {"dvi:1920x1080", 24, 1920, 1080, 0, 440, 1024, 20, 50, 80, 5, 0, 0, 0}, 
+    /*
+     * !!! EXPERIMENTAL 1080P MODE !!! MAKES SOME MONITORS GO WACKO !!! 
+     */
+    {"dvi:1920x1080", 24, 1920, 1080, 0, 440, 1024, 20, 50, 80, 5, 0, 0, 0},
 
-    /* Please put more modes in here! */
+    /*
+     * Please put more modes in here! 
+     */
 };
 
 void Omap3_framebuffer_init(void)
 {
-    /* This *must* be page aligned. */
-    struct dispc_regs* OmapDispc = (struct dispc_regs*)(gOmapDisplayControllerBase + 0x440);
+    /*
+     * This *must* be page aligned. 
+     */
+    struct dispc_regs *OmapDispc = (struct dispc_regs *) (gOmapDisplayControllerBase + 0x440);
 
-    /* Set defaults */
+    /*
+     * Set defaults 
+     */
     uint32_t timing_h, timing_v;
     uint32_t hbp, hfp, hsw, vsw, vfp, vbp;
 
     char tmpbuf[16];
-    omap_videomode* current_mode = &omap_videomodes[0];
+    omap_videomode *current_mode = &omap_videomodes[0];
 
-    if(PE_parse_boot_argn("omapfbres", tmpbuf, sizeof(tmpbuf))) {
+    if (PE_parse_boot_argn("omapfbres", tmpbuf, sizeof(tmpbuf))) {
         int cur = 0;
-        while(cur != (sizeof(omap_videomodes) / sizeof(omap_videomode))) {
-            if(!strcmp(tmpbuf, omap_videomodes[cur].name)) {
+        while (cur != (sizeof(omap_videomodes) / sizeof(omap_videomode))) {
+            if (!strcmp(tmpbuf, omap_videomodes[cur].name)) {
                 current_mode = &omap_videomodes[cur];
                 break;
             }
@@ -357,10 +416,8 @@ void Omap3_framebuffer_init(void)
     hsw = current_mode->hsync_len;
     vsw = current_mode->vsync_len;
 
-    timing_h = FLD_VAL(hsw-1, 7, 0) | FLD_VAL(hfp-1, 19, 8) |
-                       FLD_VAL(hbp-1, 31, 20);
-    timing_v = FLD_VAL(vsw-1, 7, 0) | FLD_VAL(vfp, 19, 8) |
-                       FLD_VAL(vbp, 31, 20);
+    timing_h = FLD_VAL(hsw - 1, 7, 0) | FLD_VAL(hfp - 1, 19, 8) | FLD_VAL(hbp - 1, 31, 20);
+    timing_v = FLD_VAL(vsw - 1, 7, 0) | FLD_VAL(vfp, 19, 8) | FLD_VAL(vbp, 31, 20);
 
     uint32_t vs = FLD_VAL(current_mode->yres - 1, 26, 16) | FLD_VAL(current_mode->xres - 1, 10, 0);
 
@@ -372,51 +429,79 @@ void Omap3_framebuffer_init(void)
     OmapDispc->config = (2 << 1);
     OmapDispc->default_color0 = 0xffff0000;
     OmapDispc->control = ((1 << 3) | (3 << 8));
-    
-    /* Initialize display control */
+
+    /*
+     * Initialize display control 
+     */
     OmapDispc->control |= DISPC_ENABLE;
     OmapDispc->default_color0 = 0xffff0000;
-    
-    /* initialize lcd defaults */
+
+    /*
+     * initialize lcd defaults 
+     */
     barrier();
 
     vs = OmapDispc->size_lcd;
     uint32_t lcd_width, lcd_height;
-    
+
     lcd_height = (vs >> 16) + 1;
     lcd_width = (vs & 0xffff) + 1;
     kprintf(KPRINTF_PREFIX "lcd size is %u x %u\n", lcd_width, lcd_height);
-    
-    /* Allocate framebuffer */
-    void* framebuffer = pmap_steal_memory(lcd_width * lcd_width * 4);
-    void* framebuffer_phys = pmap_extract(kernel_pmap, framebuffer);
+
+    /*
+     * Allocate framebuffer 
+     */
+    void *framebuffer = pmap_steal_memory(lcd_width * lcd_width * 4);
+    void *framebuffer_phys = pmap_extract(kernel_pmap, framebuffer);
     bzero(framebuffer, lcd_width * lcd_height * 4);
     kprintf(KPRINTF_PREFIX "software framebuffer at %p\n", framebuffer);
-    
-    /* Set attributes in display controller */
-	OmapDispc->gfx_ba0 = framebuffer_phys;
-	OmapDispc->gfx_ba1 = 0;
-	OmapDispc->gfx_position = 0;
-	OmapDispc->gfx_row_inc = 1;
-	OmapDispc->gfx_pixel_inc = 1;
-	OmapDispc->gfx_window_skip = 0;
-	OmapDispc->gfx_size = vs;
-	OmapDispc->gfx_attributes = 0x91;
-    
-    /* Enable the display */
-    *((volatile unsigned long*)(&OmapDispc->control)) |= 1 | (1 << 1) | (1 << 5) | (1 << 6) | (1 << 15) | (1 << 16);
 
-    /* Hook to our framebuffer */
-    PE_state.video.v_baseAddr = (unsigned long)framebuffer_phys;
+    /*
+     * Set attributes in display controller 
+     */
+    OmapDispc->gfx_ba0 = framebuffer_phys;
+    OmapDispc->gfx_ba1 = 0;
+    OmapDispc->gfx_position = 0;
+    OmapDispc->gfx_row_inc = 1;
+    OmapDispc->gfx_pixel_inc = 1;
+    OmapDispc->gfx_window_skip = 0;
+    OmapDispc->gfx_size = vs;
+    OmapDispc->gfx_attributes = 0x91;
+
+    /*
+     * Enable the display 
+     */
+    *((volatile unsigned long *) (&OmapDispc->control)) |= 1 | (1 << 1) | (1 << 5) | (1 << 6) | (1 << 15) | (1 << 16);
+
+    /*
+     * Hook to our framebuffer 
+     */
+    PE_state.video.v_baseAddr = (unsigned long) framebuffer_phys;
     PE_state.video.v_rowBytes = lcd_width * 4;
     PE_state.video.v_width = lcd_width;
     PE_state.video.v_height = lcd_height;
     PE_state.video.v_depth = 4 * (8);   // 32bpp
-    
+
     kprintf(KPRINTF_PREFIX "framebuffer initialized\n");
-    
-    initialize_screen((void*)&PE_state.video, kPEAcquireScreen);
-    initialize_screen((void*)&PE_state.video, kPEEnableScreen);
+
+    /*
+     * Enable early framebuffer.
+     */
+    char tempbuf[16];
+
+    if (PE_parse_boot_argn("-early-fb-debug", tempbuf, sizeof(tempbuf))) {
+        initialize_screen((void *) &PE_state.video, kPEAcquireScreen);
+    }
+
+    if (PE_parse_boot_argn("-graphics-mode", tempbuf, sizeof(tempbuf))) {
+        /*
+         * BootX like framebuffer. 
+         */
+        memset(framebuffer, 0xb9, lcd_width * lcd_height * 4);
+        initialize_screen((void *) &PE_state.video, kPEGraphicsMode);
+    } else {
+        initialize_screen((void *) &PE_state.video, kPETextMode);
+    }
 
     return;
 }
@@ -433,19 +518,19 @@ void PE_init_SocSupport_omap3(void)
     gPESocDispatch.uart_getc = Omap3_getc;
     gPESocDispatch.uart_putc = Omap3_putc;
     gPESocDispatch.uart_init = Omap3_uart_init;
-    
+
     gPESocDispatch.interrupt_init = Omap3_interrupt_init;
     gPESocDispatch.timebase_init = Omap3_timebase_init;
-    
+
     gPESocDispatch.get_timebase = Omap3_get_timebase;
-    
+
     gPESocDispatch.handle_interrupt = Omap3_handle_interrupt;
-    
+
     gPESocDispatch.timer_value = Omap3_timer_value;
     gPESocDispatch.timer_enabled = Omap3_timer_enabled;
-    
+
     gPESocDispatch.framebuffer_init = Omap3_framebuffer_init;
-    
+
     Omap3_uart_init();
     PE_kputc = gPESocDispatch.uart_putc;
 

@@ -26,6 +26,7 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
+
 /*
  * CPU bootstrap, used to create core structures for the boot processor.
  *
@@ -46,19 +47,18 @@
 #include <mach/machine.h>
 #include <arm/arch.h>
 
-struct processor	BootProcessor;
-cpu_data_t          cpu_data_master;
+struct processor BootProcessor;
+cpu_data_t cpu_data_master;
 
 /**
  * cpu_bootstrap
  *
  * Initialize core processor data for CPU #0 during initialization.
  */
-void
-cpu_bootstrap(void)
+void cpu_bootstrap(void)
 {
     cpu_data_ptr[0] = &cpu_data_master;
-    
+
     cpu_data_master.cpu_this = &cpu_data_master;
     cpu_data_master.cpu_processor = &BootProcessor;
 }
@@ -68,17 +68,16 @@ cpu_bootstrap(void)
  *
  * Initialize more core processor data for CPU #0 during initialization.
  */
-void
-cpu_init(void)
+void cpu_init(void)
 {
-	cpu_data_t	*cdp = current_cpu_datap();
+    cpu_data_t *cdp = current_cpu_datap();
 
-	timer_call_initialize_queue(&cdp->rt_timer.queue);
-	cdp->rt_timer.deadline = EndOfAllTime;
+    timer_call_initialize_queue(&cdp->rt_timer.queue);
+    cdp->rt_timer.deadline = EndOfAllTime;
 
-	cdp->cpu_type = CPU_TYPE_ARM;
+    cdp->cpu_type = CPU_TYPE_ARM;
 #if defined(_ARM_ARCH_7)
-	cdp->cpu_subtype = CPU_SUBTYPE_ARM_V7;
+    cdp->cpu_subtype = CPU_SUBTYPE_ARM_V7;
 #elif defined(_ARM_ARCH_V6)
     cdp->cpu_subtype = CPU_SUBTYPE_ARM_V6;
 #else
@@ -105,19 +104,19 @@ int get_cpu_number(void)
  * 
  * Return the current processor PCB.
  */
-cpu_data_t* current_cpu_datap(void)
+cpu_data_t *current_cpu_datap(void)
 {
     int smp_number = get_cpu_number();
-    cpu_data_t* current_cpu_data;
-    
-    if(smp_number == 0)
+    cpu_data_t *current_cpu_data;
+
+    if (smp_number == 0)
         return &cpu_data_master;
-    
+
     current_cpu_data = cpu_datap(smp_number);
-    if(!current_cpu_data) {
+    if (!current_cpu_data) {
         panic("cpu_data for slot %d is not available yet\n", smp_number);
     }
-    
+
     return current_cpu_data;
 }
 
@@ -133,12 +132,14 @@ processor_t cpu_processor_alloc(boolean_t is_boot_cpu)
     int ret;
     processor_t proc;
 
-	if (is_boot_cpu) {
-		return &BootProcessor;
+    if (is_boot_cpu) {
+        return &BootProcessor;
     }
 
-    /* Allocate a new processor. */
-    ret = kmem_alloc(kernel_map, (vm_offset_t *) &proc, sizeof(*proc));
+    /*
+     * Allocate a new processor. 
+     */
+    ret = kmem_alloc(kernel_map, (vm_offset_t *) & proc, sizeof(*proc));
     if (ret != KERN_SUCCESS)
         return NULL;
 
@@ -153,7 +154,7 @@ processor_t cpu_processor_alloc(boolean_t is_boot_cpu)
  */
 processor_t current_processor(void)
 {
-	return current_cpu_datap()->cpu_processor;
+    return current_cpu_datap()->cpu_processor;
 }
 
 /**
@@ -168,7 +169,7 @@ processor_t current_processor(void)
 processor_t cpu_to_processor(int cpu)
 {
     assert(cpu_datap(cpu) != NULL);
-	return cpu_datap(cpu)->cpu_processor;
+    return cpu_datap(cpu)->cpu_processor;
 }
 
 /*
@@ -176,7 +177,7 @@ processor_t cpu_to_processor(int cpu)
  */
 cpu_type_t cpu_type(void)
 {
-	return current_cpu_datap()->cpu_type;
+    return current_cpu_datap()->cpu_type;
 }
 
 /**
@@ -184,10 +185,9 @@ cpu_type_t cpu_type(void)
  *
  * Return the current cpu type for a specified processor.
  */
-cpu_type_t
-slot_type(int slot_num)
+cpu_type_t slot_type(int slot_num)
 {
-	return (cpu_datap(slot_num)->cpu_type);
+    return (cpu_datap(slot_num)->cpu_type);
 }
 
 /**
@@ -195,10 +195,9 @@ slot_type(int slot_num)
  *
  * Return the current cpu subtype for a specified processor.
  */
-cpu_subtype_t
-slot_subtype(int slot_num)
+cpu_subtype_t slot_subtype(int slot_num)
 {
-	return (cpu_datap(slot_num)->cpu_subtype);
+    return (cpu_datap(slot_num)->cpu_subtype);
 }
 
 /**
@@ -206,10 +205,9 @@ slot_subtype(int slot_num)
  *
  * Return the current SMT type for a specified processor.
  */
-cpu_threadtype_t
-slot_threadtype(int slot_num)
+cpu_threadtype_t slot_threadtype(int slot_num)
 {
-	return CPU_THREADTYPE_NONE;
+    return CPU_THREADTYPE_NONE;
 }
 
 /**
@@ -219,7 +217,7 @@ slot_threadtype(int slot_num)
  */
 cpu_subtype_t cpu_subtype(void)
 {
-	return current_cpu_datap()->cpu_subtype;
+    return current_cpu_datap()->cpu_subtype;
 }
 
 /**
@@ -229,7 +227,7 @@ cpu_subtype_t cpu_subtype(void)
  */
 cpu_threadtype_t cpu_threadtype(void)
 {
-	return CPU_THREADTYPE_NONE;
+    return CPU_THREADTYPE_NONE;
 }
 
 /**
@@ -237,8 +235,7 @@ cpu_threadtype_t cpu_threadtype(void)
  *
  * Returns the current pending Asynchronous System Trap.
  */
-ast_t* ast_pending(void)
+ast_t *ast_pending(void)
 {
     return (&current_cpu_datap()->cpu_pending_ast);
 }
-

@@ -26,6 +26,7 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
+
 /*
  * AST support for ARM
  */
@@ -34,14 +35,12 @@
 #include <kern/debug.h>
 #include <kern/processor.h>
 
-void
-init_ast_check(processor_t processor)
+void init_ast_check(processor_t processor)
 {
 
 }
 
-void
-cause_ast_check(processor_t processor)
+void cause_ast_check(processor_t processor)
 {
 
 }

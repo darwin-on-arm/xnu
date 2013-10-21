@@ -49,17 +49,16 @@
 #ifdef BOARD_CONFIG_SUN4I
 #define KPRINTF_PREFIX  "PE_sun4i: "
 
-extern void rtclock_intr(arm_saved_state_t* regs);
+extern void rtclock_intr(arm_saved_state_t * regs);
 extern void rtc_configure(uint64_t hz);
 
 #define uart_base   gSun4iUartBase
-vm_offset_t     gSun4iUartBase;
+vm_offset_t gSun4iUartBase;
 
-
-static uint64_t     clock_decrementer = 0;
-static boolean_t    clock_initialized = FALSE;
-static boolean_t    clock_had_irq = FALSE;
-static uint64_t     clock_absolute_time = 0;
+static uint64_t clock_decrementer = 0;
+static boolean_t clock_initialized = FALSE;
+static boolean_t clock_had_irq = FALSE;
+static uint64_t clock_absolute_time = 0;
 
 static void timer_configure(void)
 {
@@ -68,12 +67,12 @@ static void timer_configure(void)
 
 void Sun4i_putc(int c)
 {
-    if(!gSun4iUartBase)
+    if (!gSun4iUartBase)
         return;
-    
-	while (!TX_READY)
-		barrier();
-	writel(c, UART_THR(UART));
+
+    while (!TX_READY)
+        barrier();
+    writel(c, UART_THR(UART));
 }
 
 int Sun4i_getc(void)
@@ -96,7 +95,7 @@ void Sun4i_timebase_init(void)
     return;
 }
 
-void Sun4i_handle_interrupt(void* context)
+void Sun4i_handle_interrupt(void *context)
 {
     return;
 }
@@ -121,7 +120,8 @@ void Sun4i_timer_enabled(int enable)
  */
 void vcputc(__unused int l, __unused int u, int c);
 
-static void _fb_putc(int c) {
+static void _fb_putc(int c)
+{
     Sun4i_putc(c);
 }
 
@@ -135,24 +135,24 @@ void PE_init_SocSupport_sun4i(void)
     gPESocDispatch.uart_getc = Sun4i_getc;
     gPESocDispatch.uart_putc = Sun4i_putc;
     gPESocDispatch.uart_init = Sun4i_uart_init;
-    
+
     gPESocDispatch.interrupt_init = Sun4i_interrupt_init;
     gPESocDispatch.timebase_init = Sun4i_timebase_init;
-    
+
     gPESocDispatch.get_timebase = Sun4i_get_timebase;
-    
+
     gPESocDispatch.handle_interrupt = Sun4i_handle_interrupt;
-    
+
     gPESocDispatch.timer_value = Sun4i_timer_value;
     gPESocDispatch.timer_enabled = Sun4i_timer_enabled;
-    
+
     gPESocDispatch.framebuffer_init = Sun4i_framebuffer_init;
-    
+
     Sun4i_framebuffer_init();
     Sun4i_uart_init();
-    
-    PE_kputc = _fb_putc; //gPESocDispatch.uart_putc;
-    
+
+    PE_kputc = _fb_putc;        //gPESocDispatch.uart_putc;
+
 }
 
 void PE_init_SocSupport_stub(void)

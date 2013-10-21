@@ -39,7 +39,11 @@
  *
  * Return boot-args the system was booted with.
  */
-char* PE_boot_args(void)
+char *PE_boot_args(void)
 {
-    return ((boot_args *)PE_state.bootArgs)->CommandLine;
+#ifdef BOARD_CONFIG_ARMPBA8
+    return "serial=3 debug=0x16e symbolicate-panics=1";
+#else
+    return ((boot_args *) PE_state.bootArgs)->CommandLine;
+#endif
 }

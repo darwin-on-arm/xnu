@@ -9,13 +9,12 @@
 
 #include <IOKit/IOLib.h>
 
-class AppleARMSoftIICController : IOService
-{
+class AppleARMSoftIICController:IOService {
     OSDeclareDefaultStructors(AppleARMSoftIICController);
-    
-public:
-    virtual bool start(	IOService * provider );  
-    virtual IOService* probe(IOService *provider, SInt32* score);
+
+ public:
+    virtual bool start(IOService * provider);
+    virtual IOService *probe(IOService * provider, SInt32 * score);
 };
 
 #endif

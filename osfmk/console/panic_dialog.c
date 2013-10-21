@@ -189,7 +189,6 @@ draw_panic_dialog( void )
 					char * chars;
 			} panic_dialog_info[3];
 
-
 			/* dim the screen 50% before putting up panic dialog */
 		  	dim_screen();
 

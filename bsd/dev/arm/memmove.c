@@ -45,16 +45,15 @@
 #if 0
 void *memcpy(void *dst, const void *src, unsigned int ulen)
 {
-	bcopy(src, dst, ulen);
-	return dst;
+    bcopy(src, dst, ulen);
+    return dst;
 }
-#endif /* 0 */
+#endif                          /* 0 */
 
 #ifndef __LP64__
-void *
-memmove(void *dst, const void *src, size_t ulen)
+void *memmove(void *dst, const void *src, size_t ulen)
 {
-	bcopy(src, dst, ulen);
-	return dst;
+    bcopy(src, dst, ulen);
+    return dst;
 }
 #endif

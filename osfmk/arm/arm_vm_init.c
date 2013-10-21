@@ -26,9 +26,11 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
+
 /*
  * l2_map_linear_range/l2_cache_to_range is not my code.
  */
+
 /*
  * ARM VM initialization
  */
@@ -54,12 +56,12 @@
  * cpu_ttb contains the current TTB (translation-table
  * base) of the processor. This is a physical address.
  */
-uint32_t    cpu_ttb;
+uint32_t cpu_ttb;
 
 /*
  * The section offset is set by the bootloader.
  */
-uint32_t    sectionOffset = 0x1000;
+uint32_t sectionOffset = 0x1000;
 
 /*
  * sane_size, max_mem and mem_size are controlled by arm_vm_init
@@ -67,8 +69,8 @@ uint32_t    sectionOffset = 0x1000;
  * At the moment, sane_size is forced to the size of memory
  * the booter passes to the kernel.
  */
-uint64_t    sane_size   = 0;
-uint32_t    mem_size    = 0;
+uint64_t sane_size = 0;
+uint32_t mem_size = 0;
 
 /*
  * The physical and virtual base of the kernel. These are used in 
@@ -85,18 +87,18 @@ addr64_t vm_last_addr = VM_MAX_KERNEL_ADDRESS;
 /*
  * These variables are initialized during vm init.
  */
-ppnum_t		vm_kernel_base_page;
-vm_offset_t	vm_kernel_base;
-vm_offset_t	vm_kernel_top;
-vm_offset_t	vm_kernel_stext;
-vm_offset_t	vm_kernel_etext;
-vm_offset_t	vm_kernel_slide;
+ppnum_t vm_kernel_base_page;
+vm_offset_t vm_kernel_base;
+vm_offset_t vm_kernel_top;
+vm_offset_t vm_kernel_stext;
+vm_offset_t vm_kernel_etext;
+vm_offset_t vm_kernel_slide;
 
 /*
  * These both are initialized to the same value.
  */
-uint64_t        max_mem;
-uint64_t        mem_actual;
+uint64_t max_mem;
+uint64_t mem_actual;
 
 /*
  * The sectXxx stuff contains the current kernel Mach-O section information.
@@ -116,11 +118,11 @@ unsigned long sectSizeHIB;
 
 vm_offset_t end, etext, edata;
 
-extern void* ExceptionVectorsBase;
+extern void *ExceptionVectorsBase;
 
 #define LOWGLO_BASE     0xFFFF0040
 #define VECTORS_BASE    0xFFFF0000
-#define MANAGED_BASE    0xA0000000          /* Can also be 0xA0000000, but iPhone OS 5 uses this address. */
+#define MANAGED_BASE    0xA0000000  /* Can also be 0xA0000000, but iPhone OS 5 uses this address. */
 
 /*
  * These both represent the first physical page we can use in the system,
@@ -154,32 +156,31 @@ uint32_t sectionOffset;
  */
 void l2_map_linear_range(uint32_t pa_cache_start, uint32_t phys_start, uint32_t phys_end)
 {
-	uint32_t pte_iter;
-	uint32_t page_iter;
-	uint32_t phys_iter;
-    
-	pte_iter = phys_to_virt(pa_cache_start);
-	page_iter = (phys_end - phys_start) >> PAGE_SHIFT;
-	phys_iter = phys_start;
-    
-	for (unsigned int i = 0; i < page_iter; i++)
-	{
-		unsigned int* ptv = (unsigned int*)pte_iter;
-        
-		if (phys_iter & ~L2_ADDR_MASK) {
-			panic("l2_map_linear_range: Misaligned physical page!\n");
-		}
-        
-		*ptv = phys_iter;
-        
-		*ptv |= L2_SMALL_PAGE;
-		*ptv |= L2_ACCESS_PRW;
+    uint32_t pte_iter;
+    uint32_t page_iter;
+    uint32_t phys_iter;
+
+    pte_iter = phys_to_virt(pa_cache_start);
+    page_iter = (phys_end - phys_start) >> PAGE_SHIFT;
+    phys_iter = phys_start;
+
+    for (unsigned int i = 0; i < page_iter; i++) {
+        unsigned int *ptv = (unsigned int *) pte_iter;
+
+        if (phys_iter & ~L2_ADDR_MASK) {
+            panic("l2_map_linear_range: Misaligned physical page!\n");
+        }
+
+        *ptv = phys_iter;
+
+        *ptv |= L2_SMALL_PAGE;
+        *ptv |= L2_ACCESS_PRW;
 
         *ptv |= mmu_texcb_small(MMU_CODE);
-        
-		pte_iter += sizeof(unsigned int);
-		phys_iter += PAGE_SIZE;
-	}
+
+        pte_iter += sizeof(unsigned int);
+        phys_iter += PAGE_SIZE;
+    }
 }
 
 void l2_map_linear_range_no_cache(uint32_t pa_cache_start, uint32_t phys_start, uint32_t phys_end)
@@ -187,21 +188,20 @@ void l2_map_linear_range_no_cache(uint32_t pa_cache_start, uint32_t phys_start, 
     uint32_t pte_iter;
     uint32_t page_iter;
     uint32_t phys_iter;
-    
+
     pte_iter = phys_to_virt(pa_cache_start);
     page_iter = (phys_end - phys_start) >> PAGE_SHIFT;
     phys_iter = phys_start;
 
-    for (unsigned int i = 0; i < page_iter; i++)
-    {
-        unsigned int* ptv = (unsigned int*)pte_iter;
-        
+    for (unsigned int i = 0; i < page_iter; i++) {
+        unsigned int *ptv = (unsigned int *) pte_iter;
+
         if (phys_iter & ~L2_ADDR_MASK) {
             panic("l2_map_linear_range: Misaligned physical page!\n");
         }
-        
+
         *ptv = phys_iter;
-        
+
         *ptv |= L2_SMALL_PAGE;
         *ptv |= L2_ACCESS_PRW;
 
@@ -209,7 +209,6 @@ void l2_map_linear_range_no_cache(uint32_t pa_cache_start, uint32_t phys_start, 
         phys_iter += PAGE_SIZE;
     }
 }
-
 
 /**
  * l2_cache_to_range
@@ -219,40 +218,41 @@ void l2_map_linear_range_no_cache(uint32_t pa_cache_start, uint32_t phys_start, 
  */
 void l2_cache_to_range(uint32_t pa_cache_start, uint32_t va, uint32_t tteb, uint32_t size, int zero)
 {
-	uint32_t pte_iter = pa_cache_start;
-	uint32_t tte_pbase;
-	uint32_t tte_psize;
-	
-	tte_pbase = addr_to_tte(tteb, va); /* Base of the L1 region for virtBase */
-	tte_psize = ((size >> 20) << 2); /* Size of the L1 region */
-	
-	/*
-	 * We must make sure that the managed mapping is
-	 * cleared, as this region may have been used by the
-	 * bootloader, leaving some stuff in it. We do not
-	 * do this for the identity mapping as every single page
-	 * of it is mapped anyway.
-	 *
-	 * thing size = (page count * 4)
-	 */
-	if (zero) {
-		bzero((void*)phys_to_virt(pte_iter), ((size >> PAGE_SHIFT) << 2));
-	}
-    
-	/* Create an L2 for every section in the given region */
-	for (unsigned int tte = tte_pbase; tte < (tte_pbase+tte_psize); tte += 4)
-	{
-		unsigned int* ttv = (unsigned int*)tte;
+    uint32_t pte_iter = pa_cache_start;
+    uint32_t tte_pbase;
+    uint32_t tte_psize;
 
-		if (pte_iter & ~L1_PTE_ADDR_MASK) {
+    tte_pbase = addr_to_tte(tteb, va);  /* Base of the L1 region for virtBase */
+    tte_psize = ((size >> 20) << 2);    /* Size of the L1 region */
+
+    /*
+     * We must make sure that the managed mapping is
+     * cleared, as this region may have been used by the
+     * bootloader, leaving some stuff in it. We do not
+     * do this for the identity mapping as every single page
+     * of it is mapped anyway.
+     *
+     * thing size = (page count * 4)
+     */
+    if (zero) {
+        bzero((void *) phys_to_virt(pte_iter), ((size >> PAGE_SHIFT) << 2));
+    }
+
+    /*
+     * Create an L2 for every section in the given region 
+     */
+    for (unsigned int tte = tte_pbase; tte < (tte_pbase + tte_psize); tte += 4) {
+        unsigned int *ttv = (unsigned int *) tte;
+
+        if (pte_iter & ~L1_PTE_ADDR_MASK) {
             panic("l2_cache_to_range: Misaligned L2 table %x!\n", pte_iter);
-		}
-		
-		*ttv = pte_iter;
-		*ttv |= L1_TYPE_PTE;
-		
-		pte_iter += L2_SIZE;
-	}
+        }
+
+        *ttv = pte_iter;
+        *ttv |= L1_TYPE_PTE;
+
+        pte_iter += L2_SIZE;
+    }
 }
 
 /**
@@ -263,14 +263,12 @@ void l2_cache_to_range(uint32_t pa_cache_start, uint32_t va, uint32_t tteb, uint
  */
 static void verify_lowGlo(void)
 {
-    char* lowGloString = (char*)LOWGLO_BASE;
-    
-    if(strncmp(lowGloString, "Scolecit", 8) != 0) {
-        panic("Invalid signature for lowGlo in vectors, got %s, was expecting %s\n",
-              lowGloString,
-              "Scolecit");
+    char *lowGloString = (char *) LOWGLO_BASE;
+
+    if (strncmp(lowGloString, "Scolecit", 8) != 0) {
+        panic("Invalid signature for lowGlo in vectors, got %s, was expecting %s\n", lowGloString, "Scolecit");
     }
-    
+
     kprintf("lowGlo verification string: %s\n", lowGloString);
 }
 
@@ -282,20 +280,18 @@ static void verify_lowGlo(void)
  * kprintf so that we can get out of semihosting debug output (if enabled)
  * and onto an actual serial port or something. Whatever.
  */
-void arm_vm_init(uint32_t mem_limit, boot_args *args)
+void arm_vm_init(uint32_t mem_limit, boot_args * args)
 {
-    uint32_t    gMemSize;
+    uint32_t gMemSize;
 
-    /* ARM vm init starting up. */
-    kdb_printf("\tboot_args:               0x%08x\n"
-               "\tboot_args->virtBase:     0x%08x\n"
-               "\tboot_args->physBase:     0x%08x\n"
-               "\tboot_args->topOfKernel:  0x%08x\n"
-               "\tboot_args->memSize:      0x%08x\n",
-               args, args->virtBase, args->physBase,
-               args->topOfKernelData, args->memSize);
+    /*
+     * ARM vm init starting up. 
+     */
+    kdb_printf("\tboot_args:               0x%08x\n" "\tboot_args->virtBase:     0x%08x\n" "\tboot_args->physBase:     0x%08x\n" "\tboot_args->topOfKernel:  0x%08x\n" "\tboot_args->memSize:      0x%08x\n", args, args->virtBase, args->physBase, args->topOfKernelData, args->memSize);
 
-    /* WARNING WARNING WARNING THE CODE BLOCK BELOW IS A VERY BAD IDEA */
+    /*
+     * WARNING WARNING WARNING THE CODE BLOCK BELOW IS A VERY BAD IDEA 
+     */
 #ifdef BOARD_CONFIG_S5L8930X
     /*
      * Bad hack only on 8930X. We have ~256MB "only". Bringup only.
@@ -304,110 +300,124 @@ void arm_vm_init(uint32_t mem_limit, boot_args *args)
      */
     args->memSize = 0xf000000;
 #endif
-    /* WARNING WARNING WARNING THE CODE BLOCK ABOVE IS A VERY BAD IDEA */
+    /*
+     * WARNING WARNING WARNING THE CODE BLOCK ABOVE IS A VERY BAD IDEA 
+     */
 
-    /* Set up some globals. */
+    /*
+     * Set up some globals. 
+     */
     gPhysBase = args->physBase;
     gVirtBase = args->virtBase;
     gMemSize = args->memSize;
     gTopOfKernel = args->topOfKernelData;
     max_mem = mem_size = sane_size = gMemSize;
 
-    /* Map L2 tables for identity. The initial bootloader sets up section maps for one L1, so we are next. */
+    /*
+     * Map L2 tables for identity. The initial bootloader sets up section maps for one L1, so we are next. 
+     */
     cpu_ttb = gTopOfKernel + L1_SIZE;
- 
+
     identityBaseVA = gVirtBase;
-    identityCachePA = cpu_ttb + L1_SIZE; /* After the first initial TTB. */
-    kdb_printf("arm_vm_init: L2 address for identity mappings...\n"
-               "\tmapping VA: 0x%08x\n"
-               "\tmapping PA: 0x%08x\n",
-               identityBaseVA, identityCachePA);
+    identityCachePA = cpu_ttb + L1_SIZE;    /* After the first initial TTB. */
+    kdb_printf("arm_vm_init: L2 address for identity mappings...\n" "\tmapping VA: 0x%08x\n" "\tmapping PA: 0x%08x\n", identityBaseVA, identityCachePA);
 
     managedBaseVA = MANAGED_BASE;
     managedCachePA = identityCachePA + l2_size(gMemSize);
-    kdb_printf("arm_vm_init: L2 address for kernel managed mappings...\n"
-               "\tmapping VA: 0x%08x\n"
-               "\tmapping PA: 0x%08x\n",
-               managedBaseVA, managedCachePA);
+    kdb_printf("arm_vm_init: L2 address for kernel managed mappings...\n" "\tmapping VA: 0x%08x\n" "\tmapping PA: 0x%08x\n", managedBaseVA, managedCachePA);
 
-    /* Bit generous.. */
+    /*
+     * Bit generous.. 
+     */
     first_avail = managedCachePA + l2_size(0x40000000);
-    
-    /* Configure tables for identity mapping.. */
+
+    /*
+     * Configure tables for identity mapping.. 
+     */
     kdb_printf("arm_vm_init: configuring tables for identity mapping...\n");
-    l2_cache_to_range(identityCachePA,
-                      identityBaseVA,
-                      phys_to_virt(cpu_ttb),
-                      gMemSize,
-                      TRUE);
+    l2_cache_to_range(identityCachePA, identityBaseVA, phys_to_virt(cpu_ttb), gMemSize, TRUE);
 
-    l2_cache_to_range(managedCachePA,
-                      managedBaseVA,
-                      phys_to_virt(cpu_ttb),
-                      gMemSize,
-                      TRUE);
+    l2_cache_to_range(managedCachePA, managedBaseVA, phys_to_virt(cpu_ttb), gMemSize, TRUE);
 
-    /* Create the first identity mappings. */
+    /*
+     * Create the first identity mappings. 
+     */
     kdb_printf("arm_vm_init: creating main identity mapping (section offset is 0x%x).\n", sectionOffset);
-    l2_map_linear_range(identityCachePA,
-                        gPhysBase - sectionOffset, gPhysBase + gMemSize);
+    l2_map_linear_range(identityCachePA, gPhysBase - sectionOffset, gPhysBase + gMemSize);
 
-    /* Set high exception vectors.. Steal one page from first_avail. */
+    /*
+     * Set high exception vectors.. Steal one page from first_avail. 
+     */
     kdb_printf("arm_vm_init: exception vectors are at 0x%08x.\n", &ExceptionVectorsBase);
 
-    /* Map them... */
+    /*
+     * Map them... 
+     */
     uint32_t *vecpt_start = (first_avail), *vectp, *va_vecpt;
-    vectp = (uint32_t*)addr_to_tte(phys_to_virt(cpu_ttb), VECTORS_BASE);
-    *vectp = (((uint32_t)vecpt_start) | L1_TYPE_PTE);
+    vectp = (uint32_t *) addr_to_tte(phys_to_virt(cpu_ttb), VECTORS_BASE);
+    *vectp = (((uint32_t) vecpt_start) | L1_TYPE_PTE);
     va_vecpt = phys_to_virt(vecpt_start) + pte_offset(VECTORS_BASE);
     *va_vecpt = virt_to_phys(&ExceptionVectorsBase) | L2_ACCESS_PRW | L2_SMALL_PAGE;
 
-    /* Burn it away... */
+    /*
+     * Burn it away... 
+     */
     first_avail += L1_SIZE;
     avail_end = gPhysBase + gMemSize;
 
-    /* Clean caches and flush TLBs.. */
+    /*
+     * Clean caches and flush TLBs.. 
+     */
     kdb_printf("arm_vm_init: switching translation-tables now...\n");
     set_mmu_ttb(cpu_ttb);
     set_mmu_ttb_alt(cpu_ttb);
     set_mmu_ttbcr(2);
     flush_mmu_tlb();
 
-    /* Set settings for pmap. */
+    /*
+     * Set settings for pmap. 
+     */
     kernel_pmap->pm_l1_phys = cpu_ttb;
     kernel_pmap->pm_l1_virt = phys_to_virt(cpu_ttb);
 
-    /* Set up segment information. */
+    /*
+     * Set up segment information. 
+     */
     kdb_printf("arm_vm_init: setting up segment information...\n");
-    sectTEXTB = (vm_offset_t)(uint32_t *)getsegdatafromheader(&_mh_execute_header, "__TEXT", &sectSizeTEXT);
-    sectDATAB = (vm_offset_t)(uint32_t *)getsegdatafromheader(&_mh_execute_header, "__DATA", &sectSizeDATA);
-    sectLINKB = (vm_offset_t)(uint32_t *)getsegdatafromheader(&_mh_execute_header, "__LINKEDIT", &sectSizeLINK);
-    sectKLDB = (vm_offset_t)(uint32_t *)getsegdatafromheader(&_mh_execute_header, "__KLD", &sectSizeKLD);
-    sectHIBB = (vm_offset_t)(uint32_t *)getsegdatafromheader(&_mh_execute_header, "__HIB", &sectSizeHIB);
-    sectPRELINKB = (vm_offset_t)(uint32_t *)getsegdatafromheader(&_mh_execute_header, "__PRELINK_TEXT", &sectSizePRELINK);
+    sectTEXTB = (vm_offset_t) (uint32_t *) getsegdatafromheader(&_mh_execute_header, "__TEXT", &sectSizeTEXT);
+    sectDATAB = (vm_offset_t) (uint32_t *) getsegdatafromheader(&_mh_execute_header, "__DATA", &sectSizeDATA);
+    sectLINKB = (vm_offset_t) (uint32_t *) getsegdatafromheader(&_mh_execute_header, "__LINKEDIT", &sectSizeLINK);
+    sectKLDB = (vm_offset_t) (uint32_t *) getsegdatafromheader(&_mh_execute_header, "__KLD", &sectSizeKLD);
+    sectHIBB = (vm_offset_t) (uint32_t *) getsegdatafromheader(&_mh_execute_header, "__HIB", &sectSizeHIB);
+    sectPRELINKB = (vm_offset_t) (uint32_t *) getsegdatafromheader(&_mh_execute_header, "__PRELINK_TEXT", &sectSizePRELINK);
     etext = (vm_offset_t) sectTEXTB + sectSizeTEXT;
     edata = (vm_offset_t) sectDATAB + sectSizeDATA;
-    end = round_page(getlastaddr());                                        /* Force end to next page */
+    end = round_page(getlastaddr());    /* Force end to next page */
     vm_kernel_slide = 0;
     vm_kernel_etext = etext;
     vm_kernel_stext = sectTEXTB;
     vm_kernel_top = phys_to_virt(gTopOfKernel);
     vm_kernel_base = gVirtBase;
 
-    /* Bootstrap pmap. */
+    /*
+     * Bootstrap pmap. 
+     */
     uint32_t bootstrap_addr = managedBaseVA + 0x1000;
-    pmap_bootstrap(gMemSize, (vm_offset_t*)&bootstrap_addr, 0);
-    
-    /* Subsystems. */
+    pmap_bootstrap(gMemSize, (vm_offset_t *) & bootstrap_addr, 0);
+
+    /*
+     * Subsystems. 
+     */
     printf_init();
     panic_init();
-    
+
     PE_init_kprintf(TRUE);
     kprintf("kprintf initialized!\n");
-    
-    /* Verify vectors are in the right place. */
+
+    /*
+     * Verify vectors are in the right place. 
+     */
     verify_lowGlo();
-    
+
     return;
 }
-

@@ -14,12 +14,12 @@
 #include <IOKit/IOLib.h>
 #include "AppleARMIO.h"
 
-class AppleARMIO : public ARMIO {
+class AppleARMIO:public ARMIO {
     OSDeclareDefaultStructors(AppleARMIO);
-public:
-    bool init(OSDictionary *propTable);
-    IOService * probe(IOService *provider, SInt32 *score);
+ public:
+    bool init(OSDictionary * propTable);
+    IOService *probe(IOService * provider, SInt32 * score);
     bool start(IOService * provider);
 };
 
-#endif /* defined(__AppleS5L8930XDevice__AppleS5L8930XIO__) */
+#endif                          /* defined(__AppleS5L8930XDevice__AppleS5L8930XIO__) */

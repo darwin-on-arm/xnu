@@ -25,9 +25,11 @@
  * 
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
+
 /*
  * @OSF_COPYRIGHT@
  */
+
 /*
  * Copyright 2013, winocm. <winocm@icloud.com>
  * All rights reserved.
@@ -56,6 +58,7 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
+
 /*
  * ARM machine routines
  */
@@ -88,7 +91,7 @@ uint32_t MutexSpin;
  */
 vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size)
 {
-	return(io_map(phys_addr, size, VM_WIMG_IO));
+    return (io_map(phys_addr, size, VM_WIMG_IO));
 }
 
 /**
@@ -98,7 +101,7 @@ vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size)
  */
 vm_offset_t ml_static_malloc(__unused vm_size_t size)
 {
-	return((vm_offset_t)NULL);
+    return ((vm_offset_t) NULL);
 }
 
 /**
@@ -108,7 +111,7 @@ vm_offset_t ml_static_malloc(__unused vm_size_t size)
  */
 vm_offset_t ml_vtophys(vm_offset_t vaddr)
 {
-	return (vm_offset_t)kvtophys(vaddr);
+    return (vm_offset_t) kvtophys(vaddr);
 }
 
 /**
@@ -118,9 +121,8 @@ vm_offset_t ml_vtophys(vm_offset_t vaddr)
  */
 void ml_init_interrupt(void)
 {
-	(void) ml_set_interrupts_enabled(TRUE);
+    (void) ml_set_interrupts_enabled(TRUE);
 }
-
 
 /**
  * ml_cpu_up
@@ -128,10 +130,9 @@ void ml_init_interrupt(void)
  * This is called from the machine-independent routine cpu_up()
  * to perform machine-dependent info updates. Defer to cpu_thread_init().
  */
-void
-ml_cpu_up(void)
+void ml_cpu_up(void)
 {
-	return;
+    return;
 }
 
 /**
@@ -140,10 +141,9 @@ ml_cpu_up(void)
  * This is called from the machine-independent routine cpu_down()
  * to perform machine-dependent info updates.
  */
-void
-ml_cpu_down(void)
+void ml_cpu_down(void)
 {
-	return;
+    return;
 }
 
 /**
@@ -153,7 +153,7 @@ ml_cpu_down(void)
  */
 void ovbcopy(void *from, void *to, vm_size_t bytes)
 {
-	bcopy(from, to, bytes);
+    bcopy(from, to, bytes);
 }
 
 /**
@@ -164,9 +164,9 @@ void ovbcopy(void *from, void *to, vm_size_t bytes)
 void bzero_phys(addr64_t src64, uint32_t bytes)
 {
 #ifndef __LP64__
-    bzero(phys_to_virt((uint32_t)src64), bytes);
+    bzero(phys_to_virt((uint32_t) src64), bytes);
 #else
-    bzero(phys_to_virt((uint64_t)src64), bytes);
+    bzero(phys_to_virt((uint64_t) src64), bytes);
 #endif
 }
 
@@ -179,40 +179,41 @@ void bzero_phys(addr64_t src64, uint32_t bytes)
 void bcopy_phys(addr64_t src64, addr64_t dst64, vm_size_t bytes)
 {
 #ifndef __LP64__
-    bcopy(phys_to_virt((uint32_t)src64), phys_to_virt((uint32_t)dst64), bytes);
+    bcopy(phys_to_virt((uint32_t) src64), phys_to_virt((uint32_t) dst64), bytes);
 #else
-    bcopy(phys_to_virt((uint64_t)src64), phys_to_virt((uint64_t)dst64), bytes);
+    bcopy(phys_to_virt((uint64_t) src64), phys_to_virt((uint64_t) dst64), bytes);
 #endif
     return;
 }
-
 
 /**
  * ml_init_lock_timeout
  */
 void ml_init_lock_timeout(void)
 {
-	uint64_t	abstime;
-	uint32_t	mtxspin;
-	uint64_t	default_timeout_ns = NSEC_PER_SEC>>2;
-	uint32_t	slto;
-	uint32_t	prt;
+    uint64_t abstime;
+    uint32_t mtxspin;
+    uint64_t default_timeout_ns = NSEC_PER_SEC >> 2;
+    uint32_t slto;
+    uint32_t prt;
 
-	if (PE_parse_boot_argn("slto_us", &slto, sizeof (slto)))
-		default_timeout_ns = slto * NSEC_PER_USEC;
+    if (PE_parse_boot_argn("slto_us", &slto, sizeof(slto)))
+        default_timeout_ns = slto * NSEC_PER_USEC;
 
-	/* LockTimeOut is absolutetime, LockTimeOutTSC is in TSC ticks */
-	nanoseconds_to_absolutetime(default_timeout_ns, &abstime);
-	LockTimeOut = (uint32_t) abstime;
-    
-	if (PE_parse_boot_argn("mtxspin", &mtxspin, sizeof (mtxspin))) {
-		if (mtxspin > USEC_PER_SEC>>4)
-			mtxspin =  USEC_PER_SEC>>4;
-		nanoseconds_to_absolutetime(mtxspin*NSEC_PER_USEC, &abstime);
-	} else {
-		nanoseconds_to_absolutetime(10*NSEC_PER_USEC, &abstime);
-	}
-	MutexSpin = (unsigned int)abstime;
+    /*
+     * LockTimeOut is absolutetime, LockTimeOutTSC is in TSC ticks 
+     */
+    nanoseconds_to_absolutetime(default_timeout_ns, &abstime);
+    LockTimeOut = (uint32_t) abstime;
+
+    if (PE_parse_boot_argn("mtxspin", &mtxspin, sizeof(mtxspin))) {
+        if (mtxspin > USEC_PER_SEC >> 4)
+            mtxspin = USEC_PER_SEC >> 4;
+        nanoseconds_to_absolutetime(mtxspin * NSEC_PER_USEC, &abstime);
+    } else {
+        nanoseconds_to_absolutetime(10 * NSEC_PER_USEC, &abstime);
+    }
+    MutexSpin = (unsigned int) abstime;
 
 }
 
@@ -226,7 +227,6 @@ int ml_get_max_cpus(void)
     return 0;
 }
 
-
 void ml_init_max_cpus(unsigned long max_cpus)
 {
     return;
@@ -234,13 +234,13 @@ void ml_init_max_cpus(unsigned long max_cpus)
 
 void ml_install_interrupt_handler(void *nub, int source, void *target, IOInterruptHandler handler, void *refCon)
 {
-	boolean_t current_state;
+    boolean_t current_state;
 
-	current_state = ml_get_interrupts_enabled();
+    current_state = ml_get_interrupts_enabled();
 
-	(void) ml_set_interrupts_enabled(current_state);
+    (void) ml_set_interrupts_enabled(current_state);
 
-	initialize_screen(NULL, kPEAcquireScreen);
+    initialize_screen(NULL, kPEAcquireScreen);
 }
 
 /**
@@ -248,13 +248,11 @@ void ml_install_interrupt_handler(void *nub, int source, void *target, IOInterru
  *
  * Register a processor with the system and add it to the master list.
  */
+
 /*
  * initialize and bring up the CPU.
  */
-kern_return_t ml_processor_register(
-    cpu_id_t cpu_id,
-    processor_t *processor_out,
-	ipi_handler_t* ipi_handler)
+kern_return_t ml_processor_register(cpu_id_t cpu_id, processor_t * processor_out, ipi_handler_t * ipi_handler)
 {
     return KERN_SUCCESS;
 }
@@ -262,41 +260,39 @@ kern_return_t ml_processor_register(
 /*
  * Stubbed.
  */
-void ml_thread_policy(__unused thread_t thread,
-                      __unused unsigned policy_id,
-                      __unused unsigned policy_info)
+void ml_thread_policy(__unused thread_t thread, __unused unsigned policy_id, __unused unsigned policy_info)
 {
     kprintf("ml_thread_policy is unimplemented\n");
 }
 
-int ml_get_max_affinity_sets(void) {
+int ml_get_max_affinity_sets(void)
+{
     return 1;
 }
 
-processor_set_t ml_affinity_to_pset(uint32_t affinity_num) 
+processor_set_t ml_affinity_to_pset(uint32_t affinity_num)
 {
-	return PROCESSOR_SET_NULL;
+    return PROCESSOR_SET_NULL;
 }
 
-vm_offset_t ml_static_ptovirt(vm_offset_t paddr) {
+vm_offset_t ml_static_ptovirt(vm_offset_t paddr)
+{
     return phys_to_virt(paddr);
 }
 
-void ml_get_power_state(boolean_t *icp, boolean_t *pidlep)
+void ml_get_power_state(boolean_t * icp, boolean_t * pidlep)
 {
     *pidlep = FALSE;
 }
 
-void machine_track_platform_idle(boolean_t entry) {
+void machine_track_platform_idle(boolean_t entry)
+{
     return;
 }
 
-void
-ml_static_mfree(
-        vm_offset_t vaddr,
-        vm_size_t size)
+void ml_static_mfree(vm_offset_t vaddr, vm_size_t size)
 {
-	return;
+    return;
 }
 
 /*
@@ -304,12 +300,11 @@ ml_static_mfree(
  *
  *	Convert a kernel virtual address to a physical address
  */
-addr64_t
-kvtophys(vm_offset_t addr)
+addr64_t kvtophys(vm_offset_t addr)
 {
-	pmap_paddr_t pa;
-	pa = ((pmap_paddr_t)pmap_extract(kernel_pmap, addr));
-    return (addr64_t)pa;
+    pmap_paddr_t pa;
+    pa = ((pmap_paddr_t) pmap_extract(kernel_pmap, addr));
+    return (addr64_t) pa;
 }
 
 /*
@@ -324,31 +319,31 @@ kvtophys(vm_offset_t addr)
 
 vm_size_t ml_nofault_copy(vm_offset_t virtsrc, vm_offset_t virtdst, vm_size_t size)
 {
-	addr64_t cur_phys_dst, cur_phys_src;
-	uint32_t count, nbytes = 0;
+    addr64_t cur_phys_dst, cur_phys_src;
+    uint32_t count, nbytes = 0;
 
-	while (size > 0) {
-		if (!(cur_phys_src = kvtophys(virtsrc)))
-			break;
-		if (!(cur_phys_dst = kvtophys(virtdst)))
-			break;
-		if (!pmap_valid_page(atop(cur_phys_dst)) || !pmap_valid_page(atop(cur_phys_src)))
-			break;
-		count = (uint32_t)(PAGE_SIZE - (cur_phys_src & PAGE_MASK));
-		if (count > (PAGE_SIZE - (cur_phys_dst & PAGE_MASK)))
-			count = (uint32_t)(PAGE_SIZE - (cur_phys_dst & PAGE_MASK));
-		if (count > size)
-			count = (uint32_t)size;
+    while (size > 0) {
+        if (!(cur_phys_src = kvtophys(virtsrc)))
+            break;
+        if (!(cur_phys_dst = kvtophys(virtdst)))
+            break;
+        if (!pmap_valid_page(atop(cur_phys_dst)) || !pmap_valid_page(atop(cur_phys_src)))
+            break;
+        count = (uint32_t) (PAGE_SIZE - (cur_phys_src & PAGE_MASK));
+        if (count > (PAGE_SIZE - (cur_phys_dst & PAGE_MASK)))
+            count = (uint32_t) (PAGE_SIZE - (cur_phys_dst & PAGE_MASK));
+        if (count > size)
+            count = (uint32_t) size;
 
-		bcopy_phys(cur_phys_src, cur_phys_dst, count);
+        bcopy_phys(cur_phys_src, cur_phys_dst, count);
 
-		nbytes += count;
-		virtsrc += count;
-		virtdst += count;
-		size -= count;
-	}
+        nbytes += count;
+        virtsrc += count;
+        virtdst += count;
+        size -= count;
+    }
 
-	return nbytes;
+    return nbytes;
 }
 
 /*

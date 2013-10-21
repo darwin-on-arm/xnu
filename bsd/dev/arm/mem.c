@@ -84,10 +84,10 @@
 
 #include <mach/vm_types.h>
 #include <mach/vm_param.h>
-#include <vm/vm_kern.h>		/* for kernel_map */
+#include <vm/vm_kern.h>         /* for kernel_map */
 
-extern addr64_t  kvtophys(vm_offset_t va); 
-extern boolean_t kernacc(off_t, size_t );
+extern addr64_t kvtophys(vm_offset_t va);
+extern boolean_t kernacc(off_t, size_t);
 #if !defined(SECURE_KERNEL)
 extern int setup_kmem;
 #endif
@@ -99,156 +99,155 @@ int mmwrite(dev_t dev, struct uio *uio);
 int mmioctl(dev_t dev, u_long cmd, caddr_t data, int flag, struct proc *p);
 int mmrw(dev_t dev, struct uio *uio, enum uio_rw rw);
 
-int
-mmread(dev_t dev, struct uio *uio)
+int mmread(dev_t dev, struct uio *uio)
 {
 
-	return (mmrw(dev, uio, UIO_READ));
+    return (mmrw(dev, uio, UIO_READ));
 }
 
-int
-mmwrite(dev_t dev, struct uio *uio)
+int mmwrite(dev_t dev, struct uio *uio)
 {
 
-	return (mmrw(dev, uio, UIO_WRITE));
+    return (mmrw(dev, uio, UIO_WRITE));
 }
 
-int
-mmioctl(dev_t dev, u_long cmd, __unused caddr_t data, 
-		__unused int flag, __unused struct proc *p)
+int mmioctl(dev_t dev, u_long cmd, __unused caddr_t data, __unused int flag, __unused struct proc *p)
 {
-	int minnum = minor(dev);
+    int minnum = minor(dev);
 
-	if (0 == minnum || 1 == minnum) {
-		/* /dev/mem and /dev/kmem */
+    if (0 == minnum || 1 == minnum) {
+        /*
+         * /dev/mem and /dev/kmem 
+         */
 #if defined(SECURE_KERNEL)
-		return (ENODEV);
+        return (ENODEV);
 #else
-		if (0 == setup_kmem) 
-			return (EINVAL);
+        if (0 == setup_kmem)
+            return (EINVAL);
 #endif
-	}
+    }
 
-	switch (cmd) {
-	case FIONBIO:
-	case FIOASYNC:
-		/* OK to do nothing: we always return immediately */
-		break;
-	default:
-		return ENODEV;
-	}
+    switch (cmd) {
+    case FIONBIO:
+    case FIOASYNC:
+        /*
+         * OK to do nothing: we always return immediately 
+         */
+        break;
+    default:
+        return ENODEV;
+    }
 
-	return (0);
+    return (0);
 }
 
-int
-mmrw(dev_t dev, struct uio *uio, enum uio_rw rw)
+int mmrw(dev_t dev, struct uio *uio, enum uio_rw rw)
 {
-	register int o;
-	register u_int c, v;
-	int error = 0;
-	vm_offset_t	where;
-	vm_size_t size;
+    register int o;
+    register u_int c, v;
+    int error = 0;
+    vm_offset_t where;
+    vm_size_t size;
 
+    while (uio_resid(uio) > 0 && error == 0) {
+        uio_update(uio, 0);
 
-	while (uio_resid(uio) > 0 && error == 0) {
-		uio_update(uio, 0);
+        switch (minor(dev)) {
 
-		switch (minor(dev)) {
-
-		/* minor device 0 is physical memory */
-		case 0:
+            /*
+             * minor device 0 is physical memory 
+             */
+        case 0:
 #if defined(SECURE_KERNEL)
-			return(ENODEV);
+            return (ENODEV);
 #else
-			if (setup_kmem == 0)
-				return(ENODEV);
+            if (setup_kmem == 0)
+                return (ENODEV);
 #endif
 
-			v = trunc_page(uio->uio_offset);
-			if (uio->uio_offset >= (off_t)mem_size)
-				goto fault;
+            v = trunc_page(uio->uio_offset);
+            if (uio->uio_offset >= (off_t) mem_size)
+                goto fault;
 
-			size= PAGE_SIZE;
-			if (kmem_alloc(kernel_map, &where, size) 
-				!= KERN_SUCCESS) {
-				goto fault;
-			}
-			o = uio->uio_offset - v;
-			c = min(PAGE_SIZE - o, uio_curriovlen(uio));
-			error = uiomove((caddr_t) (where + o), c, uio);
-			kmem_free(kernel_map, where, PAGE_SIZE);
-			continue;
+            size = PAGE_SIZE;
+            if (kmem_alloc(kernel_map, &where, size)
+                != KERN_SUCCESS) {
+                goto fault;
+            }
+            o = uio->uio_offset - v;
+            c = min(PAGE_SIZE - o, uio_curriovlen(uio));
+            error = uiomove((caddr_t) (where + o), c, uio);
+            kmem_free(kernel_map, where, PAGE_SIZE);
+            continue;
 
-		/* minor device 1 is kernel memory */
-		case 1:
+            /*
+             * minor device 1 is kernel memory 
+             */
+        case 1:
 #if defined(SECURE_KERNEL)
-			return(ENODEV);
+            return (ENODEV);
 #else
-			if (setup_kmem == 0)
-				return(ENODEV);
+            if (setup_kmem == 0)
+                return (ENODEV);
 #endif
-			/* Do some sanity checking */
-			if (((vm_address_t)uio->uio_offset >= VM_MAX_KERNEL_ADDRESS) ||
-				((vm_address_t)uio->uio_offset <= VM_MIN_KERNEL_AND_KEXT_ADDRESS))
-				goto fault;
-			c = uio_curriovlen(uio);
-			if (!kernacc(uio->uio_offset, c))
-				goto fault;
-			error = uiomove((caddr_t)(uintptr_t)uio->uio_offset,
-					(int)c, uio);
-			continue;
+            /*
+             * Do some sanity checking 
+             */
+            if (((vm_address_t) uio->uio_offset >= VM_MAX_KERNEL_ADDRESS) || ((vm_address_t) uio->uio_offset <= VM_MIN_KERNEL_AND_KEXT_ADDRESS))
+                goto fault;
+            c = uio_curriovlen(uio);
+            if (!kernacc(uio->uio_offset, c))
+                goto fault;
+            error = uiomove((caddr_t) (uintptr_t) uio->uio_offset, (int) c, uio);
+            continue;
 
-		/* minor device 2 is EOF/RATHOLE */
-		case 2:
-			if (rw == UIO_READ)
-				return (0);
-			c = uio_curriovlen(uio);
-			break;
-		case 3:
-			if(devzerobuf == NULL) {
-				MALLOC(devzerobuf, caddr_t,PAGE_SIZE, M_TEMP, M_WAITOK);
-				bzero(devzerobuf, PAGE_SIZE);
-			}
-			if(uio->uio_rw == UIO_WRITE) {
-				c = uio_curriovlen(uio);
-				break;
-			}
- 			c = min(uio_curriovlen(uio), PAGE_SIZE);
-			error = uiomove(devzerobuf, (int)c, uio);
-			continue;
-		default:
-			goto fault;
-			break;
-		}
-			
-		if (error)
-			break;
-		uio_update(uio, c);
-	}
-	return (error);
-fault:
-	return (EFAULT);
+            /*
+             * minor device 2 is EOF/RATHOLE 
+             */
+        case 2:
+            if (rw == UIO_READ)
+                return (0);
+            c = uio_curriovlen(uio);
+            break;
+        case 3:
+            if (devzerobuf == NULL) {
+                MALLOC(devzerobuf, caddr_t, PAGE_SIZE, M_TEMP, M_WAITOK);
+                bzero(devzerobuf, PAGE_SIZE);
+            }
+            if (uio->uio_rw == UIO_WRITE) {
+                c = uio_curriovlen(uio);
+                break;
+            }
+            c = min(uio_curriovlen(uio), PAGE_SIZE);
+            error = uiomove(devzerobuf, (int) c, uio);
+            continue;
+        default:
+            goto fault;
+            break;
+        }
+
+        if (error)
+            break;
+        uio_update(uio, c);
+    }
+    return (error);
+ fault:
+    return (EFAULT);
 }
 
-
-boolean_t
-kernacc(
-    off_t 	start,
-    size_t	len
-)
+boolean_t kernacc(off_t start, size_t len)
 {
-	off_t base;
-	off_t end;
-    
-	base = trunc_page(start);
-	end = start + len;
-	
-	while (base < end) {
-	  if(kvtophys((vm_offset_t)base) == 0ULL)
-			return(FALSE);
-		base += page_size;
-	}   
+    off_t base;
+    off_t end;
 
-	return (TRUE);
+    base = trunc_page(start);
+    end = start + len;
+
+    while (base < end) {
+        if (kvtophys((vm_offset_t) base) == 0ULL)
+            return (FALSE);
+        base += page_size;
+    }
+
+    return (TRUE);
 }
