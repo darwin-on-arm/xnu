@@ -260,7 +260,9 @@ CWARNFLAGS_STD = \
 	-Wno-private-extern -Wno-cast-align
 
 # Certain warnings are non-fatal (8474835)
-CWARNFLAGS_STD += -Wno-error=cast-align
+CWARNFLAGS_STD += -Wno-error=cast-align -Wno-unused-parameter \
+	-Wno-missing-prototypes -Wno-unused-variable \
+	-Wno-incompatible-pointer-types
 
 # Can be overridden in Makefile.template or Makefile.$arch
 export CWARNFLAGS ?= $(CWARNFLAGS_STD)

@@ -1565,6 +1565,9 @@ pmap_t pmap_create(ledger_t ledger, vm_map_size_t size, __unused boolean_t is_64
      * Zalloc a new one.
      */
     our_pmap = (pmap_t) zalloc(pmap_zone);
+    if(!our_pmap) {
+        panic("pmap_create: allocating the new pmap failed");
+    }
     our_pmap->pm_refcnt = 1;
     pmap_common_init(our_pmap);
 

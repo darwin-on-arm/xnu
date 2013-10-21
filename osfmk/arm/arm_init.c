@@ -26,7 +26,6 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-
 /*
  * ARM processor init
  */
@@ -37,10 +36,44 @@
 #include <pexpert/arm/boot.h>
 #include <pexpert/arm/protos.h>
 #include <arm/armops.h>
-
+ 
 extern uint8_t *irqstack;
 
 extern int disableConsoleOutput, serialmode;
+
+static inline uint32_t arm_processor_read_cpuidr(void)
+{
+    uint32_t ret;
+    __asm__ __volatile__("mrc p15, 0, %0, c0, c0, 0" : "=r"(ret));
+    return ret;
+}
+
+static void arm_processor_feature_identify(void)
+{
+    /* todo */
+    return;
+}
+
+/**
+ * arm_processor_identify
+ *
+ * Print out information about the currently executing processor.
+ */
+void arm_processor_identify(void)
+{
+    char *cpu_name = 
+#if __ARM_ARCH == 7
+    "ARMv7";
+#elif __ARM_ARCH == 6
+    "ARMv6"
+#else
+    "unknown ARM";
+#endif
+
+    uint32_t cpuidr = arm_processor_read_cpuidr();
+    kprintf("Current processor is an %s [0x%08x] revision %d.\n", cpu_name, cpuidr, cpuidr & 15);
+    arm_processor_feature_identify();
+}
 
 /**
  * arm_init
@@ -154,9 +187,9 @@ void arm_init(boot_args * args)
     if (PE_parse_boot_argn("-no-cache", tempbuf, sizeof(tempbuf))) {
         kprintf("cache: No caching enabled (I+D).\n");
     } else {
-        kprintf("cache: initializing i+dcache\n");
+        kprintf("cache: initializing i+dcache ... ");
         cache_initialize();
-        kprintf("cache: done\n");
+        kprintf("done\n");
     }
 
     /*
@@ -183,6 +216,11 @@ void arm_init(boot_args * args)
     thread->machine.cpu_data = cpu_datap(cpu_number());
     thread->kernel_stack = irqstack;
     timer_start(&thread->system_timer, mach_absolute_time());
+
+    /*
+     * Processor identification.
+     */
+    arm_processor_identify();
 
     /*
      * VFP/float initialization. 

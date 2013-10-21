@@ -175,17 +175,9 @@ static char *ifsr_to_human(uint32_t ifsr)
 static int __abort_count = 0;
 void sleh_abort(void *context, int reason)
 {
-    uint32_t dfsr, dfar, ifsr, ifar, cpsr, exception_type = 0, exception_subcode = 0;
+    uint32_t dfsr = 0, dfar = 0, ifsr = 0, ifar = 0, cpsr, exception_type = 0, exception_subcode = 0;
     arm_saved_state_t *arm_ctx = (arm_saved_state_t *) context;
     thread_t thread = current_thread();
-
-    /*
-     * We do not want anything entering sleh_abort recursively. 
-     */
-    if (__abort_count != 0) {
-        panic("sleh_abort: recursive abort! (pc %x lr %x sp %x cpsr %x dfar 0x%08x abort count %d)\n", arm_ctx->pc, arm_ctx->lr, arm_ctx->sp, arm_ctx->cpsr, dfar, __abort_count);
-    }
-    __abort_count++;
 
     /*
      * Make sure we get the correct registers only if required. 
@@ -201,6 +193,21 @@ void sleh_abort(void *context, int reason)
         kprintf("[prefetch] pc %x lr %x fsr %x far %x cpsr %x\n", arm_ctx->pc, arm_ctx->lr, ifsr, ifar, arm_ctx->cpsr);
     } else {
         panic("sleh_abort: weird abort, type %d (context at %p)", reason, context);
+    }
+
+    /*
+     * We do not want anything entering sleh_abort recursively. 
+     */
+    if (__abort_count != 0) {
+        panic("sleh_abort: recursive abort! (pc %x lr %x sp %x cpsr %x dfar 0x%08x abort count %d)\n", arm_ctx->pc, arm_ctx->lr, arm_ctx->sp, arm_ctx->cpsr, dfar, __abort_count);
+    }
+    __abort_count++;
+
+    /*
+     * Panic if it's an alignment fault?
+     */
+    if((ifsr == 1) || (dfsr == 1)) {
+        panic("sleh_abort: alignment fault!");
     }
 
     if (!kernel_map) {
