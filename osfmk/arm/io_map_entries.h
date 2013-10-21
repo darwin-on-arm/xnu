@@ -37,16 +37,9 @@
 #include <sys/appleapiopts.h>
 
 #ifdef	__APPLE_API_PRIVATE
-__BEGIN_DECLS
-extern vm_offset_t	io_map(
-				vm_map_offset_t		phys_addr,
-				vm_size_t		size,
-				unsigned int            flags);
+__BEGIN_DECLS extern vm_offset_t io_map(vm_map_offset_t phys_addr, vm_size_t size, unsigned int flags);
 extern vm_offset_t io_map_spec(vm_map_offset_t phys_addr, vm_size_t size, unsigned int flags);
 __END_DECLS
-#endif	/* __APPLE_API_PRIVATE */
-
-#endif  /* _ARM_IO_MAP_ENTRIES */
-
-#endif	/* KERNEL_PRIVATE */
-
+#endif                          /* __APPLE_API_PRIVATE */
+#endif                          /* _ARM_IO_MAP_ENTRIES */
+#endif                          /* KERNEL_PRIVATE */

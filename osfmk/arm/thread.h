@@ -62,25 +62,25 @@ __private_extern__ unsigned int _MachineStateCount[];
  * as the PCB.
  */
 struct machine_thread {
-	arm_saved_state_t	*iss;
-    
-    arm_saved_state_t   *uss;
-    arm_vfp_state_t     *uvfp;
-    
-    arm_saved_state_t   user_regs;
+    arm_saved_state_t *iss;
 
-    arm_exception_state_t   es;
+    arm_saved_state_t *uss;
+    arm_vfp_state_t *uvfp;
 
-    cpu_data_t*     cpu_data;
-    
-    int                 vfp_dirty;
-    int                 vfp_enable;
-    arm_vfp_state_t     vfp_regs;
+    arm_saved_state_t user_regs;
 
-    uint32_t            preempt_count;
+    arm_exception_state_t es;
+
+    cpu_data_t *cpu_data;
+
+    int vfp_dirty;
+    int vfp_enable;
+    arm_vfp_state_t vfp_regs;
+
+    uint32_t preempt_count;
 
 #ifdef	MACH_BSD
-	uint64_t        cthread_self;	/* for use of cthread package  */
+    uint64_t cthread_self;      /* for use of cthread package  */
 #endif
 };
 typedef struct machine_thread *pcb_t;

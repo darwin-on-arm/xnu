@@ -34,4 +34,3 @@
 	uint64_t	uexc_handler;
 
 #endif
-

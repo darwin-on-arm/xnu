@@ -61,7 +61,7 @@
 #ifndef _ARM_MP_H_
 #define _ARM_MP_H_
 
-#define MAX_CPUS	32		/* (8*sizeof(long)) */
+#define MAX_CPUS	32          /* (8*sizeof(long)) */
 
 #ifndef	ASSEMBLER
 #include <stdint.h>
@@ -72,29 +72,29 @@
 #include <mach/vm_types.h>
 #include <kern/lock.h>
 
-extern	unsigned int	real_ncpus;		/* real number of cpus */
-extern	unsigned int	max_ncpus;		/* max number of cpus */
-decl_simple_lock_data(extern,kdb_lock);	/* kdb lock		*/
+extern unsigned int real_ncpus; /* real number of cpus */
+extern unsigned int max_ncpus;  /* max number of cpus */
+decl_simple_lock_data(extern, kdb_lock);    /* kdb lock     */
 
-extern  void	console_init(void);
-extern	void	*console_cpu_alloc(boolean_t boot_cpu);
-extern	void	console_cpu_free(void *console_buf);
+extern void console_init(void);
+extern void *console_cpu_alloc(boolean_t boot_cpu);
+extern void console_cpu_free(void *console_buf);
 
-extern	int	kdb_cpu;		/* current cpu running kdb	*/
-extern	int	kdb_debug;
-extern	int	kdb_active[];
+extern int kdb_cpu;             /* current cpu running kdb  */
+extern int kdb_debug;
+extern int kdb_active[];
 
-extern	volatile boolean_t mp_kdp_trap;
-extern 	volatile boolean_t force_immediate_debugger_NMI;
-extern  volatile boolean_t pmap_tlb_flush_timeout;
-extern  volatile usimple_lock_t spinlock_timed_out;
-extern  volatile uint32_t spinlock_owner_cpu;
+extern volatile boolean_t mp_kdp_trap;
+extern volatile boolean_t force_immediate_debugger_NMI;
+extern volatile boolean_t pmap_tlb_flush_timeout;
+extern volatile usimple_lock_t spinlock_timed_out;
+extern volatile uint32_t spinlock_owner_cpu;
 
-extern	uint64_t	LastDebuggerEntryAllowance;
+extern uint64_t LastDebuggerEntryAllowance;
 
-extern	boolean_t	mp_recent_debugger_activity(void);
+extern boolean_t mp_recent_debugger_activity(void);
 #endif
 
 #endif
 
-#endif /* KERNEL_PRIVATE */
+#endif                          /* KERNEL_PRIVATE */

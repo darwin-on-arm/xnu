@@ -61,18 +61,14 @@
 
 #if !defined(ASSEMBLER) && defined(MACH_KERNEL)
 
-typedef kern_return_t (*perfCallback)(
-				int			trapno,
-				void			*regs,
-				uintptr_t		*lo_spp,
-				      int);
+typedef kern_return_t(*perfCallback) (int trapno, void *regs, uintptr_t * lo_spp, int);
 
-typedef kern_return_t (*perfASTCallback)(ast_t reasons, ast_t *myast);
+typedef kern_return_t(*perfASTCallback) (ast_t reasons, ast_t * myast);
 
 extern volatile perfCallback perfTrapHook;
 extern volatile perfASTCallback perfASTHook;
 extern volatile perfCallback perfIntHook;
 
-#endif	/* !ASSEMBLER && MACH_KERNEL */
+#endif                          /* !ASSEMBLER && MACH_KERNEL */
 
-#endif	/* ARM_TRAP_H */
+#endif                          /* ARM_TRAP_H */

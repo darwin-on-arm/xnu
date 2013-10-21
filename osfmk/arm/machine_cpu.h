@@ -34,28 +34,21 @@
 #include <pexpert/pexpert.h>
 #include <sys/cdefs.h>
 
-__BEGIN_DECLS
-void	cpu_machine_init(
-	void);
+__BEGIN_DECLS void cpu_machine_init(void);
 
-void	handle_pending_TLB_flushes(
-	void);
+void handle_pending_TLB_flushes(void);
 
-int cpu_signal_handler(arm_saved_state_t *regs);
+int cpu_signal_handler(arm_saved_state_t * regs);
 
-kern_return_t cpu_register(
-        int *slot_nump);
-__END_DECLS
-
-static inline void cpu_halt(void)
+kern_return_t cpu_register(int *slot_nump);
+__END_DECLS static inline void cpu_halt(void)
 {
-	panic("CPU HALT\n");
+    panic("CPU HALT\n");
 }
 
 static inline void cpu_pause(void)
 {
-//	panic("Pausing CPU\n");
+//  panic("Pausing CPU\n");
 }
 
-#endif /* _ARM_MACHINE_CPU_H_ */
-
+#endif                          /* _ARM_MACHINE_CPU_H_ */

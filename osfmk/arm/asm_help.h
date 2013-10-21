@@ -62,7 +62,7 @@
     .globl _ ##function             ;   \
     .align  4                       ;   \
     _##function:                    ;   \
-    
+
 #define EnterARM_NoAlign(function)      \
     .code 32                        ;   \
     .globl _ ##function             ;   \
@@ -85,11 +85,11 @@
     .align 6                        ;   \
     .globl _ ##function             ;   \
     _##function:                    ;
-    
+
 #define EnterAArch64_NoAlign(function)  \
     .align 6                        ;   \
     .globl _ ##function             ;   \
-    _##function:                    ;  
+    _##function:                    ;
 
 #define EnterARM_NoAlign    EnterAArch64_NoAlign
 #define EnterThumb_NoAlign  EnterAArch64_NoAlign
@@ -118,7 +118,7 @@
         msr     cpsr_cf, r2
 
 #define AtomicEpilogue              \
-        msr     cpsr_cf, r3 
+        msr     cpsr_cf, r3
 
 #define AtomicMachineNoExclusive(name, instr)  \
     EnterARM(hw_atomic_ ##name)     \

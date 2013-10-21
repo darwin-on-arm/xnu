@@ -58,9 +58,9 @@
  * Definitions for byte order, according to byte significance from low
  * address to high.
  */
-#define	__DARWIN_LITTLE_ENDIAN	1234	/* LSB first: i386, vax */
-#define	__DARWIN_BIG_ENDIAN	4321	/* MSB first: 68000, ibm, net */
-#define	__DARWIN_PDP_ENDIAN	3412	/* LSB first in word, MSW first in long */
+#define	__DARWIN_LITTLE_ENDIAN	1234    /* LSB first: i386, vax */
+#define	__DARWIN_BIG_ENDIAN	4321    /* MSB first: 68000, ibm, net */
+#define	__DARWIN_PDP_ENDIAN	3412    /* LSB first in word, MSW first in long */
 
 #define	__DARWIN_BYTE_ORDER	__DARWIN_LITTLE_ENDIAN
 
@@ -74,5 +74,5 @@
 
 #include <sys/_endian.h>
 
-#endif /* defined(KERNEL) || (!defined(_POSIX_C_SOURCE) || defined(_DARWIN_C_SOURCE)) */
-#endif /* !_ARM__ENDIAN_H_ */
+#endif                          /* defined(KERNEL) || (!defined(_POSIX_C_SOURCE) || defined(_DARWIN_C_SOURCE)) */
+#endif                          /* !_ARM__ENDIAN_H_ */

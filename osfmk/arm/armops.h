@@ -41,8 +41,8 @@
  * VFP crap.
  */
 extern void init_vfp(void);
-extern void vfp_context_save(struct arm_vfp_state* state);
-extern void vfp_context_load(struct arm_vfp_state* state);
+extern void vfp_context_save(struct arm_vfp_state *state);
+extern void vfp_context_load(struct arm_vfp_state *state);
 extern uint32_t vfp_enable_exception(boolean_t enable);
 
 #endif

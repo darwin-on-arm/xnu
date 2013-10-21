@@ -55,51 +55,51 @@
 
 #define l2_size(size) ((uint32_t)((size >> 20) << 10))
 
-void arm_vm_init(uint32_t mem_limit, boot_args *args);
+void arm_vm_init(uint32_t mem_limit, boot_args * args);
 
-typedef uint32_t	pd_entry_t;	/* L1 table entry */
-typedef uint32_t	pt_entry_t;	/* L2 table entry */
+typedef uint32_t pd_entry_t;    /* L1 table entry */
+typedef uint32_t pt_entry_t;    /* L2 table entry */
 
-#pragma pack(4)							/* Make sure the structure stays as we defined it */
+#pragma pack(4)                 /* Make sure the structure stays as we defined it */
 /* new pmap struct */
-typedef uint32_t    paddr_t;        /* Physical address */
-typedef uint32_t    vaddr_t;        /* Virtual address */
+typedef uint32_t paddr_t;       /* Physical address */
+typedef uint32_t vaddr_t;       /* Virtual address */
 
 struct pmap {
-    paddr_t         pm_l1_phys;     /* L1 table address */
-    vaddr_t         pm_l1_virt;     /* L1 virtual table address */
-    vaddr_t         pm_l2_cache;    /* L2 page tables */
-    decl_simple_lock_data(,lock)    /* lock on map */
-    int             pm_refcnt;      /* pmap reference count */
-    ledger_t        ledger;         /* self ledger */
-    boolean_t       pm_shared;      /* nested pmap? */
-    int             pm_nx;          /* protection for pmap */
-    task_map_t      pm_task_map;    /* process task map */
-    struct pmap_statistics  pm_stats;
+    paddr_t pm_l1_phys;         /* L1 table address */
+    vaddr_t pm_l1_virt;         /* L1 virtual table address */
+    vaddr_t pm_l2_cache;        /* L2 page tables */
+     decl_simple_lock_data(, lock)  /* lock on map */
+    int pm_refcnt;              /* pmap reference count */
+    ledger_t ledger;            /* self ledger */
+    boolean_t pm_shared;        /* nested pmap? */
+    int pm_nx;                  /* protection for pmap */
+    task_map_t pm_task_map;     /* process task map */
+    struct pmap_statistics pm_stats;
 };
 
 typedef struct arm_l1_entry_t {
-    uint32_t    is_coarse:1;        /* Is it a coarse page/section descriptor? */
-    uint32_t    is_section:1;
-    uint32_t    bufferable:1;       /* Zero on coarse. */
-    uint32_t    cacheable:1;        /* Zero on coarse. */
-    uint32_t    sbz:1;              /* Should be zero. */
-    uint32_t    domain:4;           /* Domain entry */
-    uint32_t    ecc:1;              /* P-bit */
-    uint32_t    pfn:22;
+    uint32_t is_coarse:1;       /* Is it a coarse page/section descriptor? */
+    uint32_t is_section:1;
+    uint32_t bufferable:1;      /* Zero on coarse. */
+    uint32_t cacheable:1;       /* Zero on coarse. */
+    uint32_t sbz:1;             /* Should be zero. */
+    uint32_t domain:4;          /* Domain entry */
+    uint32_t ecc:1;             /* P-bit */
+    uint32_t pfn:22;
 } arm_l1_entry_t;
 
 typedef struct arm_l2_entry_t {
-    uint32_t    nx:1;               /* 1 on 64kB pages, not supported. */
-    uint32_t    valid:1;            /* 0 on 64kB pages, not supported. */
-    uint32_t    bufferable:1;
-    uint32_t    cacheable:1;
-    uint32_t    ap:2;
-    uint32_t    tex:3;
-    uint32_t    apx:1;
-    uint32_t    shareable:1;
-    uint32_t    non_global:1;
-    uint32_t    pfn:20;
+    uint32_t nx:1;              /* 1 on 64kB pages, not supported. */
+    uint32_t valid:1;           /* 0 on 64kB pages, not supported. */
+    uint32_t bufferable:1;
+    uint32_t cacheable:1;
+    uint32_t ap:2;
+    uint32_t tex:3;
+    uint32_t apx:1;
+    uint32_t shareable:1;
+    uint32_t non_global:1;
+    uint32_t pfn:20;
 } arm_l2_entry_t;
 
 typedef struct arm_l1_t {
@@ -137,9 +137,8 @@ typedef struct arm_l2_t {
 				VM_MEM_NOT_CACHEABLE | VM_MEM_GUARDED)
 #define VM_WIMG_WTHRU		(VM_MEM_WRITE_THROUGH | VM_MEM_COHERENT | VM_MEM_GUARDED)
 /* write combining mode, aka store gather */
-#define VM_WIMG_WCOMB		(VM_MEM_NOT_CACHEABLE | VM_MEM_COHERENT) 
+#define VM_WIMG_WCOMB		(VM_MEM_NOT_CACHEABLE | VM_MEM_COHERENT)
 #define	VM_WIMG_INNERWBACK	VM_MEM_COHERENT
-
 
 /* 
  * prototypes.
@@ -155,19 +154,19 @@ typedef struct arm_l2_t {
 #define virt_to_phys(p) ((unsigned int)((((unsigned long)(p)) - gVirtBase) + gPhysBase))
 #define phys_to_virt(p) ((unsigned int)((((unsigned long)(p)) - gPhysBase) + gVirtBase))
 
-#define L1_SIZE 0x4000 /* 16kb: covers 2048*2 1MB sections */
-#define L2_SIZE 0x400 /* 1kb: covers 256 4kb sections */
+#define L1_SIZE 0x4000          /* 16kb: covers 2048*2 1MB sections */
+#define L2_SIZE 0x400           /* 1kb: covers 256 4kb sections */
 
 #define tte_offset(addr) (((addr >> 0x14) & 0xfff) << 2)
 #define pte_offset(addr) (((addr & ~(L1_SECT_ADDR_MASK)) >> PAGE_SHIFT) << 2)
 #define addr_to_tte(base, addr) (base + tte_offset(addr))
 
 #define L1_PTE_ADDR_MASK 0xfffffc00 /* Bits [31:10] */
-#define L1_SECT_ADDR_MASK 0xfff00000 /* Bits [31:20] */
+#define L1_SECT_ADDR_MASK 0xfff00000    /* Bits [31:20] */
 
 #define L1_PTE_ADDR(tte) (tte & L1_PTE_ADDR_MASK)
 
-#define L1_TYPE_MASK 3 /* two least bits */
+#define L1_TYPE_MASK 3          /* two least bits */
 
 #define L1_TYPE_FAULT 0
 #define L1_TYPE_PTE 1
@@ -186,44 +185,28 @@ typedef struct arm_l2_t {
 #define tte_is_page_table(tte) ((tte & L1_TYPE_MASK) == L1_TYPE_PTE)
 
 #define L2_SMALL_PAGE 0x2
-#define L2_NX_BIT 0x1 /* XN bit */
-#define L2_C_BIT 0x8 /* C bit */
-#define L2_B_BIT 0x4 /* B bit */
-#define L2_S_BIT 0x400 /* S bit */
-#define L2_NG_BIT 0x800 /* nG bit */
+#define L2_NX_BIT 0x1           /* XN bit */
+#define L2_C_BIT 0x8            /* C bit */
+#define L2_B_BIT 0x4            /* B bit */
+#define L2_S_BIT 0x400          /* S bit */
+#define L2_NG_BIT 0x800         /* nG bit */
 
-extern addr64_t	   	kvtophys(vm_offset_t va);				/* Get physical address from kernel virtual */
-extern vm_map_offset_t kvtophys64(vm_map_offset_t va);				/* Get 64-bit physical address from kernel virtual */
-extern vm_offset_t	pmap_map(
-                             vm_offset_t        virt,
-                             vm_map_offset_t        start,
-                             vm_map_offset_t        end,
-                             vm_prot_t	prot,
-                             unsigned int	flags);
+extern addr64_t kvtophys(vm_offset_t va);   /* Get physical address from kernel virtual */
+extern vm_map_offset_t kvtophys64(vm_map_offset_t va);  /* Get 64-bit physical address from kernel virtual */
+extern vm_offset_t pmap_map(vm_offset_t virt, vm_map_offset_t start, vm_map_offset_t end, vm_prot_t prot, unsigned int flags);
 
-extern boolean_t	pmap_map_bd(
-                             vm_offset_t        virt,
-                             vm_map_offset_t        start,
-                             vm_map_offset_t        end,
-                             vm_prot_t	prot,
-                             unsigned int	flags);
+extern boolean_t pmap_map_bd(vm_offset_t virt, vm_map_offset_t start, vm_map_offset_t end, vm_prot_t prot, unsigned int flags);
 
-extern kern_return_t    pmap_add_physical_memory(vm_offset_t spa,
-						 vm_offset_t epa,
-						 boolean_t available,
-						 unsigned int attr);
-extern void		pmap_bootstrap(uint64_t msize,
-				       vm_offset_t *first_avail,
-				       unsigned int kmapsize);
+extern kern_return_t pmap_add_physical_memory(vm_offset_t spa, vm_offset_t epa, boolean_t available, unsigned int attr);
+extern void pmap_bootstrap(uint64_t msize, vm_offset_t * first_avail, unsigned int kmapsize);
 
-extern    vm_offset_t
-pmap_get_phys(pmap_t pmap, void* virt);
+extern vm_offset_t pmap_get_phys(pmap_t pmap, void *virt);
 
 extern vm_offset_t pmap_boot_map(vm_size_t size);
 
 extern void sync_cache64(addr64_t pa, unsigned length);
 extern void sync_ppage(ppnum_t pa);
-extern void	sync_cache_virtual(vm_offset_t va, unsigned length);
+extern void sync_cache_virtual(vm_offset_t va, unsigned length);
 extern void flush_dcache(vm_offset_t va, unsigned length, boolean_t phys);
 extern void flush_dcache64(addr64_t va, unsigned length, boolean_t phys);
 extern void invalidate_dcache(vm_offset_t va, unsigned length, boolean_t phys);
@@ -237,40 +220,43 @@ extern ppnum_t pmap_find_phys(pmap_t pmap, addr64_t va);
 extern void MapUserMemoryWindowInit(void);
 extern addr64_t MapUserMemoryWindow(vm_map_t map, addr64_t va);
 extern boolean_t pmap_eligible_for_execute(ppnum_t pa);
-extern int pmap_list_resident_pages(struct pmap *pmap, vm_offset_t *listp, int space);
+extern int pmap_list_resident_pages(struct pmap *pmap, vm_offset_t * listp, int space);
 extern void pmap_init_sharedpage(vm_offset_t cpg);
 extern void pmap_disable_NX(pmap_t pmap);
 
 extern boolean_t pmap_valid_page(ppnum_t pn);
 
 extern void pt_fake_zone_init(int);
-extern void pt_fake_zone_info(int *, vm_size_t *, vm_size_t *, vm_size_t *, vm_size_t *, 
-			      uint64_t *, int *, int *, int *);
+extern void pt_fake_zone_info(int *, vm_size_t *, vm_size_t *, vm_size_t *, vm_size_t *, uint64_t *, int *, int *, int *);
 
 extern void pmap_create_sharedpage(void);
 
 /* Not required for arm: */
-static inline void pmap_set_4GB_pagezero(__unused pmap_t pmap) {}
-static inline void pmap_clear_4GB_pagezero(__unused pmap_t pmap) {}
+static inline void pmap_set_4GB_pagezero(__unused pmap_t pmap)
+{
+}
+
+static inline void pmap_clear_4GB_pagezero(__unused pmap_t pmap)
+{
+}
 #endif
 
 typedef struct mem_region {
-	vm_offset_t start;                  /* Address of base of region */
-	struct phys_entry *phys_table;      /* base of region's table */
-	unsigned int end;                   /* End address+1 */
+    vm_offset_t start;          /* Address of base of region */
+    struct phys_entry *phys_table;  /* base of region's table */
+    unsigned int end;           /* End address+1 */
 } mem_region_t;
 
-typedef uint32_t  pmap_paddr_t;
+typedef uint32_t pmap_paddr_t;
 
 #define PMAP_MEM_REGION_MAX 26
 extern mem_region_t pmap_mem_regions[PMAP_MEM_REGION_MAX];
-extern int          pmap_mem_regions_count;
+extern int pmap_mem_regions_count;
 
 void pmap_common_init(pmap_t pmap);
 void pmap_static_init(void);
 
 void l2_map_linear_range(uint32_t pa_cache_start, uint32_t phys_start, uint32_t phys_end);
 void l2_cache_to_range(uint32_t pa_cache_start, uint32_t va, uint32_t tteb, uint32_t size, int zero);
-
 
 #endif

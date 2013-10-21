@@ -35,50 +35,50 @@
 #ifdef	MACH_KERNEL_PRIVATE
 
 struct hslock {
-	uintptr_t	lock_data;
+    uintptr_t lock_data;
 };
 typedef struct hslock hw_lock_data_t, *hw_lock_t;
 
-extern	unsigned int	LcksOpts;
+extern unsigned int LcksOpts;
 
-#define enaLkDeb		0x00000001	/* Request debug in default attribute */
-#define enaLkStat		0x00000002	/* Request statistic in default attribute */
+#define enaLkDeb		0x00000001  /* Request debug in default attribute */
+#define enaLkStat		0x00000002  /* Request statistic in default attribute */
 
 #endif
 
 #ifdef	MACH_KERNEL_PRIVATE
 typedef struct {
-	unsigned long	interlock;
-	unsigned long	lck_spin_pad[9];	/* XXX - usimple_lock_data_t */
+    unsigned long interlock;
+    unsigned long lck_spin_pad[9];  /* XXX - usimple_lock_data_t */
 } lck_spin_t;
 
-#define	LCK_SPIN_TAG_DESTROYED		0x00002007	/* lock marked as Destroyed */
+#define	LCK_SPIN_TAG_DESTROYED		0x00002007  /* lock marked as Destroyed */
 
 #else
 #ifdef	KERNEL_PRIVATE
 typedef struct {
-	unsigned long    opaque[10];
+    unsigned long opaque[10];
 } lck_spin_t;
 #else
-typedef	struct __lck_spin_t__	lck_spin_t;
+typedef struct __lck_spin_t__ lck_spin_t;
 #endif
 #endif
 
 #ifdef	MACH_KERNEL_PRIVATE
 typedef struct _lck_mtx_ {
-	union {
-		struct {
-			unsigned int			lck_mtxd_data;
-			unsigned short			lck_mtxd_waiters;
-			unsigned short			lck_mtxd_pri;
-			unsigned int			lck_mtxd_pad8;
-		} lck_mtxd;
-		struct {
-			unsigned int            lck_mtxi_tag;
-			struct _lck_mtx_ext_		*lck_mtxi_ptr;
-			unsigned int			    lck_mtxi_pad;
-		} lck_mtxi;
-	} lck_mtx_sw;
+    union {
+        struct {
+            unsigned int lck_mtxd_data;
+            unsigned short lck_mtxd_waiters;
+            unsigned short lck_mtxd_pri;
+            unsigned int lck_mtxd_pad8;
+        } lck_mtxd;
+        struct {
+            unsigned int lck_mtxi_tag;
+            struct _lck_mtx_ext_ *lck_mtxi_ptr;
+            unsigned int lck_mtxi_pad;
+        } lck_mtxi;
+    } lck_mtx_sw;
 } lck_mtx_t;
 
 #define lck_mtx_data    lck_mtx_sw.lck_mtxd.lck_mtxd_data
@@ -94,43 +94,43 @@ typedef struct _lck_mtx_ {
 #define lck_mtx_ptr	lck_mtx_sw.lck_mtxi.lck_mtxi_ptr
 #define lck_mtx_state	lck_mtx_sw.lck_mtxi.lck_mtxi_pad
 
-#define	LCK_MTX_TAG_INDIRECT			0x00001007	/* lock marked as Indirect  */
-#define	LCK_MTX_TAG_DESTROYED			0x00002007	/* lock marked as Destroyed */
-#define LCK_MTX_PTR_EXTENDED			0x00003007	/* lock is extended version */
+#define	LCK_MTX_TAG_INDIRECT			0x00001007  /* lock marked as Indirect  */
+#define	LCK_MTX_TAG_DESTROYED			0x00002007  /* lock marked as Destroyed */
+#define LCK_MTX_PTR_EXTENDED			0x00003007  /* lock is extended version */
 
 /* Adaptive spin before blocking */
-extern unsigned int	MutexSpin;
+extern unsigned int MutexSpin;
 
-extern void		lck_mtx_lock_mark_destroyed(lck_mtx_t *mutex);
-extern int		lck_mtx_lock_mark_promoted(lck_mtx_t *mutex);
-extern int		lck_mtx_lock_decr_waiter(lck_mtx_t *mutex);
-extern int		lck_mtx_lock_grab_mutex(lck_mtx_t *mutex);
-extern integer_t	lck_mtx_lock_get_pri(lck_mtx_t *mutex);
+extern void lck_mtx_lock_mark_destroyed(lck_mtx_t * mutex);
+extern int lck_mtx_lock_mark_promoted(lck_mtx_t * mutex);
+extern int lck_mtx_lock_decr_waiter(lck_mtx_t * mutex);
+extern int lck_mtx_lock_grab_mutex(lck_mtx_t * mutex);
+extern integer_t lck_mtx_lock_get_pri(lck_mtx_t * mutex);
 
-extern void		hw_lock_byte_init(uint8_t *lock_byte);
-extern void		hw_lock_byte_lock(uint8_t *lock_byte);
-extern void		hw_lock_byte_unlock(uint8_t *lock_byte);
+extern void hw_lock_byte_init(uint8_t * lock_byte);
+extern void hw_lock_byte_lock(uint8_t * lock_byte);
+extern void hw_lock_byte_unlock(uint8_t * lock_byte);
 
 #define     lck_rw_lock_exclusive       lck_rw_lock_exclusive_gen
 
 typedef struct {
-	unsigned int		type;
-	vm_offset_t		pc;
-	vm_offset_t		thread;
+    unsigned int type;
+    vm_offset_t pc;
+    vm_offset_t thread;
 } lck_mtx_deb_t;
 
 #define MUTEX_TAG       0x4d4d
 
 typedef struct {
-	unsigned int		lck_mtx_stat_data;
+    unsigned int lck_mtx_stat_data;
 } lck_mtx_stat_t;
 
 typedef struct _lck_mtx_ext_ {
-	lck_mtx_t		lck_mtx;
-	struct _lck_grp_	*lck_mtx_grp;
-	unsigned int		lck_mtx_attr;
-	lck_mtx_deb_t		lck_mtx_deb;
-	uint64_t		lck_mtx_stat;
+    lck_mtx_t lck_mtx;
+    struct _lck_grp_ *lck_mtx_grp;
+    unsigned int lck_mtx_attr;
+    lck_mtx_deb_t lck_mtx_deb;
+    uint64_t lck_mtx_stat;
 } lck_mtx_ext_t;
 
 #define	LCK_MTX_ATTR_DEBUG	0x1
@@ -141,40 +141,34 @@ typedef struct _lck_mtx_ext_ {
 #else
 #ifdef	KERNEL_PRIVATE
 typedef struct {
-	unsigned long		opaque[3];
+    unsigned long opaque[3];
 } lck_mtx_t;
 
 typedef struct {
-	unsigned long		opaque[10];
+    unsigned long opaque[10];
 } lck_mtx_ext_t;
 
 #else
-typedef struct __lck_mtx_t__		lck_mtx_t;
-typedef struct __lck_mtx_ext_t__	lck_mtx_ext_t;
+typedef struct __lck_mtx_t__ lck_mtx_t;
+typedef struct __lck_mtx_ext_t__ lck_mtx_ext_t;
 #endif
 #endif
 
 #ifdef	MACH_KERNEL_PRIVATE
-#pragma pack(1)		/* Make sure the structure stays as we defined it */
+#pragma pack(1)                 /* Make sure the structure stays as we defined it */
 typedef struct _lck_rw_t_internal_ {
-	union {
-		struct {
-            unsigned int        lck_rwd_interlock:1,
-        lck_rwd_waiting:1,
-        lck_rwd_want_upgrade:1,
-        lck_rwd_want_excl:1,
-        lck_rwd_pad17:11,
-        lck_rwd_priv_excl:1,
-        lck_rwd_shared_cnt:16;
-			unsigned int			lck_rwd_pad4;
-			unsigned int			lck_rwd_pad8;
-		} lck_rwd;
-		struct {
-			unsigned int			lck_rwi_tag;
-			struct _lck_rw_ext_	*lck_rwi_ptr;
-			unsigned int			lck_rwi_pad8;
-		} lck_rwi;
-	} lck_rw_sw;
+    union {
+        struct {
+            unsigned int lck_rwd_interlock:1, lck_rwd_waiting:1, lck_rwd_want_upgrade:1, lck_rwd_want_excl:1, lck_rwd_pad17:11, lck_rwd_priv_excl:1, lck_rwd_shared_cnt:16;
+            unsigned int lck_rwd_pad4;
+            unsigned int lck_rwd_pad8;
+        } lck_rwd;
+        struct {
+            unsigned int lck_rwi_tag;
+            struct _lck_rw_ext_ *lck_rwi_ptr;
+            unsigned int lck_rwi_pad8;
+        } lck_rwi;
+    } lck_rw_sw;
 } lck_rw_t;
 
 #define	lck_rw_interlock		lck_rw_sw.lck_rwd.lck_rwd_interlock
@@ -200,18 +194,18 @@ typedef struct _lck_rw_t_internal_ {
 #define	LCK_RW_ATTR_DIS_MYLOCK	0x10000000
 #define	LCK_RW_ATTR_DIS_MYLOCKb	28
 
-#define	LCK_RW_TAG_DESTROYED		0x00002007	/* lock marked as Destroyed */
+#define	LCK_RW_TAG_DESTROYED		0x00002007  /* lock marked as Destroyed */
 
 #else
 #ifdef	KERNEL_PRIVATE
 #pragma pack(1)
 typedef struct {
-	uint32_t		opaque[3];
+    uint32_t opaque[3];
 } lck_rw_t;
 #pragma pack()
 #else
-typedef struct __lck_rw_t__	lck_rw_t;
+typedef struct __lck_rw_t__ lck_rw_t;
 #endif
 #endif
 
-#endif	/* _ARM_LOCKS_H_ */
+#endif                          /* _ARM_LOCKS_H_ */

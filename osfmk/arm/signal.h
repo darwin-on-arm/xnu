@@ -12,8 +12,7 @@
 #include <sys/cdefs.h>
 
 #ifndef _ANSI_SOURCE
-typedef int sig_atomic_t; 
-#endif /* ! _ANSI_SOURCE */
+typedef int sig_atomic_t;
+#endif                          /* ! _ANSI_SOURCE */
 
-#endif	/* _ARM_SIGNAL_ */
-
+#endif                          /* _ARM_SIGNAL_ */

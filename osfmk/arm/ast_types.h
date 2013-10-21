@@ -64,6 +64,6 @@
  *	Data type for remote ast_check() invocation support.  Currently
  *	not implemented.  Do this first to avoid include problems.
  */
-typedef	int	ast_check_t;
+typedef int ast_check_t;
 
-#endif	/* _ARM_AST_TYPES_H_ */
+#endif                          /* _ARM_AST_TYPES_H_ */

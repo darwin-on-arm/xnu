@@ -67,7 +67,7 @@
 #ifdef	KERNEL_PRIVATE
 
 /* Use a function to do this less directly. */
-extern int	cpu_number(void);
+extern int cpu_number(void);
 
 #ifdef MACH_KERNEL_PRIVATE
 #include <arm/cpu_data.h>
@@ -75,9 +75,8 @@ extern int	cpu_number(void);
 /* Get the cpu number directly from the pre-processor data area */
 #define	cpu_number()	get_cpu_number()
 
-#endif	/* !MACH_KERNEL_PRIVATE */
+#endif                          /* !MACH_KERNEL_PRIVATE */
 
-#endif	/* KERNEL_PRIVATE */
+#endif                          /* KERNEL_PRIVATE */
 
-#endif	/* _ARM_CPU_NUMBER_H_ */
-
+#endif                          /* _ARM_CPU_NUMBER_H_ */

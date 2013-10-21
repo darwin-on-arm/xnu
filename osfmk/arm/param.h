@@ -58,14 +58,14 @@
 #define	ALIGNBYTES	__DARWIN_ALIGNBYTES
 #define	ALIGN(p)	__DARWIN_ALIGN(p)
 
-#define	NBPG		4096		/* bytes/page */
-#define	PGOFSET		(NBPG-1)	/* byte offset into page */
-#define	PGSHIFT		12		/* LOG2(NBPG) */
+#define	NBPG		4096        /* bytes/page */
+#define	PGOFSET		(NBPG-1)    /* byte offset into page */
+#define	PGSHIFT		12          /* LOG2(NBPG) */
 
 #define	DEV_BSIZE	512
-#define	DEV_BSHIFT	9		/* log2(DEV_BSIZE) */
+#define	DEV_BSHIFT	9           /* log2(DEV_BSIZE) */
 #define BLKDEV_IOSIZE	2048
-#define	MAXPHYS		(64 * 1024)	/* max raw I/O transfer size */
+#define	MAXPHYS		(64 * 1024) /* max raw I/O transfer size */
 
 #define	CLSIZE		1
 #define	CLSIZELOG2	0
@@ -77,18 +77,18 @@
  * clusters (MAPPED_MBUFS), MCLBYTES must also be an integral multiple
  * of the hardware page size.
  */
-#define	MSIZESHIFT	8			/* 256 */
-#define	MSIZE		(1 << MSIZESHIFT)	/* size of an mbuf */
-#define	MCLSHIFT	11			/* 2048 */
-#define	MCLBYTES	(1 << MCLSHIFT)		/* size of an mbuf cluster */
-#define	MBIGCLSHIFT	12			/* 4096 */
-#define	MBIGCLBYTES	(1 << MBIGCLSHIFT)	/* size of a big cluster */
-#define	M16KCLSHIFT	14			/* 16384 */
-#define	M16KCLBYTES	(1 << M16KCLSHIFT)	/* size of a jumbo cluster */
+#define	MSIZESHIFT	8           /* 256 */
+#define	MSIZE		(1 << MSIZESHIFT)   /* size of an mbuf */
+#define	MCLSHIFT	11          /* 2048 */
+#define	MCLBYTES	(1 << MCLSHIFT) /* size of an mbuf cluster */
+#define	MBIGCLSHIFT	12          /* 4096 */
+#define	MBIGCLBYTES	(1 << MBIGCLSHIFT)  /* size of a big cluster */
+#define	M16KCLSHIFT	14          /* 16384 */
+#define	M16KCLBYTES	(1 << M16KCLSHIFT)  /* size of a jumbo cluster */
 
 #define	MCLOFSET	(MCLBYTES - 1)
 #ifndef NMBCLUSTERS
-#define	NMBCLUSTERS	CONFIG_NMBCLUSTERS	/* cl map size */
+#define	NMBCLUSTERS	CONFIG_NMBCLUSTERS  /* cl map size */
 #endif
 
 /*
@@ -136,12 +136,11 @@
 #define	USERMODE(x)		(((x) & 3) == 3)
 #define	BASEPRI(x)		(((x) & (255 << 8)) == 0)
 
-
 #if	defined(KERNEL) || defined(STANDALONE)
 #define	DELAY(n) delay(n)
 
-#else	/* defined(KERNEL) || defined(STANDALONE) */
+#else                           /* defined(KERNEL) || defined(STANDALONE) */
 #define	DELAY(n)	{ register int N = (n); while (--N > 0); }
-#endif	/* defined(KERNEL) || defined(STANDALONE) */
+#endif                          /* defined(KERNEL) || defined(STANDALONE) */
 
-#endif /* _ARM_PARAM_H_ */
+#endif                          /* _ARM_PARAM_H_ */

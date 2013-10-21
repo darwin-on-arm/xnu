@@ -35,45 +35,40 @@
 #ifndef _STRUCT_MCONTEXT
 #if __DARWIN_UNIX03
 #define _STRUCT_MCONTEXT        struct __darwin_mcontext
-_STRUCT_MCONTEXT
-{
-	_STRUCT_ARM_EXCEPTION_STATE	__es;
-	_STRUCT_ARM_THREAD_STATE	__ss;
-	_STRUCT_ARM_VFP_STATE		__fs;
+_STRUCT_MCONTEXT {
+    _STRUCT_ARM_EXCEPTION_STATE __es;
+    _STRUCT_ARM_THREAD_STATE __ss;
+    _STRUCT_ARM_VFP_STATE __fs;
 };
 
 #define _STRUCT_MCONTEXT64	struct __darwin_mcontext64
-_STRUCT_MCONTEXT64
-{
-	_STRUCT_ARM_EXCEPTION_STATE64	__es;
-	_STRUCT_ARM_THREAD_STATE64	__ss;
-	_STRUCT_ARM_NEON_STATE64	__ns;
+_STRUCT_MCONTEXT64 {
+    _STRUCT_ARM_EXCEPTION_STATE64 __es;
+    _STRUCT_ARM_THREAD_STATE64 __ss;
+    _STRUCT_ARM_NEON_STATE64 __ns;
 };
 
-#else /* !__DARWIN_UNIX03 */
+#else                           /* !__DARWIN_UNIX03 */
 #define _STRUCT_MCONTEXT        struct mcontext
-_STRUCT_MCONTEXT
-{
-	_STRUCT_ARM_EXCEPTION_STATE	es;
-	_STRUCT_ARM_THREAD_STATE	ss;
-	_STRUCT_ARM_VFP_STATE		fs;
+_STRUCT_MCONTEXT {
+    _STRUCT_ARM_EXCEPTION_STATE es;
+    _STRUCT_ARM_THREAD_STATE ss;
+    _STRUCT_ARM_VFP_STATE fs;
 };
 
 #define _STRUCT_MCONTEXT64	struct mcontext64
-_STRUCT_MCONTEXT64
-{
-	_STRUCT_ARM_EXCEPTION_STATE64	es;
-	_STRUCT_ARM_THREAD_STATE64	ss;
-	_STRUCT_ARM_NEON_STATE64	ns;
+_STRUCT_MCONTEXT64 {
+    _STRUCT_ARM_EXCEPTION_STATE64 es;
+    _STRUCT_ARM_THREAD_STATE64 ss;
+    _STRUCT_ARM_NEON_STATE64 ns;
 };
-#endif /* __DARWIN_UNIX03 */
-#endif /* _STRUCT_MCONTEXT */
-
+#endif                          /* __DARWIN_UNIX03 */
+#endif                          /* _STRUCT_MCONTEXT */
 
 #if !defined(_POSIX_C_SOURCE) || defined(_DARWIN_C_SOURCE)
 #ifndef ARM_MCONTEXT_SIZE
 #define ARM_MCONTEXT_SIZE       (ARM_THREAD_STATE_COUNT + ARM_VFP_STATE_COUNT + ARM_EXCEPTION_STATE_COUNT) * sizeof(int)
-#endif /* ARM_MCONTEXT_SIZE */
-#endif /* (_POSIX_C_SOURCE && !_DARWIN_C_SOURCE) */
+#endif                          /* ARM_MCONTEXT_SIZE */
+#endif                          /* (_POSIX_C_SOURCE && !_DARWIN_C_SOURCE) */
 
-#endif /* __ARM_MCONTEXT_H_ */
+#endif                          /* __ARM_MCONTEXT_H_ */
