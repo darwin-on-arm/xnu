@@ -94,7 +94,10 @@ buildtool="make"
 version="${project/$projnam-/}"
 build_version=$(($(GetBuildVersion $DARWIN_BUILDROOT/{Logs,Symbols,Headers,Roots}/$projnam/$project.*) + 1))
 
-REAL_SRCROOT="$(pwd)"
+REAL_SRCROOT="/SourceCache/$projnam/$project"
+
+git clone $(pwd) $REAL_SRCROOT
+
 REAL_OBJROOT="$BuildRoot/$vartmp/$projnam/$project.obj~$build_version"
 REAL_SYMROOT="$BuildRoot/$vartmp/$projnam/$project.sym~$build_version"
 REAL_DSTROOT="$BuildRoot/$vartmp/$projnam/$project.root~$build_version"
