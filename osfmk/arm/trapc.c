@@ -185,12 +185,11 @@ void sleh_abort(void *context, int reason)
     if (reason == SLEH_ABORT_TYPE_DATA_ABORT) {
         dfsr = __arm_get_dfsr();
         dfar = __arm_get_dfar();
-        kprintf("[data] pc %x lr %x fsr %x far %x cpsr %x\n", arm_ctx->pc, arm_ctx->lr, dfsr, dfar, arm_ctx->cpsr);
-        pt_entry_t pte = pmap_pte(thread->map->pmap, dfar);
+//        kprintf("[data] pc %x lr %x fsr %x far %x cpsr %x\n", arm_ctx->pc, arm_ctx->lr, dfsr, dfar, arm_ctx->cpsr);
     } else if (reason == SLEH_ABORT_TYPE_PREFETCH_ABORT) {
         ifsr = __arm_get_ifsr();
         ifar = __arm_get_ifar();
-        kprintf("[prefetch] pc %x lr %x fsr %x far %x cpsr %x\n", arm_ctx->pc, arm_ctx->lr, ifsr, ifar, arm_ctx->cpsr);
+//        kprintf("[prefetch] pc %x lr %x fsr %x far %x cpsr %x\n", arm_ctx->pc, arm_ctx->lr, ifsr, ifar, arm_ctx->cpsr);
     } else {
         panic("sleh_abort: weird abort, type %d (context at %p)", reason, context);
     }
@@ -274,7 +273,7 @@ void sleh_abort(void *context, int reason)
                  * Get the current thread map. 
                  */
                 map = thread->map;
-
+                
                 /*
                  * Attempt to fault the page. 
                  */
@@ -355,13 +354,13 @@ void sleh_abort(void *context, int reason)
                     /*
                      * Debug only. 
                      */
-                    printf("%s[%d]: usermode prefetch abort, EXC_BAD_ACCESS at 0x%08x in map %p (pmap %p) (%s)\n", proc_name_address(thread->task->bsd_info), proc_pid(thread->task->bsd_info), arm_ctx->pc, map, map->pmap, ifsr_to_human(ifsr));
-                    printf("Thread has ARM register state:\n"
-                           "    r0: 0x%08x  r1: 0x%08x  r2: 0x%08x  r3: 0x%08x\n"
-                           "    r4: 0x%08x  r5: 0x%08x  r6: 0x%08x  r7: 0x%08x\n"
-                           "    r8: 0x%08x  r9: 0x%08x r10: 0x%08x r11: 0x%08x\n"
-                           "   r12: 0x%08x  sp: 0x%08x  lr: 0x%08x  pc: 0x%08x\n"
-                           "  cpsr: 0x%08x\n", arm_ctx->r[0], arm_ctx->r[1], arm_ctx->r[2], arm_ctx->r[3], arm_ctx->r[4], arm_ctx->r[5], arm_ctx->r[6], arm_ctx->r[7], arm_ctx->r[8], arm_ctx->r[9], arm_ctx->r[10], arm_ctx->r[11], arm_ctx->r[12], arm_ctx->sp, arm_ctx->lr, arm_ctx->pc, arm_ctx->cpsr);
+                    kprintf("%s[%d]: usermode prefetch abort, EXC_BAD_ACCESS at 0x%08x in map %p (pmap %p) (%s)\n", proc_name_address(thread->task->bsd_info), proc_pid(thread->task->bsd_info), arm_ctx->pc, map, map->pmap, ifsr_to_human(ifsr));
+                    kprintf("Thread has ARM register state:\n"
+                            "    r0: 0x%08x  r1: 0x%08x  r2: 0x%08x  r3: 0x%08x\n"
+                            "    r4: 0x%08x  r5: 0x%08x  r6: 0x%08x  r7: 0x%08x\n"
+                            "    r8: 0x%08x  r9: 0x%08x r10: 0x%08x r11: 0x%08x\n"
+                            "   r12: 0x%08x  sp: 0x%08x  lr: 0x%08x  pc: 0x%08x\n"
+                            "  cpsr: 0x%08x\n", arm_ctx->r[0], arm_ctx->r[1], arm_ctx->r[2], arm_ctx->r[3], arm_ctx->r[4], arm_ctx->r[5], arm_ctx->r[6], arm_ctx->r[7], arm_ctx->r[8], arm_ctx->r[9], arm_ctx->r[10], arm_ctx->r[11], arm_ctx->r[12], arm_ctx->sp, arm_ctx->lr, arm_ctx->pc, arm_ctx->cpsr);
                 } else {
                     /*
                      * Retry execution of instruction. 
@@ -398,13 +397,13 @@ void sleh_abort(void *context, int reason)
                     /*
                      * Only for debug. 
                      */
-                    printf("%s[%d]: usermode data abort, EXC_BAD_ACCESS at 0x%08x in map %p (pmap %p) (%s)\n", proc_name_address(thread->task->bsd_info), proc_pid(thread->task->bsd_info), dfar, map, map->pmap, ifsr_to_human(dfsr));
-                    printf("Thread has ARM register state:\n"
-                           "    r0: 0x%08x  r1: 0x%08x  r2: 0x%08x  r3: 0x%08x\n"
-                           "    r4: 0x%08x  r5: 0x%08x  r6: 0x%08x  r7: 0x%08x\n"
-                           "    r8: 0x%08x  r9: 0x%08x r10: 0x%08x r11: 0x%08x\n"
-                           "   r12: 0x%08x  sp: 0x%08x  lr: 0x%08x  pc: 0x%08x\n"
-                           "  cpsr: 0x%08x\n", arm_ctx->r[0], arm_ctx->r[1], arm_ctx->r[2], arm_ctx->r[3], arm_ctx->r[4], arm_ctx->r[5], arm_ctx->r[6], arm_ctx->r[7], arm_ctx->r[8], arm_ctx->r[9], arm_ctx->r[10], arm_ctx->r[11], arm_ctx->r[12], arm_ctx->sp, arm_ctx->lr, arm_ctx->pc, arm_ctx->cpsr);
+                    kprintf("%s[%d]: usermode data abort, EXC_BAD_ACCESS at 0x%08x in map %p (pmap %p) (%s)\n", proc_name_address(thread->task->bsd_info), proc_pid(thread->task->bsd_info), dfar, map, map->pmap, ifsr_to_human(dfsr));
+                    kprintf("Thread has ARM register state:\n"
+                            "    r0: 0x%08x  r1: 0x%08x  r2: 0x%08x  r3: 0x%08x\n"
+                            "    r4: 0x%08x  r5: 0x%08x  r6: 0x%08x  r7: 0x%08x\n"
+                            "    r8: 0x%08x  r9: 0x%08x r10: 0x%08x r11: 0x%08x\n"
+                            "   r12: 0x%08x  sp: 0x%08x  lr: 0x%08x  pc: 0x%08x\n"
+                            "  cpsr: 0x%08x\n", arm_ctx->r[0], arm_ctx->r[1], arm_ctx->r[2], arm_ctx->r[3], arm_ctx->r[4], arm_ctx->r[5], arm_ctx->r[6], arm_ctx->r[7], arm_ctx->r[8], arm_ctx->r[9], arm_ctx->r[10], arm_ctx->r[11], arm_ctx->r[12], arm_ctx->sp, arm_ctx->lr, arm_ctx->pc, arm_ctx->cpsr);
                 } else {
                     /*
                      * Retry execution of instruction. 
@@ -635,13 +634,13 @@ void sleh_undef(arm_saved_state_t * state)
             }
         }
 
-        printf("%s[%d]: usermode undefined instruction, EXC_BAD_INSTRUCTION at 0x%08x in map %p (pmap %p)\n", proc_name_address(thread->task->bsd_info), proc_pid(thread->task->bsd_info), arm_ctx->pc, map, map->pmap);
-        printf("Thread has ARM register state:\n"
-               "    r0: 0x%08x  r1: 0x%08x  r2: 0x%08x  r3: 0x%08x\n"
-               "    r4: 0x%08x  r5: 0x%08x  r6: 0x%08x  r7: 0x%08x\n"
-               "    r8: 0x%08x  r9: 0x%08x r10: 0x%08x r11: 0x%08x\n"
-               "   r12: 0x%08x  sp: 0x%08x  lr: 0x%08x  pc: 0x%08x\n"
-               "  cpsr: 0x%08x\n", arm_ctx->r[0], arm_ctx->r[1], arm_ctx->r[2], arm_ctx->r[3], arm_ctx->r[4], arm_ctx->r[5], arm_ctx->r[6], arm_ctx->r[7], arm_ctx->r[8], arm_ctx->r[9], arm_ctx->r[10], arm_ctx->r[11], arm_ctx->r[12], arm_ctx->sp, arm_ctx->lr, arm_ctx->pc, arm_ctx->cpsr);
+        kprintf("%s[%d]: usermode undefined instruction, EXC_BAD_INSTRUCTION at 0x%08x in map %p (pmap %p)\n", proc_name_address(thread->task->bsd_info), proc_pid(thread->task->bsd_info), arm_ctx->pc, map, map->pmap);
+        kprintf("Thread has ARM register state:\n"
+                "    r0: 0x%08x  r1: 0x%08x  r2: 0x%08x  r3: 0x%08x\n"
+                "    r4: 0x%08x  r5: 0x%08x  r6: 0x%08x  r7: 0x%08x\n"
+                "    r8: 0x%08x  r9: 0x%08x r10: 0x%08x r11: 0x%08x\n"
+                "   r12: 0x%08x  sp: 0x%08x  lr: 0x%08x  pc: 0x%08x\n"
+                "  cpsr: 0x%08x\n", arm_ctx->r[0], arm_ctx->r[1], arm_ctx->r[2], arm_ctx->r[3], arm_ctx->r[4], arm_ctx->r[5], arm_ctx->r[6], arm_ctx->r[7], arm_ctx->r[8], arm_ctx->r[9], arm_ctx->r[10], arm_ctx->r[11], arm_ctx->r[12], arm_ctx->sp, arm_ctx->lr, arm_ctx->pc, arm_ctx->cpsr);
         /*
          * xxx gate 
          */

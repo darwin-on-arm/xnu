@@ -42,7 +42,8 @@
 char *PE_boot_args(void)
 {
 #ifdef BOARD_CONFIG_ARMPBA8
-    return "serial=3 debug=0x16e symbolicate-panics=1";
+	return "-v";
+//    return "debug=0x16e symbolicate-panics=1";
 #else
     return ((boot_args *) PE_state.bootArgs)->CommandLine;
 #endif

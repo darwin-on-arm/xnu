@@ -513,7 +513,7 @@ void print_threads(uint32_t stackptr)
             /*
              * Make sure it's a Upcb if it's a user program. 
              */
-            if (!thread->continuation && (thread->machine.uss != thread->machine.iss) && thread->machine.uss->pc) {
+            if (!thread->continuation && (thread->machine.uss != thread->machine.iss) && thread->machine.uss->lr) {
                 kdb_printf("%s\tuser state:\n", ((current_thread() == thread) ? crashed : "\t"));
                 kdb_printf("%s\t  r0: 0x%08x  r1: 0x%08x  r2: 0x%08x  r3: 0x%08x\n"
                            "%s\t  r4: 0x%08x  r5: 0x%08x  r6: 0x%08x  r7: 0x%08x\n"
