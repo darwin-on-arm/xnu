@@ -345,7 +345,7 @@ kernel_bootstrap_thread(void)
 #if (defined(__i386__) || defined(__x86_64__))
 	if (turn_on_log_leaks && !new_nkdbufs)
 		new_nkdbufs = 200000;
-	start_kern_tracing(new_nkdbufs, FALSE);
+	start_kern_tracing(new_nkdbufs);
 	if (turn_on_log_leaks)
 		log_leaks = 1;
 #endif
@@ -370,7 +370,7 @@ kernel_bootstrap_thread(void)
 #if (!defined(__i386__) && !defined(__x86_64__))
 	if (turn_on_log_leaks && !new_nkdbufs)
 		new_nkdbufs = 200000;
-	start_kern_tracing(new_nkdbufs, FALSE);
+	start_kern_tracing(new_nkdbufs);
 	if (turn_on_log_leaks)
 		log_leaks = 1;
 #endif

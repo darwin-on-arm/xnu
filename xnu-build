@@ -96,11 +96,15 @@ build_version=$(($(GetBuildVersion $DARWIN_BUILDROOT/{Logs,Symbols,Headers,Roots
 
 REAL_SRCROOT="/SourceCache/$projnam/$project"
 
+if [ -e $REAL_SRCROOT ]; then
+	rm -rf $REAL_SRCROOT
+fi
+
 git clone $(pwd) $REAL_SRCROOT
 
-REAL_OBJROOT="$BuildRoot/$vartmp/$projnam/$project.obj~$build_version"
-REAL_SYMROOT="$BuildRoot/$vartmp/$projnam/$project.sym~$build_version"
-REAL_DSTROOT="$BuildRoot/$vartmp/$projnam/$project.root~$build_version"
+REAL_OBJROOT="$BuildRoot/$vartmp/$projnam/Objects/$project~$build_version"
+REAL_SYMROOT="$BuildRoot/$vartmp/$projnam/Symbols/$project~$build_version"
+REAL_DSTROOT="$BuildRoot/$vartmp/$projnam/Roots/$project~$build_version"
 
 mkdir -p $REAL_SRCROOT $REAL_OBJROOT $REAL_SYMROOT $REAL_DSTROOT
 
