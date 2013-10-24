@@ -98,7 +98,7 @@ REAL_SRCROOT="/SourceCache/$projnam/$project"
 
 git clone $(pwd) $REAL_SRCROOT
 
-REAL_OBJROOT="$BuildRoot/$vartmp/$projnam/$project.obj~$build_version"
+REAL_OBJROOT="$BuildRoot/$vartmp/$projnam/$project~$build_version"
 REAL_SYMROOT="$BuildRoot/$vartmp/$projnam/$project.sym~$build_version"
 REAL_DSTROOT="$BuildRoot/$vartmp/$projnam/$project.root~$build_version"
 
