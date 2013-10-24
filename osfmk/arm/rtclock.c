@@ -124,7 +124,7 @@ uint64_t mach_absolute_time(void)
     return pe_arm_get_timebase(NULL);
 }
 
-void machine_delay_until(uint64_t deadline)
+void machine_delay_until(uint64_t interval, uint64_t deadline)
 {
     uint64_t now;
 

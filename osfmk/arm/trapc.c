@@ -185,12 +185,15 @@ void sleh_abort(void *context, int reason)
     if (reason == SLEH_ABORT_TYPE_DATA_ABORT) {
         dfsr = __arm_get_dfsr();
         dfar = __arm_get_dfar();
+#if 0
         kprintf("[data] pc %x lr %x fsr %x far %x cpsr %x\n", arm_ctx->pc, arm_ctx->lr, dfsr, dfar, arm_ctx->cpsr);
-        pt_entry_t pte = pmap_pte(thread->map->pmap, dfar);
+#endif
     } else if (reason == SLEH_ABORT_TYPE_PREFETCH_ABORT) {
         ifsr = __arm_get_ifsr();
         ifar = __arm_get_ifar();
+#if 0
         kprintf("[prefetch] pc %x lr %x fsr %x far %x cpsr %x\n", arm_ctx->pc, arm_ctx->lr, ifsr, ifar, arm_ctx->cpsr);
+#endif
     } else {
         panic("sleh_abort: weird abort, type %d (context at %p)", reason, context);
     }
