@@ -245,7 +245,7 @@ void sleh_abort(void *context, int reason)
                 /*
                  * Attempt to fault the page. 
                  */
-                code = vm_fault(map, vm_map_trunc_page(arm_ctx->pc), (VM_PROT_READ | VM_PROT_WRITE), FALSE, THREAD_UNINT, NULL, vm_map_trunc_page(0));
+                code = vm_fault(map, vm_map_trunc_page(arm_ctx->pc, PAGE_MASK), (VM_PROT_READ | VM_PROT_WRITE), FALSE, THREAD_UNINT, NULL, vm_map_trunc_page(0, PAGE_MASK));
 
                 if (code != KERN_SUCCESS) {
                     /*
@@ -277,12 +277,12 @@ void sleh_abort(void *context, int reason)
                 /*
                  * Attempt to fault the page. 
                  */
-                code = vm_fault(map, vm_map_trunc_page(dfar), (VM_PROT_READ), FALSE, THREAD_UNINT, NULL, vm_map_trunc_page(0));
+                code = vm_fault(map, vm_map_trunc_page(dfar, PAGE_MASK), (VM_PROT_READ), FALSE, THREAD_UNINT, NULL, vm_map_trunc_page(0, PAGE_MASK));
                 if (code != KERN_SUCCESS) {
                     /*
                      * Still, die in a fire. 
                      */
-                    code = vm_fault(kernel_map, vm_map_trunc_page(dfar), (VM_PROT_READ), FALSE, THREAD_UNINT, NULL, vm_map_trunc_page(0));
+                    code = vm_fault(kernel_map, vm_map_trunc_page(dfar, PAGE_MASK), (VM_PROT_READ), FALSE, THREAD_UNINT, NULL, vm_map_trunc_page(0, PAGE_MASK));
                     if (code != KERN_SUCCESS) {
                         /*
                          * Attempt to fault the page against the kernel map. 
@@ -345,7 +345,7 @@ void sleh_abort(void *context, int reason)
                 /*
                  * Attempt to fault the page. 
                  */
-                code = vm_fault(map, vm_map_trunc_page(arm_ctx->pc), (VM_PROT_READ), FALSE, THREAD_UNINT, NULL, vm_map_trunc_page(0));
+                code = vm_fault(map, vm_map_trunc_page(arm_ctx->pc, PAGE_MASK), (VM_PROT_READ), FALSE, THREAD_UNINT, NULL, vm_map_trunc_page(0, PAGE_MASK));
 
                 if ((code != KERN_SUCCESS) && (code != KERN_ABORTED)) {
                     exception_type = EXC_BAD_ACCESS;
@@ -388,7 +388,7 @@ void sleh_abort(void *context, int reason)
                 /*
                  * Attempt to fault the page. 
                  */
-                code = vm_fault(map, vm_map_trunc_page(dfar), (VM_PROT_READ), FALSE, THREAD_UNINT, NULL, vm_map_trunc_page(0));
+                code = vm_fault(map, vm_map_trunc_page(dfar, PAGE_MASK), (VM_PROT_READ), FALSE, THREAD_UNINT, NULL, vm_map_trunc_page(0, PAGE_MASK));
 
                 if ((code != KERN_SUCCESS) && (code != KERN_ABORTED)) {
                     exception_type = EXC_BAD_ACCESS;

@@ -41,7 +41,6 @@
 #include <arm/machine_routines.h>
 #include <vm/vm_kern.h>
 #include <kern/timer_call.h>
-#include <kern/etimer.h>
 #include <kern/processor.h>
 #include <arm/misc_protos.h>
 #include <mach/machine.h>
@@ -72,7 +71,7 @@ void cpu_init(void)
 {
     cpu_data_t *cdp = current_cpu_datap();
 
-    timer_call_initialize_queue(&cdp->rt_timer.queue);
+    timer_call_queue_init(&cdp->rt_timer.queue);
     cdp->rt_timer.deadline = EndOfAllTime;
 
     cdp->cpu_type = CPU_TYPE_ARM;

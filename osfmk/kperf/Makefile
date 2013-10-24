@@ -11,7 +11,6 @@ EXPORT_ONLY_FILES = 	\
 			context.h	\
 			timetrigger.h   \
 			pet.h           \
-			filter.h        \
 			kperfbsd.h      \
 			action.h        \
 			kperf.h

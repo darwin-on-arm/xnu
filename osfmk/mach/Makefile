@@ -8,15 +8,11 @@ include $(MakeInc_def)
 
 INSTINC_SUBDIRS = machine
 INSTINC_SUBDIRS_ARM = arm
-INSTINC_SUBDIRS_ARM64 = arm
-INSTINC_SUBDIRS_I386 = i386
 INSTINC_SUBDIRS_X86_64 = i386
 
 EXPINC_SUBDIRS = machine
-EXPINC_SUBDIRS_I386 = i386
 EXPINC_SUBDIRS_X86_64 = i386
 EXPINC_SUBDIRS_ARM = arm
-EXPINC_SUBDIRS_ARM64 = arm
 
 MIG_TYPES = \
 	clock_types.defs \
@@ -43,6 +39,7 @@ MIG_DEFS =	\
 	security.defs \
 	task.defs \
 	task_access.defs \
+	telemetry_notification.defs \
 	thread_act.defs \
 	vm_map.defs
 
@@ -68,7 +65,8 @@ MIG_USHDRS = \
 	memory_object_server.h \
 	memory_object_default_server.h \
 	notify_server.h \
-	task_access_server.h
+	task_access_server.h \
+	telemetry_notification_server.h
 
 MIG_UUHDRS = \
 	clock.h \
@@ -175,11 +173,7 @@ EXPORT_MI_GEN_LIST = \
 
 EXPORT_MI_DIR = mach
 
-.ORDER: ${MIGINCLUDES}
-
 ${MIGINCLUDES} : ${MIG_TYPES}
-
-.ORDER: ${MIG_UUHDRS}
 
 ${MIG_UUHDRS} : \
 	%.h : %.defs
@@ -189,8 +183,6 @@ ${MIG_UUHDRS} : \
 		-user /dev/null		\
 		-header $@ 		\
 		$<
-
-.ORDER: ${MIG_USHDRS}
 
 ${MIG_USHDRS} : \
 	%_server.h : %.defs
@@ -205,11 +197,6 @@ ${MIG_USHDRS} : \
 #
 # Build path
 #
-COMP_SUBDIRS_I386 = \
-	i386
-
-COMP_SUBDIRS_ARM = \
-	arm
 
 INCFLAGS_MAKEFILE= -I..
 
@@ -244,6 +231,7 @@ MIG_KUSRC = \
 	memory_object_control_user.c \
 	memory_object_default_user.c \
 	task_access_user.c \
+	telemetry_notification_user.c \
 	upl_user.c \
 	vm_map_user.c
 
@@ -316,8 +304,8 @@ MIG_KSSRC = \
 COMP_FILES = ${MIG_KUSRC} ${MIG_KSSRC}
 
 ${COMP_FILES} : ${MIG_TYPES}
-        
-.ORDER: ${MIG_KUSRC}                           
+
+.ORDER: ${MIG_KUSRC}    
 
 ${MIG_KUSRC} : \
 	%_user.c : %.defs
@@ -329,8 +317,6 @@ ${MIG_KUSRC} : \
 		-sheader /dev/null		\
 		$<
 
-.ORDER: ${MIG_KSSRC}                           
-        
 ${MIG_KSSRC}: \
 	%_server.c : %.defs
 	@echo MIG $@

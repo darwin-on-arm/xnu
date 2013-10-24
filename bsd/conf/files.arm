@@ -18,6 +18,6 @@ bsd/kern/policy_check.c			optional config_macf
 
 bsd/kern/bsd_stubs.c		standard
 bsd/netinet/in_cksum.c		optional inet
-
+bsd/netinet/cpu_in_cksum.c	standard
 
 

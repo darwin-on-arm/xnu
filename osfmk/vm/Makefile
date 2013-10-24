@@ -11,6 +11,7 @@ DATAFILES =
 
 EXPORT_ONLY_FILES = \
 	pmap.h \
+	WKdm_new.h \
 	vm_fault.h \
 	vm_kern.h \
 	vm_map.h \

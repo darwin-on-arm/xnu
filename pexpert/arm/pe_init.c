@@ -175,10 +175,12 @@ void PE_init_iokit(void)
         default_noroot_data = failedBootPict;
     }
 
+#if 0
     /*
      * Initialize the panic UI
      */
     panic_ui_initialize((unsigned char *) appleClut8);
+#endif
 
     /*
      * Initialize the spinning wheel (progress indicator).

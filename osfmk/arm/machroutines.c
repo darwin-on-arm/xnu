@@ -346,6 +346,16 @@ vm_size_t ml_nofault_copy(vm_offset_t virtsrc, vm_offset_t virtdst, vm_size_t si
     return nbytes;
 }
 
+void ml_cpu_get_info(ml_cpu_info_t *cpu_infop) {
+    return;
+}
+
+void machine_signal_idle(processor_t processor)
+{
+    return;
+}
+
+
 /*
  * ml_phys_read_*.
  */
@@ -371,3 +381,4 @@ ml_phys_read_write_comb_gen(unsigned int, unsigned int, addr64_t, _word_64)
 
 ml_phys_read_write_comb_gen(unsigned long long, unsigned long long, vm_offset_t, _double)
 ml_phys_read_write_comb_gen(unsigned long long, unsigned long long, addr64_t, _double_64)
+

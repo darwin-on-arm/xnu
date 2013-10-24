@@ -73,3 +73,8 @@ void pal_set_signal_delivery(thread_t thread __unused)
 void pal_ast_check(thread_t thread)
 {
 }
+
+#undef pal_thread_terminate_self
+void pal_thread_terminate_self(thread_t thread)
+{
+}

@@ -47,8 +47,7 @@ PRIVATE_DATAFILES =         \
 	OSKextLibPrivate.h  \
 	kext_request_keys.h \
 	mkext.h		    \
-	prelink.h	    \
-	WKdm.h
+	prelink.h
 
 INSTALL_MI_LIST	=       \
 	OSByteOrder.h   \

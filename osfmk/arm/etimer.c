@@ -39,9 +39,10 @@
 #include <kern/processor.h>
 #include <kern/macro_help.h>
 #include <kern/spl.h>
-#include <kern/etimer.h>
 #include <kern/pms.h>
 #include <kern/queue.h>
+
+#include <kern/timer_queue.h>
 
 #include <machine/commpage.h>
 #include <machine/machine_routines.h>
@@ -71,11 +72,11 @@ void timer_update(timer_t timer, uint32_t new_high, uint32_t new_low)
 }
 
 /**
- * etimer_set_deadline
+ * timer_set_deadline
  *
  * Set the clock deadline.
  */
-void etimer_set_deadline(uint64_t deadline)
+void timer_set_deadline(uint64_t deadline)
 {
     rtclock_timer_t *mytimer;
     spl_t s;
@@ -87,18 +88,18 @@ void etimer_set_deadline(uint64_t deadline)
     mytimer = &pp->rt_timer;    /* Point to the timer itself */
     mytimer->deadline = deadline;   /* Set the new expiration time */
 
-    etimer_resync_deadlines();
+    timer_resync_deadlines();
 
     splx(s);
 }
 
 /**
- * etimer_resync_deadlines
+ * timer_resync_deadlines
  *
  * Resynchronize the timer deadlines, called from the interrupt routine.
  */
 
-void etimer_resync_deadlines(void)
+void timer_resync_deadlines(void)
 {
     uint64_t deadline;
     uint64_t pmdeadline;
@@ -139,12 +140,12 @@ void etimer_resync_deadlines(void)
 }
 
 /**
- * etimer_intr
+ * timer_intr
  *
  * Timer interrupt routine, called from the realtime clock interrupt
  * routine.
  */
-void etimer_intr(int inuser, uint64_t iaddr)
+void timer_intr(int inuser, uint64_t iaddr)
 {
     uint64_t abstime;
     rtclock_timer_t *mytimer;
@@ -172,7 +173,7 @@ void etimer_intr(int inuser, uint64_t iaddr)
      * schedule our next deadline 
      */
 
-    etimer_resync_deadlines();
+    timer_resync_deadlines();
 }
 
 /**
@@ -188,7 +189,7 @@ mpqueue_head_t *timer_queue_assign(uint64_t deadline)
     if (cdp->cpu_running) {
         queue = &cdp->rt_timer.queue;
         if (deadline < cdp->rt_timer.deadline) {
-            etimer_set_deadline(deadline);
+            timer_set_deadline(deadline);
         }
     } else {
         queue = &cpu_datap(master_cpu)->rt_timer.queue;
@@ -202,12 +203,9 @@ mpqueue_head_t *timer_queue_assign(uint64_t deadline)
  *
  * Used for coalescing timer deadlines.
  */
-uint64_t timer_call_slop(uint64_t deadline)
+uint64_t timer_call_slop(uint64_t deadline, uint64_t now, uint32_t flags, thread_t cthread, boolean_t *pratelimited)
 {
-    uint64_t now = mach_absolute_time();
-    if (deadline > now) {
-        return MIN((deadline - now) >> 3, NSEC_PER_MSEC);   /* Min of 12.5% and 1ms */
-    }
+    return 0;
 }
 
 /**
@@ -219,7 +217,7 @@ void timer_queue_cancel(mpqueue_head_t * queue, uint64_t deadline, uint64_t new_
 {
     if (queue == &current_cpu_datap()->rt_timer.queue) {
         if (deadline < new_deadline) {
-            etimer_set_deadline(new_deadline);
+            timer_set_deadline(new_deadline);
         }
     }
 }

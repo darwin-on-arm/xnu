@@ -555,6 +555,19 @@ C_RULE_2_D=${C_RULE_2}
 C_RULE_3_D=${C_RULE_3}
 C_RULE_4_D=${C_RULE_4}
 
+ifeq ($(DO_CTFMACHO), 1)
+C_CTFRULE_1A=${C_RULE_1A} -o $@.non_lto $(CFLAGS_NOLTO_FLAG) 
+C_CTFRULE_1B=$(<F)
+C_CTFRULE_2=$(_v)if [ -z "${$@_SKIP_CTFCONVERT}" ]; then ${CTFCONVERT} -l xnu -v -o $@.non_lto.ctf $@.non_lto > /dev/null || true; fi
+else
+C_CTFRULE_1A=@true 
+C_CTFRULE_1B=
+C_CTFRULE_2=@true 
+endif
+P_CTFRULE_1A=@true 
+P_CTFRULE_1B=
+P_CTFRULE_2=@true 
+
 #
 # Compilation rules to generate .co from .cp or .cpo from .cpp
 #   The config tool slickly changes the last source filename char to 'o'

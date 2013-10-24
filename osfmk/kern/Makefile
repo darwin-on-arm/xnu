@@ -17,7 +17,6 @@ EXPORT_ONLY_FILES = \
 	cpu_number.h \
 	cpu_data.h \
 	debug.h \
-	etimer.h \
 	extmod_statistics.h \
 	ipc_mig.h \
 	ipc_misc.h \
@@ -38,6 +37,7 @@ EXPORT_ONLY_FILES = \
 	simple_lock.h \
 	startup.h \
 	task.h \
+	telemetry.h \
 	thread.h \
 	thread_call.h \
 	wait_queue.h \

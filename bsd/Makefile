@@ -16,7 +16,6 @@ INSTINC_SUBDIRS = \
 	machine \
 	miscfs \
 	net \
-	netat \
 	netinet \
 	netinet6 \
 	netkey \
@@ -49,7 +48,6 @@ EXPINC_SUBDIRS = \
 	machine \
 	miscfs \
 	net \
-	netat \
 	netinet \
 	netinet6 \
 	netkey \

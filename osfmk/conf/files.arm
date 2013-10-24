@@ -8,7 +8,7 @@ OPTIONS/dynamic_num_nodes	optional dynamic_num_nodes
 OPTIONS/vtoc_compat	optional vtoc_compat
 OPTIONS/fddi		optional fddi
 
-osfmk/console/panic_dialog.c	     optional  vc device-driver
+#osfmk/console/panic_dialog.c	     optional  vc device-driver
 osfmk/console/video_console.c        optional  vc device-driver
 osfmk/console/arm/video_scroll.c	optional vc device-driver
 osfmk/console/arm/serial_console.c	optional vc

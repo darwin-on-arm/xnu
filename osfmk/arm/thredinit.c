@@ -376,7 +376,7 @@ void thread_set_child(thread_t child, int pid)
     return;
 }
 
-void thread_set_wq_state32(thread_t thread, thread_state_t tstate)
+kern_return_t thread_set_wq_state32(thread_t thread, thread_state_t tstate)
 {
     arm_thread_state_t *state;
     arm_saved_state_t *saved_state;
@@ -414,4 +414,6 @@ void thread_set_wq_state32(thread_t thread, thread_state_t tstate)
         thread_unlock(thread);
         splx(s);
     }
+
+    return KERN_SUCCESS;
 }

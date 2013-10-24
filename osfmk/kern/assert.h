@@ -83,8 +83,6 @@ __END_DECLS
 
 #if	MACH_ASSERT
 
-#undef assert
-
 #define assert(ex)  \
 	((ex) ? (void)0 : Assert(__FILE__, __LINE__, # ex))
 #define	assert_static(x)	assert(x)

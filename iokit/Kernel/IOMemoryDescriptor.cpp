@@ -88,13 +88,9 @@ unsigned int  IOTranslateCacheBits(struct phys_entry *pp);
 
 __END_DECLS
 
-#define kIOMaximumMappedIOByteCount	(512*1024*1024)
-
 #define kIOMapperWaitSystem	((IOMapper *) 1)
 
 static IOMapper * gIOSystemMapper = NULL;
-
-static ppnum_t	  gIOMaximumMappedIOPageCount = atop_32(kIOMaximumMappedIOByteCount);
 
 ppnum_t		  gIOLastPage;
 
@@ -156,9 +152,10 @@ struct ioGMDData {
     addr64_t    fMappedBase;
     uint64_t fPreparationID;
     unsigned int fPageCnt;
+    unsigned char fDiscontig;
 #if __LP64__
     // align arrays to 8 bytes so following macros work
-    unsigned int fPad;
+    unsigned char fPad[3];
 #endif
     upl_page_info_t fPageList[1]; /* variable length */
     ioPLBlock fBlocks[1]; /* variable length */
@@ -684,13 +681,17 @@ IOGeneralMemoryDescriptor::initWithOptions(void *	buffers,
 		IODelete(_ranges.v, IOVirtualRange, _rangesCount);
 	}
 
-	if (_memEntry)
+	options |= (kIOMemoryRedirected & _flags);
+	if (!(kIOMemoryRedirected & options))
 	{
-	    ipc_port_release_send((ipc_port_t) _memEntry);
-	    _memEntry = 0;
+	    if (_memEntry)
+	    {
+		ipc_port_release_send((ipc_port_t) _memEntry);
+		_memEntry = 0;
+	    }
+	    if (_mappings)
+		_mappings->flushCollection();
 	}
-	if (_mappings)
-	    _mappings->flushCollection();
     }
     else {
         if (!super::init())
@@ -906,14 +907,21 @@ void IOGeneralMemoryDescriptor::free()
 	reserved->dp.memory = 0;
 	UNLOCK;
     }
-
-    if ((kIOMemoryTypePhysical != type) && (kIOMemoryTypePhysical64 != type))
+    if ((kIOMemoryTypePhysical == type) || (kIOMemoryTypePhysical64 == type))
     {
-	while (_wireCount)
-	    complete();
+	ioGMDData * dataP;
+	if (_memoryEntries && (dataP = getDataP(_memoryEntries)) && dataP->fMappedBase)
+	{
+	    dataP->fMapper->iovmFree(atop_64(dataP->fMappedBase), _pages);
+	    dataP->fMappedBase = 0;
+	}
     }
-    if (_memoryEntries)
-        _memoryEntries->release();
+    else
+    {
+	while (_wireCount) complete();
+    }
+
+    if (_memoryEntries) _memoryEntries->release();
 
     if (_ranges.v && !(kIOMemoryAsReference & _flags))
     {
@@ -1196,19 +1204,16 @@ IOReturn IOGeneralMemoryDescriptor::dmaCommandOperation(DMACommandOps op, void *
 
 	if (_memoryEntries && data->fMapper)
 	{
-	    bool remap = false;
+	    bool remap;
 	    bool whole = ((data->fOffset == 0) && (data->fLength == _length));
 	    dataP = getDataP(_memoryEntries);
-	    if (data->fMapSpec.numAddressBits < dataP->fDMAMapNumAddressBits)
-	    {
-	     	dataP->fDMAMapNumAddressBits = data->fMapSpec.numAddressBits;
-		remap = ((dataP->fMappedBase + _length) > (1ULL << dataP->fDMAMapNumAddressBits));
-	    }
-	    if (data->fMapSpec.alignment > dataP->fDMAMapAlignment)
-	    {
-	     	dataP->fDMAMapAlignment = data->fMapSpec.alignment;
-		remap |= (dataP->fDMAMapAlignment > page_size);
-	    }
+
+	    if (data->fMapSpec.numAddressBits < dataP->fDMAMapNumAddressBits) dataP->fDMAMapNumAddressBits = data->fMapSpec.numAddressBits;
+	    if (data->fMapSpec.alignment      > dataP->fDMAMapAlignment)      dataP->fDMAMapAlignment      = data->fMapSpec.alignment;
+
+	    remap = (dataP->fDMAMapNumAddressBits < 64)
+	    	 && ((dataP->fMappedBase + _length) > (1ULL << dataP->fDMAMapNumAddressBits));
+	    remap |= (dataP->fDMAMapAlignment > page_size);
 	    remap |= (!whole);
 	    if (remap || !dataP->fMappedBase)
 	    {
@@ -1225,6 +1230,7 @@ IOReturn IOGeneralMemoryDescriptor::dmaCommandOperation(DMACommandOps op, void *
 	    	data->fAlloc = dataP->fMappedBase;
 		data->fAllocCount = 0; 				// IOMD owns the alloc
 	    }
+	    data->fMapContig = !dataP->fDiscontig;
 	}
 
 	return (err);				
@@ -1767,6 +1773,7 @@ IOMemoryDescriptor::dmaCommandOperation(DMACommandOps op, void *vData, UInt data
 
 	if (params) panic("class %s does not support IODMACommand::kIterateOnly", getMetaClass()->getClassName());
 
+	data->fMapContig = true;
 	err = md->dmaMap(data->fMapper, &data->fMapSpec, data->fOffset, data->fLength, &data->fAlloc, &data->fAllocCount);
 	return (err);				
     }
@@ -1781,7 +1788,10 @@ purgeableControlBits(IOOptionBits newState, vm_purgable_t * control, int * state
     IOReturn err = kIOReturnSuccess;
 
     *control = VM_PURGABLE_SET_STATE;
-    switch (newState)
+
+    enum { kIOMemoryPurgeableControlMask = 15 };
+
+    switch (kIOMemoryPurgeableControlMask & newState)
     {
 	case kIOMemoryPurgeableKeepCurrent:
 	    *control = VM_PURGABLE_GET_STATE;
@@ -1791,7 +1801,7 @@ purgeableControlBits(IOOptionBits newState, vm_purgable_t * control, int * state
 	    *state = VM_PURGABLE_NONVOLATILE;
 	    break;
 	case kIOMemoryPurgeableVolatile:
-	    *state = VM_PURGABLE_VOLATILE;
+	    *state = VM_PURGABLE_VOLATILE | (newState & ~kIOMemoryPurgeableControlMask);
 	    break;
 	case kIOMemoryPurgeableEmpty:
 	    *state = VM_PURGABLE_EMPTY;
@@ -1808,7 +1818,7 @@ purgeableStateBits(int * state)
 {
     IOReturn err = kIOReturnSuccess;
 
-    switch (*state)
+    switch (VM_PURGABLE_STATE_MASK & *state)
     {
 	case VM_PURGABLE_NONVOLATILE:
 	    *state = kIOMemoryPurgeableNonVolatile;
@@ -1850,6 +1860,11 @@ IOGeneralMemoryDescriptor::setPurgeable( IOOptionBits newState,
 	    if (_task == kernel_task && (kIOMemoryBufferPageable & _flags))
 	    {
 		err = kIOReturnNotReady;
+		break;
+	    }
+	    else if (!_task)
+	    {
+		err = kIOReturnUnsupported;
 		break;
 	    }
 	    else
@@ -1919,6 +1934,43 @@ IOReturn IOMemoryDescriptor::setPurgeable( IOOptionBits newState,
 
     return (err);
 }
+
+ 
+IOReturn IOMemoryDescriptor::getPageCounts( IOByteCount * residentPageCount,
+                                     	    IOByteCount * dirtyPageCount )
+{
+   IOReturn err = kIOReturnSuccess;
+   unsigned int _residentPageCount, _dirtyPageCount;
+
+   if (kIOMemoryThreadSafe & _flags) LOCK;
+
+    do 
+    {
+       if (!_memEntry)
+       {
+	   err = kIOReturnNotReady;
+	   break;
+       }
+       if ((residentPageCount == NULL) && (dirtyPageCount == NULL))
+       {
+	   err = kIOReturnBadArgument;
+	   break;
+       }
+
+       err = mach_memory_entry_get_page_counts((ipc_port_t) _memEntry, 
+						residentPageCount ? &_residentPageCount : NULL,
+						dirtyPageCount    ? &_dirtyPageCount    : NULL);
+       if (kIOReturnSuccess != err) break;
+       if (residentPageCount) *residentPageCount = _residentPageCount;
+       if (dirtyPageCount)    *dirtyPageCount    = _dirtyPageCount;
+    }
+    while (false);
+
+    if (kIOMemoryThreadSafe & _flags) UNLOCK;
+
+    return (err);
+}
+ 
 
 extern "C" void dcache_incoherent_io_flush64(addr64_t pa, unsigned int count);
 extern "C" void dcache_incoherent_io_store64(addr64_t pa, unsigned int count);
@@ -2061,22 +2113,13 @@ IOReturn IOGeneralMemoryDescriptor::wireVirtual(IODirection forDirection)
     IOReturn error = kIOReturnCannotWire;
     ioGMDData *dataP;
     upl_page_info_array_t pageInfo;
-    ppnum_t mapBase = 0;
-    ipc_port_t sharedMem = (ipc_port_t) _memEntry;
+    ppnum_t mapBase;
+    ipc_port_t sharedMem;
 
-    assert(!_wireCount);
     assert(kIOMemoryTypeVirtual == type || kIOMemoryTypeVirtual64 == type || kIOMemoryTypeUIO == type);
 
-    if (_pages > gIOMaximumMappedIOPageCount)
-	return kIOReturnNoResources;
-
-    dataP = getDataP(_memoryEntries);
-    IOMapper *mapper;
-    mapper = dataP->fMapper;
-    dataP->fMappedBase = 0;
-
-    if (forDirection == kIODirectionNone)
-        forDirection = getDirection();
+    if ((kIODirectionOutIn & forDirection) == kIODirectionNone)
+        forDirection = (IODirection) (forDirection | getDirection());
 
     int uplFlags;    // This Mem Desc's default flags for upl creation
     switch (kIODirectionOutIn & forDirection)
@@ -2084,7 +2127,6 @@ IOReturn IOGeneralMemoryDescriptor::wireVirtual(IODirection forDirection)
     case kIODirectionOut:
         // Pages do not need to be marked as dirty on commit
         uplFlags = UPL_COPYOUT_FROM;
-        _flags |= kIOMemoryPreparedReadOnly;
         break;
 
     case kIODirectionIn:
@@ -2092,15 +2134,34 @@ IOReturn IOGeneralMemoryDescriptor::wireVirtual(IODirection forDirection)
         uplFlags = 0;	// i.e. ~UPL_COPYOUT_FROM
         break;
     }
-    uplFlags |= UPL_SET_IO_WIRE | UPL_SET_LITE;
 
-#ifdef UPL_NEED_32BIT_ADDR
+    if (_wireCount)
+    {
+        if ((kIOMemoryPreparedReadOnly & _flags) && !(UPL_COPYOUT_FROM & uplFlags))
+        {
+	    OSReportWithBacktrace("IOMemoryDescriptor 0x%lx prepared read only", VM_KERNEL_ADDRPERM(this));
+	    error = kIOReturnNotWritable;
+        }
+        else error = kIOReturnSuccess;
+	return (error);
+    }
+
+    dataP = getDataP(_memoryEntries);
+    IOMapper *mapper;
+    mapper = dataP->fMapper;
+    dataP->fMappedBase = 0;
+
+    uplFlags |= UPL_SET_IO_WIRE | UPL_SET_LITE;
     if (kIODirectionPrepareToPhys32 & forDirection) 
     {
 	if (!mapper) uplFlags |= UPL_NEED_32BIT_ADDR;
 	if (dataP->fDMAMapNumAddressBits > 32) dataP->fDMAMapNumAddressBits = 32;
     }
-#endif
+    if (kIODirectionPrepareNoFault    & forDirection) uplFlags |= UPL_REQUEST_NO_FAULT;
+    if (kIODirectionPrepareNoZeroFill & forDirection) uplFlags |= UPL_NOZEROFILLIO;
+
+    mapBase = 0;
+    sharedMem = (ipc_port_t) _memEntry;
 
     // Note that appendBytes(NULL) zeros the data up to the desired length.
     _memoryEntries->appendBytes(0, dataP->fPageCnt * sizeof(upl_page_info_t));
@@ -2115,9 +2176,9 @@ IOReturn IOGeneralMemoryDescriptor::wireVirtual(IODirection forDirection)
 
     // Iterate over the vector of virtual ranges
     Ranges vec = _ranges;
-    unsigned int pageIndex = 0;
-    IOByteCount mdOffset = 0;
-    ppnum_t highestPage = 0;
+    unsigned int pageIndex  = 0;
+    IOByteCount mdOffset    = 0;
+    ppnum_t highestPage     = 0;
 
     for (UInt range = 0; range < _rangesCount; range++) {
         ioPLBlock iopl;
@@ -2199,7 +2260,7 @@ IOReturn IOGeneralMemoryDescriptor::wireVirtual(IODirection forDirection)
 
             if (baseInfo->device) {
                 numPageInfo = 1;
-                iopl.fFlags  = kIOPLOnDevice;
+                iopl.fFlags = kIOPLOnDevice;
             }
             else {
                 iopl.fFlags = 0;
@@ -2207,6 +2268,7 @@ IOReturn IOGeneralMemoryDescriptor::wireVirtual(IODirection forDirection)
 
             iopl.fIOMDOffset = mdOffset;
             iopl.fPageInfo = pageIndex;
+            if (mapper && pageIndex && (page_mask & (mdOffset + iopl.fPageOffset))) dataP->fDiscontig = true;
 
 #if 0
 	    // used to remove the upl for auto prepares here, for some errant code
@@ -2248,6 +2310,8 @@ IOReturn IOGeneralMemoryDescriptor::wireVirtual(IODirection forDirection)
 
     _highestPage = highestPage;
 
+    if (UPL_COPYOUT_FROM & uplFlags) _flags |= kIOMemoryPreparedReadOnly;
+
     return kIOReturnSuccess;
 
 abortExit:
@@ -2268,6 +2332,8 @@ abortExit:
 
     if (error == KERN_FAILURE)
         error = kIOReturnCannotWire;
+    else if (error == KERN_MEMORY_ERROR)
+        error = kIOReturnNoResources;
 
     return error;
 }
@@ -2298,6 +2364,7 @@ bool IOGeneralMemoryDescriptor::initMemoryEntries(size_t size, IOMapper * mapper
     dataP->fDMAMapNumAddressBits = 64;
     dataP->fDMAMapAlignment      = 0;
     dataP->fPreparationID        = kIOPreparationIDUnprepared;
+    dataP->fDiscontig            = false;
 
     return (true);
 }
@@ -2455,9 +2522,9 @@ IOReturn IOGeneralMemoryDescriptor::prepare(IODirection forDirection)
     if (_prepareLock)
 	IOLockLock(_prepareLock);
 
-    if (!_wireCount
-    && (kIOMemoryTypeVirtual == type || kIOMemoryTypeVirtual64 == type || kIOMemoryTypeUIO == type) ) {
-        error = wireVirtual(forDirection);
+    if (kIOMemoryTypeVirtual == type || kIOMemoryTypeVirtual64 == type || kIOMemoryTypeUIO == type)
+    {
+	error = wireVirtual(forDirection);
     }
 
     if (kIOReturnSuccess == error)
@@ -3343,8 +3410,22 @@ IOReturn IOMemoryDescriptor::redirect( task_t safeTask, bool doRedirect )
 
     do {
 	if( (iter = OSCollectionIterator::withCollection( _mappings))) {
+
+	    memory_object_t   pager;
+
+	    if( reserved)
+		pager = (memory_object_t) reserved->dp.devicePager;
+	    else
+		pager = MACH_PORT_NULL;
+
 	    while( (mapping = (IOMemoryMap *) iter->getNextObject()))
+	    {
 		mapping->redirect( safeTask, doRedirect );
+		if (!doRedirect && !safeTask && pager && (kernel_map == mapping->fAddressMap))
+		{
+		    err = handleFault( pager, mapping->fAddressMap, mapping->fAddress, mapping->fOffset, mapping->fLength, kIOMapDefaultCache );
+		}
+	    }
 
 	    iter->release();
 	}
@@ -3423,6 +3504,8 @@ IOReturn IOMemoryMap::unmap( void )
 
     if( fAddress && fAddressMap && (0 == fSuperMap) && fMemory
 	&& (0 == (fOptions & kIOMapStatic))) {
+
+        vm_map_iokit_unmapped_region(fAddressMap, fLength);
 
         err = fMemory->doUnmap(fAddressMap, (IOVirtualAddress) this, 0);
 
@@ -3652,12 +3735,7 @@ void IOMemoryDescriptor::initialize( void )
     if( 0 == gIOMemoryLock)
 	gIOMemoryLock = IORecursiveLockAlloc();
 
-    IORegistryEntry::getRegistryRoot()->setProperty(kIOMaximumMappedIOByteCountKey,
-						    ptoa_64(gIOMaximumMappedIOPageCount), 64);
     gIOLastPage = IOGetLastPageNumber();
-
-    gIOPageAllocLock = IOSimpleLockAlloc();
-    queue_init(&gIOPageAllocList);
 }
 
 void IOMemoryDescriptor::free( void )
@@ -3909,6 +3987,10 @@ IOMemoryMap * IOMemoryDescriptor::makeMapping(
 	kr = mapDesc->doMap( 0, (IOVirtualAddress *) &mapping, options, 0, 0 );
 	if (kIOReturnSuccess == kr)
 	{
+	    if (0 == (mapping->fOptions & kIOMapStatic)) {
+            vm_map_iokit_mapped_region(mapping->fAddressMap, length);
+        }
+
 	    result = mapping;
 	    mapDesc->addMapping(result);
 	    result->setMemoryDescriptor(mapDesc, offset);

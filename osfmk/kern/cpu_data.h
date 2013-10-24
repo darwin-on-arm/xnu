@@ -45,6 +45,14 @@
 
 __BEGIN_DECLS
 
+extern void		_disable_preemption(void);
+extern void		_enable_preemption(void);
+
+#ifndef __arm__
+#define disable_preemption()			_disable_preemption()
+#define enable_preemption()			_enable_preemption()
+#endif
+
 __END_DECLS
 
 #endif	/* _KERN_CPU_DATA_H_ */

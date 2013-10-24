@@ -896,7 +896,7 @@ unsigned int pmap_get_refmod(ppnum_t pn)
  */
 void pmap_enter(pmap_t pmap, vm_map_offset_t va, ppnum_t pa, vm_prot_t prot, vm_prot_t fault_type, unsigned int flags, boolean_t wired)
 {
-    pmap_enter_options(pmap, va, pa, prot, fault_type, flags, wired, 0);
+    pmap_enter_options(pmap, va, pa, prot, fault_type, flags, wired, 0, NULL);
 }
 
 /**
@@ -1067,9 +1067,9 @@ void pmap_expand(pmap_t map, vm_offset_t v)
     SPLVM(spl);
 
     /*
-     * Do not extend past the commpage. 
+     * Do not extend past the commpage. Only on non-kernel pmap.
      */
-    if (v > _COMM_PAGE_BASE_ADDRESS)
+    if (v > _COMM_PAGE_BASE_ADDRESS && map != kernel_pmap)
         panic("attempting to expand pmap past maximum address of %x\n", _COMM_PAGE_BASE_ADDRESS);
 
     /*
@@ -1099,7 +1099,7 @@ void pmap_expand(pmap_t map, vm_offset_t v)
  * Create a translation entry for a PA->VA mappings with additional options.
  * Called from vm_fault.
  */
-kern_return_t pmap_enter_options(pmap_t pmap, vm_map_offset_t va, ppnum_t pa, vm_prot_t prot, vm_prot_t fault_type, unsigned int flags, boolean_t wired, unsigned int options)
+kern_return_t pmap_enter_options(pmap_t pmap, vm_map_offset_t va, ppnum_t pa, vm_prot_t prot, vm_prot_t fault_type, unsigned int flags, boolean_t wired, unsigned int options, void* arg)
 {
     spl_t spl;
     pt_entry_t pte;

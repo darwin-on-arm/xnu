@@ -109,9 +109,7 @@
 #include <sys/kdebug.h>
 
 #include "iso_font.c"
-#if !CONFIG_EMBEDDED
 #include "progress_meter_data.c"
-#endif
 
 #include <kern/wait_queue.h>
 
@@ -2744,9 +2742,7 @@ initialize_screen(PE_Video * boot_vinfo, unsigned int op)
 			if ( gc_graphics_boot == FALSE ) break;
 
 			vc_progress_set( FALSE, 0 );
-#if !CONFIG_EMBEDDED
 			vc_enable_progressmeter( FALSE );
-#endif
 			gc_enable( TRUE );
 			break;
 
@@ -2757,9 +2753,7 @@ initialize_screen(PE_Video * boot_vinfo, unsigned int op)
 			if ( gc_graphics_boot == FALSE ) break;
 
 			vc_progress_set( FALSE, 0 );
-#if !CONFIG_EMBEDDED
 			vc_enable_progressmeter( FALSE );
-#endif
 
 			vc_clut8 = NULL;
 #ifdef GRATEFULDEBUGGER
@@ -2839,7 +2833,6 @@ vcattach(void)
 	}
 }
 
-#if !CONFIG_EMBEDDED
 
 int vc_progress_meter_enable;
 int vc_progress_meter_value;
@@ -2979,5 +2972,4 @@ vc_set_progressmeter(int new_value)
     splx(s);
 }
 
-#endif /* !CONFIG_EMBEDDED */
 

@@ -96,6 +96,10 @@
 #error architecture not supported
 #endif
 
+#define KEXT_ALLOC_MAX_OFFSET (2 * 1024 * 1024 * 1024UL)
+#define KEXT_ALLOC_BASE(x)  ((x) - KEXT_ALLOC_MAX_OFFSET)
+#define KEXT_ALLOC_SIZE(x)  (KEXT_ALLOC_MAX_OFFSET - (x))
+
 /*
  *	Physical memory is mapped linearly at an offset virtual memory.
  */

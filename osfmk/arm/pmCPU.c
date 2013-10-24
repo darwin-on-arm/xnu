@@ -38,7 +38,7 @@
 #include <kern/thread.h>
 #include <arm/misc_protos.h>
 
-void thread_tell_urgency(int urgency, uint64_t rt_period, uint64_t rt_deadline)
+void thread_tell_urgency(int urgency, uint64_t rt_period, uint64_t rt_deadline, thread_t nthread)
 {
     return;
 }

@@ -288,8 +288,10 @@ void DebuggerCommon(__unused unsigned int reason, void *ctx, const char *message
         /*
          * Draw the panic dialog. 
          */
+#if 0
         if (!PE_reboot_on_panic())
             draw_panic_dialog();
+#endif
 
         /*
          * Go into the debugger with a dummy state. 
@@ -309,8 +311,10 @@ void DebuggerCommon(__unused unsigned int reason, void *ctx, const char *message
         /*
          * Draw the panic dialog. 
          */
+#if 0
         if (!PE_reboot_on_panic())
             draw_panic_dialog();
+#endif
 
         /*
          * Go into the debugger. 

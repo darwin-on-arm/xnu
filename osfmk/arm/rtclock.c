@@ -43,7 +43,6 @@
 #include <kern/misc_protos.h>
 #include <kern/spl.h>
 #include <kern/assert.h>
-#include <kern/etimer.h>
 #include <mach/vm_prot.h>
 #include <vm/pmap.h>
 #include <vm/vm_kern.h>         /* for kernel_map */
@@ -113,7 +112,7 @@ void rtclock_intr(arm_saved_state_t * regs)
      */
 
     spl_t x = splclock();
-    etimer_intr(0, 0);
+    timer_intr(0, 0);
     splx(x);
 
     return;
@@ -124,7 +123,7 @@ uint64_t mach_absolute_time(void)
     return pe_arm_get_timebase(NULL);
 }
 
-void machine_delay_until(uint64_t deadline)
+void machine_delay_until(uint64_t interval, uint64_t deadline)
 {
     uint64_t now;
 

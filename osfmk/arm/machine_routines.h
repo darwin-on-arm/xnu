@@ -255,5 +255,7 @@ void interrupt_latency_tracker_setup(void);
 void interrupt_reset_latency_stats(void);
 void interrupt_populate_latency_stats(char *, unsigned);
 
+#define TCOAL_DEBUG(x, a, b, c, d, e) do { } while(0)
+
 #endif                          /* XNU_KERNEL_PRIVATE */
 #endif                          /* _I386_MACHINE_ROUTINES_H_ */

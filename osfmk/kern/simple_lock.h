@@ -75,7 +75,9 @@
 #include <kern/kern_types.h>
 #include <machine/simple_lock.h>
 
-#include <machine/lock.h>
+#ifdef __arm__
+#include <arm/lock.h>
+#endif
 
 #ifdef	MACH_KERNEL_PRIVATE
 #include <mach_ldebug.h>
@@ -126,18 +128,6 @@ extern uint32_t			hw_atomic_and(
 extern void			hw_atomic_or_noret(
 					volatile uint32_t	*dest,
 					uint32_t	mask);
-
-
-extern void			hw_atomic_and_noret(
-					volatile uint32_t	*dest,
-					uint32_t	mask);
-
-
-#ifdef __arm__
-#define hw_atomic_or     hw_atomic_or_noret
-#define hw_atomic_and    hw_atomic_and_noret
-#endif
-
 /*
  * Variant of hw_atomic_and which doesn't return a value; potentially
  * more efficient on some platforms.
@@ -179,6 +169,11 @@ extern void			usimple_unlock(
 
 extern unsigned int		usimple_lock_try(
 					usimple_lock_t);
+
+#ifdef __arm__
+#define hw_atomic_or     hw_atomic_or_noret
+#define hw_atomic_and    hw_atomic_and_noret
+#endif
 
 __END_DECLS
 

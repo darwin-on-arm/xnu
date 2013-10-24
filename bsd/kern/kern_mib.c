@@ -97,6 +97,7 @@
 #include <mach/vm_param.h>
 #include <kern/task.h>
 #include <vm/vm_kern.h>
+#include <vm/vm_map.h>
 #include <mach/host_info.h>
 #include <kern/pms.h>
 
@@ -237,6 +238,13 @@ sysctl_hw_generic(__unused struct sysctl_oid *oidp, __unused void *arg1,
 		} else {
 			return(EINVAL);
 		}
+	case HW_PAGESIZE:
+	{
+		vm_map_t map = get_task_map(current_task());
+		val = vm_map_page_size(map);
+		qval = (long long)val;
+		break;
+	}
 	case HW_CACHELINE:
 		val = cpu_info.cache_line_size;
 		qval = (long long)val;
@@ -318,7 +326,8 @@ static int
 sysctl_pagesize
 (__unused struct sysctl_oid *oidp, __unused void *arg1, __unused int arg2, struct sysctl_req *req)
 {
-	long long l = page_size;
+	vm_map_t map = get_task_map(current_task());
+	long long l = vm_map_page_size(map);
 	return sysctl_io_number(req, l, sizeof(l), NULL, NULL);
 }
 
@@ -386,7 +395,7 @@ SYSCTL_INT(_hw_optional, OID_AUTO, floatingpoint, CTLFLAG_RD | CTLFLAG_KERN | CT
  *
  * The *_compat nodes are *NOT* visible within the kernel.
  */
-SYSCTL_COMPAT_INT (_hw, HW_PAGESIZE,     pagesize_compat, CTLFLAG_RD | CTLFLAG_MASKED | CTLFLAG_LOCKED, &page_size, 0, "");
+SYSCTL_PROC(_hw, HW_PAGESIZE,     pagesize_compat, CTLTYPE_INT | CTLFLAG_RD | CTLFLAG_MASKED | CTLFLAG_LOCKED, 0, HW_PAGESIZE, sysctl_hw_generic, "I", "");
 SYSCTL_COMPAT_INT (_hw, HW_BUS_FREQ,     busfrequency_compat, CTLFLAG_RD | CTLFLAG_MASKED | CTLFLAG_LOCKED, &gPEClockFrequencyInfo.bus_clock_rate_hz, 0, "");
 SYSCTL_COMPAT_INT (_hw, HW_CPU_FREQ,     cpufrequency_compat, CTLFLAG_RD | CTLFLAG_MASKED | CTLFLAG_LOCKED, &gPEClockFrequencyInfo.cpu_clock_rate_hz, 0, "");
 SYSCTL_PROC(_hw, HW_CACHELINE,    cachelinesize_compat, CTLTYPE_INT | CTLFLAG_RD | CTLFLAG_MASKED | CTLFLAG_LOCKED, 0, HW_CACHELINE, sysctl_hw_generic, "I", "");
@@ -502,21 +511,6 @@ sysctl_mib_init(void)
 	}
 
 #if defined (__i386__) || defined (__x86_64__)
-#define is_capability_set(k) (((_get_cpu_capabilities() & (k)) == (k)) ? 1 : 0)
-	mmx_flag		= is_capability_set(kHasMMX);
-	sse_flag		= is_capability_set(kHasSSE);
-	sse2_flag		= is_capability_set(kHasSSE2);
-	sse3_flag		= is_capability_set(kHasSSE3);
-	supplementalsse3_flag	= is_capability_set(kHasSupplementalSSE3);
-	sse4_1_flag		= is_capability_set(kHasSSE4_1);
-	sse4_2_flag		= is_capability_set(kHasSSE4_2);
-	x86_64_flag		= is_capability_set(k64Bit);
-	aes_flag		= is_capability_set(kHasAES);
-	avx1_0_flag		= is_capability_set(kHasAVX1_0);
-	rdrand_flag		= is_capability_set(kHasRDRAND);
-	f16c_flag		= is_capability_set(kHasF16C);
-	enfstrg_flag		= is_capability_set(kHasENFSTRG);
-
 	/* hw.cpufamily */
 	cpufamily = cpuid_cpufamily();
 
