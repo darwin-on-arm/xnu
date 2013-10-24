@@ -61,7 +61,7 @@ $BUILDER2 =~ s/[\n\t]//g;
 my $HOST=`hostname -f`;
 $HOST =~ s/[\n\t]//g;
 
-my $BUILDER = $BUILDER2 . "(" . $HOST . ")";
+my $BUILDER = $BUILDER2;
 
 # Handle two scenarios:
 # SRCROOT=/tmp/xnu
