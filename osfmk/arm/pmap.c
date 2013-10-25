@@ -1151,12 +1151,6 @@ kern_return_t pmap_enter_options(pmap_t pmap, vm_map_offset_t va, ppnum_t pa, vm
     PMAP_LOCK(pmap);
 
     /*
-     * Make sure said PA is a valid one and is within the RAM boundaries. 
-     */
-    if ((avail_start >> PAGE_SHIFT) > pa || (avail_end >> PAGE_SHIFT) < pa)
-        return KERN_INVALID_ARGUMENT;
-
-    /*
      * If the old page already has a mapping, the caller might be changing protection flags.
      */
     uint32_t old_pte = (*(uint32_t *) pte);
@@ -1168,8 +1162,9 @@ kern_return_t pmap_enter_options(pmap_t pmap, vm_map_offset_t va, ppnum_t pa, vm
          */
 
         uint32_t template_pte = ((pa << PAGE_SHIFT) & L2_ADDR_MASK) | L2_SMALL_PAGE | L2_ACCESS_PRW;
-        if (!wired)
-            template_pte |= L2_ACCESS_USER;
+        if(!wired) /* xxx kill */
+            template_pte |= L2_ACCESS_USER; 
+
         /*
          * XXX add cacheability flags 
          */
@@ -1588,6 +1583,7 @@ pmap_t pmap_create(ledger_t ledger, vm_map_size_t size, __unused boolean_t is_64
         panic("pmap_create: allocating the new pmap failed");
     }
     our_pmap->pm_refcnt = 1;
+    our_pmap->ledger = ledger;
     pmap_common_init(our_pmap);
 
     /*

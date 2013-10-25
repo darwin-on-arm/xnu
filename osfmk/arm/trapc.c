@@ -578,11 +578,6 @@ void sleh_undef(arm_saved_state_t * state)
                  * Continue user execution. 
                  */
                 thread->machine.vfp_enable = TRUE;
-            } else {
-                /*
-                 * Just use the new exception state. 
-                 */
-                vfp_enable_exception(TRUE);
             }
             return;
         }
@@ -607,11 +602,6 @@ void sleh_undef(arm_saved_state_t * state)
                      * Continue user execution. 
                      */
                     thread->machine.vfp_enable = TRUE;
-                } else {
-                    /*
-                     * Just use the new exception state. 
-                     */
-                    vfp_enable_exception(TRUE);
                 }
                 return;
             }

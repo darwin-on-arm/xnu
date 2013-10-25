@@ -290,21 +290,6 @@ void arm_vm_init(uint32_t mem_limit, boot_args * args)
     kdb_printf("\tboot_args:               0x%08x\n" "\tboot_args->virtBase:     0x%08x\n" "\tboot_args->physBase:     0x%08x\n" "\tboot_args->topOfKernel:  0x%08x\n" "\tboot_args->memSize:      0x%08x\n", args, args->virtBase, args->physBase, args->topOfKernelData, args->memSize);
 
     /*
-     * WARNING WARNING WARNING THE CODE BLOCK BELOW IS A VERY BAD IDEA 
-     */
-#ifdef BOARD_CONFIG_S5L8930X
-    /*
-     * Bad hack only on 8930X. We have ~256MB "only". Bringup only.
-     * Something goes very wrong when we have 512MB, and I can't debug
-     * this issue right now. iBoot is weird. :|
-     */
-    args->memSize = 0xf000000;
-#endif
-    /*
-     * WARNING WARNING WARNING THE CODE BLOCK ABOVE IS A VERY BAD IDEA 
-     */
-
-    /*
      * Set up some globals. 
      */
     gPhysBase = args->physBase;

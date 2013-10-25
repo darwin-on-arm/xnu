@@ -12,7 +12,7 @@ bsd/dev/arm/memmove.c		standard
 bsd/dev/arm/stubs.c		standard
 bsd/dev/arm/unix_syscalls.c	standard
 #bsd/dev/arm/systemcalls.c	standard
-#bsd/dev/arm/unix_signal.c	standard
+bsd/dev/arm/unix_signals.c	standard
 
 # Support for identifying MACF calouts with locks held
 bsd/kern/policy_check.c			optional config_macf

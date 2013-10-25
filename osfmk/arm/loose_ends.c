@@ -65,6 +65,7 @@
 
 #include <kern/kern_types.h>
 #include <string.h>
+#include <arm/pmap.h>
 
 #define INT_SIZE	(BYTE_SIZE * sizeof (int))
 
@@ -159,5 +160,13 @@ size_t strlen(register const char *string)
  */
 void fillPage(ppnum_t pa, unsigned int fill)
 {
+#if 0
+    vm_offset_t v = phys_to_virt(pa << PAGE_SHIFT);
+    uint32_t i;
+
+    for(i = 0; i <= PAGE_SIZE; i += sizeof(uint32_t)) {
+        *(uint32_t*)((uintptr_t)v + i) = fill;
+    }
+#endif
     return;
 }

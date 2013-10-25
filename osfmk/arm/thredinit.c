@@ -253,6 +253,7 @@ static void save_vfp_context(thread_t thread)
     if (thread->machine.vfp_enable && !thread->machine.vfp_dirty) {
         vfp_context_save(&thread->machine.vfp_regs);
         vfp_enable_exception(FALSE);
+        thread->machine.vfp_enable = FALSE;
     }
 }
 

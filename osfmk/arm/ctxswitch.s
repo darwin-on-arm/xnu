@@ -152,6 +152,7 @@ return_to_user:
     ldr     r0, [sp, #0x40]
     
     msr     spsr_cxsf, r0
+    clrex
     ldr     lr, [sp, #0x3C]
     
     ldmfd   sp, {r0-lr}^
