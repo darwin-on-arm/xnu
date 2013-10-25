@@ -184,5 +184,16 @@ mmu_initialized:
 .data
 .align 4
 .globl _intstack_top
+.globl _intstack
+_intstack:
 .space (8192), 0
 _intstack_top:
+
+/*
+ * ARM SMP stack.
+ */
+.globl _debstack_top
+.globl _debstack
+_debstack:
+.space (8192), 0
+_debstack_top:

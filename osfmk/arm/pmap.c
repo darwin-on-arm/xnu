@@ -119,6 +119,14 @@ lock_t pmap_system_lock;
 #define SPLVM(spl)          spl = splhigh();
 #define SPLX(spl)           splx(spl);
 
+#define PMAP_LOCK(pmap) {       \
+    simple_lock(&(pmap)->lock); \
+}
+
+#define PMAP_UNLOCK(pmap) {         \
+    simple_unlock(&(pmap)->lock);       \
+}
+
 /** Useful Macros */
 #define pa_index(pa)        (atop(pa))
 #define pai_to_pvh(pai)     (&pv_head_table[pai - atop(gPhysBase)])
@@ -975,6 +983,7 @@ vm_offset_t pmap_extract(pmap_t pmap, vm_offset_t virt)
      * as the page tables may be changed by another callee to pmap_enter or such.
      */
     SPLVM(spl);
+    PMAP_LOCK(pmap);
     if (!ttep)
         goto extract_out;
 
@@ -1047,6 +1056,7 @@ vm_offset_t pmap_extract(pmap_t pmap, vm_offset_t virt)
      * Return.
      */
     SPLX(spl);
+    PMAP_UNLOCK(pmap);
     return ppn;
 }
 
@@ -1065,6 +1075,7 @@ void pmap_expand(pmap_t map, vm_offset_t v)
      * High priority. We do not want any interruptions.
      */
     SPLVM(spl);
+    PMAP_LOCK(map);
 
     /*
      * Do not extend past the commpage. 
@@ -1090,6 +1101,7 @@ void pmap_expand(pmap_t map, vm_offset_t v)
      */
     flush_mmu_tlb();
     SPLX(spl);
+    PMAP_UNLOCK(map);
     return;
 }
 
@@ -1124,16 +1136,19 @@ kern_return_t pmap_enter_options(pmap_t pmap, vm_map_offset_t va, ppnum_t pa, vm
      * page table modification.
      */
     SPLVM(spl);
+    PMAP_LOCK(pmap);
 
     /*
      * Expand the pmap to include the new PTE if necessary to accomodate the new VA we're
      * entering in.
      */
+    PMAP_UNLOCK(pmap);
     while ((pte = pmap_pte(pmap, va)) == NULL) {
         SPLX(spl);
         pmap_expand(pmap, va);
         SPLVM(spl);
     }
+    PMAP_LOCK(pmap);
 
     /*
      * Make sure said PA is a valid one and is within the RAM boundaries. 
@@ -1307,6 +1322,8 @@ kern_return_t pmap_enter_options(pmap_t pmap, vm_map_offset_t va, ppnum_t pa, vm
      * The operation has completed successfully.
      */
     SPLX(spl);
+    PMAP_UNLOCK(pmap);
+
     return KERN_SUCCESS;
 }
 
@@ -1491,6 +1508,7 @@ void pmap_remove(pmap_t map, vm_offset_t s, vm_offset_t e)
     /*
      * High Priority. Nothing may interrupt the removal process.
      */
+    PMAP_LOCK(map);
     SPLVM(spl);
 
     while (s < e) {
@@ -1542,6 +1560,7 @@ void pmap_remove(pmap_t map, vm_offset_t s, vm_offset_t e)
      * Return. 
      */
     SPLX(spl);
+    PMAP_UNLOCK(map);
     return;
 }
 
@@ -1769,6 +1788,7 @@ void pmap_destroy(pmap_t pmap)
     if (pmap == kernel_pmap)
         panic("pmap_destroy: attempting to destroy kernel_pmap");
 
+    PMAP_LOCK(pmap);
     SPLVM(spl);
 
     /*
@@ -1786,6 +1806,7 @@ void pmap_destroy(pmap_t pmap)
      * Unlock the pmap system.
      */
     SPLX(spl);
+    PMAP_UNLOCK(pmap);
 
     /*
      * If the pmap still has a reference count, we don't kill it.
@@ -1857,6 +1878,8 @@ kern_return_t pmap_nest(pmap_t grand, pmap_t subord, addr64_t va_start, addr64_t
      */
     spl_t spl;
     SPLVM(spl);
+    PMAP_LOCK(grand);
+    PMAP_LOCK(subord);
 
     /*
      * Mark the surbodinate pmap as shared.
@@ -1869,6 +1892,9 @@ kern_return_t pmap_nest(pmap_t grand, pmap_t subord, addr64_t va_start, addr64_t
      */
     flush_mmu_tlb();
     SPLX(spl);
+    PMAP_UNLOCK(grand);
+    PMAP_UNLOCK(subord);
+
     return KERN_SUCCESS;
 }
 

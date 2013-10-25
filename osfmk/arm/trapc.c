@@ -497,7 +497,7 @@ void sleh_undef(arm_saved_state_t * state)
         /*
          * Handle if it's a NEON/VFP instruction. 
          */
-        thumb_offset = (state->cpsr & ~(1 << 5)) ? 1 : 0;
+        thumb_offset = (state->cpsr & (1 << 5)) ? 1 : 0;
         copyin((uint8_t *) (arm_ctx->pc + thumb_offset), &instruction, sizeof(uint32_t));
 
         /*
@@ -508,7 +508,7 @@ void sleh_undef(arm_saved_state_t * state)
         /*
          * NEON instruction. 
          */
-        if (((instruction & 0xff100000) == 0xf4000000) || ((instruction & 0xfe000000) == 0xf2000000)) {
+        if (((OSSwapInt32(instruction) & 0xff100000) == 0xf4000000) || ((OSSwapInt32(instruction) & 0xfe000000) == 0xf2000000)) {
             panic_context(0, (void *) arm_ctx, "sleh_undef: NEON usage in kernel mode\n"
                           "r0: 0x%08x  r1: 0x%08x  r2: 0x%08x  r3: 0x%08x\n"
                           "r4: 0x%08x  r5: 0x%08x  r6: 0x%08x  r7: 0x%08x\n"
@@ -552,7 +552,7 @@ void sleh_undef(arm_saved_state_t * state)
         /*
          * Get the current instruction. 
          */
-        thumb_offset = (state->cpsr & ~(1 << 5)) ? 1 : 0;
+        thumb_offset = (arm_ctx->cpsr & (1 << 5)) ? 1 : 0;
         copyin((uint8_t *) (arm_ctx->pc + thumb_offset), &instruction, sizeof(uint32_t));
 
         /*
@@ -560,31 +560,10 @@ void sleh_undef(arm_saved_state_t * state)
          */
         instruction = OSSwapInt32(instruction);
 
-        {
-            /*
-             * gated instruction. 
-             */
-            thread->machine.vfp_dirty = 0;
-            if (!thread->machine.vfp_enable) {
-                vfp_enable_exception(TRUE);
-                vfp_context_load(&thread->machine.vfp_regs);
-                /*
-                 * Continue user execution. 
-                 */
-                thread->machine.vfp_enable = TRUE;
-            } else {
-                /*
-                 * Just use the new exception state. 
-                 */
-                vfp_enable_exception(TRUE);
-            }
-            return;
-        }
-
         /*
          * NEON instruction. 
          */
-        if ((((instruction) & 0xff100000) == 0xf4000000) || (((instruction) & 0xfe000000) == 0xf2000000)) {
+        if (((OSSwapInt32(instruction) & 0xff100000) == 0xf4000000) || ((OSSwapInt32(instruction) & 0xfe000000) == 0xf2000000)) {
             /*
              * NEON instruction. 
              */
