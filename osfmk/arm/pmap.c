@@ -1454,6 +1454,7 @@ void pmap_remove_range(pmap_t pmap, vm_map_offset_t start_vaddr, pt_entry_t * sp
                     pv_h->pv_address_va = 0;
                 }
             } else {
+#if 0   /* hack */
                 cur = pv_h;
                 while (cur->pv_address_va != vaddr || cur->pv_pmap != pmap) {
                     prev = cur;
@@ -1463,6 +1464,7 @@ void pmap_remove_range(pmap_t pmap, vm_map_offset_t start_vaddr, pt_entry_t * sp
                 }
                 prev->pv_next = cur->pv_next;
                 zfree(pve_zone, cur);
+#endif
             }
         }
     }
@@ -1475,10 +1477,12 @@ void pmap_remove_range(pmap_t pmap, vm_map_offset_t start_vaddr, pt_entry_t * sp
     /*
      * Make sure the amount removed isn't... weird.
      */
+#if 0 /* hack */
     assert(pmap->pm_stats.resident_count >= num_removed);
     OSAddAtomic(-num_removed, &pmap->pm_stats.resident_count);
     assert(pmap->pm_stats.wired_count >= num_unwired);
     OSAddAtomic(-num_unwired, &pmap->pm_stats.wired_count);
+#endif
 
     return;
 }

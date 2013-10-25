@@ -40,7 +40,7 @@
 #include <kern/processor.h>
 
 typedef struct _abort_information_context {
-    uint32_t gprs[13];
+    uint32_t r[13];
     uint32_t sp;
     uint32_t lr;
     uint32_t pc;

@@ -176,24 +176,18 @@ static int __abort_count = 0;
 void sleh_abort(void *context, int reason)
 {
     uint32_t dfsr = 0, dfar = 0, ifsr = 0, ifar = 0, cpsr, exception_type = 0, exception_subcode = 0;
-    arm_saved_state_t *arm_ctx = (arm_saved_state_t *) context;
+    abort_information_context_t *arm_ctx = (abort_information_context_t *) context;
     thread_t thread = current_thread();
 
     /*
      * Make sure we get the correct registers only if required. 
      */
     if (reason == SLEH_ABORT_TYPE_DATA_ABORT) {
-        dfsr = __arm_get_dfsr();
-        dfar = __arm_get_dfar();
-#if 0
-        kprintf("[data] pc %x lr %x fsr %x far %x cpsr %x\n", arm_ctx->pc, arm_ctx->lr, dfsr, dfar, arm_ctx->cpsr);
-#endif
+        dfsr = arm_ctx->fsr;
+        dfar = arm_ctx->far;
     } else if (reason == SLEH_ABORT_TYPE_PREFETCH_ABORT) {
-        ifsr = __arm_get_ifsr();
-        ifar = __arm_get_ifar();
-#if 0
-        kprintf("[prefetch] pc %x lr %x fsr %x far %x cpsr %x\n", arm_ctx->pc, arm_ctx->lr, ifsr, ifar, arm_ctx->cpsr);
-#endif
+        ifsr = arm_ctx->fsr;
+        ifar = arm_ctx->far;
     } else {
         panic("sleh_abort: weird abort, type %d (context at %p)", reason, context);
     }

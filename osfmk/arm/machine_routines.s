@@ -210,6 +210,19 @@ EnterARM(set_mmu_ttbcr)
  * Flush a MVA specific entry from the TLB.
  */
  EnterARM(flush_mmu_single)
+    /* Gated. */
+    mov     r0, #0
+    mcr     p15, 0, r0, c8, c7, 0
+    mcr     p15, 0, r0, c7, c5, 0
+#if __ARM_ARCH == 7
+    isb     sy
+    dsb     sy
+#else
+    mcr     p15, 0, r0, c7, c5, 4
+    mcr     p15, 0, r0, c7, c10, 4
+#endif
+    bx      lr
+
     /* Shove the lowest 12-bits off the VA */
     mov     r0, r0, lsr #12
     mov     r0, r0, lsl #12
