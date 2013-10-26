@@ -361,12 +361,22 @@ void machine_task_terminate(task_t task)
 
 void *find_user_regs(thread_t thread)
 {
+    assert(thread->machine.uss == &thread->machine.user_regs);
     return (void *) thread->machine.uss;
 }
 
 kern_return_t machine_thread_dup(thread_t self, thread_t target)
 {
-    bcopy(&self->machine.user_regs, &self->machine.user_regs, sizeof(arm_saved_state_t));
+    /*
+     * Copy user registers.
+     */
+    bcopy(&self->machine.user_regs, &target->machine.user_regs, sizeof(arm_saved_state_t));
+
+    /*
+     * Save FP registers and copy.
+     */
+    save_vfp_context(self);
+    bcopy(&self->machine.vfp_regs, &target->machine.vfp_regs, sizeof(arm_vfp_state_t));
 #ifdef  MACH_BSD
     target->machine.cthread_self = self->machine.cthread_self;
 #endif
@@ -375,6 +385,7 @@ kern_return_t machine_thread_dup(thread_t self, thread_t target)
 
 void thread_set_child(thread_t child, int pid)
 {
+    assert(child->machine.uss == &child->machine.user_regs);
     child->machine.uss->r[0] = pid;
     child->machine.uss->r[1] = 1;
     return;
@@ -388,6 +399,7 @@ void thread_set_wq_state32(thread_t thread, thread_state_t tstate)
     spl_t s = 0;
 
     saved_state = thread->machine.uss;
+    assert(thread->machine.uss == &thread->machine.user_regs);
 
     state = (arm_thread_state_t *) tstate;
 

@@ -2276,14 +2276,7 @@ setup_wqthread(proc_t p, thread_t th, boolean_t overcommit, uint32_t priority, i
      * Set up ARM registers and call.
      */
     {
-	arm_thread_state_t state;
-	arm_thread_state_t *ts = &state;
-
-	/* XXX ARM add more */
-	ts->pc = p->p_wqthread;
-	ts->sp = tl->th_stackaddr + PTH_DEFAULT_GUARDSIZE;
-
-	thread_set_wq_state32(th, (thread_state_t)ts);
+		panic("setup_wqthread");
     }
 #else
 #error setup_wqthread  not defined for this architecture

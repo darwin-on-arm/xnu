@@ -302,6 +302,7 @@ void arm_vm_init(uint32_t mem_limit, boot_args * args)
      * Map L2 tables for identity. The initial bootloader sets up section maps for one L1, so we are next. 
      */
     cpu_ttb = gTopOfKernel + L1_SIZE;
+    bzero(phys_to_virt(cpu_ttb), L1_SIZE);
 
     identityBaseVA = gVirtBase;
     identityCachePA = cpu_ttb + L1_SIZE;    /* After the first initial TTB. */
@@ -347,7 +348,11 @@ void arm_vm_init(uint32_t mem_limit, boot_args * args)
     /*
      * Burn it away... 
      */
-    first_avail += L1_SIZE;
+#ifdef BOARD_CONFIG_S5L8930X
+    first_avail += 4096 * L1_SIZE; /* temporary..... */
+#else
+    first_avail += 1 * L1_SIZE; /* temporary..... */
+#endif
     avail_end = gPhysBase + gMemSize;
 
     /*

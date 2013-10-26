@@ -69,7 +69,7 @@ static uint64_t clock_absolute_time = 0;
 
 static void timer_configure(void)
 {
-    uint64_t hz = 32000;
+    uint64_t hz = 320000;
     clock_decrementer = (hz / 7);   // For 500Hz.
 
     gPEClockFrequencyInfo.timebase_frequency_hz = hz;

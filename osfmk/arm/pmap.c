@@ -119,6 +119,7 @@ lock_t pmap_system_lock;
 #define SPLVM(spl)          spl = splhigh();
 #define SPLX(spl)           splx(spl);
 
+#if 0
 #define PMAP_LOCK(pmap) {       \
     simple_lock(&(pmap)->lock); \
 }
@@ -126,6 +127,10 @@ lock_t pmap_system_lock;
 #define PMAP_UNLOCK(pmap) {         \
     simple_unlock(&(pmap)->lock);       \
 }
+#endif
+
+#define PMAP_LOCK(pmap)
+#define PMAP_UNLOCK(pmap)
 
 /** Useful Macros */
 #define pa_index(pa)        (atop(pa))
@@ -315,7 +320,7 @@ vm_offset_t pmap_pte(pmap_t pmap, vm_offset_t virt)
      * Verify it's not a section mapping. 
      */
     if ((tte & ARM_PAGE_MASK_VALUE) == ARM_PAGE_SECTION)
-        panic("Translation table entry is a section mapping");
+        panic("Translation table entry is a section mapping (tte %x ttep %x)", tte, tte_offset);
 
     /*
      * Clean the TTE bits off, get the address. 
@@ -853,8 +858,8 @@ void pmap_bootstrap(__unused uint64_t msize, vm_offset_t * __first_avail, __unus
      * Set the available page amount. 
      */
     avail_remaining = (avail_end - first_avail) >> PAGE_SHIFT;
-    vm_first_phys = gPhysBase;
-    avail_start = gPhysBase;
+    vm_first_phys = first_avail;
+    avail_start = first_avail;
 
     kprintf("pmap_bootstrap: physical region 0x%08x - 0x%08x\n", first_avail, avail_end);
 
@@ -966,6 +971,11 @@ void pmap_create_sharedpage(void)
      * And map it.
      */
     pmap_enter(kernel_pmap, (vm_map_offset_t) _COMM_PAGE_BASE_ADDRESS, page->phys_page, 0, 0, FALSE, FALSE);
+
+    /*
+     * Memset it.
+     */
+    memset((void*)_COMM_PAGE_BASE_ADDRESS, 0x77, PAGE_SIZE);
     return;
 }
 
@@ -1256,7 +1266,9 @@ kern_return_t pmap_enter_options(pmap_t pmap, vm_map_offset_t va, ppnum_t pa, vm
                 if (!pv_e) {
                     panic("pmap_enter_options: failed to grab a leaf node\n");
                 }
+#if 0
                 kprintf("pmap_enter_options: PV_GRAB_LEAF(), leaf node %p, head node %p\n", pv_e, pv_h);
+#endif
                 goto Retry;
             }
 
@@ -1856,7 +1868,7 @@ void pmap_protect(pmap_t map, vm_map_offset_t sva, vm_map_offset_t eva, vm_prot_
  *
  * Nest a pmap with new mappings into a master pmap.
  */
-kern_return_t pmap_nest(pmap_t grand, pmap_t subord, addr64_t va_start, addr64_t nstart, uint64_t size)
+kern_return_t pmap_nest(pmap_t subord, pmap_t grand, addr64_t va_start, addr64_t nstart, uint64_t size)
 {
     int copied;
 
