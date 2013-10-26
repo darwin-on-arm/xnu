@@ -243,6 +243,7 @@ void sleh_abort(void *context, int reason)
                 /*
                  * Attempt to fault the page. 
                  */
+                assert(get_preemption_level() == 0);
                 code = vm_fault(map, vm_map_trunc_page(arm_ctx->pc), (VM_PROT_READ | VM_PROT_WRITE), FALSE, THREAD_UNINT, NULL, vm_map_trunc_page(0));
 
                 if (code != KERN_SUCCESS) {
@@ -275,6 +276,7 @@ void sleh_abort(void *context, int reason)
                 /*
                  * Attempt to fault the page. 
                  */
+                assert(get_preemption_level() == 0);
                 code = vm_fault(map, vm_map_trunc_page(dfar), (VM_PROT_READ), FALSE, THREAD_UNINT, NULL, vm_map_trunc_page(0));
                 if (code != KERN_SUCCESS) {
                     /*
@@ -343,6 +345,7 @@ void sleh_abort(void *context, int reason)
                 /*
                  * Attempt to fault the page. 
                  */
+                assert(get_preemption_level() == 0);
                 code = vm_fault(map, vm_map_trunc_page(arm_ctx->pc), (VM_PROT_READ), FALSE, THREAD_UNINT, NULL, vm_map_trunc_page(0));
 
                 if ((code != KERN_SUCCESS) && (code != KERN_ABORTED)) {
@@ -386,6 +389,7 @@ void sleh_abort(void *context, int reason)
                 /*
                  * Attempt to fault the page. 
                  */
+                assert(get_preemption_level() == 0);
                 code = vm_fault(map, vm_map_trunc_page(dfar), (VM_PROT_READ), FALSE, THREAD_UNINT, NULL, vm_map_trunc_page(0));
 
                 if ((code != KERN_SUCCESS) && (code != KERN_ABORTED)) {
@@ -428,7 +432,7 @@ void sleh_abort(void *context, int reason)
      */
     if (exception_type) {
         __abort_count--;
-        doexception(exception_type, 0, exception_subcode);
+        doexception(exception_type, exception_subcode, 0);
     }
 
     /*
@@ -612,7 +616,7 @@ void sleh_undef(arm_saved_state_t * state)
          * xxx gate 
          */
         exception_type = EXC_BAD_INSTRUCTION;
-        exception_subcode = 0xBEEF;
+        exception_subcode = 0;
     } else if (cpsr == 0x17) {
         panic("sleh_undef: undefined instruction in system mode");
     }
@@ -621,8 +625,7 @@ void sleh_undef(arm_saved_state_t * state)
      * If there was a user exception, handle it. 
      */
     if (exception_type) {
-        __abort_count--;
-        doexception(exception_type, 0, exception_subcode);
+        doexception(exception_type, exception_subcode, 0);
     }
 
     /*

@@ -304,6 +304,7 @@ bsdthread_create(__unused struct proc *p, struct bsdthread_create_args  *uap, us
          */
 	if (isLP64 == 0) {
 		x86_thread_state32_t state;
+
 		x86_thread_state32_t *ts = &state;
 
         	ts->eip = (int)p->p_threadstart;
@@ -348,21 +349,19 @@ bsdthread_create(__unused struct proc *p, struct bsdthread_create_args  *uap, us
 	}
 #elif defined(__arm__) 
 	{
-	int flavor=0, count=0;
-	void * state;
+		/* Set up ARM registers... */
+		arm_thread_state_t state;
+		arm_thread_state_t *ts = &state;
 
-	kret = thread_getstatus(th, flavor, (thread_state_t)&state, &count);
-	if (kret != KERN_SUCCESS) {
-		error = EINVAL;
-		goto out1;
-	}
-
-	/* XXX ARM TODO */
-
-	kret = thread_setstatus(th, flavor, (thread_state_t)&state, count);
-	if (kret != KERN_SUCCESS)
-		error = EINVAL;
-		goto out1;
+		ts->pc = (uint32_t)p->p_threadstart;
+		ts->sp = (int)((vm_offset_t)(th_stack-C_32_STK_ALIGN));
+		ts->r[0] = (uint32_t)th_pthread;
+		ts->r[1] = (uint32_t)th_thport;
+		ts->r[2] = (uint32_t)user_func;
+		ts->r[3] = (uint32_t)user_funcarg;
+		ts->r[4] = (uint32_t)user_stacksize;
+		ts->r[5] = (uint32_t)uap->flags;
+		thread_set_wq_state32(th, (thread_state_t)ts);
 	}
 #else
 #error bsdthread_create  not defined for this architecture

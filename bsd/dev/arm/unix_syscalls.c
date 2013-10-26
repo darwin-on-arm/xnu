@@ -106,7 +106,7 @@ void unix_syscall(arm_saved_state_t * state)
     void *vt;
     unsigned int code;
     struct sysent *callp;
-    int error;
+    int error = 0;
     vm_offset_t params;
     struct proc *p;
     struct uthread *uthread;
@@ -186,11 +186,6 @@ void unix_syscall(arm_saved_state_t * state)
     uthread->uu_rval[0] = 0;
     uthread->uu_rval[1] = 0;
 
-    /*
-     * TODO: Change to CPSR definition! 
-     */
-    state->cpsr |= (1 << 29);
-
 #if 0
     kprintf("syscall: called bsd\n"
             "r0: 0x%08x  r1: 0x%08x  r2: 0x%08x  r3: 0x%08x\n"
@@ -198,23 +193,57 @@ void unix_syscall(arm_saved_state_t * state)
             "r8: 0x%08x  r9: 0x%08x r10: 0x%08x r11: 0x%08x\n"
             "12: 0x%08x  sp: 0x%08x  lr: 0x%08x  pc: 0x%08x\n" "cpsr: 0x%08x\n", state->r[0], state->r[1], state->r[2], state->r[3], state->r[4], state->r[5], state->r[6], state->r[7], state->r[8], state->r[9], state->r[10], state->r[11], state->r[12], state->sp, state->lr, state->pc, state->cpsr);
 #endif
+#if 0
+    kdb_printf("SYSCALL: %s (%d, routine %p), args %p, return %x (%x, %x) pc 0x%08x\n", syscallnames[code >= NUM_SYSENT ? 63 : code], code, callp->sy_call, (void *) uthread->uu_arg, error, uthread->uu_rval[0], uthread->uu_rval[1], state->pc);
+#endif
 
     AUDIT_SYSCALL_ENTER(code, p, uthread);
     error = (*(callp->sy_call)) (p, (void *) uthread->uu_arg, &(uthread->uu_rval[0]));
-
     AUDIT_SYSCALL_EXIT(code, p, uthread, error);
-    kprintf("SYSCALL: %s (%d, routine %p), args %p, return %d (%x, %x)\n", syscallnames[code >= NUM_SYSENT ? 63 : code], code, callp->sy_call, (void *) uthread->uu_arg, error, uthread->uu_rval[0], uthread->uu_rval[1]);
 
-    if (error) {
-        state->r[0] = error;
-    } else {
-        /*
-         * Not an error, like stat64() 
-         */
-        state->r[0] = uthread->uu_rval[0];
-        state->r[1] = uthread->uu_rval[1];
-        state->cpsr &= ~(1 << 29);  /* C-bit IIRC, turn this into a Define */
+#if CONFIG_MACF
+    mac_thread_userret(code, error, thread);
+#endif
+
+
+    if (error == ERESTART) {
+        panic("unix_syscall: restarting syscall\n");
+    } else if(error != EJUSTRETURN) {
+        if(error) {
+            state->r[0] = error;
+        } else { /* Not error. */
+            switch(callp->sy_return_type) {
+                case _SYSCALL_RET_INT_T:
+                    state->r[0] = uthread->uu_rval[0];                    
+                    state->r[1] = uthread->uu_rval[1];
+                    break;
+                case _SYSCALL_RET_UINT_T:
+                    state->r[0] = (u_int)uthread->uu_rval[0];                    
+                    state->r[1] = (u_int)uthread->uu_rval[1];
+                    break;
+                case _SYSCALL_RET_OFF_T:
+                case _SYSCALL_RET_UINT64_T:
+                    state->r[0] = uthread->uu_rval[0];                    
+                    state->r[1] = uthread->uu_rval[1];
+                    break;
+                case _SYSCALL_RET_ADDR_T:
+                case _SYSCALL_RET_SIZE_T:
+                case _SYSCALL_RET_SSIZE_T: {
+                    user_addr_t *retp = (user_addr_t *)&uthread->uu_rval[0];
+                    state->r[0] = *retp;
+                    state->r[1] = 0;
+                }
+                    break;
+                case _SYSCALL_RET_NONE:
+                    break;
+                default:
+                    panic("unix_syscall: unknown return type");
+                    break;
+            }
+            state->cpsr &= ~(1 << 29);  /* C-bit IIRC, turn this into a Define */
+        }
     }
+
 
     uthread->uu_flag &= ~UT_NOTCANCELPT;
 
@@ -242,29 +271,69 @@ void unix_syscall_return(int error)
     thread_t thread_act;
     struct uthread *uthread;
     struct proc *proc;
-    arm_saved_state_t *regs;
-    unsigned int code;
+    arm_saved_state_t *state;
+    unsigned int code = 0;
     struct sysent *callp;
 
     thread_act = current_thread();
     proc = current_proc();
     uthread = get_bsdthread_info(thread_act);
 
-    regs = find_user_regs(thread_act);
+    state = find_user_regs(thread_act);
 
-    if (regs->r[0] != 0)
-        code = regs->r[0];
+    if (state->r[12] != 0)
+        code = state->r[12];
 
     callp = (code >= NUM_SYSENT) ? &sysent[63] : &sysent[code];
 
-    kprintf("unix_syscall_return error: %d\n", code);
+    AUDIT_SYSCALL_EXIT(code, proc, uthread, error);
 
+    if (error == ERESTART) {
+        panic("unix_syscall: restarting syscall\n");
+    } else if(error != EJUSTRETURN) {
+        if(error) {
+            state->r[0] = error;
+        } else { /* Not error. */
+            switch(callp->sy_return_type) {
+                case _SYSCALL_RET_INT_T:
+                    state->r[0] = uthread->uu_rval[0];                    
+                    state->r[1] = uthread->uu_rval[1];
+                    break;
+                case _SYSCALL_RET_UINT_T:
+                    state->r[0] = (u_int)uthread->uu_rval[0];                    
+                    state->r[1] = (u_int)uthread->uu_rval[1];
+                    break;
+                case _SYSCALL_RET_OFF_T:
+                case _SYSCALL_RET_UINT64_T:
+                    state->r[0] = uthread->uu_rval[0];                    
+                    state->r[1] = uthread->uu_rval[1];
+                    break;
+                case _SYSCALL_RET_ADDR_T:
+                case _SYSCALL_RET_SIZE_T:
+                case _SYSCALL_RET_SSIZE_T: {
+                    user_addr_t *retp = (user_addr_t *)&uthread->uu_rval[0];
+                    state->r[0] = *retp;
+                    state->r[1] = 0;
+                }
+                    break;
+                case _SYSCALL_RET_NONE:
+                    break;
+                default:
+                    panic("unix_syscall: unknown return type");
+                    break;
+            }
+            state->cpsr &= ~(1 << 29);  /* C-bit IIRC, turn this into a Define */
+        }
+    }
+    
     uthread->uu_flag &= ~UT_NOTCANCELPT;
 
+#if FUNNEL_DEBUG    
     /*
-     * panic if funnel is held 
+     * if we're holding the funnel panic
      */
     syscall_exit_funnelcheck();
+#endif /* FUNNEL_DEBUG */
 
     if (uthread->uu_lowpri_window) {
         /*

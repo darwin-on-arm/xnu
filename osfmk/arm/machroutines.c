@@ -346,6 +346,11 @@ vm_size_t ml_nofault_copy(vm_offset_t virtsrc, vm_offset_t virtdst, vm_size_t si
     return nbytes;
 }
 
+boolean_t ml_thread_is64bit(thread_t thread) {  
+    return FALSE;
+}
+
+
 /*
  * ml_phys_read_*.
  */

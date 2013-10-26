@@ -600,6 +600,8 @@ boolean_t pmap_verify_free(vm_offset_t phys)
 
     pv_h = pai_to_pvh(phys);
     result = (pv_h->pv_pmap == PMAP_NULL);
+    if(result == FALSE) kdb_printf("pmap_verify_free: ppn %p pa %x va %x map %p\n",
+                                   phys, phys << PAGE_SHIFT, pv_h->pv_address_va, pv_h->pv_pmap);
     SPLX(spl);
 
     return (result);
@@ -1437,8 +1439,8 @@ void pmap_remove_range(pmap_t pmap, vm_map_offset_t start_vaddr, pt_entry_t * sp
              */
 
             if (pv_h->pv_pmap == PMAP_NULL) {
-                kprintf("pmap_remove_range: null pv_h->pmap (pmap %p, pv_h %p, pai %d, vaddr %x, cpte %x)\n", pmap, pv_h, pai, vaddr, cpte);
-                goto out;
+                /* kprintf("pmap_remove_range: null pv_h->pmap (pmap %p, pv_h %p, pai %d, vaddr %x, cpte %x)\n", pmap, pv_h, pai, vaddr, cpte); */
+                continue;
             }
 
             /*

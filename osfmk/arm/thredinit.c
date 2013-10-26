@@ -366,8 +366,11 @@ void *find_user_regs(thread_t thread)
 
 kern_return_t machine_thread_dup(thread_t self, thread_t target)
 {
-    save_vfp_context(self);
-    ovbcopy((void *) &self->machine.user_regs, (void *) &target->machine.user_regs, sizeof(arm_saved_state_t));
+    bcopy(&self->machine.user_regs, &self->machine.user_regs, sizeof(arm_saved_state_t));
+#ifdef  MACH_BSD
+    target->machine.cthread_self = self->machine.cthread_self;
+#endif
+    return KERN_SUCCESS;
 }
 
 void thread_set_child(thread_t child, int pid)
@@ -384,7 +387,7 @@ void thread_set_wq_state32(thread_t thread, thread_state_t tstate)
     thread_t curth = current_thread();
     spl_t s = 0;
 
-    saved_state = thread->machine.iss;
+    saved_state = thread->machine.uss;
 
     state = (arm_thread_state_t *) tstate;
 
