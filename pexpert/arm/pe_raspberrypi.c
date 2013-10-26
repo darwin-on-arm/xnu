@@ -52,18 +52,16 @@
 extern void rtclock_intr(arm_saved_state_t * regs);
 extern void rtc_configure(uint64_t hz);
 
-#define uart_io   gRaspberryPiUartIO
-vm_offset_t     gRaspberryPiUartIO;
-#define uart_reg   gRaspberryPiUartReg
-vm_offset_t     gRaspberryPiUartReg;
-
-#define systimer_val   gRaspberryPiSysClk
-vm_offset_t     gRaspberryPiSysClk;
-
+#define gpio_base   gRaspberryPiGPIOBase
+vm_offset_t     gRaspberryPiGPIOBase;
+#define uart_base   gRaspberryPiUartBase
+vm_offset_t     gRaspberryPiUartBase;
+#define systimer_base   gRaspberryPiSystimerBase
+vm_offset_t     gRaspberryPiSystimerBase;
 #define mb_base   gRaspberryPiMailboxBase
 vm_offset_t       gRaspberryPiMailboxBase;
 
-struct fb_info gFBInfo;
+struct fb_info __attribute__((aligned(16))) gFBInfo;
 
 static uint64_t clock_decrementer = 0;
 static boolean_t clock_initialized = FALSE;
@@ -77,47 +75,47 @@ static void timer_configure(void)
 
 void RaspberryPi_putc(int c)
 {
-    while(!GET32(uart_reg) & 0x20)
+    while(!GET32(uart_base + AUX_MU_LSR_REG) & 0x20)
         barrier();
-    PUT32(uart_io, c);
+    PUT32(uart_base + AUX_MU_IO_REG, c);
 }
 
 int RaspberryPi_getc(void)
 {
-    while(!GET32(uart_reg) & 0x01)
+    while(!GET32(uart_base + AUX_MU_LSR_REG) & 0x01)
         barrier();
-    return GET32(uart_io);
+    return GET32(uart_base + AUX_MU_IO_REG);
 }
 
 void RaspberryPi_uart_init(void)
 {
     unsigned int i;
-    PUT32_phy(AUX_ENABLES, 1);
-    PUT32_phy(AUX_MU_IER_REG, 0);
-    PUT32_phy(AUX_MU_CNTL_REG, 0);
-    PUT32_phy(AUX_MU_LCR_REG, 3);
-    PUT32_phy(AUX_MU_MCR_REG, 0);
-    PUT32_phy(AUX_MU_IER_REG, 0);
-    PUT32_phy(AUX_MU_IIR_REG, 0xC6);
-    PUT32_phy(AUX_MU_BAUD_REG, 270); // 115200 bps
+	gRaspberryPiUartBase = ml_io_map(AUX_BASE, PAGE_SIZE);
+    gRaspberryPiGPIOBase = ml_io_map(GP_BASE, PAGE_SIZE);
 
-    i = GET32_phy(GPFSEL1);
+    PUT32(uart_base + AUX_ENABLES,       1);
+    PUT32(uart_base + AUX_MU_IER_REG,    0);
+    PUT32(uart_base + AUX_MU_CNTL_REG,   0);
+    PUT32(uart_base + AUX_MU_LCR_REG,    3);
+    PUT32(uart_base + AUX_MU_MCR_REG,    0);
+    PUT32(uart_base + AUX_MU_IER_REG,    0);
+    PUT32(uart_base + AUX_MU_IIR_REG, 0xC6);
+    PUT32(uart_base + AUX_MU_BAUD_REG, 270); // 115200 bps
+
+    i = GET32(gpio_base + GPFSEL1);
     i &= ~(7<<12); // Configure GPIO14 as..
     i |= 2<<12; // ..TXD for UART
     i &= ~(7<<15); // Configure GPIO15 as..
     i |= 2<<15; // ..RXD for UART
-    PUT32_phy(GPFSEL1, i);
+    PUT32(gpio_base + GPFSEL1, i);
 
-    PUT32_phy(GPPUD, 0);
+    PUT32(gpio_base + GPPUD, 0);
     for(i = 0; i<150; i++) barrier();
-    PUT32_phy(GPPUDCLK0, (1<<14) | (1<<15));
+    PUT32(gpio_base + GPPUDCLK0, (1<<14) | (1<<15));
     for(i = 0; i<150; i++) barrier();
-    PUT32_phy(GPPUDCLK0, 0);
+    PUT32(gpio_base + GPPUDCLK0, 0);
 
-    PUT32_phy(AUX_MU_CNTL_REG, 3);
-
-    gRaspberryPiUartReg = ml_io_map(AUX_MU_LSR_REG, PAGE_SIZE);
-    gRaspberryPiUartIO = ml_io_map(AUX_MU_IO_REG, PAGE_SIZE);
+    PUT32(uart_base + AUX_MU_CNTL_REG, 3);
 
     kprintf(KPRINTF_PREFIX "serial is up\n");
 }
@@ -129,7 +127,7 @@ void RaspberryPi_interrupt_init(void)
 
 void RaspberryPi_timebase_init(void)
 {
-    gRaspberryPiSysClk = ml_io_map(SYSTIMERCLK, PAGE_SIZE);
+    gRaspberryPiSystimerBase = ml_io_map(SYSTIMER_BASE, PAGE_SIZE);
 }
 
 void RaspberryPi_handle_interrupt(void *context)
@@ -144,7 +142,7 @@ uint64_t RaspberryPi_get_timebase(void)
 
 uint64_t RaspberryPi_timer_value(void)
 {
-    return GET64(systimer_val); // free-running 64 bit timer, about 1 MHz
+    return GET64(systimer_base + SYSTIMERCLK); // free-running 64 bit timer, about 1 MHz
 }
 
 void RaspberryPi_timer_enabled(int enable)
