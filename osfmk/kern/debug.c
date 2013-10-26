@@ -486,7 +486,7 @@ static void panic_display_kernel_uuid(void) {
 
 static void panic_display_kernel_aslr(void) {
 #if	defined(__x86_64__) || (__arm__)
-	if (vm_kernel_slide) {
+	if (0) {
 		kdb_printf("Kernel slide:     0x%016lx\n", vm_kernel_slide);
 		kdb_printf("Kernel text base: %p\n", (void *) vm_kernel_stext);
 	}

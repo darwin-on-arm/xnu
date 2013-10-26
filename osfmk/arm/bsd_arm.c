@@ -182,6 +182,25 @@ kern_return_t machine_thread_get_state(thread_t thr_act, thread_flavor_t flavor,
             *count = ARM_THREAD_STATE_COUNT;
             break;
         }
+    case ARM_VFP_STATE:
+        {
+            struct arm_vfp_state *state;
+            struct arm_vfp_state *saved_state;
+
+            if (*count < ARM_VFP_STATE_COUNT)
+                return (KERN_INVALID_ARGUMENT);
+
+            state = (struct arm_vfp_state *) tstate;
+            saved_state = (struct arm_vfp_state *) &thr_act->machine.vfp_regs;
+
+            /*
+             * First, copy everything:
+             */
+            *state = *saved_state;
+
+            *count = ARM_VFP_STATE_COUNT;
+            break;
+        }
 
     default:
         return (KERN_INVALID_ARGUMENT);

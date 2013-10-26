@@ -377,9 +377,7 @@ kern_return_t machine_thread_dup(thread_t self, thread_t target)
      */
     save_vfp_context(self);
     bcopy(&self->machine.vfp_regs, &target->machine.vfp_regs, sizeof(arm_vfp_state_t));
-#ifdef  MACH_BSD
-    target->machine.cthread_self = self->machine.cthread_self;
-#endif
+
     return KERN_SUCCESS;
 }
 

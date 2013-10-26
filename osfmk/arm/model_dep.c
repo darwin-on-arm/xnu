@@ -200,7 +200,21 @@ void panic_backlog(uint32_t stackptr)
 
     kdb_printf("Panicked task %p: %d pages, %d threads: pid %d: %s\n" "panicked thread: %p, backtrace: 0x%08x\n", task, task->all_image_info_size, task->thread_count, (task->bsd_info != NULL) ? proc_pid(task->bsd_info) : 0, name, currthr, stackptr);
     panic_arm_thread_backtrace(stackptr, 32, NULL, FALSE, NULL, TRUE, "");
-
+    
+    if ((currthr->machine.uss == &currthr->machine.user_regs) && currthr->machine.uss->pc) {
+        kdb_printf("%s\tuser state:\n", "");
+        kdb_printf("%s\t  r0: 0x%08x  r1: 0x%08x  r2: 0x%08x  r3: 0x%08x\n"
+                   "%s\t  r4: 0x%08x  r5: 0x%08x  r6: 0x%08x  r7: 0x%08x\n"
+                   "%s\t  r8: 0x%08x  r9: 0x%08x r10: 0x%08x r11: 0x%08x\n"
+                   "%s\t r12: 0x%08x  sp: 0x%08x  lr: 0x%08x  pc: 0x%08x\n"
+                   "%s\tcpsr: 0x%08x fsr: 0x%08x far: 0x%08x\n",
+                           "", currthr->machine.uss->r[0], currthr->machine.uss->r[1], currthr->machine.uss->r[2], currthr->machine.uss->r[3],
+                           "", currthr->machine.uss->r[4], currthr->machine.uss->r[5], currthr->machine.uss->r[6], currthr->machine.uss->r[7],
+                           "", currthr->machine.uss->r[8], currthr->machine.uss->r[9], currthr->machine.uss->r[10], currthr->machine.uss->r[11],
+                           "", currthr->machine.uss->r[12], currthr->machine.uss->sp, currthr->machine.uss->lr, currthr->machine.uss->pc, 
+                           "", currthr->machine.uss->cpsr, 0, 0);
+    }
+    
     if (panicDebugging) {
         print_threads(stackptr);
     } else {
@@ -255,6 +269,9 @@ void DebuggerCommon(__unused unsigned int reason, void *ctx, const char *message
      * iOS compatibility :) 
      */
     kdb_printf("Paniclog version: %d\n", 1);
+
+    kdb_printf("Kernel slide:     0x%016lx\n", vm_kernel_slide);
+    kdb_printf("Kernel text base: %p\n", (void *) vm_kernel_stext);
 
     /*
      * Display panic information. 
@@ -513,7 +530,7 @@ void print_threads(uint32_t stackptr)
             /*
              * Make sure it's a Upcb if it's a user program. 
              */
-            if (!thread->continuation && (thread->machine.uss != thread->machine.iss) && thread->machine.uss->pc) {
+            if ((thread->machine.uss == &thread->machine.user_regs) && thread->machine.uss->pc) {
                 kdb_printf("%s\tuser state:\n", ((current_thread() == thread) ? crashed : "\t"));
                 kdb_printf("%s\t  r0: 0x%08x  r1: 0x%08x  r2: 0x%08x  r3: 0x%08x\n"
                            "%s\t  r4: 0x%08x  r5: 0x%08x  r6: 0x%08x  r7: 0x%08x\n"

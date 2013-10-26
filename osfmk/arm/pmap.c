@@ -1174,7 +1174,7 @@ kern_return_t pmap_enter_options(pmap_t pmap, vm_map_offset_t va, ppnum_t pa, vm
          */
 
         uint32_t template_pte = ((pa << PAGE_SHIFT) & L2_ADDR_MASK) | L2_SMALL_PAGE | L2_ACCESS_PRW;
-        if(!wired) /* xxx kill */
+        //if(!wired) /* xxx kill */
             template_pte |= L2_ACCESS_USER; 
 
         /*
