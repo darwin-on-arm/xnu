@@ -4504,12 +4504,13 @@ OSKext::load(
     if (isExecutable()) {
         OSKext::updateLoadedKextSummaries();
         savePanicString(/* isLoading */ true);
-
+#ifndef __arm__
 #if CONFIG_DTRACE
         registerWithDTrace();
 #else
         jettisonLinkeditSegment();
 #endif /* CONFIG_DTRACE */
+#endif
     }
 
 loaded:
@@ -5331,7 +5332,7 @@ OSKext_protect(
     vm_prot_t  new_prot,
     boolean_t  set_max)
 {
-    return KERN_FAILURE;
+    return KERN_SUCCESS;
 }
 
 
@@ -5343,7 +5344,7 @@ OSKext_wire(
     vm_prot_t  access_type,
     boolean_t       user_wire)
 {
-	return KERN_FAILURE;
+	return KERN_SUCCESS;
 }
 #else
 static inline kern_return_t
@@ -5582,7 +5583,7 @@ boolean_t
 OSKext::verifySegmentMapping(kernel_segment_command_t *seg)
 {
     mach_vm_address_t address = 0;
-
+#ifndef __arm__
     if (!segmentShouldBeWired(seg)) return true;
 
     for (address = seg->vmaddr;
@@ -5599,7 +5600,7 @@ OSKext::verifySegmentMapping(kernel_segment_command_t *seg)
             return false;
         }
     }
-
+#endif
     return true;
 }
 
@@ -9771,6 +9772,7 @@ OSKext::printKextsInBacktrace(
 
     summary_page = trunc_page((addr64_t)(uintptr_t)gLoadedKextSummaries);
     last_summary_page = round_page(summary_page + sLoadedKextSummariesAllocSize);
+#ifndef __arm__
     for (; summary_page < last_summary_page; summary_page += PAGE_SIZE) {
         if (pmap_find_phys(kernel_pmap, summary_page) == 0) {
             (*printf_func)("         can't perform kext scan: "
@@ -9778,7 +9780,7 @@ OSKext::printKextsInBacktrace(
             goto finish;
         }
     }
-
+#endif
     for (i = 0; i < gLoadedKextSummaries->numSummaries; ++i) {
         OSKextLoadedKextSummary * summary;
         
@@ -9885,20 +9887,23 @@ void OSKext::printSummary(
          kmod_ref; 
          kmod_ref = kmod_ref->next) {
         kmod_info_t * rinfo;
-        
+
+#ifndef __arm__        
         if (pmap_find_phys(kernel_pmap, (addr64_t)((uintptr_t)kmod_ref)) == 0) {
             (*printf_func)("            kmod dependency scan stopped "
                            "due to missing dependency page: %p\n", kmod_ref);
             break;
         }
+#endif
         rinfo = kmod_ref->info;
-        
+
+#ifndef __arm__        
         if (pmap_find_phys(kernel_pmap, (addr64_t)((uintptr_t)rinfo)) == 0) {
             (*printf_func)("            kmod dependency scan stopped "
                            "due to missing kmod page: %p\n", rinfo);
             break;
         }
-        
+#endif        
         if (!rinfo->address) {
             continue; // skip fake entries for built-ins
         }
@@ -10124,8 +10129,8 @@ OSKext::saveLoadedKextPanicListTyped(
             continue;
         }
 
-        if (!kmod_info ||
-            !pmap_find_phys(kernel_pmap, (addr64_t)((uintptr_t)kmod_info))) {
+        if (!kmod_info /* ||
+            !pmap_find_phys(kernel_pmap, (addr64_t)((uintptr_t)kmod_info))*/) {
 
             printf("kext scan stopped due to missing kmod_info page: %p\n",
                 kmod_info);

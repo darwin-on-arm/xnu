@@ -441,6 +441,25 @@ static int panic_print_macho_symbol_name(kernel_mach_header_t * mh, vm_address_t
     return 0;
 }
 
+extern kmod_info_t * kmod; /* the list of modules */
+
+static void
+panic_print_kmod_symbol_name(vm_address_t search)
+{
+    kmod_info_t *           current_kmod = kmod;
+    
+    while (current_kmod != NULL) {
+        if ((current_kmod->address <= search) &&
+            (current_kmod->address + current_kmod->size > search))
+            break;
+        current_kmod = current_kmod->next;
+    }
+    if (current_kmod != NULL) {
+        /* if kexts had symbol table loaded, we'd call search_symbol_name again; alas, they don't */
+      kdb_printf(" (%s: 0x%lx)", current_kmod->name, (unsigned long)search - current_kmod->address);
+    }
+}
+
 /**
  * panic_print_symbol_name
  *
@@ -453,10 +472,8 @@ static void panic_print_symbol_name(vm_address_t search)
      * try searching in the kernel 
      */
     if (panic_print_macho_symbol_name(&_mh_execute_header, search, "mach_kernel") == 0) {
-        /*
-         * oh well 
-         */
-        return;
+        /* that failed, now try to search for the right kext */
+        panic_print_kmod_symbol_name(search);
     }
 }
 

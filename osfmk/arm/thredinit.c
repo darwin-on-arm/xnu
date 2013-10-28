@@ -406,19 +406,14 @@ void thread_set_wq_state32(thread_t thread, thread_state_t tstate)
         thread_lock(thread);
     }
 
+    bzero(saved_state, sizeof(arm_thread_state_t));
     saved_state->r[0] = state->r[0];
     saved_state->r[1] = state->r[1];
     saved_state->r[2] = state->r[2];
     saved_state->r[3] = state->r[3];
     saved_state->r[4] = state->r[4];
     saved_state->r[5] = state->r[5];
-    saved_state->r[6] = state->r[6];
-    saved_state->r[7] = state->r[7];
-    saved_state->r[8] = state->r[8];
-    saved_state->r[9] = state->r[9];
-    saved_state->r[10] = state->r[10];
-    saved_state->r[11] = state->r[11];
-    saved_state->r[12] = state->r[12];
+
     saved_state->sp = state->sp;
     saved_state->lr = state->lr;
     saved_state->pc = state->pc;

@@ -1400,7 +1400,7 @@ void pmap_init(void)
  */
 void pmap_remove_range(pmap_t pmap, vm_map_offset_t start_vaddr, pt_entry_t * spte, pt_entry_t * epte, boolean_t is_sect)
 {
-    pt_entry_t *cpte;
+    pt_entry_t *cpte = spte;
     vm_map_offset_t vaddr;
     vm_size_t our_page_size = (is_sect) ? (1 * 1024 * 1024) : PAGE_SIZE;
     int num_removed = 0, num_unwired = 0;
@@ -1524,44 +1524,23 @@ void pmap_remove(pmap_t map, vm_offset_t s, vm_offset_t e)
     PMAP_LOCK(map);
     SPLVM(spl);
 
+    /*
+     * Grab the TTE.
+     */
+    tte = pmap_tte(map, l);
+
     while (s < e) {
-        /*
-         * Grab the TTE.
-         */
-        tte = pmap_tte(map, l);
-
-        /*
-         * 1MB section size. eeeeee. This is the granularity of one entry.
-         */
-        l = (s + (1 * 1024 * 1024));
-
-        /*
-         * Make sure the TTE isn't a fault one. (invalid descriptor)
-         */
+        l = (s + (1 * 1024 * 1024)) & ~((1 * 1024 * 1024)-1);
+        if (l > e)
+            l = e;
         if (tte && ((*(vm_offset_t *) tte & ARM_PAGE_MASK_VALUE) != 0)) {
-            boolean_t is_sect = TRUE;
-
-            /*
-             * 1MB Section mapping.
-             */
-            spte = (vm_offset_t *) tte;
-            epte = (vm_offset_t *) tte + 1;
-
-            /*
-             * Special treatment for a page table.
-             */
-            if ((*(vm_offset_t *) tte & ARM_PAGE_MASK_VALUE) == ARM_PAGE_PAGE_TABLE) {
-                spte = (vm_offset_t *) pmap_pte(map, s);
-                epte = (vm_offset_t *) pmap_pte(map, e);
-                is_sect = FALSE;
-            }
-
-            /*
-             * Remove the range of entries.
-             */
-            pmap_remove_range(map, s, spte, epte, is_sect);
+            spte = (pt_entry_t *)phys_to_virt((*(vm_offset_t*)tte & L1_PTE_ADDR_MASK));
+            spte = &spte[((s >> PAGE_SHIFT) & 0x3ff)];
+            epte = &spte[((l-s) >> PAGE_SHIFT)];
+            pmap_remove_range(map, s, spte, epte, FALSE);
         }
         s = l;
+        tte++;
     }
 
     /*
