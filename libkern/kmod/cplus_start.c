@@ -46,7 +46,7 @@
 /* The following preprocessor test must match exactly with the architectures
  * that define the CONFIG_STATIC_CPPINIT config option.
  */
-#if __i386__
+#if defined(__i386__) || defined(__arm__)
 
 #include <mach/mach_types.h>
 #include <libkern/OSKextLib.h>
