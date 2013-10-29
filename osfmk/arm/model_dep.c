@@ -198,7 +198,9 @@ void panic_backlog(uint32_t stackptr)
         name = (char *) "unknown task";
     }
 
-    kdb_printf("Panicked task %p: %d pages, %d threads: pid %d: %s\n" "panicked thread: %p, backtrace: 0x%08x\n", task, task->all_image_info_size, task->thread_count, (task->bsd_info != NULL) ? proc_pid(task->bsd_info) : 0, name, currthr, stackptr);
+    kext_dump_panic_lists(&kdb_printf);
+
+    kdb_printf("\nPanicked task %p: %d pages, %d threads: pid %d: %s\n" "panicked thread: %p, backtrace: 0x%08x\n", task, task->all_image_info_size, task->thread_count, (task->bsd_info != NULL) ? proc_pid(task->bsd_info) : 0, name, currthr, stackptr);
     panic_arm_thread_backtrace(stackptr, 32, NULL, FALSE, NULL, TRUE, "");
     
     if ((currthr->machine.uss == &currthr->machine.user_regs) && currthr->machine.uss->pc) {

@@ -10276,7 +10276,9 @@ OSKext::printKextPanicLists(int (*printf_func)(const char *fmt, ...))
 
     printf_func("loaded kexts:\n");
     if (loaded_kext_paniclist &&
+#ifndef __arm__
         pmap_find_phys(kernel_pmap, (addr64_t) (uintptr_t) loaded_kext_paniclist) &&
+#endif
         loaded_kext_paniclist[0]) {
 
         printf_func("%.*s", loaded_kext_paniclist_length, loaded_kext_paniclist);

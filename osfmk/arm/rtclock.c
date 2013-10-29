@@ -202,7 +202,7 @@ void clock_get_system_microtime(clock_sec_t * secs, clock_usec_t * microsecs)
 
 void nanoseconds_to_absolutetime(uint64_t nanoseconds, uint64_t * result)
 {
-    printf("nanoseconds_to_absolutetime: %llu => %llu\n", nanoseconds, nanoseconds / rtclock_scaler);
+    kprintf("nanoseconds_to_absolutetime: %llu => %llu\n", nanoseconds, nanoseconds / rtclock_scaler);
     *result = nanoseconds / rtclock_scaler;
 }
 

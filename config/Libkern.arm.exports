@@ -1,3 +1,9 @@
+_OSAddAtomic64
+_OSCompareAndSwap64
+_OSRuntimeFinalizeCPP
+_OSRuntimeInitializeCPP
+_OSRuntimeUnloadCPP
+_OSRuntimeUnloadCPPForSegment
 __ZN10OSIterator20_RESERVEDOSIterator0Ev
 __ZN10OSIterator20_RESERVEDOSIterator1Ev
 __ZN10OSIterator20_RESERVEDOSIterator2Ev
@@ -126,4 +132,7 @@ __ZN9OSBoolean19_RESERVEDOSBoolean4Ev
 __ZN9OSBoolean19_RESERVEDOSBoolean5Ev
 __ZN9OSBoolean19_RESERVEDOSBoolean6Ev
 __ZN9OSBoolean19_RESERVEDOSBoolean7Ev
-
+_sprintf
+_strcat
+_strcpy
+_vsprintf

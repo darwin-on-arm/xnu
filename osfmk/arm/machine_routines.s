@@ -168,9 +168,13 @@ EnterARM(_enable_preemption)
 __preempt:
     /* Reenable interrupts */
     cpsie   f
+    stmfd   sp!,{r7,lr}
+    add     r7, sp, #8
     mov     r0, #7
     mov     r1, #1
-    LoadConstantToReg(_ast_taken + 1, pc)
+    blx     _ast_taken
+    ldmfd   sp!,{r7,lr}
+    bx      lr
 
 /**
  * current_thread
