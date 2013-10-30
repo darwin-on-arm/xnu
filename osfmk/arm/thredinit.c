@@ -133,6 +133,12 @@ kern_return_t machine_thread_create(thread_t thread, task_t task)
     assert(thread->machine.iss == NULL);
 
     /*
+     * Zero out the register save areas.
+     */
+    bzero(&thread->machine.vfp_regs, sizeof(arm_vfp_state_t));
+    bzero(&thread->machine.user_regs, sizeof(arm_saved_state_t));
+
+    /*
      * Set the members now. 
      */
     thread->machine.preempt_count = 0;
@@ -370,7 +376,7 @@ kern_return_t machine_thread_dup(thread_t self, thread_t target)
     /*
      * Copy user registers.
      */
-    bcopy(&self->machine.user_regs, &target->machine.user_regs, sizeof(arm_saved_state_t));
+    bcopy(self->machine.uss, target->machine.uss, sizeof(arm_saved_state_t));
 
     /*
      * Save FP registers and copy.

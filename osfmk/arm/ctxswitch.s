@@ -41,7 +41,8 @@
  */
 EnterARM(Call_continuation)
     /* Set the new stack pointer. */
-    mov     sp, r3
+    LoadThreadRegister(r9)
+    ldr     sp, [r9, TH_PCB_ISS]
 
     /* Zero out frame pointer */
     mov     r7, #0
@@ -57,7 +58,6 @@ EnterARM(Call_continuation)
     /* Terminate thread. */
     mrc     p15, 0, r0, c13, c0, 4
     blx     _thread_terminate
-
     b       .
 
 /**
@@ -116,6 +116,16 @@ EnterARM(machine_load_context)
     add     r3, r3, #16
     ldmia   r3!, {r4-lr}
     bx      lr
+
+/**
+ * thread_syscall_return
+ */ 
+EnterARM(thread_syscall_return)
+    cpsid   i
+    LoadThreadRegister(r9)
+    ldr     r4, [r9, TH_PCB_USS]
+    str     r0, [r4]
+    b       thread_return_join
 
 /**
  * thread_exception_return
