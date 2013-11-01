@@ -367,6 +367,8 @@ void sleh_abort(void *context, int reason)
                      * Retry execution of instruction. 
                      */
                     __abort_count--;
+                    ml_set_interrupts_enabled(TRUE);
+                    doexception(0, 0, 0);
                     return;
                 }
                 break;
@@ -406,11 +408,14 @@ void sleh_abort(void *context, int reason)
                            "    r8: 0x%08x  r9: 0x%08x r10: 0x%08x r11: 0x%08x\n"
                            "   r12: 0x%08x  sp: 0x%08x  lr: 0x%08x  pc: 0x%08x\n"
                            "  cpsr: 0x%08x\n", arm_ctx->r[0], arm_ctx->r[1], arm_ctx->r[2], arm_ctx->r[3], arm_ctx->r[4], arm_ctx->r[5], arm_ctx->r[6], arm_ctx->r[7], arm_ctx->r[8], arm_ctx->r[9], arm_ctx->r[10], arm_ctx->r[11], arm_ctx->r[12], arm_ctx->sp, arm_ctx->lr, arm_ctx->pc, arm_ctx->cpsr);
+                    Debugger("usermode abort");
                 } else {
                     /*
                      * Retry execution of instruction. 
                      */
                     __abort_count--;
+                    ml_set_interrupts_enabled(TRUE);
+                    doexception(0, 0, 0);
                     return;
                 }
                 break;
@@ -432,6 +437,7 @@ void sleh_abort(void *context, int reason)
      */
     if (exception_type) {
         __abort_count--;
+        ml_set_interrupts_enabled(TRUE);
         doexception(exception_type, exception_subcode, 0);
     }
 
@@ -625,6 +631,7 @@ void sleh_undef(arm_saved_state_t * state)
      * If there was a user exception, handle it. 
      */
     if (exception_type) {
+        ml_set_interrupts_enabled(TRUE);
         doexception(exception_type, exception_subcode, 0);
     }
 

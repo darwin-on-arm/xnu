@@ -140,6 +140,10 @@ void PE_init_platform(boolean_t vm_initialized, void *_args)
          * Reset kputc. 
          */
         PE_kputc = gPESocDispatch.uart_putc;
+        unsigned int boot_arg;
+
+        if (PE_parse_boot_argn("kprintf", &boot_arg, sizeof(boot_arg)))
+            PE_kputc = cnputc;
 
         /*
          * XXX: Real iOS kernel does iBoot/debug-enabled init after the DTInit call. 

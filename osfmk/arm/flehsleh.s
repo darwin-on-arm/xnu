@@ -312,7 +312,7 @@ data_abort_crash_in_usermode:
     mrs     r0, spsr
     str     r0, [sp, #0x40]
     mov     r0, sp
-    msr     cpsr_c, #0x93
+    cpsid   i, #0x13
     mrc     p15, 0, r5, c5, c0, 0
     mrc     p15, 0, r6, c6, c0, 0
     str     r5, [sp, #0x44]
@@ -325,7 +325,7 @@ data_abort_crash_in_usermode:
 
 data_abort_crash_in_kernel:
     /* supervisor */
-    msr     cpsr_c, #0x93
+    cpsid   i, #0x13
     
     /* make space on the stack for the registers. */
     sub     sp, sp, #0x50
@@ -336,7 +336,7 @@ data_abort_crash_in_kernel:
     mov     r12, sp
 
     /* abort mode */
-    msr     cpsr_c, #0x97
+    cpsid   i, #0x17
 
     /* Save more registers */
     str     lr, [r12, #0x3C]
@@ -344,7 +344,7 @@ data_abort_crash_in_kernel:
     str     r4, [r12, #0x40]
 
     /* supervisor */
-    msr     cpsr_c, #0x93
+    cpsid   i, #0x13
 
     /* Get DFSR */
     mrc     p15, 0, r5, c5, c0, 0

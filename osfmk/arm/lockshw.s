@@ -90,7 +90,7 @@ EnterARM(hw_lock_unlock)
     ldr     r3, [r0]
     bic     r3, r3, #1
     str     r3, [r0]
-    LoadConstantToReg(__enable_preemption, pc)
+    b       __enable_preemption
 
 /**
  * arm_usimple_lock_try and friends
@@ -330,7 +330,8 @@ EnterARM(lock_write_to_read)
     movs        r2, r2
     bxeq        lr
     add         r0, r0, #8
-    LoadConstantToReg(_thread_wakeup+1, pc)
+    LoadConstantToReg(_thread_wakeup+1, r12)
+    bx          r12
 rwlstexit:
     mov         r2, r1
     mov         r1, r0
@@ -391,7 +392,7 @@ lmuslow:
     and         r3, r1, #2
     str         r3, [r0]
 lmuret:
-    LoadConstantToReg(__enable_preemption, pc)
+    b           __enable_preemption
 lmupanic:
     mov         r1, r0
     ldr         r2, [r1]
@@ -445,7 +446,7 @@ mlckslow:
     mov     r3, r12
     orrne   r3, r3, #2
     str     r3, [r0]
-    ldr     pc, __enable_preemption
+    b       __enable_preemption
 mlckwait:
     orr     r3, r3, #0
     str     r3, [r0]
@@ -536,7 +537,7 @@ EnterARM(lck_mtx_assert)
     bxeq    lr
     mov     r1, r0
     adr     r0, panicString_lockNotOwned
-    LoadConstantToReg(_panic + 1, pc)
+    blx     _panic
 lck_mtx_assert_owned:
     cmp     r1, #2
     bne     lck_mtx_assert_bad_arg
@@ -545,10 +546,10 @@ lck_mtx_assert_owned:
     bxne    lr
     mov     r1, r0
     adr     r0, panicString_lockOwned
-    LoadConstantToReg(_panic + 1, pc)
+    blx     _panic
 lck_mtx_assert_bad_arg:
     adr     r0, panicString_lockBadArgument
-    LoadConstantToReg(_panic + 1, pc)
+    blx     _panic
 
     .align 4
 panicString_lockNotOwned:

@@ -97,6 +97,7 @@ extern uint32_t debug_enabled;
 extern const char version[];
 extern char osversion[];
 extern boolean_t panicDialogDesired;
+extern int enable_timing;
 
 #define ANSI_COLOR_RED     "\x1b[31m"
 #define ANSI_COLOR_GREEN   "\x1b[32m"
@@ -349,7 +350,9 @@ void DebuggerCommon(__unused unsigned int reason, void *ctx, const char *message
 void DebuggerWithContext(__unused unsigned int reason, void *ctx, const char *message)
 {
     hw_atomic_add(&debug_mode, 1);
+    hw_atomic_sub(&enable_timing, 1);
     DebuggerCommon(reason, ctx, message);
+    hw_atomic_add(&enable_timing, 1);
     hw_atomic_sub(&debug_mode, 1);
     return;
 }
@@ -363,7 +366,9 @@ void DebuggerWithContext(__unused unsigned int reason, void *ctx, const char *me
 void Debugger(const char *message)
 {
     hw_atomic_add(&debug_mode, 1);
+    hw_atomic_sub(&enable_timing, 1);
     DebuggerCommon(EXC_BREAKPOINT, NULL, message);
+    hw_atomic_add(&enable_timing, 1);
     hw_atomic_sub(&debug_mode, 1);
     return;
 }

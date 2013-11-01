@@ -311,11 +311,16 @@ panic_epilogue(spl_t	s)
 	/* NOTREACHED */
 }
 
+extern int enable_timing;
+
 void
 panic(const char *str, ...)
 {
 	va_list	listp;
 	spl_t	s;
+
+	if(enable_timing)
+		enable_timing = 0;
 
 	/* panic_caller is initialized to 0.  If set, don't change it */
 	if ( ! panic_caller )
@@ -333,6 +338,8 @@ panic(const char *str, ...)
 	/*
 	 * Release panicwait indicator so that other cpus may call Debugger().
 	 */
+	enable_timing = 1;
+
 	panicwait = 0;
 	Debugger("panic");
 	panic_epilogue(s);
