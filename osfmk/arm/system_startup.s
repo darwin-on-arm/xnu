@@ -33,6 +33,7 @@
 #include <arm/arch.h>
 #include <arm/asm_help.h>
 #include <assym.s>
+#include <mach/arm/asm.h>
 
 /*
  * During system initialization, there are two possible methods of
@@ -49,7 +50,7 @@
 
 EnterARM(_start)
     /* First, disable interrupts so that the BL doesn't get any. */
-    LoadConstantToReg(_arm_init, lr)
+    LOAD_ADDR(lr, arm_init)
     cpsid   if
 
     /* If MMU is initialized, go the quick way. */
@@ -138,7 +139,7 @@ fix_boot_args_hack_for_bootkit:
     add     r0, r0, r10
 
     /* Goddamn section offset. */
-    LoadConstantToReg(_sectionOffset, r12)
+    LOAD_ADDR(r12, sectionOffset)
     mov     r11, #0
     str     r11, [r12]
 
@@ -174,7 +175,7 @@ mmu_initialized:
     mcr     p15, 0, r4, c7, c5, 0
 
     /* Set up initial sp. */
-    LoadConstantToReg(_intstack_top, sp)
+    LOAD_ADDR(sp, intstack_top)
 
     /* Boot to ARM init. */
     bx      lr
@@ -198,3 +199,7 @@ _intstack_top:
 _debstack:
 .space (8192), 0
 _debstack_top:
+
+LOAD_ADDR_GEN_DEF(arm_init)
+LOAD_ADDR_GEN_DEF(intstack_top)
+LOAD_ADDR_GEN_DEF(sectionOffset)

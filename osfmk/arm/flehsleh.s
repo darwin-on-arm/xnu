@@ -33,6 +33,7 @@
 #include <arm/arch.h>
 #include <arm/asm_help.h>
 #include <assym.s>
+#include <mach/arm/asm.h>
 
 /**
  * fleh_reset
@@ -144,13 +145,13 @@ swi_mach:
     mov     r4, r5
     cmp     r5, #0x80
     bge     swi_mach_error
-    LoadConstantToReg(_mach_trap_table, r1)
+    LOAD_ADDR(r1, mach_trap_table)
 
     add     r11, r5, r5, lsl#1
     add     r1, r1, r11, lsl#2
 
     ldr     r1, [r1, #4]
-    LoadConstantToReg(_kern_invalid + 1, r2)    /* Thumb Function */
+    LOAD_ADDR(r2, kern_invalid)
 
     mov     r0, r8
     teq     r1, r2
@@ -393,12 +394,12 @@ irqhandler_from_user:
     mrs     r0, spsr
     str     r0, [sp, #0x40]
     mov     r5, sp
-    LoadConstantToReg(_irqstack_top, sp)
+    LOAD_ADDR(sp, irqstack_top)
     b       irq_join
 
 irqhandler_from_kernel:
     /* Set up IRQ stack */
-    LoadConstantToReg(_irqstack_top, sp)
+    LOAD_ADDR(sp, irqstack_top)
 
     /* Now save the registers */
     sub     sp, sp, #0x50
@@ -534,7 +535,7 @@ restore_kernel_context:
  * vector panic helper.
  */
 irqvec_panic:
-    LoadConstantToReg(_irqstack_top, sp)
+    LOAD_ADDR(sp, irqstack_top)
     mov     r1, r0
     adr     r0, vecPanicString
     blx     _panic
@@ -543,4 +544,7 @@ irqvec_panic:
 vecPanicString:
     .asciz  "fleh_vectors: exception in exception vectors, 0x%08x"
 
+LOAD_ADDR_GEN_DEF(irqstack_top)
+LOAD_ADDR_GEN_DEF(kern_invalid)
+LOAD_ADDR_GEN_DEF(mach_trap_table)
 

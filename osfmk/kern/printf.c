@@ -664,7 +664,7 @@ _doprnt(
 		uint64_t t = mach_absolute_time();
 		uint64_t ns; absolutetime_to_nanoseconds(t, &ns);
 		/* truncate the end of the timing information */
-		int tlen = sprintf(tbuf, "[%5llu.%06llu] ", (uint64_t)(ns / NSEC_PER_SEC), (uint64_t)((ns % NSEC_PER_SEC) / USEC_PER_SEC));
+		int tlen = sprintf(tbuf, "[%5llu.%06llu] ", (uint64_t)(ns / NSEC_PER_SEC), (uint64_t)((ns % NSEC_PER_SEC) / 1000));
 		for(tp = tbuf; tp < tbuf + tlen; tp++) 
 			putc(*tp);
 	}

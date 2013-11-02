@@ -33,6 +33,7 @@
 #include <arm/arch.h>
 #include <arm/asm_help.h>
 #include <assym.s>
+#include <mach/arm/asm.h>
 
 /**
  * Call_continuation
@@ -77,7 +78,7 @@ EnterARM(Switch_context)
     stmiaeq r3, {r4-lr}
 
     /* Save current thread */
-    LoadConstantToReg(_CurrentThread, r4)
+    LOAD_ADDR(r4, CurrentThread)
     str     r2, [r4]
 
     /* Set old/new threads */
@@ -99,7 +100,7 @@ EnterARM(Switch_context)
  */
 EnterARM(machine_load_context)
     /* Save current thread */
-    LoadConstantToReg(_CurrentThread, r4)
+    LOAD_ADDR(r4, CurrentThread)
     str     r0, [r4]
 
     /* Set thread */
@@ -168,4 +169,4 @@ return_to_user:
     ldmfd   sp, {r0-lr}^
     movs    pc, lr
     
-
+LOAD_ADDR_GEN_DEF(CurrentThread)

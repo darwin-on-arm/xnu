@@ -10,6 +10,7 @@
 #include <mach_assert.h>
 #include <assym.s>
 #include <arm/asm_help.h>
+#include <mach/arm/asm.h>
 
 /*
  * OMAP3530 on BeagleBoard xM has issues with STREX/LDREX. Do ourselves a favor
@@ -167,12 +168,12 @@ rwlsloopres:
 rwlsopt:
     mov     r2, #0x8001
     ands    r2, r1, r2
-    LoadConstantToReg(_lck_rw_lock_shared_gen + 1, r12)
+    LOAD_ADDR(r12, lck_rw_lock_shared_gen)
     bx      r12
     movs    r2, r1, lsr#16
     bne     rwlsloopres
 rwlsloolow:
-    LoadConstantToReg(_lck_rw_lock_shared_gen + 1, r12)
+    LOAD_ADDR(r12, lck_rw_lock_shared_gen)
     bx      r12
 
 /**
@@ -202,7 +203,7 @@ rwleloop:
     bx          lr
 #endif
 rwleslow:
-    LoadConstantToReg(_lck_rw_lock_exclusive_gen + 1, r12)
+    LOAD_ADDR(r12, lck_rw_lock_exclusive_gen)
     bx          r12
 
 /**
@@ -277,7 +278,7 @@ EnterARM(lck_rw_lock_shared_to_exclusive)
     ands        r2, r1, r3
     beq         rwlsepanic
     bic         r1, r1, r3
-    LoadConstantToReg(_lck_rw_lock_shared_gen + 1, r12)
+    LOAD_ADDR(r12, lck_rw_lock_shared_gen)
     subs        r2, r2, #0x10000
     bxne        r12
     ands        r3, r1, #5
@@ -330,7 +331,7 @@ EnterARM(lock_write_to_read)
     movs        r2, r2
     bxeq        lr
     add         r0, r0, #8
-    LoadConstantToReg(_thread_wakeup+1, r12)
+    LOAD_ADDR(r12, thread_wakeup)
     bx          r12
 rwlstexit:
     mov         r2, r1
@@ -641,3 +642,6 @@ rwtlepanic:
 rwtlePanicString:
     .asciz  "lck_rw_try_lock_exclusive: lock (0x%08x, 0x%08x)"
     
+LOAD_ADDR_GEN_DEF(thread_wakeup)
+LOAD_ADDR_GEN_DEF(lck_rw_lock_shared_gen)
+LOAD_ADDR_GEN_DEF(lck_rw_lock_exclusive_gen)
