@@ -2810,6 +2810,14 @@ void vcattach(void); /* XXX gcc 4 warning cleanup */
 void
 vcattach(void)
 {
+#ifdef __arm__
+	/* Print out video console information to serial and screen */
+	printf("%svideo console at 0x%lx (%ldx%ldx%ld)\n", (vinfo.v_depth >= 8) ? "\033[31mC\033[32mO\033[33mL\033[34mO\033[35mR\033[0m " : "",
+		vinfo.v_baseaddr, vinfo.v_width, vinfo.v_height,  vinfo.v_depth);
+	kprintf("%svideo console at 0x%lx (%ldx%ldx%ld)\n", (vinfo.v_depth >= 8) ? "\033[31mC\033[32mO\033[33mL\033[34mO\033[35mR\033[0m " : "",
+		vinfo.v_baseaddr, vinfo.v_width, vinfo.v_height,  vinfo.v_depth);
+#endif
+
 	vm_initialized = TRUE;
 
 	if ( gc_graphics_boot == FALSE )
