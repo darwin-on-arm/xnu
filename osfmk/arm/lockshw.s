@@ -18,9 +18,6 @@
 #ifdef BOARD_CONFIG_OMAP3530
 #undef BOARD_CONFIG_OMAP3530
 #endif
-#ifdef BOARD_CONFIG_OMAP335X
-#undef BOARD_CONFIG_OMAP335X
-#endif
 
 #ifdef NO_EXCLUSIVES
 #define ldrex           ldr
@@ -157,7 +154,7 @@ rwlsloop:
     bne     rwlsopt
 rwlsloopres:
     add     r1, r1, #0x10000
-#if !defined(BOARD_CONFIG_OMAP3530) && !defined(BOARD_CONFIG_OMAP335X)
+#ifndef BOARD_CONFIG_OMAP3530
     strex   r2, r1, [r0]
     movs    r2, r2
     bxeq    lr
@@ -213,7 +210,7 @@ rwleslow:
  */
 EnterARM(lock_done)
 EnterARM(lck_rw_done)
-#if defined(BOARD_CONFIG_OMAP3530) || defined(BOARD_CONFIG_OMAP335X)
+#ifdef BOARD_CONFIG_OMAP3530
     mrs         r9, cpsr
     cpsid       if
 #endif
@@ -243,12 +240,14 @@ rwldexcl1:
     and         r12, r1, #2
     bic         r1, r1, r2
 rwldstore:
-#if !defined(BOARD_CONFIG_OMAP3530) && !defined(BOARD_CONFIG_OMAP335X)
+#ifndef BOARD_CONFIG_OMAP3530
     strex       r2, r1, [r0]
     movs        r2, r2
     bne         _lock_done_enter
 #else
     str         r1, [r0]
+#endif
+#ifdef BOARD_CONFIG_OMAP3530
     msr         cpsr_cf, r9
 #endif
     movs        r12, r12
@@ -284,7 +283,7 @@ EnterARM(lck_rw_lock_shared_to_exclusive)
     ands        r3, r1, #5
     bxne        r12
     orr         r1, r1, #4
-#if !defined(BOARD_CONFIG_OMAP3530) && !defined(BOARD_CONFIG_OMAP335X)
+#ifndef BOARD_CONFIG_OMAP3530
     strex       r2, r1, [r0]
     movs        r2, r2
     bne         _lock_read_to_write
@@ -320,7 +319,7 @@ EnterARM(lock_write_to_read)
     moveq       r3, #0xA
     bic         r1, r1, r3
     orr         r1, r1, #0x10000
-#if !defined(BOARD_CONFIG_OMAP3530) && !defined(BOARD_CONFIG_OMAP335X)
+#ifndef BOARD_CONFIG_OMAP3530
     strex       r3, r1, [r0]
     movs        r3, r3
     bne         _lock_write_to_read
