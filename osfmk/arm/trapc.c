@@ -199,7 +199,7 @@ void sleh_abort(void *context, int reason)
         panic("sleh_abort: recursive abort! (pc %x lr %x sp %x cpsr %x dfar 0x%08x abort count %d)\n", arm_ctx->pc, arm_ctx->lr, arm_ctx->sp, arm_ctx->cpsr, dfar, __abort_count);
     }
     __abort_count++;
-
+                    
     /*
      * Panic if it's an alignment fault?
      */

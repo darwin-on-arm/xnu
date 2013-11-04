@@ -348,8 +348,8 @@ void arm_vm_init(uint32_t mem_limit, boot_args * args)
     /*
      * Burn it away... 
      */
-#ifdef BOARD_CONFIG_S5L8930X
-    first_avail += 8192 * L1_SIZE; /* temporary..... */
+#if defined(BOARD_CONFIG_S5L8930X) || defined(BOARD_CONFIG_S5L8920X) || defined(BOARD_CONFIG_S5L8922X)
+    first_avail += 6144 * L1_SIZE; /* temporary..... */
 #else
     first_avail += 1 * L1_SIZE; /* temporary..... */
 #endif

@@ -35,6 +35,8 @@
 #include <kern/debug.h>
 #include <kern/processor.h>
 
+unsigned int real_ncpus = 1;
+
 void init_ast_check(processor_t processor)
 {
 

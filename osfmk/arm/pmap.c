@@ -106,9 +106,13 @@ pv_entry_t pv_head_table;       /* Start of PV entries. */
 static pmap_paddr_t avail_remaining;    /* Remaining avaialable pages. */
 uint32_t virt_begin, virt_end;  /* Virtual Address Space. */
 uint32_t avail_start, vm_first_phys;
-
+vm_page_t commpage;
 uint64_t pmap_nesting_size_min = 0x8000000;
 uint64_t pmap_nesting_size_max = 0x8000000;
+
+int allow_data_exec  = 0;       /* no exec from data, embedded is hardcore like that */
+int allow_stack_exec = 0;       /* No apps may execute from the stack by default */
+int nx_enabled = 1;
 
 /* THE kernel pmap. */
 struct pmap kernel_pmap_store;
@@ -964,13 +968,13 @@ void pmap_create_sharedpage(void)
     /*
      * Grab a page...
      */
-    vm_page_t page = pmap_grab_page();
-    assert(page);
+    commpage = pmap_grab_page();
+    assert(commpage);
 
     /*
      * And map it.
      */
-    pmap_enter(kernel_pmap, (vm_map_offset_t) _COMM_PAGE_BASE_ADDRESS, page->phys_page, 0, 0, FALSE, FALSE);
+    pmap_enter(kernel_pmap, (vm_map_offset_t) _COMM_PAGE_BASE_ADDRESS, commpage->phys_page, 0, 0, FALSE, FALSE);
 
     /*
      * Memset it.
@@ -1174,7 +1178,7 @@ kern_return_t pmap_enter_options(pmap_t pmap, vm_map_offset_t va, ppnum_t pa, vm
          */
 
         uint32_t template_pte = ((pa << PAGE_SHIFT) & L2_ADDR_MASK) | L2_SMALL_PAGE | L2_ACCESS_PRW;
-        //if(!wired) /* xxx kill */
+        if (!wired) /* xxx kill */
             template_pte |= L2_ACCESS_USER; 
 
         /*
@@ -1887,6 +1891,8 @@ kern_return_t pmap_nest(pmap_t subord, pmap_t grand, addr64_t va_start, addr64_t
     SPLX(spl);
     PMAP_UNLOCK(grand);
     PMAP_UNLOCK(subord);
+
+    pmap_enter(kernel_pmap, (vm_map_offset_t) _COMM_PAGE_BASE_ADDRESS, commpage->phys_page, 0, 0, FALSE, FALSE);
 
     return KERN_SUCCESS;
 }

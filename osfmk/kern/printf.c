@@ -657,7 +657,7 @@ _doprnt(
 	void			(*putc)(char),
 	int			radix)		/* default radix - for '%r' */
 {
-#ifdef __arm__
+#if 0
 	/* timing information */
 	if(enable_timing) {
 		char tbuf[50], *tp;

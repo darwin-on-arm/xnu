@@ -132,6 +132,8 @@ void ml_init_interrupt(void)
  */
 void ml_cpu_up(void)
 {
+    (void)hw_atomic_add(&machine_info.physical_cpu, 1);
+    (void)hw_atomic_add(&machine_info.logical_cpu, 1);
     return;
 }
 
@@ -143,6 +145,8 @@ void ml_cpu_up(void)
  */
 void ml_cpu_down(void)
 {
+    (void)hw_atomic_sub(&machine_info.physical_cpu, 1);
+    (void)hw_atomic_sub(&machine_info.logical_cpu, 1);
     return;
 }
 
@@ -224,11 +228,14 @@ void ml_init_lock_timeout(void)
  */
 int ml_get_max_cpus(void)
 {
-    return 0;
+    return(machine_info.max_cpus);
 }
 
 void ml_init_max_cpus(unsigned long max_cpus)
 {
+    machine_info.max_cpus = max_cpus;
+    machine_info.physical_cpu_max = max_cpus;
+    machine_info.logical_cpu_max = max_cpus;
     return;
 }
 
