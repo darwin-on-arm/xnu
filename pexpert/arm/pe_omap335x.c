@@ -1,5 +1,6 @@
 /*
  * Copyright 2013, winocm. <winocm@icloud.com>
+ * Copyright 2013, furkanmustafa.
  * All rights reserved.
  * 
  * Redistribution and use in source and binary forms, with or without modification,
@@ -132,7 +133,7 @@ int Omap3_getc(void)
 void Omap3_uart_init(void)
 {
     int baudDivisor;
- 
+
     assert(OMAP3_UART_BAUDRATE != 0);
     baudDivisor = (OMAP3_UART_CLOCK / 16 / OMAP3_UART_BAUDRATE);
 
@@ -181,7 +182,7 @@ void Omap3_timebase_init(void)
      * Stop the timer. 
      */
     Omap3_timer_enabled(FALSE);
-	
+
     /*
      * Enable interrupts 
      */
@@ -209,17 +210,17 @@ void Omap3_timebase_init(void)
     /*
      * !!! SET INTERRUPTS ENABLED ON OVERFLOW 
      */
-    HwReg32(gOmapTimerBase + TISR) = 0x7; // 0x7; //0x2;
-    HwReg32(gOmapTimerBase + TIER) = 0x7; // 0x7; //0x2;
+    HwReg32(gOmapTimerBase + TISR) = 0x7;   // 0x7; //0x2;
+    HwReg32(gOmapTimerBase + TIER) = 0x7;   // 0x7; //0x2;
 
     kprintf(KPRINTF_PREFIX "starting timer..\n");
 
     // /*
     //  * Set to 32KHz 
     //  */
-    // mmio_set(gOmapPrcmBase + 0xc40, 0x40);			// CLKSEL_TIMER2_CLK = 32K_FCLK ????
-	// HwReg32(gOmapPrcmBase + 0x08) &= 0x02;
-    // mmio_set(gOmapPrcmBase + 0x400 + 0xc4, 0x02);			// CLKSEL_TIMER2_CLK = 32K_FCLK
+    // mmio_set(gOmapPrcmBase + 0xc40, 0x40);           // CLKSEL_TIMER2_CLK = 32K_FCLK ????
+    // HwReg32(gOmapPrcmBase + 0x08) &= 0x02;
+    // mmio_set(gOmapPrcmBase + 0x400 + 0xc4, 0x02);            // CLKSEL_TIMER2_CLK = 32K_FCLK
 
     /*
      * Arm the timer 
@@ -252,30 +253,30 @@ void Omap3_handle_interrupt(void *context)
         /*
          * Clear interrupt status 
          */
-        HwReg32(gOmapTimerBase + TISR) = 0x7; // 0x2; wrong?
-		
+        HwReg32(gOmapTimerBase + TISR) = 0x7;   // 0x2; wrong?
+
         /*
          * FFFFF 
          */
         rtclock_intr((arm_saved_state_t *) context);
-		
+
         /*
          * Set new IRQ generation 
          */
         HwReg32(INTCPS_CONTROL) = 0x1;
-		
+
         /*
          * ARM IT. 
          */
         Omap3_timer_enabled(TRUE);
-		
+
         /*
          * Update absolute time 
          */
-        clock_absolute_time += (clock_decrementer - Omap3_timer_value());	
-		
+        clock_absolute_time += (clock_decrementer - Omap3_timer_value());
+
         clock_had_irq = 1;
-		
+
         return;
     }
     return;
@@ -315,9 +316,9 @@ void Omap3_timer_enabled(int enable)
      * Clear the TCLR [ST] bit 
      */
     if (enable)
-		mmio_set(gOmapTimerBase + TCLR, 0x1);
+        mmio_set(gOmapTimerBase + TCLR, 0x1);
     else
-		mmio_clear(gOmapTimerBase + TCLR, 0x1);
+        mmio_clear(gOmapTimerBase + TCLR, 0x1);
 
     return;
 }
@@ -336,9 +337,13 @@ static void _fb_putc(int c)
     Omap3_putc(c);
 }
 
+extern int serialmode;
+
 void Omap3_framebuffer_init(void)
 {
-    /* This is an emulated framebuffer. */
+    /*
+     * This is an emulated framebuffer. 
+     */
     void *framebuffer = pmap_steal_memory(1024 * 768 * 4);
     void *framebuffer_phys = pmap_extract(kernel_pmap, framebuffer);
 
@@ -360,10 +365,12 @@ void Omap3_framebuffer_init(void)
 
     char tempbuf[16];
     initialize_screen((void *) &PE_state.video, kPETextMode);
-	
-	// TEMPORARY, because beaglebone (usually) doesn't have a display
-	switch_to_serial_console(); disableConsoleOutput = FALSE;
-	
+
+    // TEMPORARY, because beaglebone (usually) doesn't have a display
+    serialmode = 3;
+    switch_to_serial_console();
+    disableConsoleOutput = FALSE;
+
     return;
 }
 
@@ -392,21 +399,21 @@ void PE_init_SocSupport_omap3(void)
 
     gPESocDispatch.framebuffer_init = Omap3_framebuffer_init;
 
-	// init device base addresses
+    // init device base addresses
     gOmapSerialUartBase = ml_io_map(OMAP3_UART_BASE, PAGE_SIZE);
     gOmapTimerBase = ml_io_map(OMAP335X_SCH_TIMER_BASE, PAGE_SIZE);
     gOmapInterruptControllerBase = ml_io_map(OMAP3_GIC_BASE, PAGE_SIZE);
     // gOmapDisplayControllerBase = ml_io_map(OMAP3_DSS_BASE - 0x40, PAGE_SIZE); // doesn't apply for omap335x yet
-	
-    gOmapPrcmBase = ml_io_map(0x44E00000, PAGE_SIZE); // 0x48004000 (L4 Core / Clock Manager)
+
+    gOmapPrcmBase = ml_io_map(0x44E00000, PAGE_SIZE);   // 0x48004000 (L4 Core / Clock Manager)
 
     Omap3_uart_init();
     PE_kputc = gPESocDispatch.uart_putc;
 
     Omap3_framebuffer_init();
-	
-	mmio_set(gOmapPrcmBase + 0x404, 0x2);		// Enable Timer1 Clock
-	mmio_set(gOmapPrcmBase + 0x4C4, 0x2);		// Enable Timer1 Clock
+
+    mmio_set(gOmapPrcmBase + 0x404, 0x2);   // Enable Timer1 Clock
+    mmio_set(gOmapPrcmBase + 0x4C4, 0x2);   // Enable Timer1 Clock
 }
 
 void PE_init_SocSupport_stub(void)
