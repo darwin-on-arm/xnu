@@ -104,13 +104,14 @@ EnterARM(cache_initialize)
 #if __ARM_ARCH == 6
     mcr     p15, 0, r0, c7, c5, 4
     mcr     p15, 0, r0, c7, c10, 4
-    bx      lr
 #endif
 
     /* Enable L2 cache */
+#ifdef _ARM_ARCH_7
     mrc     p15, 0, r0, c1, c0, 1
     orr     r0, r0, #(1 << 1)
     mcr     p15, 0, r0, c1, c0, 1
+#endif
 
     /* Enable caching. */
     mrc     p15, 0, r0, c1, c0, 0

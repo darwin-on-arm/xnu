@@ -65,7 +65,7 @@ void arm_processor_identify(void)
 #if __ARM_ARCH == 7
     "ARMv7";
 #elif __ARM_ARCH == 6
-    "ARMv6"
+    "ARMv6";
 #else
     "unknown ARM";
 #endif
