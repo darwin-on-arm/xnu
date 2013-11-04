@@ -32,7 +32,7 @@ void PE_init_SocSupport_realview(void);
 void PE_init_SocSupport_sun4i(void);
 #endif
 
-#ifdef BOARD_CONFIG_OMAP3530
+#if defined(BOARD_CONFIG_OMAP3530) || defined(BOARD_CONFIG_OMAP335X)
 void PE_init_SocSupport_omap3(void);
 #endif
 
