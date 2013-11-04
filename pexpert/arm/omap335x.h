@@ -15,18 +15,19 @@
 #define FCR     0x8
 #define LCR     0xC
 #define MCR     0x10
-#define LSR     0x14		// valid 335x
+#define LSR     0x14		// 335x
 #define MSR     0x18
 #define SCR     0x1C
-#define SSR     0x44		// only this is valid for 335x
+#define SSR     0x44		// 335x
 
 #define barrier()               __asm__ __volatile__("": : :"memory");
 
-#define OMAP3_TIMER1_BASE        0x44E31000 //0x48318000
 #define OMAP3_GIC_BASE           0x48200000
 
-#define OMAP3_L4_PERIPH_BASE    0x44C00000
-#define OMAP3_UART_BASE         (OMAP3_L4_PERIPH_BASE + 0x209000)    // This is uart0 (default usb on beaglebone)
+
+#define OMAP3_L4_WKUP_PERIPH_BASE    0x44C00000
+#define OMAP3_L4_PERIPH_BASE    0x48000000
+#define OMAP3_UART_BASE         (OMAP3_L4_WKUP_PERIPH_BASE + 0x209000)    // This is uart0 (default usb on beaglebone)
 
 #define OMAP3_UART_CLOCK        48000000
 #define OMAP3_UART_BAUDRATE     115200
@@ -54,98 +55,6 @@
 #define DLL     RBR
 #define DLM     IER
 
-/*
- * DSS/framebuffer stuff
- */
-#define OMAP3_DSS_BASE      0x48050040
-#define OMAP3_DISPC_BASE    0x48050440
-#define OMAP3_VENC_BASE     0x48050C00
-
-typedef uint32_t u32;
-
-/* DSS Registers */
-struct dss_regs {
-    u32 control;                /* 0x40 */
-    u32 sdi_control;            /* 0x44 */
-    u32 pll_control;            /* 0x48 */
-};
-
-/* DISPC Registers */
-struct dispc_regs {
-    u32 control;                /* 0x40 */
-    u32 config;             /* 0x44 */
-    u32 reserve_2;              /* 0x48 */
-    u32 default_color0;         /* 0x4C */
-    u32 default_color1;         /* 0x50 */
-    u32 trans_color0;           /* 0x54 */
-    u32 trans_color1;           /* 0x58 */
-    u32 line_status;            /* 0x5C */
-    u32 line_number;            /* 0x60 */
-    u32 timing_h;               /* 0x64 */
-    u32 timing_v;               /* 0x68 */
-    u32 pol_freq;               /* 0x6C */
-    u32 divisor;                /* 0x70 */
-    u32 global_alpha;           /* 0x74 */
-    u32 size_dig;               /* 0x78 */
-    u32 size_lcd;               /* 0x7C */
-	u32 gfx_ba0;				/* 0x80 */
-	u32 gfx_ba1;				/* 0x84 */
-	u32 gfx_position;			/* 0x88 */
-	u32 gfx_size;				/* 0x8C */
-	uint8_t unused[16];				/* 0x90 */
-	u32 gfx_attributes;			/* 0xA0 */
-	u32 gfx_fifo_threshold;     /* 0xA4 */
-	u32 gfx_fifo_size_status;   /* 0xA8 */
-	u32 gfx_row_inc;			/* 0xAC */
-	u32 gfx_pixel_inc;			/* 0xB0 */
-	u32 gfx_window_skip;        /* 0xB4 */
-	u32 gfx_table_ba;			/* 0xB8 */
-};
-
-/* Few Register Offsets */
-#define FRAME_MODE_SHIFT            1
-#define TFTSTN_SHIFT                3
-#define DATALINES_SHIFT             8
-
-/* Enabling Display controller */
-#define LCD_ENABLE              1
-#define DIG_ENABLE              (1 << 1)
-#define GO_LCD                  (1 << 5)
-#define GO_DIG                  (1 << 6)
-#define GP_OUT0                 (1 << 15)
-#define GP_OUT1                 (1 << 16)
-
-#define DISPC_ENABLE                (LCD_ENABLE | \
-                         DIG_ENABLE | \
-                         GO_LCD | \
-                         GO_DIG | \
-                         GP_OUT0| \
-                         GP_OUT1)
-
-/* Configure VENC DSS Params */
-#define VENC_CLK_ENABLE             (1 << 3)
-#define DAC_DEMEN               (1 << 4)
-#define DAC_POWERDN             (1 << 5)
-#define VENC_OUT_SEL                (1 << 6)
-#define DIG_LPP_SHIFT               16
-#define VENC_DSS_CONFIG             (VENC_CLK_ENABLE | \
-                         DAC_DEMEN | \
-                         DAC_POWERDN | \
-                         VENC_OUT_SEL)
-/*
- * Panel Configuration
- */
-struct panel_config {
-    u32 timing_h;
-    u32 timing_v;
-    u32 pol_freq;
-    u32 divisor;
-    u32 lcd_size;
-    u32 panel_type;
-    u32 data_lines;
-    u32 load_mode;
-    u32 panel_color;
-};
 
 /*
  * gPIC configuration
@@ -175,8 +84,34 @@ struct panel_config {
 /*
  * Timer.
  */ 
-#define GPT1_IRQ        37
-#define GPT1_IRQ        67
+
+#define OMAP3_TIMER0_BASE       (OMAP3_L4_WKUP_PERIPH_BASE + 0x205000)	// 0x44E05000
+
+#define OMAP3_TIMER1_BASE       (OMAP3_L4_WKUP_PERIPH_BASE + 0x231000)	// 0x44E31000
+#define OMAP3_TIMER1_ENAB		0x44E004C4	 // CM_WKUP 0x44E0_0400 + CM_WKUP_TIMER1_CLKCTRL    C4h . 0
+
+#define OMAP3_TIMER2_BASE       (OMAP3_L4_PERIPH_BASE + 0x40000)		// 0x48040000
+#define OMAP3_TIMER3_BASE       (OMAP3_L4_PERIPH_BASE + 0x42000)		// 0x48042000
+#define OMAP3_TIMER4_BASE       (OMAP3_L4_PERIPH_BASE + 0x44000)		// 0x48044000
+#define OMAP3_TIMER5_BASE       (OMAP3_L4_PERIPH_BASE + 0x46000)		// 0x48046000
+#define OMAP3_TIMER6_BASE       (OMAP3_L4_PERIPH_BASE + 0x48000)		// 0x48048000
+#define OMAP3_TIMER7_BASE       (OMAP3_L4_PERIPH_BASE + 0x4A000)		// 0x4804A000
+
+#define OMAP3_TIMER0_IRQ		66
+#define OMAP3_TIMER1_IRQ		67
+#define OMAP3_TIMER2_IRQ		68
+#define OMAP3_TIMER3_IRQ		69
+#define OMAP3_TIMER4_IRQ		92
+#define OMAP3_TIMER5_IRQ		93
+#define OMAP3_TIMER6_IRQ		94
+#define OMAP3_TIMER7_IRQ		95
+
+#define OMAP335X_SCH_TIMER		1
+#define OMAP335X_SCH_TIMER_BASE	OMAP3_TIMER1_BASE
+#define OMAP335X_SCH_TIMER_IRQ	OMAP3_TIMER1_IRQ
+
+#ifdef OMAP335X_SCH_TIMER==1
+
 #define TIDR            0x0
 #define TIOCP_CFG       0x10
 #define TISTAT          0x14
@@ -193,11 +128,31 @@ struct panel_config {
 #define TSICR           0x40
 #define TCAR2           0x44
 
-/* Only for GPTIMER1/2 */
+/* Only for DMTIMER_1MS; Timer1 */
 #define TPIR            0x48
 #define TNIR            0x4C
 #define TCVR            0x50
 #define TOCR            0x54 
 #define TOWR            0x58
+
+#else
+
+#define TIDR            0x0
+#define TIOCP_CFG       0x10
+#define TISTAT          0x28
+#define TISR            0x2C
+#define TIER            0x30
+#define TWER            0x34
+#define TCLR            0x38
+#define TCRR            0x3C
+#define TLDR            0x40
+#define TTGR            0x44
+#define TWPS            0x48
+#define TMAR            0x4C
+#define TCAR1           0x50
+#define TSICR           0x54
+#define TCAR2           0x58
+
+#endif
 
 #endif

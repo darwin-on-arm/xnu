@@ -44,8 +44,6 @@
 
 extern int disableConsoleOutput, serialmode;
 
-/* XXX: timer is so god awfully borked */
-
 #ifdef BOARD_CONFIG_OMAP335X
 
 void Omap3_timer_enabled(int enable);
@@ -59,7 +57,9 @@ uint64_t Omap3_get_timebase(void);
 #define mmio_set(a,v)   mmio_write((a), mmio_read((a)) | (v))
 #define mmio_clear(a,v) mmio_write((a), mmio_read((a)) & ~(v))
 
-#define HwReg(x) *((volatile unsigned long*)(x))
+#define HwReg8(x) *((volatile uint8_t*)(x))
+#define HwReg16(x) *((volatile uint16_t*)(x))
+#define HwReg32(x) *((volatile uint32_t*)(x))
 
 #define KPRINTF_PREFIX  "PE_omap335x: "
 
@@ -101,10 +101,10 @@ void Omap3_early_putc(int c)
     if (c == '\n')
         Omap3_early_putc('\r');
 
-    while ((HwReg(OMAP3_UART_BASE + SSR) & SSR_TXFIFOFULL))
+    while ((HwReg32(OMAP3_UART_BASE + SSR) & SSR_TXFIFOFULL))
         barrier();
 
-    HwReg(OMAP3_UART_BASE + THR) = c;
+    HwReg32(OMAP3_UART_BASE + THR) = c;
 }
 
 void Omap3_putc(int c)
@@ -115,44 +115,34 @@ void Omap3_putc(int c)
     if (c == '\n')
         Omap3_putc('\r');
 
-    while ((HwReg(gOmapSerialUartBase + SSR) & SSR_TXFIFOFULL))
+    while ((HwReg32(gOmapSerialUartBase + SSR) & SSR_TXFIFOFULL))
         barrier();
 
-    HwReg(gOmapSerialUartBase + THR) = c;
+    HwReg32(gOmapSerialUartBase + THR) = c;
 }
 
 int Omap3_getc(void)
 {
-    while (!(HwReg(gOmapSerialUartBase + LSR) & LSR_DR))
+    while (!(HwReg32(gOmapSerialUartBase + LSR) & LSR_DR))
         barrier();
 
-    return (HwReg(gOmapSerialUartBase + RBR));
+    return (HwReg32(gOmapSerialUartBase + RBR));
 }
 
 void Omap3_uart_init(void)
 {
-    gOmapTimerBase = ml_io_map(OMAP3_TIMER1_BASE, PAGE_SIZE);
-    gOmapInterruptControllerBase = ml_io_map(OMAP3_GIC_BASE, PAGE_SIZE);
-    // gOmapDisplayControllerBase = ml_io_map(OMAP3_DSS_BASE - 0x40, PAGE_SIZE);
-
-    /*
-     * XXX: God. 
-     */
-    gOmapPrcmBase = ml_io_map(0x44E00000, PAGE_SIZE); // 0x48004000 (L4 Core / Clock Manager)
-
     int baudDivisor;
-    gOmapSerialUartBase = ml_io_map(OMAP3_UART_BASE, PAGE_SIZE);
-
+ 
     assert(OMAP3_UART_BAUDRATE != 0);
     baudDivisor = (OMAP3_UART_CLOCK / 16 / OMAP3_UART_BAUDRATE);
 
-    HwReg(gOmapSerialUartBase + IER) = 0x00;
-    HwReg(gOmapSerialUartBase + LCR) = LCR_BKSE | LCRVAL;
-    HwReg(gOmapSerialUartBase + DLL) = baudDivisor & 0xFF;
-    HwReg(gOmapSerialUartBase + DLM) = (baudDivisor >> 8) & 0xFF;
-    HwReg(gOmapSerialUartBase + LCR) = LCRVAL;
-    HwReg(gOmapSerialUartBase + MCR) = MCRVAL;
-    HwReg(gOmapSerialUartBase + FCR) = FCRVAL;
+    HwReg32(gOmapSerialUartBase + IER) = 0x00;
+    HwReg32(gOmapSerialUartBase + LCR) = LCR_BKSE | LCRVAL;
+    HwReg32(gOmapSerialUartBase + DLL) = baudDivisor & 0xFF;
+    HwReg32(gOmapSerialUartBase + DLM) = (baudDivisor >> 8) & 0xFF;
+    HwReg32(gOmapSerialUartBase + LCR) = LCRVAL;
+    HwReg32(gOmapSerialUartBase + MCR) = MCRVAL;
+    HwReg32(gOmapSerialUartBase + FCR) = FCRVAL;
 }
 
 void Omap3_interrupt_init(void)
@@ -167,19 +157,19 @@ void Omap3_interrupt_init(void)
     /*
      * Set MIR bits to enable all interrupts 
      */
-    HwReg(INTCPS_MIR(0)) = 0xffffffff;
-    HwReg(INTCPS_MIR(1)) = 0xffffffff;
-    HwReg(INTCPS_MIR(2)) = 0xffffffff;
+    HwReg32(INTCPS_MIR(0)) = 0xffffffff;
+    HwReg32(INTCPS_MIR(1)) = 0xffffffff;
+    HwReg32(INTCPS_MIR(2)) = 0xffffffff;
 
     /*
-     * Set the true bits 
+     * Set the true bits (for interrupts we're interested in)
      */
-    mmio_write(INTCPS_MIR_CLEAR(GPT1_IRQ >> 5), 1 << (GPT1_IRQ & 0x1f));
+    mmio_write(INTCPS_MIR_CLEAR(OMAP335X_SCH_TIMER_IRQ >> 5), 1 << (OMAP335X_SCH_TIMER_IRQ & 0x1f));
 
     /*
      * Set enable new IRQs/FIQs 
      */
-    HwReg(INTCPS_CONTROL) = (1 << 0);
+    HwReg32(INTCPS_CONTROL) = (1 << 0);
 
     barrier();
     return;
@@ -191,7 +181,7 @@ void Omap3_timebase_init(void)
      * Stop the timer. 
      */
     Omap3_timer_enabled(FALSE);
-
+	
     /*
      * Enable interrupts 
      */
@@ -205,34 +195,36 @@ void Omap3_timebase_init(void)
     /*
      * Set timer decrementer defaults 
      */
-    HwReg(gOmapTimerBase + TLDR) = 0xffffffe0;
-    HwReg(gOmapTimerBase + TCRR) = 0xffffffe0;
+    HwReg32(gOmapTimerBase + TLDR) = 0xffffffe0;
+    HwReg32(gOmapTimerBase + TCRR) = 0xffffffe0;
 
-    HwReg(gOmapTimerBase + TPIR) = 232000;
-    HwReg(gOmapTimerBase + TNIR) = -768000;
+    HwReg32(gOmapTimerBase + TPIR) = 232000;
+    HwReg32(gOmapTimerBase + TNIR) = -768000;
 
-    HwReg(gOmapTimerBase + TOCR) = 0;
-    HwReg(gOmapTimerBase + TOWR) = 100;
+    HwReg32(gOmapTimerBase + TOCR) = 0;
+    HwReg32(gOmapTimerBase + TOWR) = 100;
 
-    HwReg(gOmapTimerBase + TCLR) = (1 << 6);
+    HwReg32(gOmapTimerBase + TCLR) = (1 << 6);
 
     /*
      * !!! SET INTERRUPTS ENABLED ON OVERFLOW 
      */
-    HwReg(gOmapTimerBase + TISR) = 0x7; //0x2;
-    HwReg(gOmapTimerBase + TIER) = 0x7; //0x2; // this is disabling
+    HwReg32(gOmapTimerBase + TISR) = 0x7; // 0x7; //0x2;
+    HwReg32(gOmapTimerBase + TIER) = 0x7; // 0x7; //0x2;
+
+    kprintf(KPRINTF_PREFIX "starting timer..\n");
 
     // /*
     //  * Set to 32KHz 
     //  */
     // mmio_set(gOmapPrcmBase + 0xc40, 0x40);			// CLKSEL_TIMER2_CLK = 32K_FCLK ????
-	// HwReg(gOmapPrcmBase + 0x08) &= 0x02;
+	// HwReg32(gOmapPrcmBase + 0x08) &= 0x02;
     // mmio_set(gOmapPrcmBase + 0x400 + 0xc4, 0x02);			// CLKSEL_TIMER2_CLK = 32K_FCLK
 
     /*
      * Arm the timer 
      */
-    HwReg(gOmapTimerBase + TCLR) = (1 << 0) | (1 << 1) | (2 << 10);
+    HwReg32(gOmapTimerBase + TCLR) = (1 << 0) | (1 << 1) | (2 << 10);
 
     /*
      * Wait for it. 
@@ -249,9 +241,9 @@ void Omap3_timebase_init(void)
 
 void Omap3_handle_interrupt(void *context)
 {
-    uint32_t irq_number = (HwReg(INTCPS_SIR_IRQ)) & 0x7F;
+    uint32_t irq_number = (HwReg32(INTCPS_SIR_IRQ)) & 0x7F;
 
-    if (irq_number == GPT1_IRQ) {     /* GPTimer1 IRQ */
+    if (irq_number == OMAP335X_SCH_TIMER_IRQ) {
         /*
          * Stop the timer 
          */
@@ -260,30 +252,30 @@ void Omap3_handle_interrupt(void *context)
         /*
          * Clear interrupt status 
          */
-        HwReg(gOmapTimerBase + TISR) = 0x7; // 0x2; wrong?
-
+        HwReg32(gOmapTimerBase + TISR) = 0x7; // 0x2; wrong?
+		
         /*
          * FFFFF 
          */
         rtclock_intr((arm_saved_state_t *) context);
-
+		
         /*
          * Set new IRQ generation 
          */
-        HwReg(INTCPS_CONTROL) = 0x1;
-
+        HwReg32(INTCPS_CONTROL) = 0x1;
+		
         /*
          * ARM IT. 
          */
         Omap3_timer_enabled(TRUE);
-
+		
         /*
          * Update absolute time 
          */
         clock_absolute_time += (clock_decrementer - Omap3_timer_value());	
-
+		
         clock_had_irq = 1;
-
+		
         return;
     }
     return;
@@ -313,18 +305,19 @@ uint64_t Omap3_timer_value(void)
     /*
      * Return overflow value minus the counter 
      */
-    return 0xffffffff - (HwReg(gOmapTimerBase + TCRR));
+    return 0xffffffff - (HwReg32(gOmapTimerBase + TCRR));
 }
 
 void Omap3_timer_enabled(int enable)
 {
+
     /*
      * Clear the TCLR [ST] bit 
      */
     if (enable)
-        HwReg(gOmapTimerBase + TCLR) |= (1 << 0);
+		mmio_set(gOmapTimerBase + TCLR, 0x1);
     else
-        HwReg(gOmapTimerBase + TCLR) &= ~(1 << 0);
+		mmio_clear(gOmapTimerBase + TCLR, 0x1);
 
     return;
 }
@@ -342,49 +335,6 @@ static void _fb_putc(int c)
     vcputc(0, 0, c);
     Omap3_putc(c);
 }
-
-/* ModeDB inspired by Linux kernel. */
-typedef struct omap_videomode {
-    const char *name;
-    uint32_t refresh;
-    uint32_t xres;
-    uint32_t yres;
-    uint32_t pixclock;
-    uint32_t left_margin;       /* HBP */
-    uint32_t right_margin;      /* HFP */
-    uint32_t upper_margin;      /* VBP */
-    uint32_t lower_margin;      /* VFP */
-    uint32_t hsync_len;         /* HSW */
-    uint32_t vsync_len;         /* VSW */
-    uint32_t sync, vmode, flag;
-} omap_videomode;
-
-omap_videomode omap_videomodes[] = {
-    /*
-     * Note, our pixelclock runs at 96MHz. 
-     */
-
-    /*
-     * 1280x720 @ ~75Hz and friends 
-     */
-    {"dvi:1280x720", 60, 1280, 720, 0, 220, 440, 20, 5, 40, 5, 0, 0, 0},
-    {"dvi:1280x768", 60, 1280, 768, 0, 220, 440, 20, 5, 40, 5, 0, 0, 0},
-    {"dvi:1280x800", 60, 1280, 800, 0, 220, 440, 20, 5, 40, 5, 0, 0, 0},
-
-    /*
-     * 1024x768 @ 70Hz. 
-     */
-    {"dvi:1024x768", 60, 1024, 768, 0, 331, 37, 44, 5, 202, 10, 0, 0, 0},
-
-    /*
-     * !!! EXPERIMENTAL 1080P MODE !!! MAKES SOME MONITORS GO WACKO !!! 
-     */
-    {"dvi:1920x1080", 24, 1920, 1080, 0, 440, 1024, 20, 50, 80, 5, 0, 0, 0},
-
-    /*
-     * Please put more modes in here! 
-     */
-};
 
 void Omap3_framebuffer_init(void)
 {
@@ -442,10 +392,21 @@ void PE_init_SocSupport_omap3(void)
 
     gPESocDispatch.framebuffer_init = Omap3_framebuffer_init;
 
+	// init device base addresses
+    gOmapSerialUartBase = ml_io_map(OMAP3_UART_BASE, PAGE_SIZE);
+    gOmapTimerBase = ml_io_map(OMAP335X_SCH_TIMER_BASE, PAGE_SIZE);
+    gOmapInterruptControllerBase = ml_io_map(OMAP3_GIC_BASE, PAGE_SIZE);
+    // gOmapDisplayControllerBase = ml_io_map(OMAP3_DSS_BASE - 0x40, PAGE_SIZE); // doesn't apply for omap335x yet
+	
+    gOmapPrcmBase = ml_io_map(0x44E00000, PAGE_SIZE); // 0x48004000 (L4 Core / Clock Manager)
+
     Omap3_uart_init();
     PE_kputc = gPESocDispatch.uart_putc;
 
     Omap3_framebuffer_init();
+	
+	mmio_set(gOmapPrcmBase + 0x404, 0x2);		// Enable Timer1 Clock
+	mmio_set(gOmapPrcmBase + 0x4C4, 0x2);		// Enable Timer1 Clock
 }
 
 void PE_init_SocSupport_stub(void)
