@@ -439,3 +439,18 @@ void thread_set_wq_state32(thread_t thread, thread_state_t tstate)
         splx(s);
     }
 }
+
+/*
+ * consider_machine_collect:
+ *
+ *  Try to collect machine-dependent pages
+ */
+void
+consider_machine_collect(void)
+{
+}
+
+void
+consider_machine_adjust(void)
+{
+}

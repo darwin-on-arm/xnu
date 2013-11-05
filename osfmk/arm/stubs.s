@@ -71,7 +71,6 @@ UNIMPLEMENTED_STUB(_aout_db_sym_init)
 UNIMPLEMENTED_STUB(_aout_db_symbol_values)
 
 
-UNIMPLEMENTED_STUB(_consider_machine_adjust)
 UNIMPLEMENTED_STUB(_coredumpok)
 UNIMPLEMENTED_STUB(_cpu_sleep)
 
@@ -135,7 +134,6 @@ UNIMPLEMENTED_STUB(_adler32_vec)
 UNIMPLEMENTED_STUB(_bzero_phys_nc)
 UNIMPLEMENTED_STUB(_chudxnu_thread_ast)
 UNIMPLEMENTED_STUB(_commpage_text_populate)
-UNIMPLEMENTED_STUB(_consider_machine_collect)
 UNIMPLEMENTED_STUB(_cpu_control)
 UNIMPLEMENTED_STUB(_cpu_data_ptr)
 UNIMPLEMENTED_STUB(_cpu_exit_wait)

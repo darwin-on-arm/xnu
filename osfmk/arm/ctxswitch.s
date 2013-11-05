@@ -143,14 +143,14 @@ thread_return_join:
     mrc     p15, 0, r9, c13, c0, 4
     
     ldr     r8, [r9, MACHINE_THREAD_CPU_DATA]
-    ldr     r7, [r8, CPU_PENDING_AST]
+    ldr     r5, [r8, CPU_PENDING_AST]
     
-    cmp     r7, #0
+    cmp     r5, #0
     beq     return_to_user
 
     /* There's an ast. */
     
-    mov     r0, r7
+    mov     r0, r5
     mov     r1, #1
     blx     _ast_taken
     

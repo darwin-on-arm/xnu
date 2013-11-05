@@ -499,7 +499,6 @@ void sleh_abort(void *context, int reason)
                            arm_ctx->r[8], arm_ctx->r[9], arm_ctx->r[10],
                            arm_ctx->r[11], arm_ctx->r[12], arm_ctx->sp,
                            arm_ctx->lr, arm_ctx->pc, arm_ctx->cpsr);
-                    Debugger("usermode abort");
                 } else {
                     /*
                      * Retry execution of instruction. 

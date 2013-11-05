@@ -866,7 +866,7 @@ void mach_syscall_trace(arm_saved_state_t * state)
 {
 #if 0
     int num = -(state->r[12]);
-    kdb_printf("MACH Trap: (%d/%s)\n", num, mach_syscall_name_table[num]);
+    kprintf("MACH Trap: (%d/%s) r0: 0x%08x\n", num, mach_syscall_name_table[num], state->r[0]);
 #endif
 #if 0
     int num = -(state->r[12]);

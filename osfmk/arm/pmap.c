@@ -418,9 +418,10 @@ vm_offset_t pmap_pte(pmap_t pmap, vm_offset_t virt)
     /*
      * Verify it's not a section mapping. 
      */
-    if ((tte & ARM_PAGE_MASK_VALUE) == ARM_PAGE_SECTION)
-        panic("Translation table entry is a section mapping (tte %x ttep %x)",
+    if ((tte & ARM_PAGE_MASK_VALUE) == ARM_PAGE_SECTION) {
+        panic("Translation table entry is a section mapping (tte %x ttep %x)!\n",
               tte, tte_offset);
+    }
 
     /*
      * Clean the TTE bits off, get the address. 
@@ -1229,9 +1230,7 @@ void pmap_expand(pmap_t map, vm_offset_t v)
      * Overwrite the old L1 mapping in this region with a fresh L2 descriptor.
      */
     *tte =
-        ((page->phys_page << PAGE_SHIFT) & L1_PTE_ADDR_MASK) | L1_TYPE_PTE | (1
-                                                                              <<
-                                                                              4);
+        ((page->phys_page << PAGE_SHIFT) & L1_PTE_ADDR_MASK) | L1_TYPE_PTE | (1 << 4);
 
  Out:
 
@@ -1328,9 +1327,41 @@ kern_return_t pmap_enter_options(pmap_t pmap, vm_map_offset_t va, ppnum_t pa,
         ppnum_t pai;
 
         /*
-         * Get the pv_h for the specified page index.
+         * If the current PA isn't zero, and if it's non-existent... remove the mapping
          */
-        pai = (pa);
+        if((old_pte & L2_ADDR_MASK) != 0) {
+            pv_entry_t prev, cur;
+            pai = pa_index((old_pte & L2_ADDR_MASK));
+            pv_h = pai_to_pvh(pai);
+
+            *(uint32_t *) pte = 0;
+
+            if(pv_h->pv_pmap == PMAP_NULL) {
+                panic("pmap_enter_options: null pv_list\n");
+            }
+
+            if (pv_h->pv_address_va == va && pv_h->pv_pmap == pmap) {
+                cur = pv_h->pv_next;
+                if(cur != (pv_entry_t)0) {
+                    *pv_h = *cur;
+                    pv_e = cur;
+                } else {
+                    pv_h->pv_pmap = PMAP_NULL;
+                }
+            } else {
+                cur = pv_h;
+                while(cur->pv_address_va != va || cur->pv_pmap != pmap) {
+                    prev = cur;
+                    if ((cur = prev->pv_next) == (pv_entry_t)0) {
+                        panic("pmap_enter: mapping not in pv_list!");
+                    }
+                    prev->pv_next = cur->pv_next;
+                    pv_e = cur;
+                }
+            }
+        }
+
+        pai = pa;
         pv_h = pai_to_pvh(pai);
 
         /*
@@ -1538,15 +1569,10 @@ void pmap_remove_range(pmap_t pmap, vm_map_offset_t start_vaddr,
     int num_removed = 0, num_unwired = 0;
 
     /*
-     * xxx PLEASE FIX THIS FIX FIX FIX FIX 
-     */
-
-    /*
      * Make sure the Cpte/Epte are within sane boundaries. (256 entries, one L2 area size.)
      */
     if (((vm_offset_t) epte - (vm_offset_t) cpte) > L2_SIZE)
-        kprintf
-            ("pmap_remove_range: attempting to remove more ptes than 256!\n");
+        panic("pmap_remove_range: attempting to remove more ptes than 256!\n");
 
     for (cpte = spte, vaddr = start_vaddr; cpte < epte;
          cpte++, vaddr += our_page_size) {
@@ -1559,6 +1585,8 @@ void pmap_remove_range(pmap_t pmap, vm_map_offset_t start_vaddr,
          * Get the index for the PV table.
          */
         ppnum_t pai = pa_index(*cpte & L2_ADDR_MASK);
+        if(pai == 0)
+            continue;
         num_removed++;
 
         /*
@@ -1585,10 +1613,7 @@ void pmap_remove_range(pmap_t pmap, vm_map_offset_t start_vaddr,
              */
 
             if (pv_h->pv_pmap == PMAP_NULL) {
-                /*
-                 * kprintf("pmap_remove_range: null pv_h->pmap (pmap %p, pv_h %p, pai %d, vaddr %x, cpte %x)\n", pmap, pv_h, pai, vaddr, cpte); 
-                 */
-                continue;
+                panic("pmap_remove_range: null pv_h->pmap\n"); 
             }
 
             /*
@@ -1604,7 +1629,6 @@ void pmap_remove_range(pmap_t pmap, vm_map_offset_t start_vaddr,
                     pv_h->pv_address_va = 0;
                 }
             } else {
-#if 0                           /* hack */
                 cur = pv_h;
                 while (cur->pv_address_va != vaddr || cur->pv_pmap != pmap) {
                     prev = cur;
@@ -1614,7 +1638,6 @@ void pmap_remove_range(pmap_t pmap, vm_map_offset_t start_vaddr,
                 }
                 prev->pv_next = cur->pv_next;
                 zfree(pve_zone, cur);
-#endif
             }
         }
     }
@@ -1627,12 +1650,10 @@ void pmap_remove_range(pmap_t pmap, vm_map_offset_t start_vaddr,
     /*
      * Make sure the amount removed isn't... weird.
      */
-#if 0                           /* hack */
     assert(pmap->pm_stats.resident_count >= num_removed);
     OSAddAtomic(-num_removed, &pmap->pm_stats.resident_count);
     assert(pmap->pm_stats.wired_count >= num_unwired);
     OSAddAtomic(-num_unwired, &pmap->pm_stats.wired_count);
-#endif
 
     return;
 }
@@ -1642,17 +1663,17 @@ void pmap_remove_range(pmap_t pmap, vm_map_offset_t start_vaddr,
  *
  * Remove the given range of addresses from the specified map.
  */
-void pmap_remove(pmap_t map, vm_offset_t s, vm_offset_t e)
+void pmap_remove(pmap_t map, vm_offset_t sva, vm_offset_t eva)
 {
     spl_t spl;
-    vm_offset_t tte;
-    vm_offset_t *spte, *epte, l = s;
+    pt_entry_t* tte;
+    vm_offset_t *spte, *epte, lva = sva;
 
     /*
      * Verify the pages are page aligned.
      */
-    assert(!(s & PAGE_MASK));
-    assert(!(e & PAGE_MASK));
+    assert(!(sva & PAGE_MASK));
+    assert(!(eva & PAGE_MASK));
 
     /*
      * High Priority. Nothing may interrupt the removal process.
@@ -1661,23 +1682,32 @@ void pmap_remove(pmap_t map, vm_offset_t s, vm_offset_t e)
     SPLVM(spl);
 
     /*
-     * Grab the TTE.
+     * This is broken.
      */
-    tte = pmap_tte(map, l);
+    while(sva < eva) {
+        lva = (sva + 1 * 1024 * 1024) & ~((1 * 1024 * 1024) - 1);
+        if(lva > eva)
+            lva = eva;
+        tte = pmap_tte(map, sva);
+        assert(tte);
+        if(tte && ((*tte & ARM_PAGE_MASK_VALUE) == ARM_PAGE_PAGE_TABLE)) {
+            pt_entry_t *spte_begin;
+            spte_begin = pmap_pte(map, (sva) & ~((1 * 1024 * 1024) - 1));
+            spte = &spte_begin[((sva >> PAGE_SHIFT) & 0x3ff)];
+            epte = &spte[((lva - sva) >> PAGE_SHIFT)];
 
-    while (s < e) {
-        l = (s + (1 * 1024 * 1024)) & ~((1 * 1024 * 1024) - 1);
-        if (l > e)
-            l = e;
-        if (tte && ((*(vm_offset_t *) tte & ARM_PAGE_MASK_VALUE) != 0)) {
-            spte = (pt_entry_t *)
-                phys_to_virt((*(vm_offset_t *) tte & L1_PTE_ADDR_MASK));
-            spte = &spte[((s >> PAGE_SHIFT) & 0x3ff)];
-            epte = &spte[((l - s) >> PAGE_SHIFT)];
-            pmap_remove_range(map, s, spte, epte, FALSE);
+            assert(epte >= spte);
+
+            /*
+             * Make sure the range isn't bogus.
+             */
+            if(((vm_offset_t)epte - (vm_offset_t)spte) > L2_SIZE) {
+                panic("pmap_remove: attempting to remove bogus PTE range");;
+            }
+
+            pmap_remove_range(map, sva, spte, epte, FALSE);
         }
-        s = l;
-        tte++;
+        sva = lva;
     }
 
     /*
@@ -2038,6 +2068,8 @@ void pmap_protect(pmap_t map, vm_map_offset_t sva, vm_map_offset_t eva,
 
             while(spte < epte) {
                 if(*spte & ARM_PTE_DESCRIPTOR_4K) {
+                    assert(*spte & ARM_PTE_DESCRIPTOR_4K);
+
                     /*
                      * Make the PTE RO if necessary.
                      */
