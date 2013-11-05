@@ -159,7 +159,93 @@ decl_simple_lock_data(, pv_free_list_lock);
     simple_unlock(&pv_free_list_lock);  \
 }
 
+/** Template PTEs */
+
+/*
+ * Protection flags for various requested VM definitions, all of them are in here.
+ * These are per ARMv6/ARM11JZF-S defintions.
+ */
+arm_l2_t arm_pte_prot_templates[] = {
+                                                     /* Mode         Flags   Mode    Flags */
+    {.l2.nx = TRUE, .l2.ap = 0x00, .l2.apx = 0},     /* Privileged   ---     User    --- */
+    {.l2.nx = TRUE, .l2.ap = 0x01, .l2.apx = 0},     /* Privileged   RW-     User    --- */
+    {.l2.nx = TRUE, .l2.ap = 0x02, .l2.apx = 0},     /* Privileged   RW-     User    R-- */
+    {.l2.nx = TRUE, .l2.ap = 0x03, .l2.apx = 0},     /* Privileged   RW-     User    RW- */
+
+    {.l2.nx = FALSE, .l2.ap = 0x00, .l2.apx = 0},    /* Privileged   --X     User    --X */
+    {.l2.nx = FALSE, .l2.ap = 0x01, .l2.apx = 0},    /* Privileged   RWX     User    --X */
+    {.l2.nx = FALSE, .l2.ap = 0x02, .l2.apx = 0},    /* Privileged   RWX     User    R-X */
+    {.l2.nx = FALSE, .l2.ap = 0x03, .l2.apx = 0},    /* Privileged   RWX     User    RWX */
+
+    {.l2.nx = TRUE, .l2.ap = 0x00, .l2.apx = 1},     /* Privileged   ---     User    --- */
+    {.l2.nx = TRUE, .l2.ap = 0x01, .l2.apx = 1},     /* Privileged   R--     User    --- */
+    {.l2.nx = TRUE, .l2.ap = 0x02, .l2.apx = 1},     /* Privileged   R--     User    R-- */
+    {.l2.nx = TRUE, .l2.ap = 0x03, .l2.apx = 1},     /* Privileged   R--     User    R-- */
+
+    {.l2.nx = FALSE, .l2.ap = 0x00, .l2.apx = 1},    /* Privileged   --X     User    --X */
+    {.l2.nx = FALSE, .l2.ap = 0x01, .l2.apx = 1},    /* Privileged   R-X     User    --X */
+    {.l2.nx = FALSE, .l2.ap = 0x02, .l2.apx = 1},    /* Privileged   R-X     User    R-X */
+    {.l2.nx = FALSE, .l2.ap = 0x03, .l2.apx = 1},    /* Privileged   R-X     User    R-X */
+};
+
+/* 
+ * !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+ * !!!!!!!! Make SURE this remains in sync with arm_pte_prot_templates. !!!!!!!!! 
+ * !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+ */
+typedef enum {
+    ARM_PTE_PROT_KERNEL_NONE_USER_NONE,
+    ARM_PTE_PROT_KERNEL_RW_USER_NONE,
+    ARM_PTE_PROT_KERNEL_RW_USER_R,
+    ARM_PTE_PROT_KERNEL_RW_USER_RW,
+    ARM_PTE_PROT_KERNEL_X_USER_X,
+    ARM_PTE_PROT_KERNEL_RWX_USER_X,
+    ARM_PTE_PROT_KERNEL_RWX_USER_RX,
+    ARM_PTE_PROT_KERNEL_RWX_USER_RWX,
+    ARM_PTE_PROT_KERNEL_NONE_USER_NONE_2,
+    ARM_PTE_PROT_KERNEL_R_USER_NONE,
+    ARM_PTE_PROT_KERNEL_R_USER_R,
+    ARM_PTE_PROT_KERNEL_R_USER_R_2,
+    ARM_PTE_PROT_KERNEL_X_USER_X_2,
+    ARM_PTE_PROT_KERNEL_RX_USER_X,
+    ARM_PTE_PROT_KERNEL_RX_USER_X_2,
+    ARM_PTE_PROT_KERNEL_RX_USER_RX,
+    ARM_PTE_PROT_KERNEL_RX_USER_RX_2,
+} arm_prot_pte_definitions;
+
 /** Functions */
+
+/**
+ * pmap_vm_prot_to_page_flags
+ */
+uint32_t pmap_vm_prot_to_page_flags(pmap_t pmap, vm_prot_t prot, int wired, int nx)
+{
+    arm_l2_t* current_l2 = &arm_pte_prot_templates[0];
+    pt_entry_t pte = 0;
+
+    /* 
+     * Pmaps other than the kernel one will always have user accessible pages.
+     */
+    if(pmap != kernel_pmap)
+        pte |= L2_ACCESS_USER;
+    pte |= L2_ACCESS_PRW;
+
+    /*
+     * Enforce Read-Write if necessary.
+     */
+    if(prot & VM_PROT_WRITE)
+        pte &= ~(L2_ACCESS_APX);      /* APX-bit, RW? */
+    else
+        pte |= (L2_ACCESS_APX);       /* APX-bit, R-? */
+
+    /*
+     * Enforce XN if necessary.
+     */
+    if (!(prot & VM_PROT_EXECUTE))
+        pte |= L2_NX_BIT;        /* XN-bit, R?X */
+
+    return pte;
+}
 
 /**
  * phys_attribute_clear and friends. These suck.
@@ -974,7 +1060,7 @@ void pmap_create_sharedpage(void)
     /*
      * And map it.
      */
-    pmap_enter(kernel_pmap, (vm_map_offset_t) _COMM_PAGE_BASE_ADDRESS, commpage->phys_page, 0, 0, FALSE, FALSE);
+    pmap_enter(kernel_pmap, (vm_map_offset_t) _COMM_PAGE_BASE_ADDRESS, commpage->phys_page, VM_PROT_READ | VM_PROT_WRITE, 0, FALSE, TRUE);
 
     /*
      * Memset it.
@@ -1045,7 +1131,7 @@ vm_offset_t pmap_extract(pmap_t pmap, vm_offset_t virt)
          * Make sure it's not a large page. They're not supported yet, but they will 
          * be at some point.
          */
-        if (((*ptep) & ARM_PTE_DESCRIPTOR_64K))
+        if (((*ptep & ARM_PAGE_MASK_VALUE) == ARM_PTE_DESCRIPTOR_64K))
             panic("pmap_extract: 64kb pages not supported yet");
 
         /*
@@ -1177,29 +1263,12 @@ kern_return_t pmap_enter_options(pmap_t pmap, vm_map_offset_t va, ppnum_t pa, vm
          * XXX protection is not implemented right now, all pages are 'RWX'.
          */
 
-        uint32_t template_pte = ((pa << PAGE_SHIFT) & L2_ADDR_MASK) | L2_SMALL_PAGE | L2_ACCESS_PRW;
-        if (!wired) /* xxx kill */
-            template_pte |= L2_ACCESS_USER; 
+        uint32_t template_pte = ((pa << PAGE_SHIFT) & L2_ADDR_MASK) | L2_SMALL_PAGE;
+        template_pte |= pmap_vm_prot_to_page_flags(pmap, prot, wired, 0);
 
-        /*
-         * XXX add cacheability flags 
-         */
-        if (flags & VM_MEM_NOT_CACHEABLE) {
-            /*
-             * xxx arm 
-             */
-            template_pte |= mmu_texcb_small(MMU_DMA);
-        } else if (flags & VM_MEM_COHERENT) {
-            /*
-             * Writethrough cache by default. 
-             */
-            template_pte |= mmu_texcb_small(MMU_CODE);
-        } else {
-            /*
-             * Writethrough cache by default. 
-             */
-            template_pte |= mmu_texcb_small(MMU_DMA);
-        }
+        if(va == _COMM_PAGE_BASE_ADDRESS)
+            template_pte |= L2_ACCESS_USER;
+
         *(uint32_t *) pte = template_pte;
 
         /*
@@ -1297,11 +1366,15 @@ kern_return_t pmap_enter_options(pmap_t pmap, vm_map_offset_t va, ppnum_t pa, vm
         pmap->pm_stats.wired_count++;
 
     /*
-     * !!! IMPLEMENT 'pmap_vm_prot_to_page_flags' !!!
-     * XXX protection is not implemented right now, all pages are 'RWX'.
+     * Set VM protections
      */
-    uint32_t template_pte = ((pa << PAGE_SHIFT) & L2_ADDR_MASK) | L2_SMALL_PAGE | L2_ACCESS_PRW;
-    if (!wired)
+    uint32_t template_pte = ((pa << PAGE_SHIFT) & L2_ADDR_MASK) | L2_SMALL_PAGE;
+    template_pte |= pmap_vm_prot_to_page_flags(pmap, prot, wired, 0);
+
+    /*
+     * Hack for commpage, how is this to be done?
+     */
+    if(va == _COMM_PAGE_BASE_ADDRESS)
         template_pte |= L2_ACCESS_USER;
 
     /*

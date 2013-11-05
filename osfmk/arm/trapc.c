@@ -168,6 +168,39 @@ static char *ifsr_to_human(uint32_t ifsr)
 }
 
 /**
+ * sleh_fatal_exception
+ */
+void sleh_fatal_exception(abort_information_context_t* arm_ctx, char* message)
+{
+    debug_mode = TRUE;
+    printf("Fatal exception: %s\n", message);
+    printf("ARM register state: (saved state %p)\n"
+           "  r0: 0x%08x  r1: 0x%08x  r2: 0x%08x  r3: 0x%08x\n"
+           "  r4: 0x%08x  r5: 0x%08x  r6: 0x%08x  r7: 0x%08x\n"
+           "  r8: 0x%08x  r9: 0x%08x r10: 0x%08x r11: 0x%08x\n"
+           "  12: 0x%08x  sp: 0x%08x  lr: 0x%08x  pc: 0x%08x\n"
+           "cpsr: 0x%08x fsr: 0x%08x far: 0x%08x\n", arm_ctx,
+           arm_ctx->r[0], arm_ctx->r[1], arm_ctx->r[2], arm_ctx->r[3],
+           arm_ctx->r[4], arm_ctx->r[5], arm_ctx->r[6], arm_ctx->r[7], arm_ctx->r[8], 
+           arm_ctx->r[9], arm_ctx->r[10], arm_ctx->r[11], arm_ctx->r[12], 
+           arm_ctx->sp, arm_ctx->lr, arm_ctx->pc, arm_ctx->cpsr, arm_ctx->fsr, arm_ctx->far);
+    printf("Current thread: %p\n", current_thread());
+
+    uint32_t ttbcr, ttbr0, ttbr1;
+    __asm__ __volatile__("mrc p15, 0, %0, c2, c0, 0" : "=r"(ttbr0));
+    __asm__ __volatile__("mrc p15, 0, %0, c2, c0, 1" : "=r"(ttbr1));
+    __asm__ __volatile__("mrc p15, 0, %0, c2, c0, 2" : "=r"(ttbcr));
+
+    printf("Control registers:\n"
+           "  ttbcr: 0x%08x  ttbr0:  0x%08x  ttbr1:  0x%08x\n",
+           ttbcr, ttbr0, ttbr1);
+    Debugger("fatal exception");
+    printf("We are hanging here ...\n");
+
+    Halt_system();
+}
+
+/**
  * sleh_abort
  *
  * Handle prefetch and data aborts. (EXC_BAD_ACCESS IS NOT HERE YET)
@@ -189,14 +222,14 @@ void sleh_abort(void *context, int reason)
         ifsr = arm_ctx->fsr;
         ifar = arm_ctx->far;
     } else {
-        panic("sleh_abort: weird abort, type %d (context at %p)", reason, context);
+        sleh_fatal_exception(arm_ctx, "sleh_abort: weird abort");
     }
 
     /*
      * We do not want anything entering sleh_abort recursively. 
      */
     if (__abort_count != 0) {
-        panic("sleh_abort: recursive abort! (pc %x lr %x sp %x cpsr %x dfar 0x%08x abort count %d)\n", arm_ctx->pc, arm_ctx->lr, arm_ctx->sp, arm_ctx->cpsr, dfar, __abort_count);
+        sleh_fatal_exception(arm_ctx, "sleh_abort: recursive abort");
     }
     __abort_count++;
                     
@@ -204,15 +237,15 @@ void sleh_abort(void *context, int reason)
      * Panic if it's an alignment fault?
      */
     if((ifsr == 1) || (dfsr == 1)) {
-        panic("sleh_abort: alignment fault!");
+        sleh_fatal_exception(arm_ctx, "sleh_abort: alignment fault");
     }
 
     if (!kernel_map) {
-        panic("sleh_abort: kernel_map is NULL\n");
+        sleh_fatal_exception(arm_ctx, "sleh_abort: kernel map is NULL, probably a fault before vm_bootstrap?");
     }
 
     if (!thread) {
-        panic("sleh_abort: current thread is NULL\n");
+        sleh_fatal_exception(arm_ctx, "sleh_abort: current thread is null?");
     }
 
     /*
@@ -244,7 +277,7 @@ void sleh_abort(void *context, int reason)
                  * Attempt to fault the page. 
                  */
                 assert(get_preemption_level() == 0);
-                code = vm_fault(map, vm_map_trunc_page(arm_ctx->pc), (VM_PROT_READ | VM_PROT_WRITE), FALSE, THREAD_UNINT, NULL, vm_map_trunc_page(0));
+                code = vm_fault(map, vm_map_trunc_page(arm_ctx->pc), (VM_PROT_EXECUTE | VM_PROT_READ), FALSE, THREAD_UNINT, NULL, vm_map_trunc_page(0));
 
                 if (code != KERN_SUCCESS) {
                     /*
@@ -277,12 +310,12 @@ void sleh_abort(void *context, int reason)
                  * Attempt to fault the page. 
                  */
                 assert(get_preemption_level() == 0);
-                code = vm_fault(map, vm_map_trunc_page(dfar), (VM_PROT_READ), FALSE, THREAD_UNINT, NULL, vm_map_trunc_page(0));
+                code = vm_fault(map, vm_map_trunc_page(dfar), (dfsr & 0x800) ? (VM_PROT_READ | VM_PROT_WRITE) : (VM_PROT_READ), FALSE, THREAD_UNINT, NULL, vm_map_trunc_page(0));
                 if (code != KERN_SUCCESS) {
                     /*
                      * Still, die in a fire. 
                      */
-                    code = vm_fault(kernel_map, vm_map_trunc_page(dfar), (VM_PROT_READ), FALSE, THREAD_UNINT, NULL, vm_map_trunc_page(0));
+                    code = vm_fault(kernel_map, vm_map_trunc_page(dfar), (dfsr & 0x800) ? (VM_PROT_READ | VM_PROT_WRITE) : (VM_PROT_READ), FALSE, THREAD_UNINT, NULL, vm_map_trunc_page(0));
                     if (code != KERN_SUCCESS) {
                         /*
                          * Attempt to fault the page against the kernel map. 
@@ -305,7 +338,7 @@ void sleh_abort(void *context, int reason)
                                 panic("Attempting to use a recovery routine on a kernel map thread");
 
                             if (!thread->map)
-                                panic("Current thread has no thread map, what?");
+                                sleh_fatal_exception(arm_ctx, "Current thread has no thread map, what?");
 
                             kprintf("[trap] data abort in kernel mode, transferring control to RecoveryRoutine %p, dfsr %x, dfar %x, pc %x, map %p pmap %p\n", thread->recover, dfsr, dfar, arm_ctx->pc, map, map->pmap);
                             arm_ctx->pc = thread->recover;
@@ -346,7 +379,7 @@ void sleh_abort(void *context, int reason)
                  * Attempt to fault the page. 
                  */
                 assert(get_preemption_level() == 0);
-                code = vm_fault(map, vm_map_trunc_page(arm_ctx->pc), (VM_PROT_READ), FALSE, THREAD_UNINT, NULL, vm_map_trunc_page(0));
+                code = vm_fault(map, vm_map_trunc_page(arm_ctx->pc), (VM_PROT_EXECUTE | VM_PROT_READ), FALSE, THREAD_UNINT, NULL, vm_map_trunc_page(0));
 
                 if ((code != KERN_SUCCESS) && (code != KERN_ABORTED)) {
                     exception_type = EXC_BAD_ACCESS;
@@ -392,7 +425,7 @@ void sleh_abort(void *context, int reason)
                  * Attempt to fault the page. 
                  */
                 assert(get_preemption_level() == 0);
-                code = vm_fault(map, vm_map_trunc_page(dfar), (VM_PROT_READ), FALSE, THREAD_UNINT, NULL, vm_map_trunc_page(0));
+                code = vm_fault(map, vm_map_trunc_page(dfar), (dfsr & 0x800) ? (VM_PROT_READ | VM_PROT_WRITE) : (VM_PROT_READ), FALSE, THREAD_UNINT, NULL, vm_map_trunc_page(0));
 
                 if ((code != KERN_SUCCESS) && (code != KERN_ABORTED)) {
                     exception_type = EXC_BAD_ACCESS;
@@ -440,6 +473,7 @@ void sleh_abort(void *context, int reason)
         ml_set_interrupts_enabled(TRUE);
         doexception(exception_type, exception_subcode, 0);
     }
+
 
     /*
      * Done. 

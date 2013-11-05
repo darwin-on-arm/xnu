@@ -181,6 +181,7 @@ typedef struct arm_l2_t {
 #define L2_ACCESS_PRO 0x210
 
 #define L2_ACCESS_USER      (1 << 5)
+#define L2_ACCESS_APX       (1 << 9)
 
 #define tte_is_page_table(tte) ((tte & L1_TYPE_MASK) == L1_TYPE_PTE)
 
