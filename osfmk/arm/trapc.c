@@ -64,7 +64,8 @@ void arm_mach_do_exception(void)
     exception_triage(0, 0, 0);
 }
 
-void doexception(int exc, mach_exception_code_t code, mach_exception_subcode_t sub)
+void doexception(int exc, mach_exception_code_t code,
+                 mach_exception_subcode_t sub)
 {
     mach_exception_data_type_t codes[EXCEPTION_CODE_MAX];
 
@@ -170,7 +171,7 @@ static char *ifsr_to_human(uint32_t ifsr)
 /**
  * sleh_fatal_exception
  */
-void sleh_fatal_exception(abort_information_context_t* arm_ctx, char* message)
+void sleh_fatal_exception(abort_information_context_t * arm_ctx, char *message)
 {
     debug_mode = TRUE;
     printf("Fatal exception: %s\n", message);
@@ -181,15 +182,16 @@ void sleh_fatal_exception(abort_information_context_t* arm_ctx, char* message)
            "  12: 0x%08x  sp: 0x%08x  lr: 0x%08x  pc: 0x%08x\n"
            "cpsr: 0x%08x fsr: 0x%08x far: 0x%08x\n", arm_ctx,
            arm_ctx->r[0], arm_ctx->r[1], arm_ctx->r[2], arm_ctx->r[3],
-           arm_ctx->r[4], arm_ctx->r[5], arm_ctx->r[6], arm_ctx->r[7], arm_ctx->r[8], 
-           arm_ctx->r[9], arm_ctx->r[10], arm_ctx->r[11], arm_ctx->r[12], 
-           arm_ctx->sp, arm_ctx->lr, arm_ctx->pc, arm_ctx->cpsr, arm_ctx->fsr, arm_ctx->far);
+           arm_ctx->r[4], arm_ctx->r[5], arm_ctx->r[6], arm_ctx->r[7],
+           arm_ctx->r[8], arm_ctx->r[9], arm_ctx->r[10], arm_ctx->r[11],
+           arm_ctx->r[12], arm_ctx->sp, arm_ctx->lr, arm_ctx->pc, arm_ctx->cpsr,
+           arm_ctx->fsr, arm_ctx->far);
     printf("Current thread: %p\n", current_thread());
 
     uint32_t ttbcr, ttbr0, ttbr1;
-    __asm__ __volatile__("mrc p15, 0, %0, c2, c0, 0" : "=r"(ttbr0));
-    __asm__ __volatile__("mrc p15, 0, %0, c2, c0, 1" : "=r"(ttbr1));
-    __asm__ __volatile__("mrc p15, 0, %0, c2, c0, 2" : "=r"(ttbcr));
+    __asm__ __volatile__("mrc p15, 0, %0, c2, c0, 0":"=r"(ttbr0));
+    __asm__ __volatile__("mrc p15, 0, %0, c2, c0, 1":"=r"(ttbr1));
+    __asm__ __volatile__("mrc p15, 0, %0, c2, c0, 2":"=r"(ttbcr));
 
     printf("Control registers:\n"
            "  ttbcr: 0x%08x  ttbr0:  0x%08x  ttbr1:  0x%08x\n",
@@ -208,8 +210,10 @@ void sleh_fatal_exception(abort_information_context_t* arm_ctx, char* message)
 static int __abort_count = 0;
 void sleh_abort(void *context, int reason)
 {
-    uint32_t dfsr = 0, dfar = 0, ifsr = 0, ifar = 0, cpsr, exception_type = 0, exception_subcode = 0;
-    abort_information_context_t *arm_ctx = (abort_information_context_t *) context;
+    uint32_t dfsr = 0, dfar = 0, ifsr = 0, ifar = 0, cpsr, exception_type =
+        0, exception_subcode = 0;
+    abort_information_context_t *arm_ctx =
+        (abort_information_context_t *) context;
     thread_t thread = current_thread();
 
     /*
@@ -232,16 +236,17 @@ void sleh_abort(void *context, int reason)
         sleh_fatal_exception(arm_ctx, "sleh_abort: recursive abort");
     }
     __abort_count++;
-                    
+
     /*
      * Panic if it's an alignment fault?
      */
-    if((ifsr == 1) || (dfsr == 1)) {
+    if ((ifsr == 1) || (dfsr == 1)) {
         sleh_fatal_exception(arm_ctx, "sleh_abort: alignment fault");
     }
 
     if (!kernel_map) {
-        sleh_fatal_exception(arm_ctx, "sleh_abort: kernel map is NULL, probably a fault before vm_bootstrap?");
+        sleh_fatal_exception(arm_ctx,
+                             "sleh_abort: kernel map is NULL, probably a fault before vm_bootstrap?");
     }
 
     if (!thread) {
@@ -277,7 +282,10 @@ void sleh_abort(void *context, int reason)
                  * Attempt to fault the page. 
                  */
                 assert(get_preemption_level() == 0);
-                code = vm_fault(map, vm_map_trunc_page(arm_ctx->pc), (VM_PROT_EXECUTE | VM_PROT_READ), FALSE, THREAD_UNINT, NULL, vm_map_trunc_page(0));
+                code =
+                    vm_fault(map, vm_map_trunc_page(arm_ctx->pc),
+                             (VM_PROT_EXECUTE | VM_PROT_READ), FALSE,
+                             THREAD_UNINT, NULL, vm_map_trunc_page(0));
 
                 if (code != KERN_SUCCESS) {
                     /*
@@ -290,8 +298,13 @@ void sleh_abort(void *context, int reason)
                                   "r8: 0x%08x  r9: 0x%08x r10: 0x%08x r11: 0x%08x\n"
                                   "12: 0x%08x  sp: 0x%08x  lr: 0x%08x  pc: 0x%08x\n"
                                   "cpsr: 0x%08x fsr: 0x%08x far: 0x%08x\n",
-                                  ifar, arm_ctx->r[0], arm_ctx->r[1], arm_ctx->r[2], arm_ctx->r[3],
-                                  arm_ctx->r[4], arm_ctx->r[5], arm_ctx->r[6], arm_ctx->r[7], arm_ctx->r[8], arm_ctx->r[9], arm_ctx->r[10], arm_ctx->r[11], arm_ctx->r[12], arm_ctx->sp, arm_ctx->lr, arm_ctx->pc, arm_ctx->cpsr, ifsr, ifar);
+                                  ifar, arm_ctx->r[0], arm_ctx->r[1],
+                                  arm_ctx->r[2], arm_ctx->r[3], arm_ctx->r[4],
+                                  arm_ctx->r[5], arm_ctx->r[6], arm_ctx->r[7],
+                                  arm_ctx->r[8], arm_ctx->r[9], arm_ctx->r[10],
+                                  arm_ctx->r[11], arm_ctx->r[12], arm_ctx->sp,
+                                  arm_ctx->lr, arm_ctx->pc, arm_ctx->cpsr, ifsr,
+                                  ifar);
                 } else {
                     __abort_count--;
                 }
@@ -310,12 +323,20 @@ void sleh_abort(void *context, int reason)
                  * Attempt to fault the page. 
                  */
                 assert(get_preemption_level() == 0);
-                code = vm_fault(map, vm_map_trunc_page(dfar), (dfsr & 0x800) ? (VM_PROT_READ | VM_PROT_WRITE) : (VM_PROT_READ), FALSE, THREAD_UNINT, NULL, vm_map_trunc_page(0));
+                code =
+                    vm_fault(map, vm_map_trunc_page(dfar),
+                             (dfsr & 0x800) ? (VM_PROT_READ | VM_PROT_WRITE)
+                             : (VM_PROT_READ), FALSE, THREAD_UNINT, NULL,
+                             vm_map_trunc_page(0));
                 if (code != KERN_SUCCESS) {
                     /*
                      * Still, die in a fire. 
                      */
-                    code = vm_fault(kernel_map, vm_map_trunc_page(dfar), (dfsr & 0x800) ? (VM_PROT_READ | VM_PROT_WRITE) : (VM_PROT_READ), FALSE, THREAD_UNINT, NULL, vm_map_trunc_page(0));
+                    code =
+                        vm_fault(kernel_map, vm_map_trunc_page(dfar),
+                                 (dfsr & 0x800) ? (VM_PROT_READ | VM_PROT_WRITE)
+                                 : (VM_PROT_READ), FALSE, THREAD_UNINT, NULL,
+                                 vm_map_trunc_page(0));
                     if (code != KERN_SUCCESS) {
                         /*
                          * Attempt to fault the page against the kernel map. 
@@ -328,19 +349,31 @@ void sleh_abort(void *context, int reason)
                                           "r8: 0x%08x  r9: 0x%08x r10: 0x%08x r11: 0x%08x\n"
                                           "12: 0x%08x  sp: 0x%08x  lr: 0x%08x  pc: 0x%08x\n"
                                           "cpsr: 0x%08x fsr: 0x%08x far: 0x%08x\n",
-                                          dfar, arm_ctx->r[0], arm_ctx->r[1], arm_ctx->r[2], arm_ctx->r[3],
-                                          arm_ctx->r[4], arm_ctx->r[5], arm_ctx->r[6], arm_ctx->r[7], arm_ctx->r[8], arm_ctx->r[9], arm_ctx->r[10], arm_ctx->r[11], arm_ctx->r[12], arm_ctx->sp, arm_ctx->lr, arm_ctx->pc, arm_ctx->cpsr, dfsr, dfar);
+                                          dfar, arm_ctx->r[0], arm_ctx->r[1],
+                                          arm_ctx->r[2], arm_ctx->r[3],
+                                          arm_ctx->r[4], arm_ctx->r[5],
+                                          arm_ctx->r[6], arm_ctx->r[7],
+                                          arm_ctx->r[8], arm_ctx->r[9],
+                                          arm_ctx->r[10], arm_ctx->r[11],
+                                          arm_ctx->r[12], arm_ctx->sp,
+                                          arm_ctx->lr, arm_ctx->pc,
+                                          arm_ctx->cpsr, dfsr, dfar);
                         } else {
                             /*
                              * If there's a recovery routine, use it. 
                              */
                             if (thread->map == kernel_map)
-                                panic("Attempting to use a recovery routine on a kernel map thread");
+                                panic
+                                    ("Attempting to use a recovery routine on a kernel map thread");
 
                             if (!thread->map)
-                                sleh_fatal_exception(arm_ctx, "Current thread has no thread map, what?");
+                                sleh_fatal_exception(arm_ctx,
+                                                     "Current thread has no thread map, what?");
 
-                            kprintf("[trap] data abort in kernel mode, transferring control to RecoveryRoutine %p, dfsr %x, dfar %x, pc %x, map %p pmap %p\n", thread->recover, dfsr, dfar, arm_ctx->pc, map, map->pmap);
+                            kprintf
+                                ("[trap] data abort in kernel mode, transferring control to RecoveryRoutine %p, dfsr %x, dfar %x, pc %x, map %p pmap %p\n",
+                                 thread->recover, dfsr, dfar, arm_ctx->pc, map,
+                                 map->pmap);
                             arm_ctx->pc = thread->recover;
                             arm_ctx->cpsr &= ~(1 << 5);
                             thread->recover = NULL;
@@ -379,7 +412,10 @@ void sleh_abort(void *context, int reason)
                  * Attempt to fault the page. 
                  */
                 assert(get_preemption_level() == 0);
-                code = vm_fault(map, vm_map_trunc_page(arm_ctx->pc), (VM_PROT_EXECUTE | VM_PROT_READ), FALSE, THREAD_UNINT, NULL, vm_map_trunc_page(0));
+                code =
+                    vm_fault(map, vm_map_trunc_page(arm_ctx->pc),
+                             (VM_PROT_EXECUTE | VM_PROT_READ), FALSE,
+                             THREAD_UNINT, NULL, vm_map_trunc_page(0));
 
                 if ((code != KERN_SUCCESS) && (code != KERN_ABORTED)) {
                     exception_type = EXC_BAD_ACCESS;
@@ -388,13 +424,22 @@ void sleh_abort(void *context, int reason)
                     /*
                      * Debug only. 
                      */
-                    printf("%s[%d]: usermode prefetch abort, EXC_BAD_ACCESS at 0x%08x in map %p (pmap %p) (%s)\n", proc_name_address(thread->task->bsd_info), proc_pid(thread->task->bsd_info), arm_ctx->pc, map, map->pmap, ifsr_to_human(ifsr));
+                    printf
+                        ("%s[%d]: usermode prefetch abort, EXC_BAD_ACCESS at 0x%08x in map %p (pmap %p) (%s)\n",
+                         proc_name_address(thread->task->bsd_info),
+                         proc_pid(thread->task->bsd_info), arm_ctx->pc, map,
+                         map->pmap, ifsr_to_human(ifsr));
                     printf("Thread has ARM register state:\n"
                            "    r0: 0x%08x  r1: 0x%08x  r2: 0x%08x  r3: 0x%08x\n"
                            "    r4: 0x%08x  r5: 0x%08x  r6: 0x%08x  r7: 0x%08x\n"
                            "    r8: 0x%08x  r9: 0x%08x r10: 0x%08x r11: 0x%08x\n"
                            "   r12: 0x%08x  sp: 0x%08x  lr: 0x%08x  pc: 0x%08x\n"
-                           "  cpsr: 0x%08x\n", arm_ctx->r[0], arm_ctx->r[1], arm_ctx->r[2], arm_ctx->r[3], arm_ctx->r[4], arm_ctx->r[5], arm_ctx->r[6], arm_ctx->r[7], arm_ctx->r[8], arm_ctx->r[9], arm_ctx->r[10], arm_ctx->r[11], arm_ctx->r[12], arm_ctx->sp, arm_ctx->lr, arm_ctx->pc, arm_ctx->cpsr);
+                           "  cpsr: 0x%08x\n", arm_ctx->r[0], arm_ctx->r[1],
+                           arm_ctx->r[2], arm_ctx->r[3], arm_ctx->r[4],
+                           arm_ctx->r[5], arm_ctx->r[6], arm_ctx->r[7],
+                           arm_ctx->r[8], arm_ctx->r[9], arm_ctx->r[10],
+                           arm_ctx->r[11], arm_ctx->r[12], arm_ctx->sp,
+                           arm_ctx->lr, arm_ctx->pc, arm_ctx->cpsr);
                 } else {
                     /*
                      * Retry execution of instruction. 
@@ -425,7 +470,11 @@ void sleh_abort(void *context, int reason)
                  * Attempt to fault the page. 
                  */
                 assert(get_preemption_level() == 0);
-                code = vm_fault(map, vm_map_trunc_page(dfar), (dfsr & 0x800) ? (VM_PROT_READ | VM_PROT_WRITE) : (VM_PROT_READ), FALSE, THREAD_UNINT, NULL, vm_map_trunc_page(0));
+                code =
+                    vm_fault(map, vm_map_trunc_page(dfar),
+                             (dfsr & 0x800) ? (VM_PROT_READ | VM_PROT_WRITE)
+                             : (VM_PROT_READ), FALSE, THREAD_UNINT, NULL,
+                             vm_map_trunc_page(0));
 
                 if ((code != KERN_SUCCESS) && (code != KERN_ABORTED)) {
                     exception_type = EXC_BAD_ACCESS;
@@ -434,13 +483,22 @@ void sleh_abort(void *context, int reason)
                     /*
                      * Only for debug. 
                      */
-                    printf("%s[%d]: usermode data abort, EXC_BAD_ACCESS at 0x%08x in map %p (pmap %p) (%s)\n", proc_name_address(thread->task->bsd_info), proc_pid(thread->task->bsd_info), dfar, map, map->pmap, ifsr_to_human(dfsr));
+                    printf
+                        ("%s[%d]: usermode data abort, EXC_BAD_ACCESS at 0x%08x in map %p (pmap %p) (%s)\n",
+                         proc_name_address(thread->task->bsd_info),
+                         proc_pid(thread->task->bsd_info), dfar, map, map->pmap,
+                         ifsr_to_human(dfsr));
                     printf("Thread has ARM register state:\n"
                            "    r0: 0x%08x  r1: 0x%08x  r2: 0x%08x  r3: 0x%08x\n"
                            "    r4: 0x%08x  r5: 0x%08x  r6: 0x%08x  r7: 0x%08x\n"
                            "    r8: 0x%08x  r9: 0x%08x r10: 0x%08x r11: 0x%08x\n"
                            "   r12: 0x%08x  sp: 0x%08x  lr: 0x%08x  pc: 0x%08x\n"
-                           "  cpsr: 0x%08x\n", arm_ctx->r[0], arm_ctx->r[1], arm_ctx->r[2], arm_ctx->r[3], arm_ctx->r[4], arm_ctx->r[5], arm_ctx->r[6], arm_ctx->r[7], arm_ctx->r[8], arm_ctx->r[9], arm_ctx->r[10], arm_ctx->r[11], arm_ctx->r[12], arm_ctx->sp, arm_ctx->lr, arm_ctx->pc, arm_ctx->cpsr);
+                           "  cpsr: 0x%08x\n", arm_ctx->r[0], arm_ctx->r[1],
+                           arm_ctx->r[2], arm_ctx->r[3], arm_ctx->r[4],
+                           arm_ctx->r[5], arm_ctx->r[6], arm_ctx->r[7],
+                           arm_ctx->r[8], arm_ctx->r[9], arm_ctx->r[10],
+                           arm_ctx->r[11], arm_ctx->r[12], arm_ctx->sp,
+                           arm_ctx->lr, arm_ctx->pc, arm_ctx->cpsr);
                     Debugger("usermode abort");
                 } else {
                     /*
@@ -473,7 +531,6 @@ void sleh_abort(void *context, int reason)
         ml_set_interrupts_enabled(TRUE);
         doexception(exception_type, exception_subcode, 0);
     }
-
 
     /*
      * Done. 
@@ -536,7 +593,8 @@ void sleh_undef(arm_saved_state_t * state)
          * Handle if it's a NEON/VFP instruction. 
          */
         thumb_offset = (state->cpsr & (1 << 5)) ? 1 : 0;
-        copyin((uint8_t *) (arm_ctx->pc + thumb_offset), &instruction, sizeof(uint32_t));
+        copyin((uint8_t *) (arm_ctx->pc + thumb_offset), &instruction,
+               sizeof(uint32_t));
 
         /*
          * Check the instruction encoding to see if it's a coprocessor instruction. 
@@ -546,39 +604,60 @@ void sleh_undef(arm_saved_state_t * state)
         /*
          * NEON instruction. 
          */
-        if (((OSSwapInt32(instruction) & 0xff100000) == 0xf4000000) || ((OSSwapInt32(instruction) & 0xfe000000) == 0xf2000000)) {
-            panic_context(0, (void *) arm_ctx, "sleh_undef: NEON usage in kernel mode\n"
+        if (((OSSwapInt32(instruction) & 0xff100000) == 0xf4000000)
+            || ((OSSwapInt32(instruction) & 0xfe000000) == 0xf2000000)) {
+            panic_context(0, (void *) arm_ctx,
+                          "sleh_undef: NEON usage in kernel mode\n"
                           "r0: 0x%08x  r1: 0x%08x  r2: 0x%08x  r3: 0x%08x\n"
                           "r4: 0x%08x  r5: 0x%08x  r6: 0x%08x  r7: 0x%08x\n"
                           "r8: 0x%08x  r9: 0x%08x r10: 0x%08x r11: 0x%08x\n"
                           "12: 0x%08x  sp: 0x%08x  lr: 0x%08x  pc: 0x%08x\n"
-                          "cpsr: 0x%08x\n", arm_ctx->r[0], arm_ctx->r[1], arm_ctx->r[2], arm_ctx->r[3], arm_ctx->r[4], arm_ctx->r[5], arm_ctx->r[6], arm_ctx->r[7], arm_ctx->r[8], arm_ctx->r[9], arm_ctx->r[10], arm_ctx->r[11], arm_ctx->r[12], arm_ctx->sp, arm_ctx->lr, arm_ctx->pc, arm_ctx->cpsr);
+                          "cpsr: 0x%08x\n", arm_ctx->r[0], arm_ctx->r[1],
+                          arm_ctx->r[2], arm_ctx->r[3], arm_ctx->r[4],
+                          arm_ctx->r[5], arm_ctx->r[6], arm_ctx->r[7],
+                          arm_ctx->r[8], arm_ctx->r[9], arm_ctx->r[10],
+                          arm_ctx->r[11], arm_ctx->r[12], arm_ctx->sp,
+                          arm_ctx->lr, arm_ctx->pc, arm_ctx->cpsr);
         }
 
-        if ((((instruction & 0xF000000) >> 24) == 0xE) || (((instruction & 0xF000000) >> 24) == 0xD) || (((instruction & 0xF000000) >> 24) == 0xC)) {
+        if ((((instruction & 0xF000000) >> 24) == 0xE)
+            || (((instruction & 0xF000000) >> 24) == 0xD)
+            || (((instruction & 0xF000000) >> 24) == 0xC)) {
             uint32_t cr = (instruction & 0xF00) >> 8;
             if (cr == 10 || cr == 11) {
                 /*
                  * VFP instruction. 
                  */
-                panic_context(0, (void *) arm_ctx, "sleh_undef: VFP usage in kernel mode\n"
+                panic_context(0, (void *) arm_ctx,
+                              "sleh_undef: VFP usage in kernel mode\n"
                               "r0: 0x%08x  r1: 0x%08x  r2: 0x%08x  r3: 0x%08x\n"
                               "r4: 0x%08x  r5: 0x%08x  r6: 0x%08x  r7: 0x%08x\n"
                               "r8: 0x%08x  r9: 0x%08x r10: 0x%08x r11: 0x%08x\n"
                               "12: 0x%08x  sp: 0x%08x  lr: 0x%08x  pc: 0x%08x\n"
-                              "cpsr: 0x%08x\n", arm_ctx->r[0], arm_ctx->r[1], arm_ctx->r[2], arm_ctx->r[3], arm_ctx->r[4], arm_ctx->r[5], arm_ctx->r[6], arm_ctx->r[7], arm_ctx->r[8], arm_ctx->r[9], arm_ctx->r[10], arm_ctx->r[11], arm_ctx->r[12], arm_ctx->sp, arm_ctx->lr, arm_ctx->pc, arm_ctx->cpsr);
+                              "cpsr: 0x%08x\n", arm_ctx->r[0], arm_ctx->r[1],
+                              arm_ctx->r[2], arm_ctx->r[3], arm_ctx->r[4],
+                              arm_ctx->r[5], arm_ctx->r[6], arm_ctx->r[7],
+                              arm_ctx->r[8], arm_ctx->r[9], arm_ctx->r[10],
+                              arm_ctx->r[11], arm_ctx->r[12], arm_ctx->sp,
+                              arm_ctx->lr, arm_ctx->pc, arm_ctx->cpsr);
             }
         }
 
         /*
          * Fall through to bad kernel handler. 
          */
-        panic_context(0, (void *) arm_ctx, "sleh_undef: undefined kernel instruction\n"
+        panic_context(0, (void *) arm_ctx,
+                      "sleh_undef: undefined kernel instruction\n"
                       "r0: 0x%08x  r1: 0x%08x  r2: 0x%08x  r3: 0x%08x\n"
                       "r4: 0x%08x  r5: 0x%08x  r6: 0x%08x  r7: 0x%08x\n"
                       "r8: 0x%08x  r9: 0x%08x r10: 0x%08x r11: 0x%08x\n"
                       "12: 0x%08x  sp: 0x%08x  lr: 0x%08x  pc: 0x%08x\n"
-                      "cpsr: 0x%08x\n", arm_ctx->r[0], arm_ctx->r[1], arm_ctx->r[2], arm_ctx->r[3], arm_ctx->r[4], arm_ctx->r[5], arm_ctx->r[6], arm_ctx->r[7], arm_ctx->r[8], arm_ctx->r[9], arm_ctx->r[10], arm_ctx->r[11], arm_ctx->r[12], arm_ctx->sp, arm_ctx->lr, arm_ctx->pc, arm_ctx->cpsr);
+                      "cpsr: 0x%08x\n", arm_ctx->r[0], arm_ctx->r[1],
+                      arm_ctx->r[2], arm_ctx->r[3], arm_ctx->r[4],
+                      arm_ctx->r[5], arm_ctx->r[6], arm_ctx->r[7],
+                      arm_ctx->r[8], arm_ctx->r[9], arm_ctx->r[10],
+                      arm_ctx->r[11], arm_ctx->r[12], arm_ctx->sp, arm_ctx->lr,
+                      arm_ctx->pc, arm_ctx->cpsr);
     } else if (cpsr == 0x10) {
         vm_map_t map;
         uint32_t instruction, thumb_offset;
@@ -591,7 +670,8 @@ void sleh_undef(arm_saved_state_t * state)
          * Get the current instruction. 
          */
         thumb_offset = (arm_ctx->cpsr & (1 << 5)) ? 1 : 0;
-        copyin((uint8_t *) (arm_ctx->pc + thumb_offset), &instruction, sizeof(uint32_t));
+        copyin((uint8_t *) (arm_ctx->pc + thumb_offset), &instruction,
+               sizeof(uint32_t));
 
         /*
          * Check the instruction encoding to see if it's a coprocessor instruction. 
@@ -601,7 +681,8 @@ void sleh_undef(arm_saved_state_t * state)
         /*
          * NEON instruction. 
          */
-        if (((OSSwapInt32(instruction) & 0xff100000) == 0xf4000000) || ((OSSwapInt32(instruction) & 0xfe000000) == 0xf2000000)) {
+        if (((OSSwapInt32(instruction) & 0xff100000) == 0xf4000000)
+            || ((OSSwapInt32(instruction) & 0xfe000000) == 0xf2000000)) {
             /*
              * NEON instruction. 
              */
@@ -623,7 +704,9 @@ void sleh_undef(arm_saved_state_t * state)
         /*
          * VFP instruction.. 
          */
-        if ((((instruction & 0xF000000) >> 24) == 0xE) || (((instruction & 0xF000000) >> 24) == 0xD) || (((instruction & 0xF000000) >> 24) == 0xC)) {
+        if ((((instruction & 0xF000000) >> 24) == 0xE)
+            || (((instruction & 0xF000000) >> 24) == 0xD)
+            || (((instruction & 0xF000000) >> 24) == 0xC)) {
             uint32_t cr = (instruction & 0xF00) >> 8;
             if (cr == 10 || cr == 11) {
                 /*
@@ -645,13 +728,20 @@ void sleh_undef(arm_saved_state_t * state)
             }
         }
 
-        printf("%s[%d]: usermode undefined instruction, EXC_BAD_INSTRUCTION at 0x%08x in map %p (pmap %p)\n", proc_name_address(thread->task->bsd_info), proc_pid(thread->task->bsd_info), arm_ctx->pc, map, map->pmap);
+        printf
+            ("%s[%d]: usermode undefined instruction, EXC_BAD_INSTRUCTION at 0x%08x in map %p (pmap %p)\n",
+             proc_name_address(thread->task->bsd_info),
+             proc_pid(thread->task->bsd_info), arm_ctx->pc, map, map->pmap);
         printf("Thread has ARM register state:\n"
                "    r0: 0x%08x  r1: 0x%08x  r2: 0x%08x  r3: 0x%08x\n"
                "    r4: 0x%08x  r5: 0x%08x  r6: 0x%08x  r7: 0x%08x\n"
                "    r8: 0x%08x  r9: 0x%08x r10: 0x%08x r11: 0x%08x\n"
                "   r12: 0x%08x  sp: 0x%08x  lr: 0x%08x  pc: 0x%08x\n"
-               "  cpsr: 0x%08x\n", arm_ctx->r[0], arm_ctx->r[1], arm_ctx->r[2], arm_ctx->r[3], arm_ctx->r[4], arm_ctx->r[5], arm_ctx->r[6], arm_ctx->r[7], arm_ctx->r[8], arm_ctx->r[9], arm_ctx->r[10], arm_ctx->r[11], arm_ctx->r[12], arm_ctx->sp, arm_ctx->lr, arm_ctx->pc, arm_ctx->cpsr);
+               "  cpsr: 0x%08x\n", arm_ctx->r[0], arm_ctx->r[1], arm_ctx->r[2],
+               arm_ctx->r[3], arm_ctx->r[4], arm_ctx->r[5], arm_ctx->r[6],
+               arm_ctx->r[7], arm_ctx->r[8], arm_ctx->r[9], arm_ctx->r[10],
+               arm_ctx->r[11], arm_ctx->r[12], arm_ctx->sp, arm_ctx->lr,
+               arm_ctx->pc, arm_ctx->cpsr);
         /*
          * xxx gate 
          */

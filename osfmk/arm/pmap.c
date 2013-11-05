@@ -110,7 +110,7 @@ vm_page_t commpage;
 uint64_t pmap_nesting_size_min = 0x8000000;
 uint64_t pmap_nesting_size_max = 0x8000000;
 
-int allow_data_exec  = 0;       /* no exec from data, embedded is hardcore like that */
+int allow_data_exec = 0;        /* no exec from data, embedded is hardcore like that */
 int allow_stack_exec = 0;       /* No apps may execute from the stack by default */
 int nx_enabled = 1;
 
@@ -166,26 +166,28 @@ decl_simple_lock_data(, pv_free_list_lock);
  * These are per ARMv6/ARM11JZF-S defintions.
  */
 arm_l2_t arm_pte_prot_templates[] = {
-                                                     /* Mode         Flags   Mode    Flags */
-    {.l2.nx = TRUE, .l2.ap = 0x00, .l2.apx = 0},     /* Privileged   ---     User    --- */
-    {.l2.nx = TRUE, .l2.ap = 0x01, .l2.apx = 0},     /* Privileged   RW-     User    --- */
-    {.l2.nx = TRUE, .l2.ap = 0x02, .l2.apx = 0},     /* Privileged   RW-     User    R-- */
-    {.l2.nx = TRUE, .l2.ap = 0x03, .l2.apx = 0},     /* Privileged   RW-     User    RW- */
+    /*
+     * Mode         Flags   Mode    Flags 
+     */
+    {.l2.nx = TRUE,.l2.ap = 0x00,.l2.apx = 0},  /* Privileged   ---     User    --- */
+    {.l2.nx = TRUE,.l2.ap = 0x01,.l2.apx = 0},  /* Privileged   RW-     User    --- */
+    {.l2.nx = TRUE,.l2.ap = 0x02,.l2.apx = 0},  /* Privileged   RW-     User    R-- */
+    {.l2.nx = TRUE,.l2.ap = 0x03,.l2.apx = 0},  /* Privileged   RW-     User    RW- */
 
-    {.l2.nx = FALSE, .l2.ap = 0x00, .l2.apx = 0},    /* Privileged   --X     User    --X */
-    {.l2.nx = FALSE, .l2.ap = 0x01, .l2.apx = 0},    /* Privileged   RWX     User    --X */
-    {.l2.nx = FALSE, .l2.ap = 0x02, .l2.apx = 0},    /* Privileged   RWX     User    R-X */
-    {.l2.nx = FALSE, .l2.ap = 0x03, .l2.apx = 0},    /* Privileged   RWX     User    RWX */
+    {.l2.nx = FALSE,.l2.ap = 0x00,.l2.apx = 0}, /* Privileged   --X     User    --X */
+    {.l2.nx = FALSE,.l2.ap = 0x01,.l2.apx = 0}, /* Privileged   RWX     User    --X */
+    {.l2.nx = FALSE,.l2.ap = 0x02,.l2.apx = 0}, /* Privileged   RWX     User    R-X */
+    {.l2.nx = FALSE,.l2.ap = 0x03,.l2.apx = 0}, /* Privileged   RWX     User    RWX */
 
-    {.l2.nx = TRUE, .l2.ap = 0x00, .l2.apx = 1},     /* Privileged   ---     User    --- */
-    {.l2.nx = TRUE, .l2.ap = 0x01, .l2.apx = 1},     /* Privileged   R--     User    --- */
-    {.l2.nx = TRUE, .l2.ap = 0x02, .l2.apx = 1},     /* Privileged   R--     User    R-- */
-    {.l2.nx = TRUE, .l2.ap = 0x03, .l2.apx = 1},     /* Privileged   R--     User    R-- */
+    {.l2.nx = TRUE,.l2.ap = 0x00,.l2.apx = 1},  /* Privileged   ---     User    --- */
+    {.l2.nx = TRUE,.l2.ap = 0x01,.l2.apx = 1},  /* Privileged   R--     User    --- */
+    {.l2.nx = TRUE,.l2.ap = 0x02,.l2.apx = 1},  /* Privileged   R--     User    R-- */
+    {.l2.nx = TRUE,.l2.ap = 0x03,.l2.apx = 1},  /* Privileged   R--     User    R-- */
 
-    {.l2.nx = FALSE, .l2.ap = 0x00, .l2.apx = 1},    /* Privileged   --X     User    --X */
-    {.l2.nx = FALSE, .l2.ap = 0x01, .l2.apx = 1},    /* Privileged   R-X     User    --X */
-    {.l2.nx = FALSE, .l2.ap = 0x02, .l2.apx = 1},    /* Privileged   R-X     User    R-X */
-    {.l2.nx = FALSE, .l2.ap = 0x03, .l2.apx = 1},    /* Privileged   R-X     User    R-X */
+    {.l2.nx = FALSE,.l2.ap = 0x00,.l2.apx = 1}, /* Privileged   --X     User    --X */
+    {.l2.nx = FALSE,.l2.ap = 0x01,.l2.apx = 1}, /* Privileged   R-X     User    --X */
+    {.l2.nx = FALSE,.l2.ap = 0x02,.l2.apx = 1}, /* Privileged   R-X     User    R-X */
+    {.l2.nx = FALSE,.l2.ap = 0x03,.l2.apx = 1}, /* Privileged   R-X     User    R-X */
 };
 
 /* 
@@ -218,31 +220,32 @@ typedef enum {
 /**
  * pmap_vm_prot_to_page_flags
  */
-uint32_t pmap_vm_prot_to_page_flags(pmap_t pmap, vm_prot_t prot, int wired, int nx)
+uint32_t pmap_vm_prot_to_page_flags(pmap_t pmap, vm_prot_t prot, int wired,
+                                    int nx)
 {
-    arm_l2_t* current_l2 = &arm_pte_prot_templates[0];
+    arm_l2_t *current_l2 = &arm_pte_prot_templates[0];
     pt_entry_t pte = 0;
 
-    /* 
+    /*
      * Pmaps other than the kernel one will always have user accessible pages.
      */
-    if(pmap != kernel_pmap)
+    if (pmap != kernel_pmap)
         pte |= L2_ACCESS_USER;
     pte |= L2_ACCESS_PRW;
 
     /*
      * Enforce Read-Write if necessary.
      */
-    if(prot & VM_PROT_WRITE)
-        pte &= ~(L2_ACCESS_APX);      /* APX-bit, RW? */
+    if (prot & VM_PROT_WRITE)
+        pte &= ~(L2_ACCESS_APX);    /* APX-bit, RW? */
     else
-        pte |= (L2_ACCESS_APX);       /* APX-bit, R-? */
+        pte |= (L2_ACCESS_APX); /* APX-bit, R-? */
 
     /*
      * Enforce XN if necessary.
      */
     if (!(prot & VM_PROT_EXECUTE))
-        pte |= L2_NX_BIT;        /* XN-bit, R?X */
+        pte |= L2_NX_BIT;       /* XN-bit, R?X */
 
     return pte;
 }
@@ -295,7 +298,8 @@ void phys_attribute_set(ppnum_t pn, int bits)
  *
  * Invoked by the Mach VM to determine the platform specific unnest region.
  */
-boolean_t pmap_adjust_unnest_parameters(pmap_t p, vm_map_offset_t * s, vm_map_offset_t * e)
+boolean_t pmap_adjust_unnest_parameters(pmap_t p, vm_map_offset_t * s,
+                                        vm_map_offset_t * e)
 {
     return FALSE;
 }
@@ -305,7 +309,9 @@ boolean_t pmap_adjust_unnest_parameters(pmap_t p, vm_map_offset_t * s, vm_map_of
  *
  * Set/Get special memory attributes; Set/Get is not implemented.
  */
-kern_return_t pmap_attribute(pmap_t pmap, vm_offset_t address, vm_size_t size, vm_machine_attribute_t atte, vm_machine_attribute_val_t * attrp)
+kern_return_t pmap_attribute(pmap_t pmap, vm_offset_t address, vm_size_t size,
+                             vm_machine_attribute_t atte,
+                             vm_machine_attribute_val_t * attrp)
 {
     return KERN_INVALID_ARGUMENT;
 }
@@ -315,7 +321,9 @@ kern_return_t pmap_attribute(pmap_t pmap, vm_offset_t address, vm_size_t size, v
  *
  * Flush appropriate cache based on page number sent.
  */
-kern_return_t pmap_attribute_cache_sync(ppnum_t pn, vm_size_t size, vm_machine_attribute_t attr, vm_machine_attribute_val_t * attrp)
+kern_return_t pmap_attribute_cache_sync(ppnum_t pn, vm_size_t size,
+                                        vm_machine_attribute_t attr,
+                                        vm_machine_attribute_val_t * attrp)
 {
     return KERN_SUCCESS;
 }
@@ -388,7 +396,8 @@ vm_offset_t pmap_tte(pmap_t pmap, vm_offset_t virt)
     uint32_t tte_offset_begin;
     tte_offset_begin = pmap->pm_l1_virt;
     if ((tte_offset_begin + L1_SIZE) < addr_to_tte(pmap->pm_l1_virt, virt))
-        panic("Translation table entry extends past L1 size (base: 0x%08X)", tte_offset_begin);
+        panic("Translation table entry extends past L1 size (base: 0x%08X)",
+              tte_offset_begin);
     return addr_to_tte(pmap->pm_l1_virt, virt);
 }
 
@@ -410,7 +419,8 @@ vm_offset_t pmap_pte(pmap_t pmap, vm_offset_t virt)
      * Verify it's not a section mapping. 
      */
     if ((tte & ARM_PAGE_MASK_VALUE) == ARM_PAGE_SECTION)
-        panic("Translation table entry is a section mapping (tte %x ttep %x)", tte, tte_offset);
+        panic("Translation table entry is a section mapping (tte %x ttep %x)",
+              tte, tte_offset);
 
     /*
      * Clean the TTE bits off, get the address. 
@@ -448,13 +458,16 @@ void mapping_free_prime(void)
  *
  * Map specified virtual address range to a physical one.
  */
-vm_offset_t pmap_map(vm_offset_t virt, vm_map_offset_t start_addr, vm_map_offset_t end_addr, vm_prot_t prot, unsigned int flags)
+vm_offset_t pmap_map(vm_offset_t virt, vm_map_offset_t start_addr,
+                     vm_map_offset_t end_addr, vm_prot_t prot,
+                     unsigned int flags)
 {
     int ps;
 
     ps = PAGE_SIZE;
     while (start_addr < end_addr) {
-        pmap_enter(kernel_pmap, (vm_map_offset_t) virt, (start_addr), prot, flags, FALSE, TRUE);
+        pmap_enter(kernel_pmap, (vm_map_offset_t) virt, (start_addr), prot,
+                   flags, FALSE, TRUE);
         virt += ps;
         start_addr += ps;
     }
@@ -516,16 +529,19 @@ vm_offset_t io_map(vm_offset_t phys_addr, vm_size_t size, unsigned int flags)
         start = virt_begin;
         virt_begin += round_page(size);
 
-        (void) pmap_map_bd(start, phys_addr, phys_addr + round_page(size), VM_PROT_READ | VM_PROT_WRITE, flags);
+        (void) pmap_map_bd(start, phys_addr, phys_addr + round_page(size),
+                           VM_PROT_READ | VM_PROT_WRITE, flags);
     } else {
         (void) kmem_alloc_pageable(kernel_map, &start, round_page(size));
-        (void) pmap_map(start, phys_addr, phys_addr + round_page(size), VM_PROT_READ | VM_PROT_WRITE, flags);
+        (void) pmap_map(start, phys_addr, phys_addr + round_page(size),
+                        VM_PROT_READ | VM_PROT_WRITE, flags);
     }
 
     return (start);
 }
 
-vm_offset_t io_map_spec(vm_map_offset_t phys_addr, vm_size_t size, unsigned int flags)
+vm_offset_t io_map_spec(vm_map_offset_t phys_addr, vm_size_t size,
+                        unsigned int flags)
 {
     return (io_map(phys_addr, size, flags));
 }
@@ -538,7 +554,9 @@ vm_offset_t io_map_spec(vm_map_offset_t phys_addr, vm_size_t size, unsigned int 
 boolean_t pmap_next_page(ppnum_t * addrp)
 {
     if (first_avail >= avail_end) {
-        kprintf("pmap_next_page: ran out of possible pages, last page was 0x%08x", first_avail);
+        kprintf
+            ("pmap_next_page: ran out of possible pages, last page was 0x%08x",
+             first_avail);
         return FALSE;
     }
 
@@ -561,7 +579,8 @@ void pmap_virtual_space(vm_offset_t * startp, vm_offset_t * endp)
 {
     *startp = virt_begin;
     *endp = virt_end;
-    kprintf("pmap_virtual_space: VM region 0x%08x - 0x%08x\n", virt_begin, virt_end);
+    kprintf("pmap_virtual_space: VM region 0x%08x - 0x%08x\n", virt_begin,
+            virt_end);
 }
 
 /**
@@ -579,7 +598,8 @@ unsigned int pmap_free_pages(void)
  *
  * Enters a physical mapping. (Before the VM subsystem is up.)
  */
-boolean_t pmap_map_bd(vm_offset_t virt, vm_map_offset_t start, vm_map_offset_t end, vm_prot_t prot, unsigned int flags)
+boolean_t pmap_map_bd(vm_offset_t virt, vm_map_offset_t start,
+                      vm_map_offset_t end, vm_prot_t prot, unsigned int flags)
 {
     spl_t spl;
 
@@ -617,7 +637,8 @@ boolean_t pmap_map_bd(vm_offset_t virt, vm_map_offset_t start, vm_map_offset_t e
 /**
  * pmap_pageable
  */
-void pmap_pageable(__unused pmap_t pmap, __unused vm_map_offset_t start, __unused vm_map_offset_t end, __unused boolean_t pageable)
+void pmap_pageable(__unused pmap_t pmap, __unused vm_map_offset_t start,
+                   __unused vm_map_offset_t end, __unused boolean_t pageable)
 {
     return;
 }
@@ -669,7 +690,8 @@ void pmap_set_reference(ppnum_t pn)
  */
 boolean_t pmap_valid_page(ppnum_t p)
 {
-    return (((p << PAGE_SHIFT) > avail_start) && ((p << PAGE_SHIFT) < avail_end));
+    return (((p << PAGE_SHIFT) > avail_start)
+            && ((p << PAGE_SHIFT) < avail_end));
 }
 
 /**
@@ -695,8 +717,10 @@ boolean_t pmap_verify_free(vm_offset_t phys)
 
     pv_h = pai_to_pvh(phys);
     result = (pv_h->pv_pmap == PMAP_NULL);
-    if(result == FALSE) kdb_printf("pmap_verify_free: ppn %p pa %x va %x map %p\n",
-                                   phys, phys << PAGE_SHIFT, pv_h->pv_address_va, pv_h->pv_pmap);
+    if (result == FALSE)
+        kdb_printf("pmap_verify_free: ppn %p pa %x va %x map %p\n",
+                   phys, phys << PAGE_SHIFT, pv_h->pv_address_va,
+                   pv_h->pv_pmap);
     SPLX(spl);
 
     return (result);
@@ -754,7 +778,8 @@ void pmap_disable_NX(pmap_t pmap)
  */
 void pmap_copy_page(ppnum_t src, ppnum_t dst)
 {
-    ovbcopy(phys_to_virt(src << PAGE_SHIFT), phys_to_virt(dst << PAGE_SHIFT), PAGE_SIZE);
+    ovbcopy(phys_to_virt(src << PAGE_SHIFT), phys_to_virt(dst << PAGE_SHIFT),
+            PAGE_SIZE);
 }
 
 /**
@@ -762,12 +787,14 @@ void pmap_copy_page(ppnum_t src, ppnum_t dst)
  *
  * Copies the specified (machine independent) pages.
  */
-void pmap_copy_part_page(ppnum_t src, vm_offset_t src_offset, ppnum_t dst, vm_offset_t dst_offset, vm_size_t len)
+void pmap_copy_part_page(ppnum_t src, vm_offset_t src_offset, ppnum_t dst,
+                         vm_offset_t dst_offset, vm_size_t len)
 {
     assert((((dst << PAGE_SHIFT) & PAGE_MASK) + dst_offset + len) <= PAGE_SIZE);
     assert((((src << PAGE_SHIFT) & PAGE_MASK) + src_offset + len) <= PAGE_SIZE);
 
-    ovbcopy(phys_to_virt(src << PAGE_SHIFT) + src_offset, phys_to_virt(dst << PAGE_SHIFT) + src_offset, len);
+    ovbcopy(phys_to_virt(src << PAGE_SHIFT) + src_offset,
+            phys_to_virt(dst << PAGE_SHIFT) + src_offset, len);
 }
 
 /**
@@ -917,7 +944,8 @@ void pmap_switch(pmap_t new_pmap)
  *
  * Map a (possibly) autogenned block
  */
-void pmap_map_block(pmap_t pmap, addr64_t va, ppnum_t pa, uint32_t size, vm_prot_t prot, int attr, __unused unsigned int flags)
+void pmap_map_block(pmap_t pmap, addr64_t va, ppnum_t pa, uint32_t size,
+                    vm_prot_t prot, int attr, __unused unsigned int flags)
 {
     uint32_t page;
     for (page = 0; page < size; page++) {
@@ -932,7 +960,8 @@ void pmap_map_block(pmap_t pmap, addr64_t va, ppnum_t pa, uint32_t size, vm_prot
  *
  * Bootstrap the pmap subsystem.
  */
-void pmap_bootstrap(__unused uint64_t msize, vm_offset_t * __first_avail, __unused unsigned int kmapsize)
+void pmap_bootstrap(__unused uint64_t msize, vm_offset_t * __first_avail,
+                    __unused unsigned int kmapsize)
 {
     /*
      * Set the first virtual address we can use. 
@@ -951,7 +980,8 @@ void pmap_bootstrap(__unused uint64_t msize, vm_offset_t * __first_avail, __unus
     vm_first_phys = first_avail;
     avail_start = first_avail;
 
-    kprintf("pmap_bootstrap: physical region 0x%08x - 0x%08x\n", first_avail, avail_end);
+    kprintf("pmap_bootstrap: physical region 0x%08x - 0x%08x\n", first_avail,
+            avail_end);
 
     /*
      * Initialize kernel pmap.
@@ -999,7 +1029,8 @@ unsigned int pmap_get_refmod(ppnum_t pn)
  *
  * Enter pages into a physical map.
  */
-void pmap_enter(pmap_t pmap, vm_map_offset_t va, ppnum_t pa, vm_prot_t prot, vm_prot_t fault_type, unsigned int flags, boolean_t wired)
+void pmap_enter(pmap_t pmap, vm_map_offset_t va, ppnum_t pa, vm_prot_t prot,
+                vm_prot_t fault_type, unsigned int flags, boolean_t wired)
 {
     pmap_enter_options(pmap, va, pa, prot, fault_type, flags, wired, 0);
 }
@@ -1060,12 +1091,14 @@ void pmap_create_sharedpage(void)
     /*
      * And map it.
      */
-    pmap_enter(kernel_pmap, (vm_map_offset_t) _COMM_PAGE_BASE_ADDRESS, commpage->phys_page, VM_PROT_READ | VM_PROT_WRITE, 0, FALSE, TRUE);
+    pmap_enter(kernel_pmap, (vm_map_offset_t) _COMM_PAGE_BASE_ADDRESS,
+               commpage->phys_page, VM_PROT_READ | VM_PROT_WRITE, 0, FALSE,
+               TRUE);
 
     /*
      * Memset it.
      */
-    memset((void*)_COMM_PAGE_BASE_ADDRESS, 0x77, PAGE_SIZE);
+    memset((void *) _COMM_PAGE_BASE_ADDRESS, 0x77, PAGE_SIZE);
     return;
 }
 
@@ -1183,7 +1216,8 @@ void pmap_expand(pmap_t map, vm_offset_t v)
      * Do not extend past the commpage. 
      */
     if (v > _COMM_PAGE_BASE_ADDRESS)
-        panic("attempting to expand pmap past maximum address of %x\n", _COMM_PAGE_BASE_ADDRESS);
+        panic("attempting to expand pmap past maximum address of %x\n",
+              _COMM_PAGE_BASE_ADDRESS);
 
     /*
      * L1 section mappings may not be expanded any further.
@@ -1194,7 +1228,10 @@ void pmap_expand(pmap_t map, vm_offset_t v)
     /*
      * Overwrite the old L1 mapping in this region with a fresh L2 descriptor.
      */
-    *tte = ((page->phys_page << PAGE_SHIFT) & L1_PTE_ADDR_MASK) | L1_TYPE_PTE | (1 << 4);
+    *tte =
+        ((page->phys_page << PAGE_SHIFT) & L1_PTE_ADDR_MASK) | L1_TYPE_PTE | (1
+                                                                              <<
+                                                                              4);
 
  Out:
 
@@ -1213,7 +1250,10 @@ void pmap_expand(pmap_t map, vm_offset_t v)
  * Create a translation entry for a PA->VA mappings with additional options.
  * Called from vm_fault.
  */
-kern_return_t pmap_enter_options(pmap_t pmap, vm_map_offset_t va, ppnum_t pa, vm_prot_t prot, vm_prot_t fault_type, unsigned int flags, boolean_t wired, unsigned int options)
+kern_return_t pmap_enter_options(pmap_t pmap, vm_map_offset_t va, ppnum_t pa,
+                                 vm_prot_t prot, vm_prot_t fault_type,
+                                 unsigned int flags, boolean_t wired,
+                                 unsigned int options)
 {
     spl_t spl;
     pt_entry_t pte;
@@ -1230,7 +1270,8 @@ kern_return_t pmap_enter_options(pmap_t pmap, vm_map_offset_t va, ppnum_t pa, vm
      * Only low addresses are supported for user pmaps.
      */
     if (va > _COMM_PAGE_BASE_ADDRESS && pmap != kernel_pmap)
-        panic("pmap_enter_options: low address 0x%08X is invalid for pmap %p\n", va, pmap);
+        panic("pmap_enter_options: low address 0x%08X is invalid for pmap %p\n",
+              va, pmap);
 
  Retry:
     /*
@@ -1263,10 +1304,11 @@ kern_return_t pmap_enter_options(pmap_t pmap, vm_map_offset_t va, ppnum_t pa, vm
          * XXX protection is not implemented right now, all pages are 'RWX'.
          */
 
-        uint32_t template_pte = ((pa << PAGE_SHIFT) & L2_ADDR_MASK) | L2_SMALL_PAGE;
+        uint32_t template_pte =
+            ((pa << PAGE_SHIFT) & L2_ADDR_MASK) | L2_SMALL_PAGE;
         template_pte |= pmap_vm_prot_to_page_flags(pmap, prot, wired, 0);
 
-        if(va == _COMM_PAGE_BASE_ADDRESS)
+        if (va == _COMM_PAGE_BASE_ADDRESS)
             template_pte |= L2_ACCESS_USER;
 
         *(uint32_t *) pte = template_pte;
@@ -1340,7 +1382,9 @@ kern_return_t pmap_enter_options(pmap_t pmap, vm_map_offset_t va, ppnum_t pa, vm
                     panic("pmap_enter_options: failed to grab a leaf node\n");
                 }
 #if 0
-                kprintf("pmap_enter_options: PV_GRAB_LEAF(), leaf node %p, head node %p\n", pv_e, pv_h);
+                kprintf
+                    ("pmap_enter_options: PV_GRAB_LEAF(), leaf node %p, head node %p\n",
+                     pv_e, pv_h);
 #endif
                 goto Retry;
             }
@@ -1354,7 +1398,10 @@ kern_return_t pmap_enter_options(pmap_t pmap, vm_map_offset_t va, ppnum_t pa, vm
             pv_e = (pv_entry_t) 0;
         }
 #if 0
-        kprintf("pmap_enter: pai %d pa %d (%x) va %x pv_h %p pmap %p pv_h->pmap %p pv_h->pv_address_va %x\n", pai, pa, pa << PAGE_SHIFT, va, pv_h, pmap, pv_h->pv_pmap, pv_h->pv_address_va);
+        kprintf
+            ("pmap_enter: pai %d pa %d (%x) va %x pv_h %p pmap %p pv_h->pmap %p pv_h->pv_address_va %x\n",
+             pai, pa, pa << PAGE_SHIFT, va, pv_h, pmap, pv_h->pv_pmap,
+             pv_h->pv_address_va);
 #endif
     }
 
@@ -1374,7 +1421,7 @@ kern_return_t pmap_enter_options(pmap_t pmap, vm_map_offset_t va, ppnum_t pa, vm
     /*
      * Hack for commpage, how is this to be done?
      */
-    if(va == _COMM_PAGE_BASE_ADDRESS)
+    if (va == _COMM_PAGE_BASE_ADDRESS)
         template_pte |= L2_ACCESS_USER;
 
     /*
@@ -1424,14 +1471,17 @@ void pmap_init(void)
     vm_size_t s;
     int i;
 
-    kprintf("pmap_init: %d physical pages in memory, kernel pmap at %p\n", (mem_size / PAGE_SIZE), kernel_pmap);
+    kprintf("pmap_init: %d physical pages in memory, kernel pmap at %p\n",
+            (mem_size / PAGE_SIZE), kernel_pmap);
 
     /*
      * Allocate the core PV structure. The pv_head_table contains trunk entries
      * for every physical page that exists in the system.
      */
     s = (mem_size / PAGE_SIZE) * sizeof(pv_entry);
-    if (kernel_memory_allocate(kernel_map, &pv_root, s, 0, KMA_KOBJECT | KMA_PERMANENT) != KERN_SUCCESS)
+    if (kernel_memory_allocate
+        (kernel_map, &pv_root, s, 0,
+         KMA_KOBJECT | KMA_PERMANENT) != KERN_SUCCESS)
         panic("pmap_init(): failed to allocate pv table!");
 
     /*
@@ -1444,12 +1494,16 @@ void pmap_init(void)
     /*
      * Initialize the Zones for object allocation. 
      */
-    pmap_zone = zinit((sizeof(struct pmap)), 400 * (sizeof(struct pmap)), 4096, "pmap_pmap");
+    pmap_zone =
+        zinit((sizeof(struct pmap)), 400 * (sizeof(struct pmap)), 4096,
+              "pmap_pmap");
 
     /*
      * Expandable zone. (pv_entry zone)
      */
-    pve_zone = zinit((sizeof(struct __pv_entry__)), 10000 * (sizeof(struct __pv_entry__)), 4096, "pmap_pve");
+    pve_zone =
+        zinit((sizeof(struct __pv_entry__)),
+              10000 * (sizeof(struct __pv_entry__)), 4096, "pmap_pve");
 
     /*
      * Initialize the free list lock. (unused right now.)
@@ -1475,7 +1529,8 @@ void pmap_init(void)
  *
  * Remove a range of hardware page-table entries. (This function does not support section mappings.)
  */
-void pmap_remove_range(pmap_t pmap, vm_map_offset_t start_vaddr, pt_entry_t * spte, pt_entry_t * epte, boolean_t is_sect)
+void pmap_remove_range(pmap_t pmap, vm_map_offset_t start_vaddr,
+                       pt_entry_t * spte, pt_entry_t * epte, boolean_t is_sect)
 {
     pt_entry_t *cpte = spte;
     vm_map_offset_t vaddr;
@@ -1490,9 +1545,11 @@ void pmap_remove_range(pmap_t pmap, vm_map_offset_t start_vaddr, pt_entry_t * sp
      * Make sure the Cpte/Epte are within sane boundaries. (256 entries, one L2 area size.)
      */
     if (((vm_offset_t) epte - (vm_offset_t) cpte) > L2_SIZE)
-        kprintf("pmap_remove_range: attempting to remove more ptes than 256!\n");
+        kprintf
+            ("pmap_remove_range: attempting to remove more ptes than 256!\n");
 
-    for (cpte = spte, vaddr = start_vaddr; cpte < epte; cpte++, vaddr += our_page_size) {
+    for (cpte = spte, vaddr = start_vaddr; cpte < epte;
+         cpte++, vaddr += our_page_size) {
         /*
          * Start nuking the range. 
          */
@@ -1528,7 +1585,9 @@ void pmap_remove_range(pmap_t pmap, vm_map_offset_t start_vaddr, pt_entry_t * sp
              */
 
             if (pv_h->pv_pmap == PMAP_NULL) {
-                /* kprintf("pmap_remove_range: null pv_h->pmap (pmap %p, pv_h %p, pai %d, vaddr %x, cpte %x)\n", pmap, pv_h, pai, vaddr, cpte); */
+                /*
+                 * kprintf("pmap_remove_range: null pv_h->pmap (pmap %p, pv_h %p, pai %d, vaddr %x, cpte %x)\n", pmap, pv_h, pai, vaddr, cpte); 
+                 */
                 continue;
             }
 
@@ -1545,7 +1604,7 @@ void pmap_remove_range(pmap_t pmap, vm_map_offset_t start_vaddr, pt_entry_t * sp
                     pv_h->pv_address_va = 0;
                 }
             } else {
-#if 0   /* hack */
+#if 0                           /* hack */
                 cur = pv_h;
                 while (cur->pv_address_va != vaddr || cur->pv_pmap != pmap) {
                     prev = cur;
@@ -1568,7 +1627,7 @@ void pmap_remove_range(pmap_t pmap, vm_map_offset_t start_vaddr, pt_entry_t * sp
     /*
      * Make sure the amount removed isn't... weird.
      */
-#if 0 /* hack */
+#if 0                           /* hack */
     assert(pmap->pm_stats.resident_count >= num_removed);
     OSAddAtomic(-num_removed, &pmap->pm_stats.resident_count);
     assert(pmap->pm_stats.wired_count >= num_unwired);
@@ -1607,13 +1666,14 @@ void pmap_remove(pmap_t map, vm_offset_t s, vm_offset_t e)
     tte = pmap_tte(map, l);
 
     while (s < e) {
-        l = (s + (1 * 1024 * 1024)) & ~((1 * 1024 * 1024)-1);
+        l = (s + (1 * 1024 * 1024)) & ~((1 * 1024 * 1024) - 1);
         if (l > e)
             l = e;
         if (tte && ((*(vm_offset_t *) tte & ARM_PAGE_MASK_VALUE) != 0)) {
-            spte = (pt_entry_t *)phys_to_virt((*(vm_offset_t*)tte & L1_PTE_ADDR_MASK));
+            spte = (pt_entry_t *)
+                phys_to_virt((*(vm_offset_t *) tte & L1_PTE_ADDR_MASK));
             spte = &spte[((s >> PAGE_SHIFT) & 0x3ff)];
-            epte = &spte[((l-s) >> PAGE_SHIFT)];
+            epte = &spte[((l - s) >> PAGE_SHIFT)];
             pmap_remove_range(map, s, spte, epte, FALSE);
         }
         s = l;
@@ -1638,7 +1698,8 @@ void pmap_remove(pmap_t map, vm_offset_t s, vm_offset_t e)
  *
  * Create a pmap.
  */
-pmap_t pmap_create(ledger_t ledger, vm_map_size_t size, __unused boolean_t is_64bit)
+pmap_t pmap_create(ledger_t ledger, vm_map_size_t size,
+                   __unused boolean_t is_64bit)
 {
     pmap_t our_pmap;
     vm_page_t new_l1;
@@ -1653,7 +1714,7 @@ pmap_t pmap_create(ledger_t ledger, vm_map_size_t size, __unused boolean_t is_64
      * Zalloc a new one.
      */
     our_pmap = (pmap_t) zalloc(pmap_zone);
-    if(!our_pmap) {
+    if (!our_pmap) {
         panic("pmap_create: allocating the new pmap failed");
     }
     our_pmap->pm_refcnt = 1;
@@ -1734,7 +1795,8 @@ void pmap_page_protect(ppnum_t pn, vm_prot_t prot)
             vaddr = pv_e->pv_address_va;
             pte = pmap_pte(pmap, vaddr);
             if (!pte) {
-                kprintf("pmap_page_protect pmap 0x%x pn 0x%x vaddr 0x%llx\n", pmap, pn, vaddr);
+                kprintf("pmap_page_protect pmap 0x%x pn 0x%x vaddr 0x%llx\n",
+                        pmap, pn, vaddr);
                 panic("pmap_page_protect");
             }
 
@@ -1818,7 +1880,9 @@ void pmap_deallocate_l1(pmap_t pmap)
     /*
      * Look up the page.
      */
-    m = vm_page_lookup(pmap_object, (vm_object_offset_t) ((ttb_base >> PAGE_SHIFT) - (gPhysBase >> PAGE_SHIFT)));
+    m = vm_page_lookup(pmap_object,
+                       (vm_object_offset_t) ((ttb_base >> PAGE_SHIFT) -
+                                             (gPhysBase >> PAGE_SHIFT)));
     assert(m);
 
     /*
@@ -1911,7 +1975,8 @@ void pmap_destroy(pmap_t pmap)
  *
  * Lower the specified protections on a certain map from sva to eva using prot prot.
  */
-void pmap_protect(pmap_t map, vm_map_offset_t sva, vm_map_offset_t eva, vm_prot_t prot)
+void pmap_protect(pmap_t map, vm_map_offset_t sva, vm_map_offset_t eva,
+                  vm_prot_t prot)
 {
     /*
      * xxx finish 
@@ -1924,14 +1989,16 @@ void pmap_protect(pmap_t map, vm_map_offset_t sva, vm_map_offset_t eva, vm_prot_
  *
  * Nest a pmap with new mappings into a master pmap.
  */
-kern_return_t pmap_nest(pmap_t subord, pmap_t grand, addr64_t va_start, addr64_t nstart, uint64_t size)
+kern_return_t pmap_nest(pmap_t subord, pmap_t grand, addr64_t va_start,
+                        addr64_t nstart, uint64_t size)
 {
     int copied;
 
     /*
      * Anounce ourselves. We are nesting one pmap inside another.
      */
-    kprintf("pmap_nest: %p[0x%08llx] => %p[0x%08llx], %d tte entries\n", grand, va_start, subord, nstart, size >> 20);
+    kprintf("pmap_nest: %p[0x%08llx] => %p[0x%08llx], %d tte entries\n", grand,
+            va_start, subord, nstart, size >> 20);
 
     /*
      * Sanity checks.
@@ -1941,7 +2008,8 @@ kern_return_t pmap_nest(pmap_t subord, pmap_t grand, addr64_t va_start, addr64_t
     }
 
     if (va_start != nstart)
-        panic("pmap_nest: va_start(0x%llx) != nstart(0x%llx)\n", va_start, nstart);
+        panic("pmap_nest: va_start(0x%llx) != nstart(0x%llx)\n", va_start,
+              nstart);
 
     /*
      * Start the copy operations.
@@ -1955,7 +2023,9 @@ kern_return_t pmap_nest(pmap_t subord, pmap_t grand, addr64_t va_start, addr64_t
      * Mark the surbodinate pmap as shared.
      */
     subord->pm_shared = TRUE;
-    bcopy(grand->pm_l1_virt + tte_offset(va_start), subord->pm_l1_virt + tte_offset(nstart), (size >> 20) * sizeof(uint32_t));
+    bcopy(grand->pm_l1_virt + tte_offset(va_start),
+          subord->pm_l1_virt + tte_offset(nstart),
+          (size >> 20) * sizeof(uint32_t));
 
     /*
      * Out. Flush all TLBs.

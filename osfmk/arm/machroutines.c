@@ -132,8 +132,8 @@ void ml_init_interrupt(void)
  */
 void ml_cpu_up(void)
 {
-    (void)hw_atomic_add(&machine_info.physical_cpu, 1);
-    (void)hw_atomic_add(&machine_info.logical_cpu, 1);
+    (void) hw_atomic_add(&machine_info.physical_cpu, 1);
+    (void) hw_atomic_add(&machine_info.logical_cpu, 1);
     return;
 }
 
@@ -145,8 +145,8 @@ void ml_cpu_up(void)
  */
 void ml_cpu_down(void)
 {
-    (void)hw_atomic_sub(&machine_info.physical_cpu, 1);
-    (void)hw_atomic_sub(&machine_info.logical_cpu, 1);
+    (void) hw_atomic_sub(&machine_info.physical_cpu, 1);
+    (void) hw_atomic_sub(&machine_info.logical_cpu, 1);
     return;
 }
 
@@ -183,9 +183,11 @@ void bzero_phys(addr64_t src64, uint32_t bytes)
 void bcopy_phys(addr64_t src64, addr64_t dst64, vm_size_t bytes)
 {
 #ifndef __LP64__
-    bcopy(phys_to_virt((uint32_t) src64), phys_to_virt((uint32_t) dst64), bytes);
+    bcopy(phys_to_virt((uint32_t) src64), phys_to_virt((uint32_t) dst64),
+          bytes);
 #else
-    bcopy(phys_to_virt((uint64_t) src64), phys_to_virt((uint64_t) dst64), bytes);
+    bcopy(phys_to_virt((uint64_t) src64), phys_to_virt((uint64_t) dst64),
+          bytes);
 #endif
     return;
 }
@@ -228,7 +230,7 @@ void ml_init_lock_timeout(void)
  */
 int ml_get_max_cpus(void)
 {
-    return(machine_info.max_cpus);
+    return (machine_info.max_cpus);
 }
 
 void ml_init_max_cpus(unsigned long max_cpus)
@@ -239,7 +241,8 @@ void ml_init_max_cpus(unsigned long max_cpus)
     return;
 }
 
-void ml_install_interrupt_handler(void *nub, int source, void *target, IOInterruptHandler handler, void *refCon)
+void ml_install_interrupt_handler(void *nub, int source, void *target,
+                                  IOInterruptHandler handler, void *refCon)
 {
     boolean_t current_state;
 
@@ -259,7 +262,9 @@ void ml_install_interrupt_handler(void *nub, int source, void *target, IOInterru
 /*
  * initialize and bring up the CPU.
  */
-kern_return_t ml_processor_register(cpu_id_t cpu_id, processor_t * processor_out, ipi_handler_t * ipi_handler)
+kern_return_t ml_processor_register(cpu_id_t cpu_id,
+                                    processor_t * processor_out,
+                                    ipi_handler_t * ipi_handler)
 {
     return KERN_SUCCESS;
 }
@@ -267,7 +272,8 @@ kern_return_t ml_processor_register(cpu_id_t cpu_id, processor_t * processor_out
 /*
  * Stubbed.
  */
-void ml_thread_policy(__unused thread_t thread, __unused unsigned policy_id, __unused unsigned policy_info)
+void ml_thread_policy(__unused thread_t thread, __unused unsigned policy_id,
+                      __unused unsigned policy_info)
 {
     kprintf("ml_thread_policy is unimplemented\n");
 }
@@ -324,7 +330,8 @@ addr64_t kvtophys(vm_offset_t addr)
  *			the duration of the copy process.
  */
 
-vm_size_t ml_nofault_copy(vm_offset_t virtsrc, vm_offset_t virtdst, vm_size_t size)
+vm_size_t ml_nofault_copy(vm_offset_t virtsrc, vm_offset_t virtdst,
+                          vm_size_t size)
 {
     addr64_t cur_phys_dst, cur_phys_src;
     uint32_t count, nbytes = 0;
@@ -334,7 +341,8 @@ vm_size_t ml_nofault_copy(vm_offset_t virtsrc, vm_offset_t virtdst, vm_size_t si
             break;
         if (!(cur_phys_dst = kvtophys(virtdst)))
             break;
-        if (!pmap_valid_page(atop(cur_phys_dst)) || !pmap_valid_page(atop(cur_phys_src)))
+        if (!pmap_valid_page(atop(cur_phys_dst))
+            || !pmap_valid_page(atop(cur_phys_src)))
             break;
         count = (uint32_t) (PAGE_SIZE - (cur_phys_src & PAGE_MASK));
         if (count > (PAGE_SIZE - (cur_phys_dst & PAGE_MASK)))
@@ -353,10 +361,10 @@ vm_size_t ml_nofault_copy(vm_offset_t virtsrc, vm_offset_t virtdst, vm_size_t si
     return nbytes;
 }
 
-boolean_t ml_thread_is64bit(thread_t thread) {  
+boolean_t ml_thread_is64bit(thread_t thread)
+{
     return FALSE;
 }
-
 
 /*
  * ml_phys_read_*.
@@ -371,15 +379,19 @@ boolean_t ml_thread_is64bit(thread_t thread) {
     }
 
 ml_phys_read_write_comb_gen(unsigned int, unsigned char, vm_offset_t, _byte)
-ml_phys_read_write_comb_gen(unsigned int, unsigned char, addr64_t, _byte_64)
+    ml_phys_read_write_comb_gen(unsigned int, unsigned char, addr64_t, _byte_64)
 
 ml_phys_read_write_comb_gen(unsigned int, unsigned short, vm_offset_t, _half)
 ml_phys_read_write_comb_gen(unsigned int, unsigned short, addr64_t, _half_64)
 
-ml_phys_read_write_comb_gen(unsigned int, unsigned int, vm_offset_t, )
+ml_phys_read_write_comb_gen(unsigned int, unsigned int, vm_offset_t,)
 ml_phys_read_write_comb_gen(unsigned int, unsigned int, addr64_t, _64)
 ml_phys_read_write_comb_gen(unsigned int, unsigned int, vm_offset_t, _word)
 ml_phys_read_write_comb_gen(unsigned int, unsigned int, addr64_t, _word_64)
 
-ml_phys_read_write_comb_gen(unsigned long long, unsigned long long, vm_offset_t, _double)
-ml_phys_read_write_comb_gen(unsigned long long, unsigned long long, addr64_t, _double_64)
+ml_phys_read_write_comb_gen(unsigned long long, unsigned long long, vm_offset_t,
+                            _double) ml_phys_read_write_comb_gen(unsigned long
+                                                                 long,
+                                                                 unsigned long
+                                                                 long, addr64_t,
+                                                                 _double_64)

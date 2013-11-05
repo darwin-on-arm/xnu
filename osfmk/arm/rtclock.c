@@ -121,7 +121,7 @@ void rtclock_intr(arm_saved_state_t * regs)
 
 uint64_t mach_absolute_time(void)
 {
-    if(!rtclock_sec_divisor)
+    if (!rtclock_sec_divisor)
         return 0;
     return pe_arm_get_timebase(NULL);
 }
@@ -136,7 +136,9 @@ void machine_delay_until(uint64_t interval, uint64_t deadline)
     } while (now < deadline);
 }
 
-static inline uint32_t _absolutetime_to_microtime(uint64_t abstime, clock_sec_t * secs, clock_usec_t * microsecs)
+static inline uint32_t _absolutetime_to_microtime(uint64_t abstime,
+                                                  clock_sec_t * secs,
+                                                  clock_usec_t * microsecs)
 {
     uint32_t remain;
     *secs = (abstime * rtclock_scaler) / (uint64_t) NSEC_PER_SEC;
@@ -145,28 +147,36 @@ static inline uint32_t _absolutetime_to_microtime(uint64_t abstime, clock_sec_t 
     return remain;
 }
 
-static inline void _absolutetime_to_nanotime(uint64_t abstime, clock_sec_t * secs, clock_usec_t * nanosecs)
+static inline void _absolutetime_to_nanotime(uint64_t abstime,
+                                             clock_sec_t * secs,
+                                             clock_usec_t * nanosecs)
 {
     *secs = (abstime * rtclock_scaler) / (uint64_t) NSEC_PER_SEC;
-    *nanosecs = (clock_usec_t) ((abstime * rtclock_scaler) % (uint64_t) NSEC_PER_SEC);
+    *nanosecs =
+        (clock_usec_t) ((abstime * rtclock_scaler) % (uint64_t) NSEC_PER_SEC);
 }
 
-void clock_interval_to_absolutetime_interval(uint32_t interval, uint32_t scale_factor, uint64_t * result)
+void clock_interval_to_absolutetime_interval(uint32_t interval,
+                                             uint32_t scale_factor,
+                                             uint64_t * result)
 {
     *result = ((uint64_t) interval * scale_factor) / rtclock_scaler;
 }
 
-void absolutetime_to_microtime(uint64_t abstime, clock_sec_t * secs, clock_usec_t * microsecs)
+void absolutetime_to_microtime(uint64_t abstime, clock_sec_t * secs,
+                               clock_usec_t * microsecs)
 {
     _absolutetime_to_microtime(abstime, secs, microsecs);
 }
 
-void absolutetime_to_nanotime(uint64_t abstime, clock_sec_t * secs, clock_nsec_t * nanosecs)
+void absolutetime_to_nanotime(uint64_t abstime, clock_sec_t * secs,
+                              clock_nsec_t * nanosecs)
 {
     _absolutetime_to_nanotime(abstime, secs, nanosecs);
 }
 
-void nanotime_to_absolutetime(clock_sec_t secs, clock_nsec_t nanosecs, uint64_t * result)
+void nanotime_to_absolutetime(clock_sec_t secs, clock_nsec_t nanosecs,
+                              uint64_t * result)
 {
     *result = (((uint64_t) secs * NSEC_PER_SEC) + nanosecs) / rtclock_scaler;
 }
@@ -204,7 +214,8 @@ void clock_get_system_microtime(clock_sec_t * secs, clock_usec_t * microsecs)
 
 void nanoseconds_to_absolutetime(uint64_t nanoseconds, uint64_t * result)
 {
-    kprintf("nanoseconds_to_absolutetime: %llu => %llu\n", nanoseconds, nanoseconds / rtclock_scaler);
+    kprintf("nanoseconds_to_absolutetime: %llu => %llu\n", nanoseconds,
+            nanoseconds / rtclock_scaler);
     *result = nanoseconds / rtclock_scaler;
 }
 
@@ -240,7 +251,8 @@ int rtclock_init(void)
      * Check the divisor 
      */
     if (!rtclock_sec_divisor) {
-        panic("Invalid RTC second divisor, perhaps the RTC wasn't configured correctly?");
+        panic
+            ("Invalid RTC second divisor, perhaps the RTC wasn't configured correctly?");
     }
 
     rtclock_scaler = (NSEC_PER_SEC / rtclock_sec_divisor);
@@ -257,7 +269,9 @@ int rtclock_init(void)
     return 1;
 }
 
-void clock_gettimeofday_set_commpage(uint64_t abstime, uint64_t epoch, uint64_t offset, clock_sec_t * secs, clock_usec_t * microsecs)
+void clock_gettimeofday_set_commpage(uint64_t abstime, uint64_t epoch,
+                                     uint64_t offset, clock_sec_t * secs,
+                                     clock_usec_t * microsecs)
 {
 
 }

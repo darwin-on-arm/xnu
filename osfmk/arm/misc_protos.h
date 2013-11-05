@@ -63,7 +63,8 @@ extern void arm_set_threadpid_priv_readwrite(uint64_t * address);
 
 extern arm_usimple_lock(usimple_lock_t l);
 
-void panic_arm_backtrace(void *_frame, int nframes, const char *msg, boolean_t regdump, arm_saved_state_t * regs);
+void panic_arm_backtrace(void *_frame, int nframes, const char *msg,
+                         boolean_t regdump, arm_saved_state_t * regs);
 
 void arm_vm_init(uint32_t mem_limit, boot_args * args);
 

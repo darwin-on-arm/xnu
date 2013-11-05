@@ -154,7 +154,8 @@ static void arc4_stir(void)
     union {
         uint32_t tsc;
         u_int rnd[128 / sizeof(u_int)];
-    } rdat;
+    }
+    rdat;
     int n;
 
     if (!rs_initialized) {

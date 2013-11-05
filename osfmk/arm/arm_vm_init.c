@@ -154,7 +154,8 @@ uint32_t sectionOffset;
  * Maps a linear range of physical pages starting at 'phys_start' and ending
  * at 'phys_end' into an L2 cache region starting at PA 'pa_cache_start'.
  */
-void l2_map_linear_range(uint32_t pa_cache_start, uint32_t phys_start, uint32_t phys_end)
+void l2_map_linear_range(uint32_t pa_cache_start, uint32_t phys_start,
+                         uint32_t phys_end)
 {
     uint32_t pte_iter;
     uint32_t page_iter;
@@ -183,7 +184,8 @@ void l2_map_linear_range(uint32_t pa_cache_start, uint32_t phys_start, uint32_t 
     }
 }
 
-void l2_map_linear_range_no_cache(uint32_t pa_cache_start, uint32_t phys_start, uint32_t phys_end)
+void l2_map_linear_range_no_cache(uint32_t pa_cache_start, uint32_t phys_start,
+                                  uint32_t phys_end)
 {
     uint32_t pte_iter;
     uint32_t page_iter;
@@ -216,7 +218,8 @@ void l2_map_linear_range_no_cache(uint32_t pa_cache_start, uint32_t phys_start, 
  * Binds a set of L2 entries starting at PA 'cache_start' to a translation table
  * 'tte' starting at virtual address 'va' and of size 'size'.
  */
-void l2_cache_to_range(uint32_t pa_cache_start, uint32_t va, uint32_t tteb, uint32_t size, int zero)
+void l2_cache_to_range(uint32_t pa_cache_start, uint32_t va, uint32_t tteb,
+                       uint32_t size, int zero)
 {
     uint32_t pte_iter = pa_cache_start;
     uint32_t tte_pbase;
@@ -266,7 +269,9 @@ static void verify_lowGlo(void)
     char *lowGloString = (char *) LOWGLO_BASE;
 
     if (strncmp(lowGloString, "Scolecit", 8) != 0) {
-        panic("Invalid signature for lowGlo in vectors, got %s, was expecting %s\n", lowGloString, "Scolecit");
+        panic
+            ("Invalid signature for lowGlo in vectors, got %s, was expecting %s\n",
+             lowGloString, "Scolecit");
     }
 
     kprintf("lowGlo verification string: %s\n", lowGloString);
@@ -287,7 +292,12 @@ void arm_vm_init(uint32_t mem_limit, boot_args * args)
     /*
      * ARM vm init starting up. 
      */
-    kdb_printf("\tboot_args:               0x%08x\n" "\tboot_args->virtBase:     0x%08x\n" "\tboot_args->physBase:     0x%08x\n" "\tboot_args->topOfKernel:  0x%08x\n" "\tboot_args->memSize:      0x%08x\n", args, args->virtBase, args->physBase, args->topOfKernelData, args->memSize);
+    kdb_printf("\tboot_args:               0x%08x\n"
+               "\tboot_args->virtBase:     0x%08x\n"
+               "\tboot_args->physBase:     0x%08x\n"
+               "\tboot_args->topOfKernel:  0x%08x\n"
+               "\tboot_args->memSize:      0x%08x\n", args, args->virtBase,
+               args->physBase, args->topOfKernelData, args->memSize);
 
     /*
      * Set up some globals. 
@@ -306,11 +316,15 @@ void arm_vm_init(uint32_t mem_limit, boot_args * args)
 
     identityBaseVA = gVirtBase;
     identityCachePA = cpu_ttb + L1_SIZE;    /* After the first initial TTB. */
-    kdb_printf("arm_vm_init: L2 address for identity mappings...\n" "\tmapping VA: 0x%08x\n" "\tmapping PA: 0x%08x\n", identityBaseVA, identityCachePA);
+    kdb_printf("arm_vm_init: L2 address for identity mappings...\n"
+               "\tmapping VA: 0x%08x\n" "\tmapping PA: 0x%08x\n",
+               identityBaseVA, identityCachePA);
 
     managedBaseVA = MANAGED_BASE;
     managedCachePA = identityCachePA + l2_size(gMemSize);
-    kdb_printf("arm_vm_init: L2 address for kernel managed mappings...\n" "\tmapping VA: 0x%08x\n" "\tmapping PA: 0x%08x\n", managedBaseVA, managedCachePA);
+    kdb_printf("arm_vm_init: L2 address for kernel managed mappings...\n"
+               "\tmapping VA: 0x%08x\n" "\tmapping PA: 0x%08x\n", managedBaseVA,
+               managedCachePA);
 
     /*
      * Bit generous.. 
@@ -321,20 +335,26 @@ void arm_vm_init(uint32_t mem_limit, boot_args * args)
      * Configure tables for identity mapping.. 
      */
     kdb_printf("arm_vm_init: configuring tables for identity mapping...\n");
-    l2_cache_to_range(identityCachePA, identityBaseVA, phys_to_virt(cpu_ttb), gMemSize, TRUE);
+    l2_cache_to_range(identityCachePA, identityBaseVA, phys_to_virt(cpu_ttb),
+                      gMemSize, TRUE);
 
-    l2_cache_to_range(managedCachePA, managedBaseVA, phys_to_virt(cpu_ttb), gMemSize, TRUE);
+    l2_cache_to_range(managedCachePA, managedBaseVA, phys_to_virt(cpu_ttb),
+                      gMemSize, TRUE);
 
     /*
      * Create the first identity mappings. 
      */
-    kdb_printf("arm_vm_init: creating main identity mapping (section offset is 0x%x).\n", sectionOffset);
-    l2_map_linear_range(identityCachePA, gPhysBase - sectionOffset, gPhysBase + gMemSize);
+    kdb_printf
+        ("arm_vm_init: creating main identity mapping (section offset is 0x%x).\n",
+         sectionOffset);
+    l2_map_linear_range(identityCachePA, gPhysBase - sectionOffset,
+                        gPhysBase + gMemSize);
 
     /*
      * Set high exception vectors.. Steal one page from first_avail. 
      */
-    kdb_printf("arm_vm_init: exception vectors are at 0x%08x.\n", &ExceptionVectorsBase);
+    kdb_printf("arm_vm_init: exception vectors are at 0x%08x.\n",
+               &ExceptionVectorsBase);
 
     /*
      * Map them... 
@@ -343,13 +363,14 @@ void arm_vm_init(uint32_t mem_limit, boot_args * args)
     vectp = (uint32_t *) addr_to_tte(phys_to_virt(cpu_ttb), VECTORS_BASE);
     *vectp = (((uint32_t) vecpt_start) | L1_TYPE_PTE);
     va_vecpt = phys_to_virt(vecpt_start) + pte_offset(VECTORS_BASE);
-    *va_vecpt = virt_to_phys(&ExceptionVectorsBase) | L2_ACCESS_PRW | L2_SMALL_PAGE;
+    *va_vecpt =
+        virt_to_phys(&ExceptionVectorsBase) | L2_ACCESS_PRW | L2_SMALL_PAGE;
 
     /*
      * Burn it away... 
      */
 #if defined(BOARD_CONFIG_S5L8930X) || defined(BOARD_CONFIG_S5L8920X) || defined(BOARD_CONFIG_S5L8922X)
-    first_avail += 6144 * L1_SIZE; /* temporary..... */
+    first_avail += 6144 * L1_SIZE;  /* temporary..... */
 #else
     first_avail += 1 * L1_SIZE; /* temporary..... */
 #endif
@@ -374,12 +395,28 @@ void arm_vm_init(uint32_t mem_limit, boot_args * args)
      * Set up segment information. 
      */
     kdb_printf("arm_vm_init: setting up segment information...\n");
-    sectTEXTB = (vm_offset_t) (uint32_t *) getsegdatafromheader(&_mh_execute_header, "__TEXT", &sectSizeTEXT);
-    sectDATAB = (vm_offset_t) (uint32_t *) getsegdatafromheader(&_mh_execute_header, "__DATA", &sectSizeDATA);
-    sectLINKB = (vm_offset_t) (uint32_t *) getsegdatafromheader(&_mh_execute_header, "__LINKEDIT", &sectSizeLINK);
-    sectKLDB = (vm_offset_t) (uint32_t *) getsegdatafromheader(&_mh_execute_header, "__KLD", &sectSizeKLD);
-    sectHIBB = (vm_offset_t) (uint32_t *) getsegdatafromheader(&_mh_execute_header, "__HIB", &sectSizeHIB);
-    sectPRELINKB = (vm_offset_t) (uint32_t *) getsegdatafromheader(&_mh_execute_header, "__PRELINK_TEXT", &sectSizePRELINK);
+    sectTEXTB =
+        (vm_offset_t) (uint32_t *) getsegdatafromheader(&_mh_execute_header,
+                                                        "__TEXT",
+                                                        &sectSizeTEXT);
+    sectDATAB =
+        (vm_offset_t) (uint32_t *) getsegdatafromheader(&_mh_execute_header,
+                                                        "__DATA",
+                                                        &sectSizeDATA);
+    sectLINKB =
+        (vm_offset_t) (uint32_t *) getsegdatafromheader(&_mh_execute_header,
+                                                        "__LINKEDIT",
+                                                        &sectSizeLINK);
+    sectKLDB =
+        (vm_offset_t) (uint32_t *) getsegdatafromheader(&_mh_execute_header,
+                                                        "__KLD", &sectSizeKLD);
+    sectHIBB =
+        (vm_offset_t) (uint32_t *) getsegdatafromheader(&_mh_execute_header,
+                                                        "__HIB", &sectSizeHIB);
+    sectPRELINKB =
+        (vm_offset_t) (uint32_t *) getsegdatafromheader(&_mh_execute_header,
+                                                        "__PRELINK_TEXT",
+                                                        &sectSizePRELINK);
     etext = (vm_offset_t) sectTEXTB + sectSizeTEXT;
     edata = (vm_offset_t) sectDATAB + sectSizeDATA;
     end = round_page(getlastaddr());    /* Force end to next page */

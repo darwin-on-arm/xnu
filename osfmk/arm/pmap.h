@@ -194,12 +194,19 @@ typedef struct arm_l2_t {
 
 extern addr64_t kvtophys(vm_offset_t va);   /* Get physical address from kernel virtual */
 extern vm_map_offset_t kvtophys64(vm_map_offset_t va);  /* Get 64-bit physical address from kernel virtual */
-extern vm_offset_t pmap_map(vm_offset_t virt, vm_map_offset_t start, vm_map_offset_t end, vm_prot_t prot, unsigned int flags);
+extern vm_offset_t pmap_map(vm_offset_t virt, vm_map_offset_t start,
+                            vm_map_offset_t end, vm_prot_t prot,
+                            unsigned int flags);
 
-extern boolean_t pmap_map_bd(vm_offset_t virt, vm_map_offset_t start, vm_map_offset_t end, vm_prot_t prot, unsigned int flags);
+extern boolean_t pmap_map_bd(vm_offset_t virt, vm_map_offset_t start,
+                             vm_map_offset_t end, vm_prot_t prot,
+                             unsigned int flags);
 
-extern kern_return_t pmap_add_physical_memory(vm_offset_t spa, vm_offset_t epa, boolean_t available, unsigned int attr);
-extern void pmap_bootstrap(uint64_t msize, vm_offset_t * first_avail, unsigned int kmapsize);
+extern kern_return_t pmap_add_physical_memory(vm_offset_t spa, vm_offset_t epa,
+                                              boolean_t available,
+                                              unsigned int attr);
+extern void pmap_bootstrap(uint64_t msize, vm_offset_t * first_avail,
+                           unsigned int kmapsize);
 
 extern vm_offset_t pmap_get_phys(pmap_t pmap, void *virt);
 
@@ -214,21 +221,26 @@ extern void invalidate_dcache(vm_offset_t va, unsigned length, boolean_t phys);
 extern void invalidate_dcache64(addr64_t va, unsigned length, boolean_t phys);
 extern void invalidate_icache(vm_offset_t va, unsigned length, boolean_t phys);
 extern void invalidate_icache64(addr64_t va, unsigned length, boolean_t phys);
-extern void pmap_map_block(pmap_t pmap, addr64_t va, ppnum_t pa, uint32_t size, vm_prot_t prot, int attr, unsigned int flags);
-extern int pmap_map_block_rc(pmap_t pmap, addr64_t va, ppnum_t pa, uint32_t size, vm_prot_t prot, int attr, unsigned int flags);
+extern void pmap_map_block(pmap_t pmap, addr64_t va, ppnum_t pa, uint32_t size,
+                           vm_prot_t prot, int attr, unsigned int flags);
+extern int pmap_map_block_rc(pmap_t pmap, addr64_t va, ppnum_t pa,
+                             uint32_t size, vm_prot_t prot, int attr,
+                             unsigned int flags);
 
 extern ppnum_t pmap_find_phys(pmap_t pmap, addr64_t va);
 extern void MapUserMemoryWindowInit(void);
 extern addr64_t MapUserMemoryWindow(vm_map_t map, addr64_t va);
 extern boolean_t pmap_eligible_for_execute(ppnum_t pa);
-extern int pmap_list_resident_pages(struct pmap *pmap, vm_offset_t * listp, int space);
+extern int pmap_list_resident_pages(struct pmap *pmap, vm_offset_t * listp,
+                                    int space);
 extern void pmap_init_sharedpage(vm_offset_t cpg);
 extern void pmap_disable_NX(pmap_t pmap);
 
 extern boolean_t pmap_valid_page(ppnum_t pn);
 
 extern void pt_fake_zone_init(int);
-extern void pt_fake_zone_info(int *, vm_size_t *, vm_size_t *, vm_size_t *, vm_size_t *, uint64_t *, int *, int *, int *);
+extern void pt_fake_zone_info(int *, vm_size_t *, vm_size_t *, vm_size_t *,
+                              vm_size_t *, uint64_t *, int *, int *, int *);
 
 extern void pmap_create_sharedpage(void);
 
@@ -257,7 +269,9 @@ extern int pmap_mem_regions_count;
 void pmap_common_init(pmap_t pmap);
 void pmap_static_init(void);
 
-void l2_map_linear_range(uint32_t pa_cache_start, uint32_t phys_start, uint32_t phys_end);
-void l2_cache_to_range(uint32_t pa_cache_start, uint32_t va, uint32_t tteb, uint32_t size, int zero);
+void l2_map_linear_range(uint32_t pa_cache_start, uint32_t phys_start,
+                         uint32_t phys_end);
+void l2_cache_to_range(uint32_t pa_cache_start, uint32_t va, uint32_t tteb,
+                       uint32_t size, int zero);
 
 #endif

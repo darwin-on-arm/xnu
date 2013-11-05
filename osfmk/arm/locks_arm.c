@@ -114,7 +114,8 @@ void lck_rw_ilk_unlock(lck_rw_t * lck)
     lck_spin_unlock(lck);
 }
 
-static void lck_mtx_ext_init(lck_mtx_ext_t * lck, lck_grp_t * grp, lck_attr_t * attr)
+static void lck_mtx_ext_init(lck_mtx_ext_t * lck, lck_grp_t * grp,
+                             lck_attr_t * attr)
 {
     bzero((void *) lck, sizeof(lck_mtx_ext_t));
 
@@ -177,7 +178,8 @@ void lck_mtx_destroy(lck_mtx_t * lck, lck_grp_t * grp)
     return;
 }
 
-void lck_mtx_init_ext(lck_mtx_t * lck, lck_mtx_ext_t * lck_ext, lck_grp_t * grp, lck_attr_t * attr)
+void lck_mtx_init_ext(lck_mtx_t * lck, lck_mtx_ext_t * lck_ext, lck_grp_t * grp,
+                      lck_attr_t * attr)
 {
     lck_attr_t *lck_attr;
 
@@ -233,7 +235,8 @@ void lck_rw_init(lck_rw_t * lck, lck_grp_t * grp, lck_attr_t * attr)
     lck->lck_rw_shared_count = 0;
     lck->lck_rw_waiting = 0;
     lck->lck_rw_tag = 0;
-    lck->lck_rw_priv_excl = ((lck_attr->lck_attr_val & LCK_ATTR_RW_SHARED_PRIORITY) == 0);
+    lck->lck_rw_priv_excl =
+        ((lck_attr->lck_attr_val & LCK_ATTR_RW_SHARED_PRIORITY) == 0);
 
     lck_grp_reference(grp);
     lck_grp_lckcnt_incr(grp, LCK_TYPE_RW);
@@ -248,14 +251,16 @@ void lck_spin_destroy(lck_spin_t * lck, lck_grp_t * grp)
     lck_grp_deallocate(grp);
 }
 
-void lck_spin_init(lck_spin_t * lck, lck_grp_t * grp, __unused lck_attr_t * attr)
+void lck_spin_init(lck_spin_t * lck, lck_grp_t * grp,
+                   __unused lck_attr_t * attr)
 {
     lck->interlock = 0;
     lck_grp_reference(grp);
     lck_grp_lckcnt_incr(grp, LCK_TYPE_SPIN);
 }
 
-void lock_init(lock_t * l, boolean_t can_sleep, __unused unsigned short tag, __unused unsigned short tag1)
+void lock_init(lock_t * l, boolean_t can_sleep, __unused unsigned short tag,
+               __unused unsigned short tag1)
 {
     l->lck_rw_interlock = 0;
     l->lck_rw_want_excl = FALSE;
@@ -275,12 +280,14 @@ void lck_rw_assert(lck_rw_t * lck, unsigned int type)
         }
         break;
     case LCK_RW_ASSERT_EXCLUSIVE:
-        if ((lck->lck_rw_want_excl || lck->lck_rw_want_upgrade) && lck->lck_rw_shared_count == 0) {
+        if ((lck->lck_rw_want_excl || lck->lck_rw_want_upgrade)
+            && lck->lck_rw_shared_count == 0) {
             return;
         }
         break;
     case LCK_RW_ASSERT_HELD:
-        if (lck->lck_rw_want_excl || lck->lck_rw_want_upgrade || lck->lck_rw_shared_count != 0) {
+        if (lck->lck_rw_want_excl || lck->lck_rw_want_upgrade
+            || lck->lck_rw_shared_count != 0) {
             return;
         }
         break;
@@ -288,7 +295,8 @@ void lck_rw_assert(lck_rw_t * lck, unsigned int type)
         break;
     }
 
-    panic("rw lock (%p) not held (mode=%u), first word %08x\n", lck, type, *(uint32_t *) lck);
+    panic("rw lock (%p) not held (mode=%u), first word %08x\n", lck, type,
+          *(uint32_t *) lck);
 }
 
 void lck_rw_lock(lck_rw_t * lck, lck_rw_type_t lck_rw_type)
@@ -378,28 +386,41 @@ void lck_rw_lock_shared_gen(lck_rw_t * lck)
 
     lck_rw_ilk_lock(lck);
 
-    while ((lck->lck_rw_want_excl || lck->lck_rw_want_upgrade) && ((lck->lck_rw_shared_count == 0) || (lck->lck_rw_priv_excl))) {
+    while ((lck->lck_rw_want_excl || lck->lck_rw_want_upgrade)
+           && ((lck->lck_rw_shared_count == 0) || (lck->lck_rw_priv_excl))) {
         i = lock_wait_time[1];
 
-        KERNEL_DEBUG(MACHDBG_CODE(DBG_MACH_LOCKS, LCK_RW_LCK_SHARED_CODE) | DBG_FUNC_START, (int) lck, lck->lck_rw_want_excl, lck->lck_rw_want_upgrade, i, 0);
+        KERNEL_DEBUG(MACHDBG_CODE(DBG_MACH_LOCKS, LCK_RW_LCK_SHARED_CODE) |
+                     DBG_FUNC_START, (int) lck, lck->lck_rw_want_excl,
+                     lck->lck_rw_want_upgrade, i, 0);
 
         if (i != 0) {
             lck_rw_ilk_unlock(lck);
-            while (--i != 0 && (lck->lck_rw_want_excl || lck->lck_rw_want_upgrade) && ((lck->lck_rw_shared_count == 0) || (lck->lck_rw_priv_excl)))
+            while (--i != 0
+                   && (lck->lck_rw_want_excl || lck->lck_rw_want_upgrade)
+                   && ((lck->lck_rw_shared_count == 0)
+                       || (lck->lck_rw_priv_excl)))
                 continue;
             lck_rw_ilk_lock(lck);
         }
 
-        if ((lck->lck_rw_want_excl || lck->lck_rw_want_upgrade) && ((lck->lck_rw_shared_count == 0) || (lck->lck_rw_priv_excl))) {
+        if ((lck->lck_rw_want_excl || lck->lck_rw_want_upgrade)
+            && ((lck->lck_rw_shared_count == 0) || (lck->lck_rw_priv_excl))) {
             lck->lck_rw_waiting = TRUE;
-            res = assert_wait((event_t) (((unsigned int *) lck) + ((sizeof(lck_rw_t) - 1) / sizeof(unsigned int))), THREAD_UNINT);
+            res =
+                assert_wait((event_t)
+                            (((unsigned int *) lck) +
+                             ((sizeof(lck_rw_t) - 1) / sizeof(unsigned int))),
+                            THREAD_UNINT);
             if (res == THREAD_WAITING) {
                 lck_rw_ilk_unlock(lck);
                 res = thread_block(THREAD_CONTINUE_NULL);
                 lck_rw_ilk_lock(lck);
             }
         }
-        KERNEL_DEBUG(MACHDBG_CODE(DBG_MACH_LOCKS, LCK_RW_LCK_SHARED_CODE) | DBG_FUNC_END, (int) lck, lck->lck_rw_want_excl, lck->lck_rw_want_upgrade, res, 0);
+        KERNEL_DEBUG(MACHDBG_CODE(DBG_MACH_LOCKS, LCK_RW_LCK_SHARED_CODE) |
+                     DBG_FUNC_END, (int) lck, lck->lck_rw_want_excl,
+                     lck->lck_rw_want_upgrade, res, 0);
     }
 
     lck->lck_rw_shared_count++;
@@ -418,7 +439,8 @@ void lck_rw_lock_exclusive_gen(lck_rw_t * lck)
      */
 
     while (lck->lck_rw_want_excl) {
-        KERNEL_DEBUG(MACHDBG_CODE(DBG_MACH_LOCKS, LCK_RW_LCK_EXCLUSIVE_CODE) | DBG_FUNC_START, (int) lck, 0, 0, 0, 0);
+        KERNEL_DEBUG(MACHDBG_CODE(DBG_MACH_LOCKS, LCK_RW_LCK_EXCLUSIVE_CODE) |
+                     DBG_FUNC_START, (int) lck, 0, 0, 0, 0);
 
         i = lock_wait_time[1];
         if (i != 0) {
@@ -430,14 +452,19 @@ void lck_rw_lock_exclusive_gen(lck_rw_t * lck)
 
         if (lck->lck_rw_want_excl) {
             lck->lck_rw_waiting = TRUE;
-            res = assert_wait((event_t) (((unsigned int *) lck) + ((sizeof(lck_rw_t) - 1) / sizeof(unsigned int))), THREAD_UNINT);
+            res =
+                assert_wait((event_t)
+                            (((unsigned int *) lck) +
+                             ((sizeof(lck_rw_t) - 1) / sizeof(unsigned int))),
+                            THREAD_UNINT);
             if (res == THREAD_WAITING) {
                 lck_rw_ilk_unlock(lck);
                 res = thread_block(THREAD_CONTINUE_NULL);
                 lck_rw_ilk_lock(lck);
             }
         }
-        KERNEL_DEBUG(MACHDBG_CODE(DBG_MACH_LOCKS, LCK_RW_LCK_EXCLUSIVE_CODE) | DBG_FUNC_END, (int) lck, res, 0, 0, 0);
+        KERNEL_DEBUG(MACHDBG_CODE(DBG_MACH_LOCKS, LCK_RW_LCK_EXCLUSIVE_CODE) |
+                     DBG_FUNC_END, (int) lck, res, 0, 0, 0);
     }
     lck->lck_rw_want_excl = TRUE;
 
@@ -449,18 +476,26 @@ void lck_rw_lock_exclusive_gen(lck_rw_t * lck)
 
         i = lock_wait_time[1];
 
-        KERNEL_DEBUG(MACHDBG_CODE(DBG_MACH_LOCKS, LCK_RW_LCK_EXCLUSIVE1_CODE) | DBG_FUNC_START, (int) lck, lck->lck_rw_shared_count, lck->lck_rw_want_upgrade, i, 0);
+        KERNEL_DEBUG(MACHDBG_CODE(DBG_MACH_LOCKS, LCK_RW_LCK_EXCLUSIVE1_CODE) |
+                     DBG_FUNC_START, (int) lck, lck->lck_rw_shared_count,
+                     lck->lck_rw_want_upgrade, i, 0);
 
         if (i != 0) {
             lck_rw_ilk_unlock(lck);
-            while (--i != 0 && (lck->lck_rw_shared_count != 0 || lck->lck_rw_want_upgrade))
+            while (--i != 0
+                   && (lck->lck_rw_shared_count != 0
+                       || lck->lck_rw_want_upgrade))
                 continue;
             lck_rw_ilk_lock(lck);
         }
 
         if (lck->lck_rw_shared_count != 0 || lck->lck_rw_want_upgrade) {
             lck->lck_rw_waiting = TRUE;
-            res = assert_wait((event_t) (((unsigned int *) lck) + ((sizeof(lck_rw_t) - 1) / sizeof(unsigned int))), THREAD_UNINT);
+            res =
+                assert_wait((event_t)
+                            (((unsigned int *) lck) +
+                             ((sizeof(lck_rw_t) - 1) / sizeof(unsigned int))),
+                            THREAD_UNINT);
 
             if (res == THREAD_WAITING) {
                 lck_rw_ilk_unlock(lck);
@@ -468,7 +503,9 @@ void lck_rw_lock_exclusive_gen(lck_rw_t * lck)
                 lck_rw_ilk_lock(lck);
             }
         }
-        KERNEL_DEBUG(MACHDBG_CODE(DBG_MACH_LOCKS, LCK_RW_LCK_EXCLUSIVE1_CODE) | DBG_FUNC_END, (int) lck, lck->lck_rw_shared_count, lck->lck_rw_want_upgrade, res, 0);
+        KERNEL_DEBUG(MACHDBG_CODE(DBG_MACH_LOCKS, LCK_RW_LCK_EXCLUSIVE1_CODE) |
+                     DBG_FUNC_END, (int) lck, lck->lck_rw_shared_count,
+                     lck->lck_rw_want_upgrade, res, 0);
     }
 
     lck_rw_ilk_unlock(lck);
@@ -490,7 +527,9 @@ boolean_t lck_rw_lock_shared_to_exclusive_gen(lck_rw_t * lck)
     lck->lck_rw_shared_count--;
 
     if (lck->lck_rw_want_upgrade) {
-        KERNEL_DEBUG(MACHDBG_CODE(DBG_MACH_LOCKS, LCK_RW_LCK_SH_TO_EX_CODE) | DBG_FUNC_START, (int) lck, lck->lck_rw_shared_count, lck->lck_rw_want_upgrade, 0, 0);
+        KERNEL_DEBUG(MACHDBG_CODE(DBG_MACH_LOCKS, LCK_RW_LCK_SH_TO_EX_CODE) |
+                     DBG_FUNC_START, (int) lck, lck->lck_rw_shared_count,
+                     lck->lck_rw_want_upgrade, 0, 0);
 
         /*
          *  Someone else has requested upgrade.
@@ -505,9 +544,13 @@ boolean_t lck_rw_lock_shared_to_exclusive_gen(lck_rw_t * lck)
         lck_rw_ilk_unlock(lck);
 
         if (do_wakeup)
-            thread_wakeup((event_t) (((unsigned int *) lck) + ((sizeof(lck_rw_t) - 1) / sizeof(unsigned int))));
+            thread_wakeup((event_t)
+                          (((unsigned int *) lck) +
+                           ((sizeof(lck_rw_t) - 1) / sizeof(unsigned int))));
 
-        KERNEL_DEBUG(MACHDBG_CODE(DBG_MACH_LOCKS, LCK_RW_LCK_SH_TO_EX_CODE) | DBG_FUNC_END, (int) lck, lck->lck_rw_shared_count, lck->lck_rw_want_upgrade, 0, 0);
+        KERNEL_DEBUG(MACHDBG_CODE(DBG_MACH_LOCKS, LCK_RW_LCK_SH_TO_EX_CODE) |
+                     DBG_FUNC_END, (int) lck, lck->lck_rw_shared_count,
+                     lck->lck_rw_want_upgrade, 0, 0);
 
         return (FALSE);
     }
@@ -517,7 +560,9 @@ boolean_t lck_rw_lock_shared_to_exclusive_gen(lck_rw_t * lck)
     while (lck->lck_rw_shared_count != 0) {
         i = lock_wait_time[1];
 
-        KERNEL_DEBUG(MACHDBG_CODE(DBG_MACH_LOCKS, LCK_RW_LCK_SH_TO_EX1_CODE) | DBG_FUNC_START, (int) lck, lck->lck_rw_shared_count, i, 0, 0);
+        KERNEL_DEBUG(MACHDBG_CODE(DBG_MACH_LOCKS, LCK_RW_LCK_SH_TO_EX1_CODE) |
+                     DBG_FUNC_START, (int) lck, lck->lck_rw_shared_count, i, 0,
+                     0);
         if (i != 0) {
             lck_rw_ilk_unlock(lck);
             while (--i != 0 && lck->lck_rw_shared_count != 0)
@@ -527,14 +572,20 @@ boolean_t lck_rw_lock_shared_to_exclusive_gen(lck_rw_t * lck)
 
         if (lck->lck_rw_shared_count != 0) {
             lck->lck_rw_waiting = TRUE;
-            res = assert_wait((event_t) (((unsigned int *) lck) + ((sizeof(lck_rw_t) - 1) / sizeof(unsigned int))), THREAD_UNINT);
+            res =
+                assert_wait((event_t)
+                            (((unsigned int *) lck) +
+                             ((sizeof(lck_rw_t) - 1) / sizeof(unsigned int))),
+                            THREAD_UNINT);
             if (res == THREAD_WAITING) {
                 lck_rw_ilk_unlock(lck);
                 res = thread_block(THREAD_CONTINUE_NULL);
                 lck_rw_ilk_lock(lck);
             }
         }
-        KERNEL_DEBUG(MACHDBG_CODE(DBG_MACH_LOCKS, LCK_RW_LCK_SH_TO_EX1_CODE) | DBG_FUNC_END, (int) lck, lck->lck_rw_shared_count, 0, 0, 0);
+        KERNEL_DEBUG(MACHDBG_CODE(DBG_MACH_LOCKS, LCK_RW_LCK_SH_TO_EX1_CODE) |
+                     DBG_FUNC_END, (int) lck, lck->lck_rw_shared_count, 0, 0,
+                     0);
     }
 
     lck_rw_ilk_unlock(lck);

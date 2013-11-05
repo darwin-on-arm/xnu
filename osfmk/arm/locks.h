@@ -159,7 +159,9 @@ typedef struct __lck_mtx_ext_t__ lck_mtx_ext_t;
 typedef struct _lck_rw_t_internal_ {
     union {
         struct {
-            unsigned int lck_rwd_interlock:1, lck_rwd_waiting:1, lck_rwd_want_upgrade:1, lck_rwd_want_excl:1, lck_rwd_pad17:11, lck_rwd_priv_excl:1, lck_rwd_shared_cnt:16;
+            unsigned int lck_rwd_interlock:1, lck_rwd_waiting:1,
+                lck_rwd_want_upgrade:1, lck_rwd_want_excl:1, lck_rwd_pad17:11,
+                lck_rwd_priv_excl:1, lck_rwd_shared_cnt:16;
             unsigned int lck_rwd_pad4;
             unsigned int lck_rwd_pad8;
         } lck_rwd;

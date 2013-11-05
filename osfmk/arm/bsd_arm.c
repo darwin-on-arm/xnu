@@ -63,7 +63,9 @@
  * Return the user stack pointer from the machine
  * dependent thread state info.
  */
-kern_return_t thread_userstack(thread_t thread, int flavor, thread_state_t tstate, unsigned int count, mach_vm_offset_t * user_stack, int *customstack)
+kern_return_t thread_userstack(thread_t thread, int flavor,
+                               thread_state_t tstate, unsigned int count,
+                               mach_vm_offset_t * user_stack, int *customstack)
 {
     struct arm_thread_state *state;
 
@@ -98,7 +100,9 @@ uint32_t sanitise_cpsr(uint32_t cpsr)
     return final_cpsr;
 }
 
-kern_return_t thread_entrypoint(thread_t thread, int flavor, thread_state_t tstate, unsigned int count, mach_vm_offset_t * entry_point)
+kern_return_t thread_entrypoint(thread_t thread, int flavor,
+                                thread_state_t tstate, unsigned int count,
+                                mach_vm_offset_t * entry_point)
 {
     struct arm_thread_state *state;
 
@@ -122,7 +126,8 @@ kern_return_t thread_entrypoint(thread_t thread, int flavor, thread_state_t tsta
     return (KERN_SUCCESS);
 }
 
-kern_return_t thread_userstackdefault(thread_t thread, mach_vm_offset_t * default_user_stack)
+kern_return_t thread_userstackdefault(thread_t thread,
+                                      mach_vm_offset_t * default_user_stack)
 {
     *default_user_stack = USRSTACK;
     return (KERN_SUCCESS);
@@ -134,7 +139,9 @@ kern_return_t thread_userstackdefault(thread_t thread, mach_vm_offset_t * defaul
  *  Get the status of the specified thread.
  */
 
-kern_return_t machine_thread_get_state(thread_t thr_act, thread_flavor_t flavor, thread_state_t tstate, mach_msg_type_number_t * count)
+kern_return_t machine_thread_get_state(thread_t thr_act, thread_flavor_t flavor,
+                                       thread_state_t tstate,
+                                       mach_msg_type_number_t * count)
 {
     switch (flavor) {
     case THREAD_STATE_FLAVOR_LIST:
@@ -209,7 +216,9 @@ kern_return_t machine_thread_get_state(thread_t thr_act, thread_flavor_t flavor,
     return (KERN_SUCCESS);
 }
 
-kern_return_t machine_thread_set_state(thread_t thread, thread_flavor_t flavor, thread_state_t tstate, mach_msg_type_number_t count)
+kern_return_t machine_thread_set_state(thread_t thread, thread_flavor_t flavor,
+                                       thread_state_t tstate,
+                                       mach_msg_type_number_t count)
 {
     struct arm_thread_state *ts;
 

@@ -40,7 +40,8 @@
 #include <vm/vm_fault.h>
 #include <sys/kdebug.h>
 
-kern_return_t copypv(addr64_t src64, addr64_t snk64, unsigned int size, int which)
+kern_return_t copypv(addr64_t src64, addr64_t snk64, unsigned int size,
+                     int which)
 {
     addr64_t src64_virt, snk64_virt;
     int bothphys = 0;

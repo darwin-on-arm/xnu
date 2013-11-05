@@ -53,8 +53,10 @@ thread_t CurrentThread;
 /*
  * These are defined in ctxswitch.s.
  */
-thread_t Switch_context(thread_t old_thread, thread_continue_t continuation, thread_t new_thread);
-void Call_continuation(thread_continue_t continuation, void *parameter, wait_result_t wresult, vm_offset_t stack);
+thread_t Switch_context(thread_t old_thread, thread_continue_t continuation,
+                        thread_t new_thread);
+void Call_continuation(thread_continue_t continuation, void *parameter,
+                       wait_result_t wresult, vm_offset_t stack);
 
 static void save_vfp_context(thread_t thread);
 
@@ -112,7 +114,8 @@ uint64_t thread_get_cthread_self(void)
 /**
  * machine_thread_inherit_taskwide
  */
-kern_return_t machine_thread_inherit_taskwide(thread_t thread, task_t parent_task)
+kern_return_t machine_thread_inherit_taskwide(thread_t thread,
+                                              task_t parent_task)
 {
     return KERN_FAILURE;
 }
@@ -159,13 +162,15 @@ kern_return_t machine_thread_create(thread_t thread, task_t task)
  *
  * Switch the current executing machine context to a new one.
  */
-thread_t machine_switch_context(thread_t old, thread_continue_t continuation, thread_t new)
+thread_t machine_switch_context(thread_t old, thread_continue_t continuation,
+                                thread_t new)
 {
     pmap_t new_pmap;
     cpu_data_t *datap;
     register thread_t retval;
 
-    kprintf("machine_switch_context: %p -> %p (cont: %p)\n", old, new, continuation);
+    kprintf("machine_switch_context: %p -> %p (cont: %p)\n", old, new,
+            continuation);
 
     if (old == new)
         panic("machine_switch_context: old = new thread (%p %p)", old, new);
@@ -273,7 +278,8 @@ void machine_stack_attach(thread_t thread, vm_offset_t stack)
     assert(stack != NULL);
     assert(thread != NULL);
 
-    kprintf("machine_stack_attach: setting stack %p for thread %p\n", stack, thread);
+    kprintf("machine_stack_attach: setting stack %p for thread %p\n", stack,
+            thread);
 
     uint32_t *kstack = (uint32_t *) STACK_IKS(stack);
 
@@ -308,7 +314,8 @@ vm_offset_t machine_stack_detach(thread_t thread)
 /*
  * Only one real processor.
  */
-processor_t machine_choose_processor(processor_set_t pset, processor_t preferred)
+processor_t machine_choose_processor(processor_set_t pset,
+                                     processor_t preferred)
 {
     return (cpu_datap(cpu_number())->cpu_processor);
 }
@@ -319,7 +326,8 @@ processor_t machine_choose_processor(processor_set_t pset, processor_t preferred
  * Call the continuation routine for a thread, really is a shim for the
  * assembly routine.
  */
-void call_continuation(thread_continue_t continuation, void *parameter, wait_result_t wresult)
+void call_continuation(thread_continue_t continuation, void *parameter,
+                       wait_result_t wresult)
 {
     thread_t self = current_thread();
 
@@ -382,7 +390,8 @@ kern_return_t machine_thread_dup(thread_t self, thread_t target)
      * Save FP registers and copy.
      */
     save_vfp_context(self);
-    bcopy(&self->machine.vfp_regs, &target->machine.vfp_regs, sizeof(arm_vfp_state_t));
+    bcopy(&self->machine.vfp_regs, &target->machine.vfp_regs,
+          sizeof(arm_vfp_state_t));
     target->machine.cthread_self = self->machine.cthread_self;
     return KERN_SUCCESS;
 }
