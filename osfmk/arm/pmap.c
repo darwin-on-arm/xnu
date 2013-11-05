@@ -1835,10 +1835,7 @@ void pmap_page_protect(ppnum_t pn, vm_prot_t prot)
                 /*
                  * Write protect the mapping and flush the TLBs for it.
                  */
-                Debugger("pmap_page_protect: Write protect mapping");
-#if 0
-                *(pt_entry_t) |= (1 << 11); /* XXX FIX */
-#endif
+                *(pt_entry_t*)pte |= (L2_ACCESS_APX);
                 flush_mmu_single(vaddr);
                 prev = pv_e;
             }
@@ -1978,9 +1975,98 @@ void pmap_destroy(pmap_t pmap)
 void pmap_protect(pmap_t map, vm_map_offset_t sva, vm_map_offset_t eva,
                   vm_prot_t prot)
 {
+    register pt_entry_t *tte;
+    register pt_entry_t *spte, *epte;
+    vm_map_offset_t lva;
+    vm_map_offset_t orig_sva;
+    boolean_t set_NX;
+    int num_found = 0;
+
     /*
-     * xxx finish 
+     * Verify the start and end are page aligned. 
      */
+    assert(!(sva & PAGE_MASK));
+    assert(!(eva & PAGE_MASK));
+
+    /*
+     * Remove PTEs if they're set to VM_PROT_NONE.
+     */
+    if (map == PMAP_NULL)
+        return;
+
+    if (prot == VM_PROT_NONE) {
+        pmap_remove(map, sva, eva);
+        return;
+    }
+
+    /*
+     * Enforce NX if necessary.
+     */
+    if ( (prot & VM_PROT_EXECUTE) || !nx_enabled )
+        set_NX = FALSE;
+    else
+        set_NX = TRUE;
+
+    /*
+     * Lock the pmap and set the protections on the PTEs. 
+     */
+    PMAP_LOCK(map);
+
+    /*
+     * This is broken.
+     */
+    orig_sva = sva;
+    while(sva < eva) {
+        lva = (sva + 1 * 1024 * 1024) & ~((1 * 1024 * 1024) - 1);
+        if(lva > eva)
+            lva = eva;
+        tte = pmap_tte(map, sva);
+        assert(tte);
+        if(tte && ((*tte & ARM_PAGE_MASK_VALUE) == ARM_PAGE_PAGE_TABLE)) {
+            pt_entry_t *spte_begin;
+            spte_begin = pmap_pte(map, (sva) & ~((1 * 1024 * 1024) - 1));
+            spte = &spte_begin[((sva >> PAGE_SHIFT) & 0x3ff)];
+            epte = &spte[((lva - sva) >> PAGE_SHIFT)];
+
+            assert(epte >= spte);
+
+            /*
+             * Make sure the range isn't bogus.
+             */
+            if(((vm_offset_t)epte - (vm_offset_t)spte) > L2_SIZE)
+                panic("pmap_protect: attempting to protect bogus PTE range");;
+
+            while(spte < epte) {
+                if(*spte & ARM_PTE_DESCRIPTOR_4K) {
+                    /*
+                     * Make the PTE RO if necessary.
+                     */
+                    if(prot & VM_PROT_WRITE)
+                        *spte &= ~(L2_ACCESS_APX);
+                    else
+                        *spte |= L2_ACCESS_APX;
+
+                    /*
+                     * Enforce NX bit.
+                     */
+                    if(set_NX)
+                        *spte |= L2_NX_BIT;
+                    else
+                        *spte &= ~(L2_NX_BIT);
+                    num_found++;
+                }
+                spte++;
+            }
+        }
+        sva = lva;
+    }
+
+    /*
+     * We're done with that, bye.
+     */
+    flush_mmu_tlb();
+    PMAP_UNLOCK(map);
+
     return;
 }
 
@@ -2045,7 +2131,7 @@ kern_return_t pmap_nest(pmap_t subord, pmap_t grand, addr64_t va_start,
  */
 kern_return_t pmap_unnest(pmap_t grand, addr64_t vaddr, uint64_t size)
 {
-    panic("pmap_unnest");
+    return KERN_SUCCESS;
 }
 
 /**
