@@ -1965,8 +1965,6 @@ kern_return_t pmap_nest(pmap_t subord, pmap_t grand, addr64_t va_start, addr64_t
     PMAP_UNLOCK(grand);
     PMAP_UNLOCK(subord);
 
-    pmap_enter(kernel_pmap, (vm_map_offset_t) _COMM_PAGE_BASE_ADDRESS, commpage->phys_page, 0, 0, FALSE, FALSE);
-
     return KERN_SUCCESS;
 }
 
