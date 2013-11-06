@@ -282,6 +282,7 @@ void sleh_abort(void *context, int reason)
                  * Attempt to fault the page. 
                  */
                 assert(get_preemption_level() == 0);
+                __abort_count--;
                 code =
                     vm_fault(map, vm_map_trunc_page(arm_ctx->pc),
                              (VM_PROT_EXECUTE | VM_PROT_READ), FALSE,
@@ -305,8 +306,6 @@ void sleh_abort(void *context, int reason)
                                   arm_ctx->r[11], arm_ctx->r[12], arm_ctx->sp,
                                   arm_ctx->lr, arm_ctx->pc, arm_ctx->cpsr, ifsr,
                                   ifar);
-                } else {
-                    __abort_count--;
                 }
                 return;
             }
@@ -323,6 +322,7 @@ void sleh_abort(void *context, int reason)
                  * Attempt to fault the page. 
                  */
                 assert(get_preemption_level() == 0);
+                __abort_count--;
                 code =
                     vm_fault(map, vm_map_trunc_page(dfar),
                              (dfsr & 0x800) ? (VM_PROT_READ | VM_PROT_WRITE)
@@ -377,12 +377,10 @@ void sleh_abort(void *context, int reason)
                             arm_ctx->pc = thread->recover;
                             arm_ctx->cpsr &= ~(1 << 5);
                             thread->recover = NULL;
-                            __abort_count--;
                             return;
                         }
                     }
                 }
-                __abort_count--;
                 return;
             }
         default:
@@ -412,11 +410,11 @@ void sleh_abort(void *context, int reason)
                  * Attempt to fault the page. 
                  */
                 assert(get_preemption_level() == 0);
+                __abort_count--;
                 code =
                     vm_fault(map, vm_map_trunc_page(arm_ctx->pc),
                              (VM_PROT_EXECUTE | VM_PROT_READ), FALSE,
                              THREAD_UNINT, NULL, vm_map_trunc_page(0));
-
                 if ((code != KERN_SUCCESS) && (code != KERN_ABORTED)) {
                     exception_type = EXC_BAD_ACCESS;
                     exception_subcode = arm_ctx->pc;
@@ -444,7 +442,6 @@ void sleh_abort(void *context, int reason)
                     /*
                      * Retry execution of instruction. 
                      */
-                    __abort_count--;
                     ml_set_interrupts_enabled(TRUE);
                     doexception(0, 0, 0);
                     return;
@@ -470,6 +467,7 @@ void sleh_abort(void *context, int reason)
                  * Attempt to fault the page. 
                  */
                 assert(get_preemption_level() == 0);
+                __abort_count--;
                 code =
                     vm_fault(map, vm_map_trunc_page(dfar),
                              (dfsr & 0x800) ? (VM_PROT_READ | VM_PROT_WRITE)
@@ -503,7 +501,6 @@ void sleh_abort(void *context, int reason)
                     /*
                      * Retry execution of instruction. 
                      */
-                    __abort_count--;
                     ml_set_interrupts_enabled(TRUE);
                     doexception(0, 0, 0);
                     return;
@@ -526,7 +523,6 @@ void sleh_abort(void *context, int reason)
      * If there was a user exception, handle it. 
      */
     if (exception_type) {
-        __abort_count--;
         ml_set_interrupts_enabled(TRUE);
         doexception(exception_type, exception_subcode, 0);
     }

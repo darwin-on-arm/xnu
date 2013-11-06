@@ -419,8 +419,9 @@ vm_offset_t pmap_pte(pmap_t pmap, vm_offset_t virt)
      * Verify it's not a section mapping. 
      */
     if ((tte & ARM_PAGE_MASK_VALUE) == ARM_PAGE_SECTION) {
-        panic("Translation table entry is a section mapping (tte %x ttep %x)!\n",
-              tte, tte_offset);
+        kprintf("Translation table entry is a section mapping (tte %x ttep %x ttebv %x)!\n",
+              tte, tte_offset, pmap->pm_l1_virt);
+        return 0;
     }
 
     /*
@@ -467,7 +468,7 @@ vm_offset_t pmap_map(vm_offset_t virt, vm_map_offset_t start_addr,
 
     ps = PAGE_SIZE;
     while (start_addr < end_addr) {
-        pmap_enter(kernel_pmap, (vm_map_offset_t) virt, (start_addr), prot,
+        pmap_enter(kernel_pmap, (vm_map_offset_t) virt, (start_addr >> PAGE_SHIFT), prot,
                    flags, FALSE, TRUE);
         virt += ps;
         start_addr += ps;
@@ -882,7 +883,7 @@ ppnum_t pmap_find_phys(pmap_t pmap, addr64_t va)
         ppn = 0;
         goto out;
     }
-    pte = (*(uint32_t *) (ptep)) & L1_PTE_ADDR_MASK;
+    pte = (*(uint32_t *) (ptep));
 
     /*
      * Make sure it's a PTE. 
@@ -892,7 +893,7 @@ ppnum_t pmap_find_phys(pmap_t pmap, addr64_t va)
         goto out;
     }
 
-    ppn = pa_index(pte);
+    ppn = pa_index(pte & L2_ADDR_MASK);
  out:
     /*
      * Return. 
@@ -1692,9 +1693,17 @@ void pmap_remove(pmap_t map, vm_offset_t sva, vm_offset_t eva)
         assert(tte);
         if(tte && ((*tte & ARM_PAGE_MASK_VALUE) == ARM_PAGE_PAGE_TABLE)) {
             pt_entry_t *spte_begin;
-            spte_begin = pmap_pte(map, (sva) & ~((1 * 1024 * 1024) - 1));
-            spte = &spte_begin[((sva >> PAGE_SHIFT) & 0x3ff)];
-            epte = &spte[((lva - sva) >> PAGE_SHIFT)];
+            spte_begin = (pt_entry_t*)(phys_to_virt(L1_PTE_ADDR(*tte)));
+            spte = (vm_offset_t)spte_begin + (vm_offset_t)pte_offset(sva);
+            epte = (vm_offset_t)spte_begin + (vm_offset_t)pte_offset(lva);
+
+            /*
+             * If the addresses are more than one 1MB apart, well...
+             */
+            if((sva >> 20) != (lva >> 20)) {
+                int mb_off = (lva >> 20) - (sva >> 20);
+                epte = (vm_offset_t)spte_begin + (0x400 * mb_off) + (vm_offset_t)pte_offset(lva);
+            }
 
             assert(epte >= spte);
 
@@ -1702,7 +1711,7 @@ void pmap_remove(pmap_t map, vm_offset_t sva, vm_offset_t eva)
              * Make sure the range isn't bogus.
              */
             if(((vm_offset_t)epte - (vm_offset_t)spte) > L2_SIZE) {
-                panic("pmap_remove: attempting to remove bogus PTE range");;
+                panic("pmap_remove: attempting to remove bogus PTE range");
             }
 
             pmap_remove_range(map, sva, spte, epte, FALSE);
@@ -1999,7 +2008,7 @@ void pmap_destroy(pmap_t pmap)
 
 /**
  * pmap_protect
- *
+ *t
  * Lower the specified protections on a certain map from sva to eva using prot prot.
  */
 void pmap_protect(pmap_t map, vm_map_offset_t sva, vm_map_offset_t eva,
@@ -2054,9 +2063,17 @@ void pmap_protect(pmap_t map, vm_map_offset_t sva, vm_map_offset_t eva,
         assert(tte);
         if(tte && ((*tte & ARM_PAGE_MASK_VALUE) == ARM_PAGE_PAGE_TABLE)) {
             pt_entry_t *spte_begin;
-            spte_begin = pmap_pte(map, (sva) & ~((1 * 1024 * 1024) - 1));
-            spte = &spte_begin[((sva >> PAGE_SHIFT) & 0x3ff)];
-            epte = &spte[((lva - sva) >> PAGE_SHIFT)];
+            spte_begin = (pt_entry_t*)(phys_to_virt(L1_PTE_ADDR(*tte)));
+            spte = (vm_offset_t)spte_begin + (vm_offset_t)pte_offset(sva);
+            epte = (vm_offset_t)spte_begin + (vm_offset_t)pte_offset(lva);
+
+            /*
+             * If the addresses are more than one 1MB apart, well...
+             */
+            if((sva >> 20) != (lva >> 20)) {
+                int mb_off = (lva >> 20) - (sva >> 20);
+                epte = (vm_offset_t)spte_begin + (0x400 * mb_off) + (vm_offset_t)pte_offset(lva);
+            }
 
             assert(epte >= spte);
 

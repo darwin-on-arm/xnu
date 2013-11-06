@@ -367,6 +367,28 @@ boolean_t ml_thread_is64bit(thread_t thread)
 }
 
 /*
+ *  Routine:        ml_cpu_get_info
+ *  Function:
+ */
+void
+ml_cpu_get_info(ml_cpu_info_t *ml_cpu_info)
+{
+    if (ml_cpu_info == 0)
+        return;
+  
+    ml_cpu_info->vector_unit = 0;
+    ml_cpu_info->cache_line_size = 0;
+    ml_cpu_info->l1_icache_size = 0;
+    ml_cpu_info->l1_dcache_size = 0;
+    ml_cpu_info->l2_settings = 0;
+    ml_cpu_info->l2_cache_size = 0xFFFFFFFF;
+    ml_cpu_info->l3_settings = 0;
+    ml_cpu_info->l3_cache_size = 0xFFFFFFFF;
+    return;
+}
+
+
+/*
  * ml_phys_read_*.
  */
 
@@ -379,7 +401,7 @@ boolean_t ml_thread_is64bit(thread_t thread)
     }
 
 ml_phys_read_write_comb_gen(unsigned int, unsigned char, vm_offset_t, _byte)
-    ml_phys_read_write_comb_gen(unsigned int, unsigned char, addr64_t, _byte_64)
+ml_phys_read_write_comb_gen(unsigned int, unsigned char, addr64_t, _byte_64)
 
 ml_phys_read_write_comb_gen(unsigned int, unsigned short, vm_offset_t, _half)
 ml_phys_read_write_comb_gen(unsigned int, unsigned short, addr64_t, _half_64)
@@ -389,9 +411,5 @@ ml_phys_read_write_comb_gen(unsigned int, unsigned int, addr64_t, _64)
 ml_phys_read_write_comb_gen(unsigned int, unsigned int, vm_offset_t, _word)
 ml_phys_read_write_comb_gen(unsigned int, unsigned int, addr64_t, _word_64)
 
-ml_phys_read_write_comb_gen(unsigned long long, unsigned long long, vm_offset_t,
-                            _double) ml_phys_read_write_comb_gen(unsigned long
-                                                                 long,
-                                                                 unsigned long
-                                                                 long, addr64_t,
-                                                                 _double_64)
+ml_phys_read_write_comb_gen(unsigned long long, unsigned long long, vm_offset_t, _double) 
+ml_phys_read_write_comb_gen(unsigned long long, unsigned long long, addr64_t, _double_64)
