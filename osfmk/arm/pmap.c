@@ -220,8 +220,7 @@ typedef enum {
 /**
  * pmap_vm_prot_to_page_flags
  */
-uint32_t pmap_vm_prot_to_page_flags(pmap_t pmap, vm_prot_t prot, int wired,
-                                    int nx)
+uint32_t pmap_vm_prot_to_page_flags(pmap_t pmap, vm_prot_t prot, int wired, int nx)
 {
     arm_l2_t *current_l2 = &arm_pte_prot_templates[0];
     pt_entry_t pte = 0;
@@ -463,8 +462,7 @@ void mapping_free_prime(void)
  * Map specified virtual address range to a physical one.
  */
 vm_offset_t pmap_map(vm_offset_t virt, vm_map_offset_t start_addr,
-                     vm_map_offset_t end_addr, vm_prot_t prot,
-                     unsigned int flags)
+                     vm_map_offset_t end_addr, vm_prot_t prot, unsigned int flags)
 {
     int ps;
 
@@ -544,8 +542,7 @@ vm_offset_t io_map(vm_offset_t phys_addr, vm_size_t size, unsigned int flags)
     return (start);
 }
 
-vm_offset_t io_map_spec(vm_map_offset_t phys_addr, vm_size_t size,
-                        unsigned int flags)
+vm_offset_t io_map_spec(vm_map_offset_t phys_addr, vm_size_t size, unsigned int flags)
 {
     return (io_map(phys_addr, size, flags));
 }
@@ -558,9 +555,8 @@ vm_offset_t io_map_spec(vm_map_offset_t phys_addr, vm_size_t size,
 boolean_t pmap_next_page(ppnum_t * addrp)
 {
     if (first_avail >= avail_end) {
-        kprintf
-            ("pmap_next_page: ran out of possible pages, last page was 0x%08x",
-             first_avail);
+        kprintf("pmap_next_page: ran out of possible pages, last page was 0x%08x",
+                first_avail);
         return FALSE;
     }
 
@@ -583,8 +579,7 @@ void pmap_virtual_space(vm_offset_t * startp, vm_offset_t * endp)
 {
     *startp = virt_begin;
     *endp = virt_end;
-    kprintf("pmap_virtual_space: VM region 0x%08x - 0x%08x\n", virt_begin,
-            virt_end);
+    kprintf("pmap_virtual_space: VM region 0x%08x - 0x%08x\n", virt_begin, virt_end);
 }
 
 /**
@@ -602,8 +597,8 @@ unsigned int pmap_free_pages(void)
  *
  * Enters a physical mapping. (Before the VM subsystem is up.)
  */
-boolean_t pmap_map_bd(vm_offset_t virt, vm_map_offset_t start,
-                      vm_map_offset_t end, vm_prot_t prot, unsigned int flags)
+boolean_t pmap_map_bd(vm_offset_t virt, vm_map_offset_t start, vm_map_offset_t end,
+                      vm_prot_t prot, unsigned int flags)
 {
     spl_t spl;
 
@@ -722,9 +717,8 @@ boolean_t pmap_verify_free(vm_offset_t phys)
     pv_h = pai_to_pvh(phys);
     result = (pv_h->pv_pmap == PMAP_NULL);
     if (result == FALSE)
-        kdb_printf("pmap_verify_free: ppn %p pa %x va %x map %p\n",
-                   phys, phys << PAGE_SHIFT, pv_h->pv_address_va,
-                   pv_h->pv_pmap);
+        kdb_printf("pmap_verify_free: ppn %p pa %x va %x map %p\n", phys,
+                   phys << PAGE_SHIFT, pv_h->pv_address_va, pv_h->pv_pmap);
     SPLX(spl);
 
     return (result);
@@ -782,8 +776,7 @@ void pmap_disable_NX(pmap_t pmap)
  */
 void pmap_copy_page(ppnum_t src, ppnum_t dst)
 {
-    ovbcopy(phys_to_virt(src << PAGE_SHIFT), phys_to_virt(dst << PAGE_SHIFT),
-            PAGE_SIZE);
+    ovbcopy(phys_to_virt(src << PAGE_SHIFT), phys_to_virt(dst << PAGE_SHIFT), PAGE_SIZE);
 }
 
 /**
@@ -949,8 +942,8 @@ void pmap_switch(pmap_t new_pmap)
  *
  * Map a (possibly) autogenned block
  */
-void pmap_map_block(pmap_t pmap, addr64_t va, ppnum_t pa, uint32_t size,
-                    vm_prot_t prot, int attr, __unused unsigned int flags)
+void pmap_map_block(pmap_t pmap, addr64_t va, ppnum_t pa, uint32_t size, vm_prot_t prot,
+                    int attr, __unused unsigned int flags)
 {
     uint32_t page;
     for (page = 0; page < size; page++) {
@@ -985,8 +978,7 @@ void pmap_bootstrap(__unused uint64_t msize, vm_offset_t * __first_avail,
     vm_first_phys = first_avail;
     avail_start = first_avail;
 
-    kprintf("pmap_bootstrap: physical region 0x%08x - 0x%08x\n", first_avail,
-            avail_end);
+    kprintf("pmap_bootstrap: physical region 0x%08x - 0x%08x\n", first_avail, avail_end);
 
     /*
      * Initialize kernel pmap.
@@ -1097,8 +1089,7 @@ void pmap_create_sharedpage(void)
      * And map it.
      */
     pmap_enter(kernel_pmap, (vm_map_offset_t) _COMM_PAGE_BASE_ADDRESS,
-               commpage->phys_page, VM_PROT_READ | VM_PROT_WRITE, 0, FALSE,
-               TRUE);
+               commpage->phys_page, VM_PROT_READ | VM_PROT_WRITE, 0, FALSE, TRUE);
 
     /*
      * Memset it.
@@ -1210,20 +1201,21 @@ void pmap_expand_ttb(pmap_t map, vm_offset_t expansion_size)
     /*
      * If the requested expansion size is less than or greater, we have nothing to do.
      */
-    if(expansion_size <= map->pm_l1_size)
+    if (expansion_size <= map->pm_l1_size)
         return;
 
     /*
      * Do not expand past maximum size.
      */
-    if(expansion_size > 0x4000)
-        panic("pmap_expand_ttb: attempting to expand past maximum address of %x, map %p, expansion %x\n", 
-              0x4000, map, expansion_size);
+    if (expansion_size > 0x4000)
+        panic
+            ("pmap_expand_ttb: attempting to expand past maximum address of %x, map %p, expansion %x\n",
+             0x4000, map, expansion_size);
 
-    switch(expansion_size) {
-        case 0x1000:
-            panic("pmap_expand_ttb: attempting to expand an already-expanded pmap?");
-        case 0x2000 ... 0x3000: {
+    switch (expansion_size) {
+    case 0x1000:
+        panic("pmap_expand_ttb: attempting to expand an already-expanded pmap?");
+    case 0x2000 ... 0x3000:{
             kern_return_t ret;
             vm_page_t pages;
 
@@ -1241,11 +1233,11 @@ void pmap_expand_ttb(pmap_t map, vm_offset_t expansion_size)
             /*
              * Copy the old entries to the new area.
              */
-            bcopy((void*)map->pm_l1_virt,
-                  (void*)phys_to_virt(pages->phys_page << PAGE_SHIFT),
-                  map->pm_l1_size);
+            bcopy((void *) map->pm_l1_virt,
+                  (void *) phys_to_virt(pages->phys_page << PAGE_SHIFT), map->pm_l1_size);
 #if 1
-            kprintf("pmap_expand_ttb: 0x%x => 0x%x\n", map->pm_l1_virt, phys_to_virt(pages->phys_page << PAGE_SHIFT));
+            kprintf("pmap_expand_ttb: 0x%x => 0x%x\n", map->pm_l1_virt,
+                    phys_to_virt(pages->phys_page << PAGE_SHIFT));
 #endif
 
             /*
@@ -1263,15 +1255,15 @@ void pmap_expand_ttb(pmap_t map, vm_offset_t expansion_size)
             /*
              * Switch into the new TTB if it needs to be used.
              */
-            if(map == current_cpu_datap()->user_pmap) {
+            if (map == current_cpu_datap()->user_pmap) {
                 set_mmu_ttb(map->pm_l1_phys);
                 flush_mmu_tlb();
             }
 
             return;
         }
-        default:
-            panic("pmap_expand_ttb: invalid expansion size %x\n", expansion_size);
+    default:
+        panic("pmap_expand_ttb: invalid expansion size %x\n", expansion_size);
     }
 
     return;
@@ -1294,11 +1286,11 @@ void pmap_expand(pmap_t map, vm_offset_t v)
     SPLVM(spl);
     PMAP_LOCK(map);
 
-    if(map != kernel_pmap) {
+    if (map != kernel_pmap) {
         /*
          * First, if we have a size below 0x1000, we can't be sure about expanding. 
          */
-        if(map->pm_l1_size < 0x1000) {
+        if (map->pm_l1_size < 0x1000) {
             panic("pmap_expand: this pmap has a really weird size: %d bytes",
                   map->pm_l1_size);
         }
@@ -1306,10 +1298,10 @@ void pmap_expand(pmap_t map, vm_offset_t v)
         /*
          * See if we can make it grow.
          */
-        uint32_t expansion_size = ((tte_offset(v)) & ~(PAGE_SIZE-1)) + PAGE_SIZE;
+        uint32_t expansion_size = ((tte_offset(v)) & ~(PAGE_SIZE - 1)) + PAGE_SIZE;
         pmap_expand_ttb(map, expansion_size);
 
-        /* 
+        /*
          * Refetch the TTE, since the pmap base may have changed.
          */
         tte = (vm_offset_t *) pmap_tte(map, v);
@@ -1330,14 +1322,13 @@ void pmap_expand(pmap_t map, vm_offset_t v)
          * L1 section mappings may not be expanded any further.
          */
         if ((*tte & ARM_PAGE_MASK_VALUE) == ARM_PAGE_SECTION)
-           panic("cannot expand current map into L1 sections");
+            panic("cannot expand current map into L1 sections");
     }
 
     /*
      * Overwrite the old L1 mapping in this region with a fresh L2 descriptor.
      */
-    *tte =
-        ((page->phys_page << PAGE_SHIFT) & L1_PTE_ADDR_MASK) | L1_TYPE_PTE | (1 << 4);
+    *tte = ((page->phys_page << PAGE_SHIFT) & L1_PTE_ADDR_MASK) | L1_TYPE_PTE | (1 << 4);
 
  Out:
 
@@ -1357,9 +1348,8 @@ void pmap_expand(pmap_t map, vm_offset_t v)
  * Called from vm_fault.
  */
 kern_return_t pmap_enter_options(pmap_t pmap, vm_map_offset_t va, ppnum_t pa,
-                                 vm_prot_t prot, vm_prot_t fault_type,
-                                 unsigned int flags, boolean_t wired,
-                                 unsigned int options)
+                                 vm_prot_t prot, vm_prot_t fault_type, unsigned int flags,
+                                 boolean_t wired, unsigned int options)
 {
     spl_t spl;
     pt_entry_t pte;
@@ -1376,8 +1366,8 @@ kern_return_t pmap_enter_options(pmap_t pmap, vm_map_offset_t va, ppnum_t pa,
      * Only low addresses are supported for user pmaps.
      */
     if (va > _COMM_PAGE_BASE_ADDRESS && pmap != kernel_pmap)
-        panic("pmap_enter_options: low address 0x%08X is invalid for pmap %p\n",
-              va, pmap);
+        panic("pmap_enter_options: low address 0x%08X is invalid for pmap %p\n", va,
+              pmap);
 
  Retry:
     /*
@@ -1410,8 +1400,7 @@ kern_return_t pmap_enter_options(pmap_t pmap, vm_map_offset_t va, ppnum_t pa,
          * XXX protection is not implemented right now, all pages are 'RWX'.
          */
 
-        uint32_t template_pte =
-            ((pa << PAGE_SHIFT) & L2_ADDR_MASK) | L2_SMALL_PAGE;
+        uint32_t template_pte = ((pa << PAGE_SHIFT) & L2_ADDR_MASK) | L2_SMALL_PAGE;
         template_pte |= pmap_vm_prot_to_page_flags(pmap, prot, wired, 0);
 
         if (va == _COMM_PAGE_BASE_ADDRESS)
@@ -1436,20 +1425,20 @@ kern_return_t pmap_enter_options(pmap_t pmap, vm_map_offset_t va, ppnum_t pa,
         /*
          * If the current PA isn't zero, and if it's non-existent... remove the mapping
          */
-        if((old_pte & L2_ADDR_MASK) != 0) {
+        if ((old_pte & L2_ADDR_MASK) != 0) {
             pv_entry_t prev, cur;
             pai = pa_index((old_pte & L2_ADDR_MASK));
             pv_h = pai_to_pvh(pai);
 
             *(uint32_t *) pte = 0;
 
-            if(pv_h->pv_pmap == PMAP_NULL) {
+            if (pv_h->pv_pmap == PMAP_NULL) {
                 panic("pmap_enter_options: null pv_list\n");
             }
 
             if (pv_h->pv_address_va == va && pv_h->pv_pmap == pmap) {
                 cur = pv_h->pv_next;
-                if(cur != (pv_entry_t)0) {
+                if (cur != (pv_entry_t) 0) {
                     *pv_h = *cur;
                     pv_e = cur;
                 } else {
@@ -1457,9 +1446,9 @@ kern_return_t pmap_enter_options(pmap_t pmap, vm_map_offset_t va, ppnum_t pa,
                 }
             } else {
                 cur = pv_h;
-                while(cur->pv_address_va != va || cur->pv_pmap != pmap) {
+                while (cur->pv_address_va != va || cur->pv_pmap != pmap) {
                     prev = cur;
-                    if ((cur = prev->pv_next) == (pv_entry_t)0) {
+                    if ((cur = prev->pv_next) == (pv_entry_t) 0) {
                         panic("pmap_enter: mapping not in pv_list!");
                     }
                     prev->pv_next = cur->pv_next;
@@ -1617,9 +1606,8 @@ void pmap_init(void)
      * for every physical page that exists in the system.
      */
     s = (mem_size / PAGE_SIZE) * sizeof(pv_entry);
-    if (kernel_memory_allocate
-        (kernel_map, &pv_root, s, 0,
-         KMA_KOBJECT | KMA_PERMANENT) != KERN_SUCCESS)
+    if (kernel_memory_allocate(kernel_map, &pv_root, s, 0, KMA_KOBJECT | KMA_PERMANENT) !=
+        KERN_SUCCESS)
         panic("pmap_init(): failed to allocate pv table!");
 
     /*
@@ -1633,15 +1621,14 @@ void pmap_init(void)
      * Initialize the Zones for object allocation. 
      */
     pmap_zone =
-        zinit((sizeof(struct pmap)), 400 * (sizeof(struct pmap)), 4096,
-              "pmap_pmap");
+        zinit((sizeof(struct pmap)), 400 * (sizeof(struct pmap)), 4096, "pmap_pmap");
 
     /*
      * Expandable zone. (pv_entry zone)
      */
     pve_zone =
-        zinit((sizeof(struct __pv_entry__)),
-              10000 * (sizeof(struct __pv_entry__)), 4096, "pmap_pve");
+        zinit((sizeof(struct __pv_entry__)), 10000 * (sizeof(struct __pv_entry__)), 4096,
+              "pmap_pve");
 
     /*
      * Initialize the free list lock. (unused right now.)
@@ -1667,8 +1654,8 @@ void pmap_init(void)
  *
  * Remove a range of hardware page-table entries. (This function does not support section mappings.)
  */
-void pmap_remove_range(pmap_t pmap, vm_map_offset_t start_vaddr,
-                       pt_entry_t * spte, pt_entry_t * epte, boolean_t is_sect)
+void pmap_remove_range(pmap_t pmap, vm_map_offset_t start_vaddr, pt_entry_t * spte,
+                       pt_entry_t * epte, boolean_t is_sect)
 {
     pt_entry_t *cpte = spte;
     vm_map_offset_t vaddr;
@@ -1681,8 +1668,7 @@ void pmap_remove_range(pmap_t pmap, vm_map_offset_t start_vaddr,
     if (((vm_offset_t) epte - (vm_offset_t) cpte) > L2_SIZE)
         panic("pmap_remove_range: attempting to remove more ptes than 256!\n");
 
-    for (cpte = spte, vaddr = start_vaddr; cpte < epte;
-         cpte++, vaddr += our_page_size) {
+    for (cpte = spte, vaddr = start_vaddr; cpte < epte; cpte++, vaddr += our_page_size) {
         /*
          * Start nuking the range. 
          */
@@ -1692,7 +1678,7 @@ void pmap_remove_range(pmap_t pmap, vm_map_offset_t start_vaddr,
          * Get the index for the PV table.
          */
         ppnum_t pai = pa_index(*cpte & L2_ADDR_MASK);
-        if(pai == 0)
+        if (pai == 0)
             continue;
         num_removed++;
 
@@ -1720,7 +1706,7 @@ void pmap_remove_range(pmap_t pmap, vm_map_offset_t start_vaddr,
              */
 
             if (pv_h->pv_pmap == PMAP_NULL) {
-                panic("pmap_remove_range: null pv_h->pmap\n"); 
+                panic("pmap_remove_range: null pv_h->pmap\n");
             }
 
             /*
@@ -1773,7 +1759,7 @@ void pmap_remove_range(pmap_t pmap, vm_map_offset_t start_vaddr,
 void pmap_remove(pmap_t map, vm_offset_t sva, vm_offset_t eva)
 {
     spl_t spl;
-    pt_entry_t* tte;
+    pt_entry_t *tte;
     vm_offset_t *spte, *epte, lva = sva;
 
     /*
@@ -1791,24 +1777,26 @@ void pmap_remove(pmap_t map, vm_offset_t sva, vm_offset_t eva)
     /*
      * This is broken.
      */
-    while(sva < eva) {
+    while (sva < eva) {
         lva = (sva + 1 * 1024 * 1024) & ~((1 * 1024 * 1024) - 1);
-        if(lva > eva)
+        if (lva > eva)
             lva = eva;
         tte = pmap_tte(map, sva);
         assert(tte);
-        if(tte && ((*tte & ARM_PAGE_MASK_VALUE) == ARM_PAGE_PAGE_TABLE)) {
+        if (tte && ((*tte & ARM_PAGE_MASK_VALUE) == ARM_PAGE_PAGE_TABLE)) {
             pt_entry_t *spte_begin;
-            spte_begin = (pt_entry_t*)(phys_to_virt(L1_PTE_ADDR(*tte)));
-            spte = (vm_offset_t)spte_begin + (vm_offset_t)pte_offset(sva);
-            epte = (vm_offset_t)spte_begin + (vm_offset_t)pte_offset(lva);
+            spte_begin = (pt_entry_t *) (phys_to_virt(L1_PTE_ADDR(*tte)));
+            spte = (vm_offset_t) spte_begin + (vm_offset_t) pte_offset(sva);
+            epte = (vm_offset_t) spte_begin + (vm_offset_t) pte_offset(lva);
 
             /*
              * If the addresses are more than one 1MB apart, well...
              */
-            if((sva >> 20) != (lva >> 20)) {
+            if ((sva >> 20) != (lva >> 20)) {
                 int mb_off = (lva >> 20) - (sva >> 20);
-                epte = (vm_offset_t)spte_begin + (0x400 * mb_off) + (vm_offset_t)pte_offset(lva);
+                epte =
+                    (vm_offset_t) spte_begin + (0x400 * mb_off) +
+                    (vm_offset_t) pte_offset(lva);
             }
 
             assert(epte >= spte);
@@ -1816,7 +1804,7 @@ void pmap_remove(pmap_t map, vm_offset_t sva, vm_offset_t eva)
             /*
              * Make sure the range isn't bogus.
              */
-            if(((vm_offset_t)epte - (vm_offset_t)spte) > L2_SIZE) {
+            if (((vm_offset_t) epte - (vm_offset_t) spte) > L2_SIZE) {
                 panic("pmap_remove: attempting to remove bogus PTE range");
             }
 
@@ -1843,8 +1831,7 @@ void pmap_remove(pmap_t map, vm_offset_t sva, vm_offset_t eva)
  *
  * Create a pmap.
  */
-pmap_t pmap_create(ledger_t ledger, vm_map_size_t size,
-                   __unused boolean_t is_64bit)
+pmap_t pmap_create(ledger_t ledger, vm_map_size_t size, __unused boolean_t is_64bit)
 {
     pmap_t our_pmap;
     vm_page_t new_l1;
@@ -1874,7 +1861,7 @@ pmap_t pmap_create(ledger_t ledger, vm_map_size_t size,
     our_pmap->pm_l1_virt = phys_to_virt(new_l1->phys_page << PAGE_SHIFT);
     bzero(phys_to_virt(new_l1->phys_page << PAGE_SHIFT), PAGE_SIZE);
 
-    /* 
+    /*
      * New pmaps have 4096 bytes of TTB area.
      */
     our_pmap->pm_l1_size = PAGE_SIZE;
@@ -1945,8 +1932,8 @@ void pmap_page_protect(ppnum_t pn, vm_prot_t prot)
             vaddr = pv_e->pv_address_va;
             pte = pmap_pte(pmap, vaddr);
             if (!pte) {
-                kprintf("pmap_page_protect pmap 0x%x pn 0x%x vaddr 0x%llx\n",
-                        pmap, pn, vaddr);
+                kprintf("pmap_page_protect pmap 0x%x pn 0x%x vaddr 0x%llx\n", pmap, pn,
+                        vaddr);
                 panic("pmap_page_protect");
             }
 
@@ -1985,7 +1972,7 @@ void pmap_page_protect(ppnum_t pn, vm_prot_t prot)
                 /*
                  * Write protect the mapping and flush the TLBs for it.
                  */
-                *(pt_entry_t*)pte |= (L2_ACCESS_APX);
+                *(pt_entry_t *) pte |= (L2_ACCESS_APX);
                 flush_mmu_single(vaddr);
                 prev = pv_e;
             }
@@ -2022,8 +2009,10 @@ void pmap_deallocate_l1(pmap_t pmap)
     /*
      * If the pmap is expanded past 0x1000, we must use cpm_deallocate.
      */
-    if(pmap->pm_l1_size > 0x1000) {
-        /* xxx todo */
+    if (pmap->pm_l1_size > 0x1000) {
+        /*
+         * xxx todo 
+         */
         return;
     }
 
@@ -2130,8 +2119,7 @@ void pmap_destroy(pmap_t pmap)
  *t
  * Lower the specified protections on a certain map from sva to eva using prot prot.
  */
-void pmap_protect(pmap_t map, vm_map_offset_t sva, vm_map_offset_t eva,
-                  vm_prot_t prot)
+void pmap_protect(pmap_t map, vm_map_offset_t sva, vm_map_offset_t eva, vm_prot_t prot)
 {
     register pt_entry_t *tte;
     register pt_entry_t *spte, *epte;
@@ -2160,7 +2148,7 @@ void pmap_protect(pmap_t map, vm_map_offset_t sva, vm_map_offset_t eva,
     /*
      * Enforce NX if necessary.
      */
-    if ( (prot & VM_PROT_EXECUTE) || !nx_enabled )
+    if ((prot & VM_PROT_EXECUTE) || !nx_enabled)
         set_NX = FALSE;
     else
         set_NX = TRUE;
@@ -2174,24 +2162,26 @@ void pmap_protect(pmap_t map, vm_map_offset_t sva, vm_map_offset_t eva,
      * This is broken.
      */
     orig_sva = sva;
-    while(sva < eva) {
+    while (sva < eva) {
         lva = (sva + 1 * 1024 * 1024) & ~((1 * 1024 * 1024) - 1);
-        if(lva > eva)
+        if (lva > eva)
             lva = eva;
         tte = pmap_tte(map, sva);
         assert(tte);
-        if(tte && ((*tte & ARM_PAGE_MASK_VALUE) == ARM_PAGE_PAGE_TABLE)) {
+        if (tte && ((*tte & ARM_PAGE_MASK_VALUE) == ARM_PAGE_PAGE_TABLE)) {
             pt_entry_t *spte_begin;
-            spte_begin = (pt_entry_t*)(phys_to_virt(L1_PTE_ADDR(*tte)));
-            spte = (vm_offset_t)spte_begin + (vm_offset_t)pte_offset(sva);
-            epte = (vm_offset_t)spte_begin + (vm_offset_t)pte_offset(lva);
+            spte_begin = (pt_entry_t *) (phys_to_virt(L1_PTE_ADDR(*tte)));
+            spte = (vm_offset_t) spte_begin + (vm_offset_t) pte_offset(sva);
+            epte = (vm_offset_t) spte_begin + (vm_offset_t) pte_offset(lva);
 
             /*
              * If the addresses are more than one 1MB apart, well...
              */
-            if((sva >> 20) != (lva >> 20)) {
+            if ((sva >> 20) != (lva >> 20)) {
                 int mb_off = (lva >> 20) - (sva >> 20);
-                epte = (vm_offset_t)spte_begin + (0x400 * mb_off) + (vm_offset_t)pte_offset(lva);
+                epte =
+                    (vm_offset_t) spte_begin + (0x400 * mb_off) +
+                    (vm_offset_t) pte_offset(lva);
             }
 
             assert(epte >= spte);
@@ -2199,17 +2189,17 @@ void pmap_protect(pmap_t map, vm_map_offset_t sva, vm_map_offset_t eva,
             /*
              * Make sure the range isn't bogus.
              */
-            if(((vm_offset_t)epte - (vm_offset_t)spte) > L2_SIZE)
+            if (((vm_offset_t) epte - (vm_offset_t) spte) > L2_SIZE)
                 panic("pmap_protect: attempting to protect bogus PTE range");;
 
-            while(spte < epte) {
-                if(*spte & ARM_PTE_DESCRIPTOR_4K) {
+            while (spte < epte) {
+                if (*spte & ARM_PTE_DESCRIPTOR_4K) {
                     assert(*spte & ARM_PTE_DESCRIPTOR_4K);
 
                     /*
                      * Make the PTE RO if necessary.
                      */
-                    if(prot & VM_PROT_WRITE)
+                    if (prot & VM_PROT_WRITE)
                         *spte &= ~(L2_ACCESS_APX);
                     else
                         *spte |= L2_ACCESS_APX;
@@ -2217,7 +2207,7 @@ void pmap_protect(pmap_t map, vm_map_offset_t sva, vm_map_offset_t eva,
                     /*
                      * Enforce NX bit.
                      */
-                    if(set_NX)
+                    if (set_NX)
                         *spte |= L2_NX_BIT;
                     else
                         *spte &= ~(L2_NX_BIT);
@@ -2243,19 +2233,19 @@ void pmap_protect(pmap_t map, vm_map_offset_t sva, vm_map_offset_t eva,
  *
  * Nest a pmap with new mappings into a master pmap.
  */
-kern_return_t pmap_nest(pmap_t grand, pmap_t subord, addr64_t va_start,
-                        addr64_t nstart, uint64_t size)
+kern_return_t pmap_nest(pmap_t grand, pmap_t subord, addr64_t va_start, addr64_t nstart,
+                        uint64_t size)
 {
     int copied;
     unsigned int i;
     vm_offset_t *tte, *ntte;
-    vm_map_offset_t nvaddr, vaddr; 
+    vm_map_offset_t nvaddr, vaddr;
 
     /*
      * Anounce ourselves. We are nesting one pmap inside another.
      */
-    kprintf("pmap_nest: %p[0x%08llx] => %p[0x%08llx], %d tte entries\n", subord,
-            va_start, grand, nstart, size >> 20);
+    kprintf("pmap_nest: %p[0x%08llx] => %p[0x%08llx], %d tte entries\n", subord, va_start,
+            grand, nstart, size >> 20);
 
     /*
      * Sanity checks.
@@ -2265,8 +2255,7 @@ kern_return_t pmap_nest(pmap_t grand, pmap_t subord, addr64_t va_start,
     }
 
     if (va_start != nstart)
-        panic("pmap_nest: va_start(0x%llx) != nstart(0x%llx)\n", va_start,
-              nstart);
+        panic("pmap_nest: va_start(0x%llx) != nstart(0x%llx)\n", va_start, nstart);
 
     /*
      * Start the copy operations.
@@ -2280,18 +2269,18 @@ kern_return_t pmap_nest(pmap_t grand, pmap_t subord, addr64_t va_start,
      */
     uint32_t num_sect = size >> 20;
     subord->pm_shared = TRUE;
-    nvaddr = (vm_map_offset_t)nstart;
+    nvaddr = (vm_map_offset_t) nstart;
 
     /*
      * Expand the subordinate pmap to fit.
      */
-    for(i = 0; i < num_sect; i++) {
+    for (i = 0; i < num_sect; i++) {
         /*
          * Fetch the TTE and expand the pmap if there is not one. 
          */
         ntte = pmap_tte(subord, nvaddr);
 
-        while(ntte == 0 || ((*ntte & ARM_PAGE_MASK_VALUE) != ARM_PAGE_PAGE_TABLE)) {
+        while (ntte == 0 || ((*ntte & ARM_PAGE_MASK_VALUE) != ARM_PAGE_PAGE_TABLE)) {
             PMAP_UNLOCK(subord);
             pmap_expand(subord, nvaddr);
             PMAP_LOCK(subord);
@@ -2310,15 +2299,15 @@ kern_return_t pmap_nest(pmap_t grand, pmap_t subord, addr64_t va_start,
      * master Grand pmap.
      */
     PMAP_LOCK(grand);
-    vaddr = (vm_map_offset_t)va_start;
-    for(i = 0; i < num_sect; i++) {
+    vaddr = (vm_map_offset_t) va_start;
+    for (i = 0; i < num_sect; i++) {
         pt_entry_t target;
 
         /*
          * Get the initial TTE from the subordinate map and verify it.
          */
         ntte = pmap_tte(subord, vaddr);
-        if(ntte == 0)
+        if (ntte == 0)
             panic("pmap_nest: no ntte, subord %p nstart 0x%x", subord, nstart);
         target = *ntte;
 
@@ -2334,8 +2323,8 @@ kern_return_t pmap_nest(pmap_t grand, pmap_t subord, addr64_t va_start,
             PMAP_LOCK(grand);
             tte = pmap_tte(grand, vaddr);
         }
-        if(tte == 0)
-            panic("pmap_nest: no tte, grand %p vaddr 0x%x", grand, vaddr);        
+        if (tte == 0)
+            panic("pmap_nest: no tte, grand %p vaddr 0x%x", grand, vaddr);
 
         /*
          * Store the TTE.
@@ -2361,7 +2350,7 @@ kern_return_t pmap_nest(pmap_t grand, pmap_t subord, addr64_t va_start,
  */
 kern_return_t pmap_unnest(pmap_t grand, addr64_t vaddr, uint64_t size)
 {
-    vm_offset_t* tte;
+    vm_offset_t *tte;
     unsigned int i, num_sect;
     addr64_t vstart, vend;
     spl_t spl;
@@ -2369,8 +2358,7 @@ kern_return_t pmap_unnest(pmap_t grand, addr64_t vaddr, uint64_t size)
     /*
      * Verify the sizes aren't unaligned.
      */
-    if ((size & (pmap_nesting_size_min-1)) ||
-        (vaddr & (pmap_nesting_size_min-1))) {
+    if ((size & (pmap_nesting_size_min - 1)) || (vaddr & (pmap_nesting_size_min - 1))) {
         panic("pmap_unnest(%p,0x%x,0x%x): unaligned addresses\n", grand, vaddr, size);
     }
 
@@ -2378,7 +2366,7 @@ kern_return_t pmap_unnest(pmap_t grand, addr64_t vaddr, uint64_t size)
      * Align everything to a 1MB boundary. (TTE granularity)
      */
     vstart = vaddr & ~((1 * 1024 * 1024) - 1);
-    vend = (vaddr + size + (1 * 1024 * 1024) - 1) & ~((1 * 1024 * 1024) -1);
+    vend = (vaddr + size + (1 * 1024 * 1024) - 1) & ~((1 * 1024 * 1024) - 1);
     size = (vend - vstart);
 
     /*
@@ -2389,9 +2377,9 @@ kern_return_t pmap_unnest(pmap_t grand, addr64_t vaddr, uint64_t size)
 
     num_sect = size >> 20;
     vaddr = vstart;
-    for(i = 0; i < num_sect; i++) {
-        tte = pmap_tte(grand, (vm_map_offset_t)vaddr);
-        if(tte == 0)
+    for (i = 0; i < num_sect; i++) {
+        tte = pmap_tte(grand, (vm_map_offset_t) vaddr);
+        if (tte == 0)
             panic("pmap_unnest: no tte, grand %p vaddr 0x%x\n", grand, vaddr);
         *tte = 0;
         vaddr += (1 * 1024 * 1024);
@@ -2416,4 +2404,51 @@ unsigned int pmap_disconnect(ppnum_t pa)
      */
     pmap_page_protect(pa, 0);
     return pmap_get_refmod(pa);
+}
+
+/*
+ * kern_return_t
+ * pmap_add_physical_memory(vm_offset_t spa, vm_offset_t epa,
+ *                          boolean_t available, unsigned int attr)
+ *
+ *  THIS IS NOT SUPPORTED
+ */
+kern_return_t pmap_add_physical_memory(__unused vm_offset_t spa, __unused vm_offset_t epa,
+                                       __unused boolean_t available,
+                                       __unused unsigned int attr)
+{
+    panic("Forget it! You can't map no more memory, you greedy puke!\n");
+    return KERN_SUCCESS;
+}
+
+/**
+ * pmap_zero_part_page
+ *
+ * Zeroes the specified (machine independent) pages.
+ */
+void pmap_zero_part_page(ppnum_t src, vm_offset_t src_offset, vm_offset_t len)
+{
+    assert(src != vm_page_fictitious_addr);
+    assert((((src << PAGE_SHIFT) & PAGE_MASK) + src_offset + len) <= PAGE_SIZE);
+    bzero(phys_to_virt(src << PAGE_SHIFT) + src_offset, len);
+}
+
+/*
+ *      pmap_copy_part_lpage copies part of a virtually addressed page 
+ *      to a physically addressed page.
+ */
+void pmap_copy_part_lpage(vm_offset_t src, vm_offset_t dst, vm_offset_t dst_offset,
+                          vm_size_t len)
+{
+    panic("pmap_copy_part_lpage");
+}
+
+/*
+ *      pmap_copy_part_rpage copies part of a physically addressed page 
+ *      to a virtually addressed page.
+ */
+void pmap_copy_part_rpage(vm_offset_t src, vm_offset_t src_offset, vm_offset_t dst,
+                          vm_size_t len)
+{
+    panic("pmap_copy_part_rpage");
 }
