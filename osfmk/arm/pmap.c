@@ -2124,16 +2124,19 @@ void pmap_protect(pmap_t map, vm_map_offset_t sva, vm_map_offset_t eva,
  *
  * Nest a pmap with new mappings into a master pmap.
  */
-kern_return_t pmap_nest(pmap_t subord, pmap_t grand, addr64_t va_start,
+kern_return_t pmap_nest(pmap_t grand, pmap_t subord, addr64_t va_start,
                         addr64_t nstart, uint64_t size)
 {
     int copied;
+    unsigned int i;
+    vm_offset_t *tte, *ntte;
+    vm_map_offset_t nvaddr, vaddr; 
 
     /*
      * Anounce ourselves. We are nesting one pmap inside another.
      */
-    kprintf("pmap_nest: %p[0x%08llx] => %p[0x%08llx], %d tte entries\n", grand,
-            va_start, subord, nstart, size >> 20);
+    kprintf("pmap_nest: %p[0x%08llx] => %p[0x%08llx], %d tte entries\n", subord,
+            va_start, grand, nstart, size >> 20);
 
     /*
      * Sanity checks.
@@ -2151,24 +2154,77 @@ kern_return_t pmap_nest(pmap_t subord, pmap_t grand, addr64_t va_start,
      */
     spl_t spl;
     SPLVM(spl);
-    PMAP_LOCK(grand);
     PMAP_LOCK(subord);
 
     /*
      * Mark the surbodinate pmap as shared.
      */
+    uint32_t num_sect = size >> 20;
     subord->pm_shared = TRUE;
-    bcopy(grand->pm_l1_virt + tte_offset(va_start),
-          subord->pm_l1_virt + tte_offset(nstart),
-          (size >> 20) * sizeof(uint32_t));
+    nvaddr = (vm_map_offset_t)nstart;
+
+    /*
+     * Expand the subordinate pmap to fit.
+     */
+    for(i = 0; i < num_sect; i++) {
+        /*
+         * Fetch the TTE and expand the pmap if there is not one. 
+         */
+        ntte = pmap_tte(subord, nvaddr);
+
+        while(ntte == 0 || ((*ntte & ARM_PAGE_MASK_VALUE) != ARM_PAGE_PAGE_TABLE)) {
+            PMAP_UNLOCK(subord);
+            pmap_expand(subord, nvaddr);
+            PMAP_LOCK(subord);
+            ntte = pmap_tte(subord, nvaddr);
+        }
+
+        /*
+         * Increase virtual address by granularity of one TTE entry.
+         */
+        nvaddr += (1 * 1024 * 1024);
+    }
+    PMAP_UNLOCK(subord);
+
+    /*
+     * Initial expansion of the Subordinate pmap is done, copy the new entries to the
+     * master Grand pmap.
+     */
+    PMAP_LOCK(grand);
+    vaddr = (vm_map_offset_t)va_start;
+    for(i = 0; i < num_sect; i++) {
+        pt_entry_t target;
+
+        /*
+         * Get the initial TTE from the subordinate map and verify it.
+         */
+        ntte = pmap_tte(subord, vaddr);
+        if(ntte == 0)
+            panic("pmap_nest: no ntte, subord %p nstart 0x%x", subord, nstart);
+        target = *ntte;
+
+        nstart += (1 * 1024 * 1024);
+
+        /*
+         * Now, get the TTE address from the Grand map.
+         */
+        tte = pmap_tte(grand, vaddr);
+        if(tte == 0)
+            panic("pmap_nest: no tte, grand %p vaddr 0x%x", grand, vaddr);        
+
+        /*
+         * Store the TTE.
+         */
+        *tte = target;
+        vaddr += (1 * 1024 * 1024);
+    }
+    PMAP_UNLOCK(grand);
 
     /*
      * Out. Flush all TLBs.
      */
     flush_mmu_tlb();
     SPLX(spl);
-    PMAP_UNLOCK(grand);
-    PMAP_UNLOCK(subord);
 
     return KERN_SUCCESS;
 }
@@ -2180,6 +2236,46 @@ kern_return_t pmap_nest(pmap_t subord, pmap_t grand, addr64_t va_start,
  */
 kern_return_t pmap_unnest(pmap_t grand, addr64_t vaddr, uint64_t size)
 {
+    vm_offset_t* tte;
+    unsigned int i, num_sect;
+    addr64_t vstart, vend;
+    spl_t spl;
+
+    /*
+     * Verify the sizes aren't unaligned.
+     */
+    if ((size & (pmap_nesting_size_min-1)) ||
+        (vaddr & (pmap_nesting_size_min-1))) {
+        panic("pmap_unnest(%p,0x%x,0x%x): unaligned addresses\n", grand, vaddr, size);
+    }
+
+    /*
+     * Align everything to a 1MB boundary. (TTE granularity)
+     */
+    vstart = vaddr & ~((1 * 1024 * 1024) - 1);
+    vend = (vaddr + size + (1 * 1024 * 1024) - 1) & ~((1 * 1024 * 1024) -1);
+    size = (vend - vstart);
+
+    /*
+     * Lock the pmaps to prevent use.
+     */
+    SPLVM(spl);
+    PMAP_LOCK(grand);
+
+    num_sect = size >> 20;
+    vaddr = vstart;
+    for(i = 0; i < num_sect; i++) {
+        tte = pmap_tte(grand, (vm_map_offset_t)vaddr);
+        if(tte == 0)
+            panic("pmap_unnest: no tte, grand %p vaddr 0x%x\n", grand, vaddr);
+        *tte = 0;
+        vaddr += (1 * 1024 * 1024);
+    }
+
+    /*
+     * The operation has now completed.
+     */
+    SPLX(spl);
     return KERN_SUCCESS;
 }
 
