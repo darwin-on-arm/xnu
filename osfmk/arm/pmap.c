@@ -419,8 +419,10 @@ vm_offset_t pmap_pte(pmap_t pmap, vm_offset_t virt)
      * Verify it's not a section mapping. 
      */
     if ((tte & ARM_PAGE_MASK_VALUE) == ARM_PAGE_SECTION) {
-        kprintf("Translation table entry is a section mapping (tte %x ttep %x ttebv %x)!\n",
+#if 0
+        panic("Translation table entry is a section mapping (tte %x ttep %x ttebv %x)!\n",
               tte, tte_offset, pmap->pm_l1_virt);
+#endif
         return 0;
     }
 
@@ -825,6 +827,7 @@ void pmap_static_init(void)
 {
     kdb_printf("pmap_static_init: Bootstrapping pmap\n");
     kernel_pmap->ledger = NULL;
+    kernel_pmap->pm_l1_size = 0x4000;   /* Cover 4*1024 TTEs */
     pmap_common_init(kernel_pmap);
     return;
 }
@@ -1197,6 +1200,83 @@ vm_offset_t pmap_extract(pmap_t pmap, vm_offset_t virt)
     return ppn;
 }
 
+/** 
+ * pmap_expand_ttb
+ * 
+ * Expand and reorganize the current translation-table as to fit a new size.
+ */
+void pmap_expand_ttb(pmap_t map, vm_offset_t expansion_size)
+{
+    /*
+     * If the requested expansion size is less than or greater, we have nothing to do.
+     */
+    if(expansion_size <= map->pm_l1_size)
+        return;
+
+    /*
+     * Do not expand past maximum size.
+     */
+    if(expansion_size > 0x4000)
+        panic("pmap_expand_ttb: attempting to expand past maximum address of %x, map %p, expansion %x\n", 
+              0x4000, map, expansion_size);
+
+    switch(expansion_size) {
+        case 0x1000:
+            panic("pmap_expand_ttb: attempting to expand an already-expanded pmap?");
+        case 0x2000 ... 0x3000: {
+            kern_return_t ret;
+            vm_page_t pages;
+
+            /*
+             * Allocate a contiguous segment of memory for the new L1 mapping table. (including one guard)
+             */
+            ret = cpm_allocate(expansion_size, &pages, 0, FALSE, KMA_LOMEM);
+            assert(ret == KERN_SUCCESS);
+
+            /*
+             * We got the new contiguous block.
+             */
+            bzero(phys_to_virt(pages->phys_page << PAGE_SHIFT), expansion_size);
+
+            /*
+             * Copy the old entries to the new area.
+             */
+            bcopy((void*)map->pm_l1_virt,
+                  (void*)phys_to_virt(pages->phys_page << PAGE_SHIFT),
+                  map->pm_l1_size);
+#if 1
+            kprintf("pmap_expand_ttb: 0x%x => 0x%x\n", map->pm_l1_virt, phys_to_virt(pages->phys_page << PAGE_SHIFT));
+#endif
+
+            /*
+             * Deallocate the old L1.
+             */
+            pmap_deallocate_l1(map);
+
+            /*
+             * Set the new TTB base.
+             */
+            map->pm_l1_virt = phys_to_virt(pages->phys_page << PAGE_SHIFT);
+            map->pm_l1_phys = pages->phys_page << PAGE_SHIFT;
+            map->pm_l1_size = expansion_size;
+
+            /*
+             * Switch into the new TTB if it needs to be used.
+             */
+            if(map == current_cpu_datap()->user_pmap) {
+                set_mmu_ttb(map->pm_l1_phys);
+                flush_mmu_tlb();
+            }
+
+            return;
+        }
+        default:
+            panic("pmap_expand_ttb: invalid expansion size %x\n", expansion_size);
+    }
+
+    return;
+}
+
 /**
  * pmap_expand
  *
@@ -1214,18 +1294,44 @@ void pmap_expand(pmap_t map, vm_offset_t v)
     SPLVM(spl);
     PMAP_LOCK(map);
 
-    /*
-     * Do not extend past the commpage. 
-     */
-    if (v > _COMM_PAGE_BASE_ADDRESS)
-        panic("attempting to expand pmap past maximum address of %x\n",
-              _COMM_PAGE_BASE_ADDRESS);
+    if(map != kernel_pmap) {
+        /*
+         * First, if we have a size below 0x1000, we can't be sure about expanding. 
+         */
+        if(map->pm_l1_size < 0x1000) {
+            panic("pmap_expand: this pmap has a really weird size: %d bytes",
+                  map->pm_l1_size);
+        }
 
-    /*
-     * L1 section mappings may not be expanded any further.
-     */
-    if ((*tte & ARM_PAGE_MASK_VALUE) == ARM_PAGE_SECTION)
-        panic("cannot expand current map into L1 sections");
+        /*
+         * See if we can make it grow.
+         */
+        uint32_t expansion_size = ((tte_offset(v)) & ~(PAGE_SIZE-1)) + PAGE_SIZE;
+        pmap_expand_ttb(map, expansion_size);
+
+        /* 
+         * Refetch the TTE, since the pmap base may have changed.
+         */
+        tte = (vm_offset_t *) pmap_tte(map, v);
+
+#if 0
+        /*
+         * Do not extend past the commpage. 
+         */
+        if (map->pm_l1_size == 0x1000) {
+            if (v >= _COMM_PAGE_BASE_ADDRESS) {
+                panic("attempting to expand pmap past maximum address of %x\n",
+                      _COMM_PAGE_BASE_ADDRESS);
+            }
+        }
+#endif
+
+        /*
+         * L1 section mappings may not be expanded any further.
+         */
+        if ((*tte & ARM_PAGE_MASK_VALUE) == ARM_PAGE_SECTION)
+           panic("cannot expand current map into L1 sections");
+    }
 
     /*
      * Overwrite the old L1 mapping in this region with a fresh L2 descriptor.
@@ -1768,6 +1874,11 @@ pmap_t pmap_create(ledger_t ledger, vm_map_size_t size,
     our_pmap->pm_l1_virt = phys_to_virt(new_l1->phys_page << PAGE_SHIFT);
     bzero(phys_to_virt(new_l1->phys_page << PAGE_SHIFT), PAGE_SIZE);
 
+    /* 
+     * New pmaps have 4096 bytes of TTB area.
+     */
+    our_pmap->pm_l1_size = PAGE_SIZE;
+
     /*
      * Done.
      */
@@ -1907,6 +2018,14 @@ void pmap_deallocate_l1(pmap_t pmap)
 {
     uint32_t ttb_base = pmap->pm_l1_phys;
     vm_page_t m;
+
+    /*
+     * If the pmap is expanded past 0x1000, we must use cpm_deallocate.
+     */
+    if(pmap->pm_l1_size > 0x1000) {
+        /* xxx todo */
+        return;
+    }
 
     /*
      * Lock the VM object. 
@@ -2209,6 +2328,12 @@ kern_return_t pmap_nest(pmap_t grand, pmap_t subord, addr64_t va_start,
          * Now, get the TTE address from the Grand map.
          */
         tte = pmap_tte(grand, vaddr);
+        if ((0 == tte) || ((*tte & ARM_PAGE_MASK_VALUE) != ARM_PAGE_PAGE_TABLE)) {
+            PMAP_UNLOCK(grand);
+            pmap_expand(grand, vaddr);
+            PMAP_LOCK(grand);
+            tte = pmap_tte(grand, vaddr);
+        }
         if(tte == 0)
             panic("pmap_nest: no tte, grand %p vaddr 0x%x", grand, vaddr);        
 
