@@ -535,11 +535,17 @@ export LDFLAGS_KERNEL_RELEASEARM     = \
 	-Wl,-pie \
 	-Wl,-static \
 	-Wl,-image_base,0x80001000 \
+	-Wl,-seg_page_size,__TEXT,0x1000 \
+	-Wl,-sectalign,__DATA,__const,0x1000 \
+	-Wl,-sectalign,__DATA,__sysctl_set,0x1000 \
 	-Wl,-exported_symbols_list,$(TARGET)/kernel-kpi.exp
 
 export LDFLAGS_KERNEL_DEVELOPMENTARM     = \
 	-Wl,-pie \
 	-Wl,-static \
+	-Wl,-seg_page_size,__TEXT,0x1000 \
+	-Wl,-sectalign,__DATA,__const,0x1000 \
+	-Wl,-sectalign,__DATA,__sysctl_set,0x1000 \
 	-Wl,-image_base,0x80001000
 
 export LDFLAGS_KERNEL_DEBUGARM = $(LDFLAGS_KERNEL_DEVELOPMENTARM)

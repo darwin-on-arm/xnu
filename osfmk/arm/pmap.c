@@ -1986,6 +1986,10 @@ kern_return_t pmap_enter_options(pmap_t pmap, vm_map_offset_t va, ppnum_t pa,
     return KERN_SUCCESS;
 }
 
+extern  vm_offset_t     sdata, edata;
+extern  vm_offset_t     sconstdata, econstdata;
+extern boolean_t doconstro_override;
+
 /**
  * pmap_init
  *
@@ -2075,6 +2079,9 @@ void pmap_init(void)
         vm_offset_t kva;
         pt_entry_t *ptep;
 
+        kprintf("Kernel text %x-%x to be write-protected\n",
+            vm_kernel_stext, vm_kernel_etext);
+
         /*
          * Add APX-bit to reduce protections to R-X.
          */
@@ -2083,12 +2090,59 @@ void pmap_init(void)
             if(ptep)
                 *ptep |= L2_ACCESS_APX;
         }
+    }
+
+    /*
+     * Set const to R-- only too.
+     */
+    boolean_t doconstro = TRUE;
+
+    (void) PE_parse_boot_argn("dataconstro", &doconstro, sizeof(doconstro));
+
+    if ((sconstdata | econstdata) & PAGE_MASK) {
+        kprintf("Const DATA misaligned 0x%lx 0x%lx\n", sconstdata, econstdata);
+        if ((sconstdata & PAGE_MASK) || (doconstro_override == FALSE))
+            doconstro = FALSE;
+    }
+
+    if ((sconstdata > edata) || (sconstdata < sdata) || ((econstdata - sconstdata) >= (edata - sdata))) {
+        kprintf("Const DATA incorrect size 0x%lx 0x%lx 0x%lx 0x%lx\n", sconstdata, econstdata, sdata, edata);
+        doconstro = FALSE;
+    }
+
+    if (doconstro)
+        kprintf("Marking const DATA read-only\n");
+
+    vm_offset_t dva;
+    for (dva = sdata; dva < edata; dva += PAGE_SIZE) {
+        pt_entry_t *pte, dpte;
+        pte = pmap_pte(kernel_pmap, dva);
+        assert(pte);
 
         /*
-         * Flush the TLBs since we changed access permissions.
+         * Make sure the PTE is valid.
          */
-        armv7_tlb_flushID_RANGE(vm_kernel_stext, vm_kernel_etext);
+        dpte = *pte;
+        assert(dpte & ARM_PTE_DESCRIPTOR_4K);
+        if(!(dpte & ARM_PTE_DESCRIPTOR_4K)) {
+            kprintf("Missing data mapping 0x%x 0x%x 0x%x\n", dva, sdata, edata);
+            continue;
+        }
+
+        /*
+         * Enforce NX and RO as necessary.
+         */
+        dpte |= L2_NX_BIT;
+        if (doconstro && (dva >= sconstdata) && (dva < econstdata)) {
+            dpte |= L2_ACCESS_APX;
+        }
+        *pte = dpte;
     }
+
+    /*
+     * Just flush the entire TLB since we messed with quite a lot of mappings.
+     */
+    armv7_tlb_flushID();
 
     SPLX(spl);
 

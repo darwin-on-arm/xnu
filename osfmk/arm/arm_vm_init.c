@@ -45,6 +45,7 @@
 #include <kern/cpu_number.h>
 #include <kern/thread.h>
 #include <console/serial_protos.h>
+#include <mach-o/loader.h>
 #include <libkern/kernel_mach_header.h>
 #include <arm/pmap.h>
 #include <arm/misc_protos.h>
@@ -116,7 +117,12 @@ unsigned long sectSizePRELINK;
 vm_offset_t sectHIBB;
 unsigned long sectSizeHIB;
 
-vm_offset_t end, etext, edata;
+vm_offset_t sectCONSTB;
+unsigned long sectSizeConst;
+boolean_t doconstro_override = FALSE;
+static kernel_section_t *sectDCONST, *segDATA;
+
+vm_offset_t end, etext, sdata, edata, sconstdata, econstdata;
 
 extern void *ExceptionVectorsBase;
 
@@ -419,12 +425,30 @@ void arm_vm_init(uint32_t mem_limit, boot_args * args)
                                                         &sectSizePRELINK);
     etext = (vm_offset_t) sectTEXTB + sectSizeTEXT;
     edata = (vm_offset_t) sectDATAB + sectSizeDATA;
+    sdata = (vm_offset_t) sectDATAB;
     end = round_page(getlastaddr());    /* Force end to next page */
     vm_kernel_slide = 0;
     vm_kernel_etext = etext;
     vm_kernel_stext = sectTEXTB;
     vm_kernel_top = phys_to_virt(gTopOfKernel);
     vm_kernel_base = gVirtBase;
+
+    segDATA = getsegbynamefromheader(&_mh_execute_header,
+                    "__DATA");
+    sectDCONST = getsectbynamefromheader(&_mh_execute_header,
+                    "__DATA", "__const");
+
+    sectCONSTB = (vm_offset_t) sectDCONST->addr;
+    sectSizeConst = sectDCONST->size;
+    sconstdata = sectCONSTB;
+    econstdata = sectCONSTB + sectSizeConst;
+
+    if (sectSizeConst & PAGE_MASK) {
+        kernel_section_t *ns = nextsect(segDATA, sectDCONST);
+        if (ns && !(ns->addr & PAGE_MASK))
+            doconstro_override = TRUE;
+    } else
+        doconstro_override = TRUE;
 
     /*
      * Bootstrap pmap. 
