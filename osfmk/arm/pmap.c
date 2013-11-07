@@ -81,6 +81,34 @@
  * any improvements or extensions that they make and grant Carnegie Mellon
  * the rights to redistribute these changes.
  */
+/*-
+ * Copyright (c) 2010 The NetBSD Foundation, Inc.
+ * All rights reserved.
+ *
+ * This code is derived from software contributed to The NetBSD Foundation
+ * by Matt Thomas at 3am Software Foundry.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE NETBSD FOUNDATION, INC. AND CONTRIBUTORS
+ * ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
+ * TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE FOUNDATION OR CONTRIBUTORS
+ * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
+ */
 /*
  * ARM physical memory map.
  *
@@ -449,6 +477,29 @@ char *pv_hash_lock_table;
 #define LOCK_PVH(index)
 #define UNLOCK_PVH(index)
 
+/** ASID stuff */
+
+#define KERNEL_ASID_PID 0
+
+static vm_offset_t pm_asid_hint = KERNEL_ASID_PID + 1;
+static u_long pm_asid_bitmap[256 / (sizeof(u_long) * 8)];
+
+static u_long pm_asid_max = 255;
+static u_long pm_asids_free = 254;      /* One is reserved by the Kernel ASID */
+
+#define __BITMAP_SET(bm, n) \
+    ((bm)[(n) / (8*sizeof(bm[0]))] |= 1LU << ((n) % (8*sizeof(bm[0]))))
+#define __BITMAP_CLR(bm, n) \
+    ((bm)[(n) / (8*sizeof(bm[0]))] &= ~(1LU << ((n) % (8*sizeof(bm[0])))))
+#define __BITMAP_ISSET_P(bm, n) \
+    (((bm)[(n) / (8*sizeof(bm[0]))] & (1LU << ((n) % (8*sizeof(bm[0]))))) != 0)
+
+#define TLBINFO_ASID_MARK_USED(ti, asid) \
+    __BITMAP_SET((ti), (asid))
+#define TLBINFO_ASID_INUSE_P(ti, asid) \
+    __BITMAP_ISSET_P((ti), (asid))
+
+
 /** Template PTEs */
 
 /*
@@ -762,20 +813,94 @@ vm_offset_t pmap_pte(pmap_t pmap, vm_offset_t virt)
     return (ptep);
 }
 
-/**
- * mapping_adjust
- */
-void mapping_adjust(void)
+
+void
+mapping_free_prime(void)
 {
-    return;
+    int             i;
+    pv_hashed_entry_t      pvh_e;
+    pv_hashed_entry_t      pvh_eh;
+    pv_hashed_entry_t      pvh_et;
+    int     pv_cnt;
+
+    pv_cnt = 0;
+    pvh_eh = pvh_et = PV_HASHED_ENTRY_NULL;
+    for (i = 0; i < (5 * PV_HASHED_ALLOC_CHUNK); i++) {
+        pvh_e = (pv_hashed_entry_t) zalloc(pv_hashed_list_zone);
+
+        pvh_e->qlink.next = (queue_entry_t)pvh_eh;
+        pvh_eh = pvh_e;
+
+        if (pvh_et == PV_HASHED_ENTRY_NULL)
+                pvh_et = pvh_e;
+        pv_cnt++;
+    }
+    PV_HASHED_FREE_LIST(pvh_eh, pvh_et, pv_cnt);
+
+    pv_cnt = 0;
+    pvh_eh = pvh_et = PV_HASHED_ENTRY_NULL;
+    for (i = 0; i < PV_HASHED_KERN_ALLOC_CHUNK; i++) {
+        pvh_e = (pv_hashed_entry_t) zalloc(pv_hashed_list_zone);
+
+        pvh_e->qlink.next = (queue_entry_t)pvh_eh;
+        pvh_eh = pvh_e;
+
+        if (pvh_et == PV_HASHED_ENTRY_NULL)
+                pvh_et = pvh_e;
+        pv_cnt++;
+    }
+    PV_HASHED_KERN_FREE_LIST(pvh_eh, pvh_et, pv_cnt);
+
 }
 
-/**
- * mapping_free_prime
- */
-void mapping_free_prime(void)
+void
+mapping_adjust(void)
 {
-    return;
+    pv_hashed_entry_t      pvh_e;
+    pv_hashed_entry_t      pvh_eh;
+    pv_hashed_entry_t      pvh_et;
+    int     pv_cnt;
+    int             i;
+
+    if (mapping_adjust_call == NULL) {
+        thread_call_setup(&mapping_adjust_call_data,
+                  (thread_call_func_t) mapping_adjust,
+                  (thread_call_param_t) NULL);
+        mapping_adjust_call = &mapping_adjust_call_data;
+    }
+
+    pv_cnt = 0;
+    pvh_eh = pvh_et = PV_HASHED_ENTRY_NULL;
+    if (pv_hashed_kern_free_count < PV_HASHED_KERN_LOW_WATER_MARK) {
+        for (i = 0; i < PV_HASHED_KERN_ALLOC_CHUNK; i++) {
+            pvh_e = (pv_hashed_entry_t) zalloc(pv_hashed_list_zone);
+
+            pvh_e->qlink.next = (queue_entry_t)pvh_eh;
+            pvh_eh = pvh_e;
+
+            if (pvh_et == PV_HASHED_ENTRY_NULL)
+                    pvh_et = pvh_e;
+            pv_cnt++;
+        }
+        PV_HASHED_KERN_FREE_LIST(pvh_eh, pvh_et, pv_cnt);
+    }
+
+    pv_cnt = 0;
+    pvh_eh = pvh_et = PV_HASHED_ENTRY_NULL;
+    if (pv_hashed_free_count < PV_HASHED_LOW_WATER_MARK) {
+        for (i = 0; i < PV_HASHED_ALLOC_CHUNK; i++) {
+            pvh_e = (pv_hashed_entry_t) zalloc(pv_hashed_list_zone);
+
+            pvh_e->qlink.next = (queue_entry_t)pvh_eh;
+            pvh_eh = pvh_e;
+
+            if (pvh_et == PV_HASHED_ENTRY_NULL)
+                    pvh_et = pvh_e;
+            pv_cnt++;
+        }
+        PV_HASHED_FREE_LIST(pvh_eh, pvh_et, pv_cnt);
+    }
+    mappingrecurse = 0;
 }
 
 /**
@@ -1139,6 +1264,7 @@ void pmap_static_init(void)
 {
     kdb_printf("pmap_static_init: Bootstrapping pmap\n");
     kernel_pmap->ledger = NULL;
+    kernel_pmap->pm_asid = 0;
     kernel_pmap->pm_l1_size = 0x4000;   /* Cover 4*1024 TTEs */
     pmap_common_init(kernel_pmap);
     return;
@@ -1244,8 +1370,9 @@ void pmap_switch(pmap_t new_pmap)
         goto switch_return;
     } else {
         current_cpu_datap()->user_pmap = new_pmap;
+        armv7_set_context_id(new_pmap->pm_asid & 0xFF);
         armv7_context_switch(new_pmap->pm_l1_phys);
-        armv7_tlb_flushID();
+        armv7_tlb_flushID_ASID(new_pmap->pm_asid & 0xFF);
     }
 
     /*
@@ -1270,6 +1397,101 @@ void pmap_map_block(pmap_t pmap, addr64_t va, ppnum_t pa, uint32_t size, vm_prot
         va += PAGE_SIZE;
         pa++;
     }
+}
+
+/**
+ * pmap_asid_init
+ */
+static inline void pmap_asid_init(void)
+{
+    pm_asid_bitmap[0] = (2 << KERNEL_ASID_PID) - 1;
+}
+
+/**
+ * pmap_asid_alloc_fast
+ *
+ * Allocate a specified ASID for each proces. Each pmap has their own
+ * individual ASID.
+ */
+#define __arraycount(__x) (sizeof(__x) / sizeof(__x[0]))
+static inline void pmap_asid_alloc_fast(pmap_t map)
+{
+    /*
+     * The pmap specified cannot be the kernel map, it already has its
+     * own ASID allocated to it.
+     */
+    assert(map != kernel_pmap);
+    assert(map->pm_asid == 0);
+    assert(pm_asids_free > 0);
+    assert(pm_asid_hint <= pm_asid_max);
+
+    /*
+     * Let's see if the hinted ASID is free. If not, search for a new one.
+     */
+    if(TLBINFO_ASID_INUSE_P(pm_asid_bitmap, pm_asid_hint)) {
+        const size_t words = __arraycount(pm_asid_bitmap);
+        const size_t nbpw = 8 * sizeof(pm_asid_bitmap[0]);
+        for (size_t i = 0; i < pm_asid_hint / nbpw; i++) {
+            assert(pm_asid_bitmap[i] == 0);
+        }
+        for (size_t i = pm_asid_hint / nbpw;; i++) {
+            assert(i < words);
+            /*
+             * ffs wants to find the first bit set while we want
+             * to find the first bit cleared.
+             */
+            u_long bits = ~pm_asid_bitmap[i];
+            if (bits) {
+                u_int n = 0;
+                if ((bits & 0xffffffff) == 0)  {
+                    bits = (bits >> 31) >> 1;
+                    assert(bits);
+                    n += 32;
+                }
+                n += ffs(bits) - 1;
+                assert(n < nbpw);
+                pm_asid_hint = n + i * nbpw;
+                break;
+            }
+        }
+        assert(pm_asid_hint > KERNEL_ASID_PID);
+        assert(TLBINFO_ASID_INUSE_P(pm_asid_bitmap, pm_asid_hint-1));
+        assert(!TLBINFO_ASID_INUSE_P(pm_asid_bitmap, pm_asid_hint));        
+    }
+
+    /*
+     * The hint contains our next ASID so take it and advance the hint.
+     * Mark it as used and insert the pai into the list of active asids.
+     * There is also one less asid free in this TLB.
+     */
+    map->pm_asid = pm_asid_hint++;
+    TLBINFO_ASID_MARK_USED(pm_asid_bitmap, map->pm_asid);
+    pm_asids_free--;
+
+    return;
+}
+
+/**
+ * pmap_asid_reset
+ */
+static inline void pmap_asid_reset(pmap_t map)
+{
+    /*
+     * We must have an ASID.
+     */
+    assert(map->pm_asid > KERNEL_ASID_PID);
+
+    /*
+     * Note that we don't mark the ASID as not in use in the TLB's ASID
+     * bitmap (thus it can't be allocated until the ASID space is exhausted
+     * and therefore reinitialized).  We don't want to flush the TLB for
+     * entries belonging to this ASID so we will let natural TLB entry
+     * replacement flush them out of the TLB.  Any new entries for this
+     * pmap will need a new ASID allocated.
+     */
+    map->pm_asid = 0;
+
+    return;
 }
 
 /**
@@ -1312,6 +1534,11 @@ void pmap_bootstrap(__unused uint64_t msize, vm_offset_t * __first_avail,
         npvhash = NPVHASH;
     }
     printf("npvhash=%d\n", npvhash);
+
+    /*
+     * ASID initialization.
+     */
+    pmap_asid_init();
 
     /*
      * Initialize kernel pmap.
@@ -1590,7 +1817,7 @@ void pmap_expand_ttb(pmap_t map, vm_offset_t expansion_size)
              */
             if (map == current_cpu_datap()->user_pmap) {
                 armv7_context_switch(map->pm_l1_phys);
-                armv7_tlb_flushID();
+                armv7_tlb_flushID_ASID(map->pm_asid & 0xFF);
             }
 
             return;
@@ -2046,7 +2273,22 @@ void pmap_init(void)
         KERN_SUCCESS)
         panic("pmap_init: failed to allocate pv hash table!");
 
+    /*
+     * Initialize the core objects.
+     */
+    uint32_t npages = (mem_size / PAGE_SIZE);
     pv_head_hash_table = (pv_rooted_entry_t) pv_root;
+    pv_root = (vm_offset_t) (pv_head_table + npages);
+
+    pv_hash_table = (pv_hashed_entry_t *) pv_root;
+    pv_root = (vm_offset_t) (pv_hash_table + (npvhash + 1));
+
+    pv_lock_table = (char *) pv_root;
+    pv_root = (vm_offset_t) (pv_lock_table + pv_lock_table_size(npages));
+
+    pv_hash_lock_table = (char *) pv_root;
+    pv_root = (vm_offset_t) (pv_hash_lock_table + pv_hash_lock_table_size((npvhash+1)));
+
     bzero((void *) pv_head_hash_table, s);
     kprintf("pmap_init: pv_head_hash_table at %p\n", pv_head_hash_table);
 
@@ -2421,7 +2663,9 @@ pmap_t pmap_create(ledger_t ledger, vm_map_size_t size, __unused boolean_t is_64
     }
     our_pmap->pm_refcnt = 1;
     our_pmap->ledger = ledger;
+    our_pmap->pm_asid = 0;
     pmap_common_init(our_pmap);
+    pmap_asid_alloc_fast(our_pmap);
 
     /*
      * Grab a new page and set the new L1 region.
@@ -3053,9 +3297,11 @@ void pmap_zero_part_page(ppnum_t src, vm_offset_t src_offset, vm_offset_t len)
     bzero(phys_to_virt(src << PAGE_SHIFT) + src_offset, len);
 }
 
-/*
- *      pmap_copy_part_lpage copies part of a virtually addressed page 
- *      to a physically addressed page.
+/**
+ * pmap_copy_part_lpage
+ * 
+ * Copy part of a virtually addressed page 
+ * to a physically addressed page.
  */
 void pmap_copy_part_lpage(vm_offset_t src, vm_offset_t dst, vm_offset_t dst_offset,
                           vm_size_t len)
@@ -3063,9 +3309,11 @@ void pmap_copy_part_lpage(vm_offset_t src, vm_offset_t dst, vm_offset_t dst_offs
     panic("pmap_copy_part_lpage");
 }
 
-/*
- *      pmap_copy_part_rpage copies part of a physically addressed page 
- *      to a virtually addressed page.
+/**
+ * pmap_copy_part_rpage
+ *
+ * Copy part of a physically addressed page 
+ * to a virtually addressed page.
  */
 void pmap_copy_part_rpage(vm_offset_t src, vm_offset_t src_offset, vm_offset_t dst,
                           vm_size_t len)

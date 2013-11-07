@@ -104,6 +104,7 @@ struct pmap {
     task_map_t pm_task_map;     /* process task map */
     struct pmap_statistics pm_stats;
     uint32_t pm_l1_size;
+    uint32_t pm_asid;
 };
 
 typedef struct arm_l1_entry_t {

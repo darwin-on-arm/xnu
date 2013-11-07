@@ -190,6 +190,9 @@ mmu_initialized:
     /* Invalidate caches */
     mcr     p15, 0, r4, c7, c5, 0
 
+    /* Set CONTEXIDR to 0, kernel ASID. */
+    mcr     p15, 0, r4, c13, c0, 1
+
     /* Set up initial sp. */
     LOAD_ADDR(sp, intstack_top)
 

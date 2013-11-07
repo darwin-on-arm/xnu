@@ -63,6 +63,17 @@ ENTRY(armv7_context_switch)
 	bx	lr
 END(armv7_context_switch)
 
+ENTRY(armv7_tlb_flushID_ASID)
+#ifdef MULTIPROCESSOR
+	mcr	p15, 0, r0, c8, c3, 2	@ flush I+D tlb per ASID inner
+#else
+	mcr	p15, 0, r0, c8, c7, 2	@ flush I+D tlb per ASID
+#endif
+	dsb				@ data synchronization barrier
+	isb
+	bx	lr
+END(armv7_tlb_flushID_ASID)
+
 ENTRY(armv7_tlb_flushID)
 	mov r0, #0
 #ifdef MULTIPROCESSOR
@@ -151,6 +162,12 @@ ENTRY_NP(armv7_icache_sync_range)
 	isb
 	bx	lr
 END(armv7_icache_sync_range)
+
+ENTRY(armv7_set_context_id)
+	mcr p15, 0, r0, c13, c0, 1
+	isb
+	bx lr
+END(armv7_set_context_id)
 
 /* LINTSTUB: void armv7_icache_sync_all(void); */
 ENTRY_NP(armv7_icache_sync_all)

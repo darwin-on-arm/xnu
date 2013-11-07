@@ -56,7 +56,10 @@ void	armv7_context_switch(u_int);
 void	armv7_tlb_flushID_SE(u_int);
 void 	armv7_tlb_flushID_RANGE(u_int, u_int);
 void 	armv7_tlb_flushID(void);
+void 	armv7_tlb_flushID_ASID(u_int);
 void	armv7_drain_writebuf(void);
+
+void	armv7_set_context_id(u_int);
 
 void	armv7_setup(char *string);
 void 	armv7_dcache_wbinv_all (void);
