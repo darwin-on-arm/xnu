@@ -48,6 +48,7 @@ osfmk/arm/etimer.c		standard
 osfmk/arm/conf.c		standard
 osfmk/arm/bcopystub.c		standard
 osfmk/arm/bsd_arm.c		standard
+osfmk/arm/cpufunc_armv7.s 	standard
 
 osfmk/kdp/ml/arm/kdp_machdep.c         optional        mach_kdp
 osfmk/kdp/ml/arm/kdp_vm.c              optional        mach_kdp

@@ -187,5 +187,4 @@ UNIMPLEMENTED_STUB(_segSizePRELINK)
 UNIMPLEMENTED_STUB(_sigreturn)
 UNIMPLEMENTED_STUB(_thread_set_parent)
 UNIMPLEMENTED_STUB(_thread_setsinglestep)
-
 UNIMPLEMENTED_STUB(_pmap_copy)
