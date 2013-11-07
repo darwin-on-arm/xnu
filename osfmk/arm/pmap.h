@@ -168,6 +168,8 @@ typedef struct arm_l2_t {
 #define VM_WIMG_WCOMB		(VM_MEM_NOT_CACHEABLE | VM_MEM_COHERENT)
 #define	VM_WIMG_INNERWBACK	VM_MEM_COHERENT
 
+#define L1SHIFT       20
+
 /* 
  * prototypes.
  */
@@ -281,7 +283,6 @@ static inline void pmap_set_4GB_pagezero(__unused pmap_t pmap)
 static inline void pmap_clear_4GB_pagezero(__unused pmap_t pmap)
 {
 }
-#endif
 
 typedef struct mem_region {
     vm_offset_t start;          /* Address of base of region */
@@ -302,5 +303,6 @@ void l2_map_linear_range(uint32_t pa_cache_start, uint32_t phys_start,
                          uint32_t phys_end);
 void l2_cache_to_range(uint32_t pa_cache_start, uint32_t va, uint32_t tteb,
                        uint32_t size, int zero);
+#endif
 
 #endif

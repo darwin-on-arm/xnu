@@ -74,6 +74,8 @@
  */
 
 #define VM_MEM_WIRED            0x4
+#define _1KB                    1 * 1024
+#define _1MB                    1 * 1024 * _1KB
 
 /** Core Structures */
 typedef struct __pv_entry__ {
@@ -1432,6 +1434,9 @@ kern_return_t pmap_enter_options(pmap_t pmap, vm_map_offset_t va, ppnum_t pa,
 
             *(uint32_t *) pte = 0;
 
+            if(!pmap_valid_page(pa))
+                goto EnterPte;
+
             if (pv_h->pv_pmap == PMAP_NULL) {
                 panic("pmap_enter_options: null pv_list\n");
             }
@@ -1459,6 +1464,9 @@ kern_return_t pmap_enter_options(pmap_t pmap, vm_map_offset_t va, ppnum_t pa,
 
         pai = pa;
         pv_h = pai_to_pvh(pai);
+
+        if(!pmap_valid_page(pa))
+            goto EnterPte;
 
         /*
          * Check to see if it exists, if it does, then make it null. The code later
@@ -1531,7 +1539,7 @@ kern_return_t pmap_enter_options(pmap_t pmap, vm_map_offset_t va, ppnum_t pa,
              pv_h->pv_address_va);
 #endif
     }
-
+EnterPte:
     /*
      * Enter and count the mapping.
      */
@@ -1659,7 +1667,7 @@ void pmap_remove_range(pmap_t pmap, vm_map_offset_t start_vaddr, pt_entry_t * sp
 {
     pt_entry_t *cpte = spte;
     vm_map_offset_t vaddr;
-    vm_size_t our_page_size = (is_sect) ? (1 * 1024 * 1024) : PAGE_SIZE;
+    vm_size_t our_page_size = (is_sect) ? (_1MB) : PAGE_SIZE;
     int num_removed = 0, num_unwired = 0;
 
     /*
@@ -1691,6 +1699,12 @@ void pmap_remove_range(pmap_t pmap, vm_map_offset_t start_vaddr, pt_entry_t * sp
          * Continue onwards if pmap isn't up yet.. (keep nuking pages!)
          */
         if (!pmap_initialized)
+            continue;
+
+        /*
+         * If it isn't a managed page, don't update the pv_table.
+         */
+        if (!pmap_valid_page(pai))
             continue;
 
         /*
@@ -1778,7 +1792,7 @@ void pmap_remove(pmap_t map, vm_offset_t sva, vm_offset_t eva)
      * This is broken.
      */
     while (sva < eva) {
-        lva = (sva + 1 * 1024 * 1024) & ~((1 * 1024 * 1024) - 1);
+        lva = (sva + _1MB) & ~((_1MB) - 1);
         if (lva > eva)
             lva = eva;
         tte = pmap_tte(map, sva);
@@ -1792,8 +1806,8 @@ void pmap_remove(pmap_t map, vm_offset_t sva, vm_offset_t eva)
             /*
              * If the addresses are more than one 1MB apart, well...
              */
-            if ((sva >> 20) != (lva >> 20)) {
-                int mb_off = (lva >> 20) - (sva >> 20);
+            if ((sva >> L1SHIFT) != (lva >> L1SHIFT)) {
+                int mb_off = (lva >> L1SHIFT) - (sva >> L1SHIFT);
                 epte =
                     (vm_offset_t) spte_begin + (0x400 * mb_off) +
                     (vm_offset_t) pte_offset(lva);
@@ -2163,7 +2177,7 @@ void pmap_protect(pmap_t map, vm_map_offset_t sva, vm_map_offset_t eva, vm_prot_
      */
     orig_sva = sva;
     while (sva < eva) {
-        lva = (sva + 1 * 1024 * 1024) & ~((1 * 1024 * 1024) - 1);
+        lva = (sva + _1MB) & ~((_1MB) - 1);
         if (lva > eva)
             lva = eva;
         tte = pmap_tte(map, sva);
@@ -2177,8 +2191,8 @@ void pmap_protect(pmap_t map, vm_map_offset_t sva, vm_map_offset_t eva, vm_prot_
             /*
              * If the addresses are more than one 1MB apart, well...
              */
-            if ((sva >> 20) != (lva >> 20)) {
-                int mb_off = (lva >> 20) - (sva >> 20);
+            if ((sva >> L1SHIFT) != (lva >> L1SHIFT)) {
+                int mb_off = (lva >> L1SHIFT) - (sva >> L1SHIFT);
                 epte =
                     (vm_offset_t) spte_begin + (0x400 * mb_off) +
                     (vm_offset_t) pte_offset(lva);
@@ -2245,7 +2259,7 @@ kern_return_t pmap_nest(pmap_t grand, pmap_t subord, addr64_t va_start, addr64_t
      * Anounce ourselves. We are nesting one pmap inside another.
      */
     kprintf("pmap_nest: %p[0x%08llx] => %p[0x%08llx], %d tte entries\n", subord, va_start,
-            grand, nstart, size >> 20);
+            grand, nstart, size >> L1SHIFT);
 
     /*
      * Sanity checks.
@@ -2267,7 +2281,7 @@ kern_return_t pmap_nest(pmap_t grand, pmap_t subord, addr64_t va_start, addr64_t
     /*
      * Mark the surbodinate pmap as shared.
      */
-    uint32_t num_sect = size >> 20;
+    uint32_t num_sect = size >> L1SHIFT;
     subord->pm_shared = TRUE;
     nvaddr = (vm_map_offset_t) nstart;
 
@@ -2290,7 +2304,7 @@ kern_return_t pmap_nest(pmap_t grand, pmap_t subord, addr64_t va_start, addr64_t
         /*
          * Increase virtual address by granularity of one TTE entry.
          */
-        nvaddr += (1 * 1024 * 1024);
+        nvaddr += (_1MB);
     }
     PMAP_UNLOCK(subord);
 
@@ -2311,7 +2325,7 @@ kern_return_t pmap_nest(pmap_t grand, pmap_t subord, addr64_t va_start, addr64_t
             panic("pmap_nest: no ntte, subord %p nstart 0x%x", subord, nstart);
         target = *ntte;
 
-        nstart += (1 * 1024 * 1024);
+        nstart += (_1MB);
 
         /*
          * Now, get the TTE address from the Grand map.
@@ -2330,7 +2344,7 @@ kern_return_t pmap_nest(pmap_t grand, pmap_t subord, addr64_t va_start, addr64_t
          * Store the TTE.
          */
         *tte = target;
-        vaddr += (1 * 1024 * 1024);
+        vaddr += (_1MB);
     }
     PMAP_UNLOCK(grand);
 
@@ -2365,8 +2379,8 @@ kern_return_t pmap_unnest(pmap_t grand, addr64_t vaddr, uint64_t size)
     /*
      * Align everything to a 1MB boundary. (TTE granularity)
      */
-    vstart = vaddr & ~((1 * 1024 * 1024) - 1);
-    vend = (vaddr + size + (1 * 1024 * 1024) - 1) & ~((1 * 1024 * 1024) - 1);
+    vstart = vaddr & ~((_1MB) - 1);
+    vend = (vaddr + size + (_1MB) - 1) & ~((_1MB) - 1);
     size = (vend - vstart);
 
     /*
@@ -2375,14 +2389,14 @@ kern_return_t pmap_unnest(pmap_t grand, addr64_t vaddr, uint64_t size)
     SPLVM(spl);
     PMAP_LOCK(grand);
 
-    num_sect = size >> 20;
+    num_sect = size >> L1SHIFT;
     vaddr = vstart;
     for (i = 0; i < num_sect; i++) {
         tte = pmap_tte(grand, (vm_map_offset_t) vaddr);
         if (tte == 0)
             panic("pmap_unnest: no tte, grand %p vaddr 0x%x\n", grand, vaddr);
         *tte = 0;
-        vaddr += (1 * 1024 * 1024);
+        vaddr += (_1MB);
     }
 
     /*
