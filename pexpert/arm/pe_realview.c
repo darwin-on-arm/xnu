@@ -364,7 +364,12 @@ void RealView_framebuffer_init(void)
     bzero(framebuffer, (pitch * height));
 
     char tempbuf[16];
-    initialize_screen((void *) &PE_state.video, kPETextMode);
+    
+	if (PE_parse_boot_argn("-graphics-mode", tempbuf, sizeof(tempbuf))) {
+        initialize_screen((void *) &PE_state.video, kPEGraphicsMode);
+    } else {
+		initialize_screen((void *) &PE_state.video, kPETextMode);
+	}
 }
 
 void PE_init_SocSupport_realview(void)

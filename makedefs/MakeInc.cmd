@@ -119,10 +119,11 @@ endif
 # Scripts or tools we build ourselves
 ifneq ($(UNAME_S),Linux)
 	SEG_HACK := $(OBJROOT)/SETUP/setsegname/setsegname
+	KEXT_CREATE_SYMBOL_SET := $(OBJROOT)/SETUP/kextsymboltool/kextsymboltool
 else
 	SEG_HACK := /usr/bin/setsegname
+	KEXT_CREATE_SYMBOL_SET := /usr/bin/kextsymboltool
 endif
-KEXT_CREATE_SYMBOL_SET := $(OBJROOT)/SETUP/kextsymboltool/kextsymboltool
 DECOMMENT := $(OBJROOT)/SETUP/decomment/decomment
 NEWVERS = $(SRCROOT)/config/newvers.pl
 MD := $(OBJROOT)/SETUP/md/md
