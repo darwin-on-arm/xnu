@@ -152,6 +152,9 @@ typedef enum {
     ARM_PTE_DESCRIPTOR_4K = 0x02,   /* 0b1X */
 } pmap_arm_l2_page_types_t;
 
+extern vm_offset_t vm_kernel_stext;
+extern vm_offset_t vm_kernel_etext;
+
 /** Global variables */
 boolean_t pmap_initialized = FALSE; /* Is the pmap system initialized? */
 static struct vm_object pmap_object_store;  /* Storage object for the actual VM thing. */
@@ -1763,8 +1766,6 @@ kern_return_t pmap_enter_options(pmap_t pmap, vm_map_offset_t va, ppnum_t pa,
          * If the current PA isn't zero, and if it's non-existent... remove the mapping
          */
         if ((old_pte & L2_ADDR_MASK) != 0) {
-            pv_hashed_entry_t *pprevh;
-
             pai = pa_index((old_pte & L2_ADDR_MASK));
             pv_h = pai_to_pvh(pai);
 
@@ -1994,6 +1995,7 @@ void pmap_init(void)
 {
     vm_offset_t pv_root;
     vm_size_t s;
+    spl_t spl;
     int i;
 
     kprintf("pmap_init: %d physical pages in memory, kernel pmap at %p\n",
@@ -2053,6 +2055,42 @@ void pmap_init(void)
      * Initialize the free list lock. (unused right now.)
      */
     simple_lock_init(&pv_free_list_lock, 0);
+    simple_lock_init(&pv_hashed_free_list_lock, 0);
+    simple_lock_init(&pv_hashed_kern_free_list_lock, 0);
+    simple_lock_init(&pv_hash_table_lock,0);
+
+    /*
+     * Remap kernel as RO only.
+     */
+    uint32_t ro_kern = 1;
+    if (PE_parse_boot_argn("kernel_read_only", &ro_kern, sizeof(ro_kern))) {
+        ro_kern = 0;
+    }
+    SPLVM(spl);
+
+    /*
+     * Rewrite the kernel PTEs.
+     */
+    if(ro_kern) {
+        vm_offset_t kva;
+        pt_entry_t *ptep;
+
+        /*
+         * Add APX-bit to reduce protections to R-X.
+         */
+        for(kva = vm_kernel_stext; kva < vm_kernel_etext; kva += PAGE_SIZE) {
+            ptep = pmap_pte(kernel_pmap, (vm_map_offset_t)kva);
+            if(ptep)
+                *ptep |= L2_ACCESS_APX;
+        }
+
+        /*
+         * Flush the TLBs since we changed access permissions.
+         */
+        armv7_tlb_flushID_RANGE(vm_kernel_stext, vm_kernel_etext);
+    }
+
+    SPLX(spl);
 
     /*
      * Set up the core VM object.
