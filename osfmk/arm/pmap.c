@@ -211,7 +211,7 @@ lock_t pmap_system_lock;
 #define SPLVM(spl)          spl = splhigh();
 #define SPLX(spl)           splx(spl);
 
-#if 0
+#if 1
 #define PMAP_LOCK(pmap) {       \
     simple_lock(&(pmap)->lock); \
 }
@@ -1149,7 +1149,6 @@ boolean_t pmap_verify_free(vm_offset_t phys)
 {
     pv_rooted_entry_t pv_h;
     int pai;
-    spl_t spl;
     boolean_t result;
 
     assert(phys != vm_page_fictitious_addr);
@@ -1159,11 +1158,8 @@ boolean_t pmap_verify_free(vm_offset_t phys)
     if (!pmap_valid_page(phys))
         return (FALSE);
 
-    SPLVM(spl);
-
     pv_h = pai_to_pvh(phys);
     result = (pv_h->pmap == PMAP_NULL);
-    SPLX(spl);
 
     return (result);
 }
@@ -1314,7 +1310,7 @@ ppnum_t pmap_find_phys(pmap_t pmap, addr64_t va)
     /*
      * Raise priority level. 
      */
-    SPLVM(spl);
+    disable_preemption();
 
     /*
      * Get the PTE. 
@@ -1339,7 +1335,7 @@ ppnum_t pmap_find_phys(pmap_t pmap, addr64_t va)
     /*
      * Return. 
      */
-    SPLX(spl);
+    enable_preemption();
     return ppn;
 }
 
@@ -1468,8 +1464,8 @@ static inline void pmap_asid_alloc_fast(pmap_t map)
     TLBINFO_ASID_MARK_USED(pm_asid_bitmap, map->pm_asid);
     pm_asids_free--;
 
-#if 0
-    kprintf("[pmap_asid_alloc_fast] ASIDs free: %x, ASID id %u for map %p allocated\n",
+#if 1
+    kprintf("[pmap_asid_alloc_fast] ASIDs free: %d ASIDs, ASID subsystem allocated id %u for map %p!\n",
             pm_asids_free, map->pm_asid, map);
 #endif
 
@@ -1678,7 +1674,7 @@ vm_offset_t pmap_extract(pmap_t pmap, vm_offset_t virt)
      * Block off all interruptions. Nothing may interrupt the extraction process
      * as the page tables may be changed by another callee to pmap_enter or such.
      */
-    SPLVM(spl);
+
     PMAP_LOCK(pmap);
     if (!ttep)
         goto extract_out;
@@ -1751,7 +1747,6 @@ vm_offset_t pmap_extract(pmap_t pmap, vm_offset_t virt)
     /*
      * Return.
      */
-    SPLX(spl);
     PMAP_UNLOCK(pmap);
     return ppn;
 }
@@ -1848,7 +1843,6 @@ void pmap_expand(pmap_t map, vm_offset_t v)
     /*
      * High priority. We do not want any interruptions.
      */
-    SPLVM(spl);
     PMAP_LOCK(map);
 
     if (map != kernel_pmap) {
@@ -1901,7 +1895,6 @@ void pmap_expand(pmap_t map, vm_offset_t v)
      * Flush the TLBs since we updated the page tables.
      */
     armv7_tlb_flushID_SE(v);
-    SPLX(spl);
     PMAP_UNLOCK(map);
     return;
 }
@@ -1946,20 +1939,17 @@ kern_return_t pmap_enter_options(pmap_t pmap, vm_map_offset_t va, ppnum_t pa,
      * Set a high priority level. We do not wany any interruptions or any unauthorized
      * page table modification.
      */
-    SPLVM(spl);
     PMAP_LOCK(pmap);
 
     /*
      * Expand the pmap to include the new PTE if necessary to accomodate the new VA we're
      * entering in.
      */
-    PMAP_UNLOCK(pmap);
     while ((pte = pmap_pte(pmap, va)) == NULL) {
-        SPLX(spl);
+        PMAP_UNLOCK(pmap);
         pmap_expand(pmap, va);
-        SPLVM(spl);
+        PMAP_LOCK(pmap);
     }
-    PMAP_LOCK(pmap);
 
     /*
      * If the old page already has a mapping, the caller might be changing protection flags.
@@ -2212,7 +2202,6 @@ kern_return_t pmap_enter_options(pmap_t pmap, vm_map_offset_t va, ppnum_t pa,
     /*
      * The operation has completed successfully.
      */
-    SPLX(spl);
     PMAP_UNLOCK(pmap);
 
     return KERN_SUCCESS;
@@ -2305,6 +2294,7 @@ void pmap_init(void)
     /*
      * Initialize the free list lock. (unused right now.)
      */
+    simple_lock_init(&kernel_pmap->lock, 0);
     simple_lock_init(&pv_free_list_lock, 0);
     simple_lock_init(&pv_hashed_free_list_lock, 0);
     simple_lock_init(&pv_hashed_kern_free_list_lock, 0);
@@ -2589,7 +2579,6 @@ void pmap_remove(pmap_t map, vm_offset_t sva, vm_offset_t eva)
      * High Priority. Nothing may interrupt the removal process.
      */
     PMAP_LOCK(map);
-    SPLVM(spl);
 
     /*
      * This is broken.
@@ -2638,7 +2627,6 @@ void pmap_remove(pmap_t map, vm_offset_t sva, vm_offset_t eva)
     /*
      * Return. 
      */
-    SPLX(spl);
     PMAP_UNLOCK(map);
     return;
 }
@@ -2738,11 +2726,6 @@ void pmap_page_protect(ppnum_t pn, vm_prot_t prot)
         remove = TRUE;
         break;
     }
-
-    /*
-     * Set a high priority level. No interruptions allowed.
-     */
-    SPLVM(spl);
 
     /*
      * Walk down the PV listings and remove the entries.
@@ -2858,10 +2841,7 @@ void pmap_page_protect(ppnum_t pn, vm_prot_t prot)
         PV_HASHED_FREE_LIST(pvh_eh, pvh_et, pvh_cnt);
     }
 
-    /*
-     * Return. 
-     */
-    SPLX(spl);
+
 }
 
 /**
@@ -2935,7 +2915,6 @@ void pmap_destroy(pmap_t pmap)
         panic("pmap_destroy: attempting to destroy kernel_pmap");
 
     PMAP_LOCK(pmap);
-    SPLVM(spl);
 
     /*
      * Okay, decrease the reference count.
@@ -2951,7 +2930,6 @@ void pmap_destroy(pmap_t pmap)
     /*
      * Unlock the pmap system.
      */
-    SPLX(spl);
     PMAP_UNLOCK(pmap);
 
     /*
@@ -3128,8 +3106,6 @@ kern_return_t pmap_nest(pmap_t grand, pmap_t subord, addr64_t va_start, addr64_t
     /*
      * Start the copy operations.
      */
-    spl_t spl;
-    SPLVM(spl);
     PMAP_LOCK(subord);
 
     /*
@@ -3206,7 +3182,6 @@ kern_return_t pmap_nest(pmap_t grand, pmap_t subord, addr64_t va_start, addr64_t
      * Out. Flush all TLBs.
      */
     armv7_tlb_flushID_RANGE(va_start, va_start + size);
-    SPLX(spl);
 
     return KERN_SUCCESS;
 }
@@ -3240,7 +3215,6 @@ kern_return_t pmap_unnest(pmap_t grand, addr64_t vaddr, uint64_t size)
     /*
      * Lock the pmaps to prevent use.
      */
-    SPLVM(spl);
     PMAP_LOCK(grand);
 
     num_sect = size >> L1SHIFT;
@@ -3257,7 +3231,9 @@ kern_return_t pmap_unnest(pmap_t grand, addr64_t vaddr, uint64_t size)
      * The operation has now completed.
      */
     armv7_tlb_flushID_RANGE(vaddr, vaddr + size);
-    SPLX(spl);
+
+    PMAP_UNLOCK(grand);
+
     return KERN_SUCCESS;
 }
 
