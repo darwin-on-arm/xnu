@@ -1468,6 +1468,11 @@ static inline void pmap_asid_alloc_fast(pmap_t map)
     TLBINFO_ASID_MARK_USED(pm_asid_bitmap, map->pm_asid);
     pm_asids_free--;
 
+#if 0
+    kprintf("[pmap_asid_alloc_fast] ASIDs free: %x, ASID id %u for map %p allocated\n",
+            pm_asids_free, map->pm_asid, map);
+#endif
+
     return;
 }
 

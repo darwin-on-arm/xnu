@@ -1574,7 +1574,7 @@ vm_map_enter(
 			 * Note that the current implementation only supports
 			 * a single size for superpages, SUPERPAGE_SIZE, per
 			 * architecture. As soon as more sizes are supposed
-			 * to be supported, SUPERPAGE_SIZE has to be replaced
+			 * to be supported, sSUPERPAGE_SIZE has to be replaced
 			 * with a lookup of the size depending on superpage_size.
 			 */
 #ifdef __x86_64__
@@ -10444,7 +10444,7 @@ vm_map_behavior_set(
 	XPR(XPR_VM_MAP,
 	    "vm_map_behavior_set, 0x%X start 0x%X end 0x%X behavior %d",
 	    map, start, end, new_behavior, 0);
-
+	
 	if (start > end ||
 	    start < vm_map_min(map) ||
 	    end > vm_map_max(map)) {

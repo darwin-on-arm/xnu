@@ -668,6 +668,8 @@ void sleh_undef(arm_saved_state_t * state)
         copyin((uint8_t *) (arm_ctx->pc + thumb_offset), &instruction,
                sizeof(uint32_t));
 
+        /* i should really fix this crap proper... */
+
         /*
          * Check the instruction encoding to see if it's a coprocessor instruction. 
          */
@@ -699,6 +701,34 @@ void sleh_undef(arm_saved_state_t * state)
         /*
          * VFP instruction.. 
          */
+        if ((((instruction & 0xF000000) >> 24) == 0xE)
+            || (((instruction & 0xF000000) >> 24) == 0xD)
+            || (((instruction & 0xF000000) >> 24) == 0xC)) {
+            uint32_t cr = (instruction & 0xF00) >> 8;
+            if (cr == 10 || cr == 11) {
+                /*
+                 * VFP instruction. 
+                 */
+                thread->machine.vfp_dirty = 0;
+                if (!thread->machine.vfp_enable) {
+                    /*
+                     * Enable VFP. 
+                     */
+                    vfp_enable_exception(TRUE);
+                    vfp_context_load(&thread->machine.vfp_regs);
+                    /*
+                     * Continue user execution. 
+                     */
+                    thread->machine.vfp_enable = TRUE;
+                }
+                return;
+            }
+        }
+
+        /*
+         * Try one last time.
+         */
+        instruction = OSSwapInt32(instruction);
         if ((((instruction & 0xF000000) >> 24) == 0xE)
             || (((instruction & 0xF000000) >> 24) == 0xD)
             || (((instruction & 0xF000000) >> 24) == 0xC)) {

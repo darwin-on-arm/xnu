@@ -141,13 +141,10 @@ void unix_syscall(arm_saved_state_t * state)
     /*
      * Current syscall number is in r12 on ARM 
      */
-    boolean_t shift_args = 0;
+    boolean_t shift_args = FALSE;
 
+    state->cpsr &= ~(1 << 29);  /* C-bit IIRC, turn this into a Define */
     code = state->r[12];
-    if (!code) {
-        shift_args = 1;
-        code = state->r[0];
-    }
 
     /*
      * Delayed binding of thread credential to process credential, if we
@@ -156,26 +153,32 @@ void unix_syscall(arm_saved_state_t * state)
     kauth_cred_uthread_update(uthread, p);
 
     callp = (code >= NUM_SYSENT) ? &sysent[63] : &sysent[code];
+    if (__improbable(callp == sysent)) {
+        /*
+         * indirect system call... system call number
+         * passed as 'arg0'
+         */
+        code = state->r[0];
+        callp = (code >= NUM_SYSENT) ? &sysent[63] : &sysent[code];
+        shift_args = TRUE;
+    }
 
     if (callp->sy_narg) {
         int arg_count = callp->sy_narg;
-        /*
-         * "Falsemunge" arguments. 
-         */
-        if (shift_args) {
-            int i;
-            for (i = 0; i < 11; i++) {
-                uthread->uu_arg[i] = state->r[i + 1];
-                if (i == (arg_count))
-                    break;
-            }
-        } else {
+        if (!shift_args) {
             int i;
             for (i = 0; i < 12; i++) {
                 uthread->uu_arg[i] = state->r[i];
                 if (i == (arg_count))
                     break;
             }
+        } else {
+            int i;
+            for (i = 0; i < 11; i++) {
+                uthread->uu_arg[i] = state->r[i + 1];
+                if (i == (arg_count))
+                    break;
+            }            
         }
     }
 
@@ -187,15 +190,9 @@ void unix_syscall(arm_saved_state_t * state)
     uthread->uu_rval[1] = 0;
 
 #if 0
-    kprintf("syscall: called bsd\n"
-            "r0: 0x%08x  r1: 0x%08x  r2: 0x%08x  r3: 0x%08x\n"
-            "r4: 0x%08x  r5: 0x%08x  r6: 0x%08x  r7: 0x%08x\n"
-            "r8: 0x%08x  r9: 0x%08x r10: 0x%08x r11: 0x%08x\n"
-            "12: 0x%08x  sp: 0x%08x  lr: 0x%08x  pc: 0x%08x\n" "cpsr: 0x%08x\n", state->r[0], state->r[1], state->r[2], state->r[3], state->r[4], state->r[5], state->r[6], state->r[7], state->r[8], state->r[9], state->r[10], state->r[11], state->r[12], state->sp, state->lr, state->pc, state->cpsr);
-#endif
-#if 0
     kdb_printf("SYSCALL: %s (%d, routine %p), args %p, return %x (%x, %x) pc 0x%08x\n", syscallnames[code >= NUM_SYSENT ? 63 : code], code, callp->sy_call, (void *) uthread->uu_arg, error, uthread->uu_rval[0], uthread->uu_rval[1], state->pc);
 #endif
+
     AUDIT_SYSCALL_ENTER(code, p, uthread);
     error = (*(callp->sy_call)) (p, (void *) uthread->uu_arg, &(uthread->uu_rval[0]));
     AUDIT_SYSCALL_EXIT(code, p, uthread, error);
@@ -204,6 +201,8 @@ void unix_syscall(arm_saved_state_t * state)
     mac_thread_userret(code, error, thread);
 #endif
 
+    if (error)
+        state->cpsr |= (1 << 29);  /* C-bit IIRC, turn this into a Define */
 
     if (error == ERESTART) {
         panic("unix_syscall: restarting syscall\n");
@@ -213,8 +212,8 @@ void unix_syscall(arm_saved_state_t * state)
         } else { /* Not error. */
             switch(callp->sy_return_type) {
                 case _SYSCALL_RET_INT_T:
-                    state->r[0] = uthread->uu_rval[0];                    
-                    state->r[1] = uthread->uu_rval[1];
+                    state->r[0] = (int)uthread->uu_rval[0];                    
+                    state->r[1] = (int)uthread->uu_rval[1];
                     break;
                 case _SYSCALL_RET_UINT_T:
                     state->r[0] = (u_int)uthread->uu_rval[0];                    
@@ -239,10 +238,8 @@ void unix_syscall(arm_saved_state_t * state)
                     panic("unix_syscall: unknown return type");
                     break;
             }
-            state->cpsr &= ~(1 << 29);  /* C-bit IIRC, turn this into a Define */
         }
     }
-
 
     uthread->uu_flag &= ~UT_NOTCANCELPT;
 

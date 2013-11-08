@@ -507,7 +507,7 @@ static void panic_print_kmod_symbol_name(vm_address_t search)
  * Attempt to find the symbol name for a specified address. Searches through
  * the kernel and kernel extensions.
  */
-static void panic_print_symbol_name(vm_address_t search)
+void panic_print_symbol_name(vm_address_t search)
 {
     /*
      * try searching in the kernel 
@@ -870,7 +870,7 @@ void mach_syscall_trace(arm_saved_state_t * state)
 #endif
 #if 0
     int num = -(state->r[12]);
-    kdb_printf("MACH Trap: (%d/%s)\n"
+    kprintf   ("MACH Trap: (%d/%s)\n"
                "r0: 0x%08x  r1: 0x%08x  r2: 0x%08x  r3: 0x%08x\n"
                "r4: 0x%08x  r5: 0x%08x  r6: 0x%08x  r7: 0x%08x\n"
                "r8: 0x%08x  r9: 0x%08x r10: 0x%08x r11: 0x%08x\n"

@@ -406,7 +406,6 @@ mach_msg_overwrite_trap(
         mach_msg_size_t		scatter_list_size = 0; /* NOT INITIALIZED - but not used in pactice */
 	__unused mach_port_seqno_t temp_seqno = 0;
     
-
 	mach_msg_return_t  mr = MACH_MSG_SUCCESS;
 	vm_map_t map = current_map();
 	
