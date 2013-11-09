@@ -59,11 +59,6 @@ typedef enum {
     SLEH_ABORT_TYPE_DATA_ABORT = 4,
 } sleh_abort_reasons;
 
-void arm_mach_do_exception(void)
-{
-    exception_triage(0, 0, 0);
-}
-
 void doexception(int exc, mach_exception_code_t code,
                  mach_exception_subcode_t sub)
 {
@@ -281,7 +276,6 @@ void sleh_abort(void *context, int reason)
                 /*
                  * Attempt to fault the page. 
                  */
-                assert(get_preemption_level() == 0);
                 __abort_count--;
                 code =
                     vm_fault(map, vm_map_trunc_page(arm_ctx->pc),
@@ -321,7 +315,6 @@ void sleh_abort(void *context, int reason)
                 /*
                  * Attempt to fault the page. 
                  */
-                assert(get_preemption_level() == 0);
                 __abort_count--;
                 code =
                     vm_fault(map, vm_map_trunc_page(dfar),

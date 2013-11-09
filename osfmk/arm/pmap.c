@@ -787,15 +787,22 @@ vm_offset_t pmap_pte(pmap_t pmap, vm_offset_t virt)
     assert(tte_offset);
     tte = *tte_offset;
 
+    /* 
+     * If the requested PTE entry is required is indeed the commonpage and
+     * we are not the kernel pmap, quit.
+     * 
+     * This is because the TTBCR is set to 4kB, and all higher page table
+     * address accesses will go to the kernel.
+     */
+    if(pmap != kernel_pmap && virt >= _COMM_PAGE_BASE_ADDRESS)
+        return 0;
+
     /*
      * Verify it's not a section mapping. 
      */
     if ((tte & ARM_PAGE_MASK_VALUE) == ARM_PAGE_SECTION) {
-#if 0
         panic("Translation table entry is a section mapping (tte %x ttep %x ttebv %x)!\n",
               tte, tte_offset, pmap->pm_l1_virt);
-#endif
-        return 0;
     }
 
     /*

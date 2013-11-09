@@ -129,6 +129,7 @@ EnterARM(fleh_swi)
 
     LoadThreadRegister(sp)
     ldr     sp, [sp, TH_PCB_ISS]
+
     mov     r11, r12
     cpsie   i
     /* Is it a trap? */
@@ -171,7 +172,10 @@ swi_exit:
 
 swi_mach_error:
     /* There was an error processing the Mach system call, panic. */
-    blx     _arm_mach_do_exception
+    mov     r0, #7
+    mov     r1, r4
+    mov     r2, #1
+    blx     _doexception
 
     mov     r0, #0x81
     b       irqvec_panic
