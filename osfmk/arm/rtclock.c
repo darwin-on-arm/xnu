@@ -94,7 +94,7 @@ int setPop(uint64_t time)
         now = 0;
         pop = deadline_to_decrementer(0, 0);
     } else {
-        now = pe_arm_get_timebase(NULL) * rtclock_scaler;   /* The time in nanoseconds */
+        now = pe_arm_get_timebase(NULL);   /* The time in nanoseconds */
         pop = deadline_to_decrementer(time, now);
     }
 
@@ -129,7 +129,7 @@ uint64_t mach_absolute_time(void)
 void machine_delay_until(uint64_t interval, uint64_t deadline)
 {
     uint64_t now;
-
+    
     do {
         cpu_pause();
         now = mach_absolute_time();

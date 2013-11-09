@@ -11730,8 +11730,6 @@ vm_map_switch(
 	/*
 	 *	Deactivate the current map and activate the requested map
 	 */
-    panic("vm_map_switch: setting current map to %p\n", map);
-    
 	PMAP_SWITCH_USER(thread, map, mycpu);
 
 	mp_enable_preemption();

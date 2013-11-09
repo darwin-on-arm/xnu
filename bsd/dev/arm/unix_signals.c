@@ -103,7 +103,9 @@ void sendsig(struct proc *p, user_addr_t ua_catcher, int sig, int mask, __unused
     struct sigacts *ps = p->p_sigacts;
     int stack_size = 0;
     kern_return_t kretn;
-
+    
+    kprintf("sendsig: Sending signal to thread %p, code %d.\n", th_act, sig);
+    return;
     panic("sendsig");
 
     th_act = current_thread();

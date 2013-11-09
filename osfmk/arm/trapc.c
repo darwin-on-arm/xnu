@@ -52,7 +52,13 @@
 #include <libkern/OSByteOrder.h>
 #include <arm/armops.h>
 
-/* xxx prot flags are broken so they're all VM_PROT_READ */
+#define ANSI_COLOR_RED     "\x1b[31m"
+#define ANSI_COLOR_GREEN   "\x1b[32m"
+#define ANSI_COLOR_YELLOW  "\x1b[33m"
+#define ANSI_COLOR_BLUE    "\x1b[34m"
+#define ANSI_COLOR_MAGENTA "\x1b[35m"
+#define ANSI_COLOR_CYAN    "\x1b[36m"
+#define ANSI_COLOR_RESET   "\x1b[0m"
 
 typedef enum {
     SLEH_ABORT_TYPE_PREFETCH_ABORT = 3,
@@ -410,13 +416,13 @@ void sleh_abort(void *context, int reason)
                              THREAD_UNINT, NULL, vm_map_trunc_page(0));
                 if ((code != KERN_SUCCESS) && (code != KERN_ABORTED)) {
                     exception_type = EXC_BAD_ACCESS;
-                    exception_subcode = arm_ctx->pc;
+                    exception_subcode = 0;
 
                     /*
                      * Debug only. 
                      */
                     printf
-                        ("%s[%d]: usermode prefetch abort, EXC_BAD_ACCESS at 0x%08x in map %p (pmap %p) (%s)\n",
+                        (ANSI_COLOR_RED "%s[%d]: " ANSI_COLOR_YELLOW "usermode prefetch abort, EXC_BAD_ACCESS at 0x%08x in map %p (pmap %p) (%s)" ANSI_COLOR_RESET" \n",
                          proc_name_address(thread->task->bsd_info),
                          proc_pid(thread->task->bsd_info), arm_ctx->pc, map,
                          map->pmap, ifsr_to_human(ifsr));
@@ -431,12 +437,13 @@ void sleh_abort(void *context, int reason)
                            arm_ctx->r[8], arm_ctx->r[9], arm_ctx->r[10],
                            arm_ctx->r[11], arm_ctx->r[12], arm_ctx->sp,
                            arm_ctx->lr, arm_ctx->pc, arm_ctx->cpsr);
+                    printf("dyld_all_image_info_addr: 0x%08x   dyld_all_image_info_size: 0x%08x\n",
+                            thread->task->all_image_info_addr, thread->task->all_image_info_size);
                 } else {
                     /*
                      * Retry execution of instruction. 
                      */
                     ml_set_interrupts_enabled(TRUE);
-                    doexception(0, 0, 0);
                     return;
                 }
                 break;
@@ -469,13 +476,13 @@ void sleh_abort(void *context, int reason)
 
                 if ((code != KERN_SUCCESS) && (code != KERN_ABORTED)) {
                     exception_type = EXC_BAD_ACCESS;
-                    exception_subcode = dfar;
+                    exception_subcode = 0;
 
                     /*
                      * Only for debug. 
                      */
                     printf
-                        ("%s[%d]: usermode data abort, EXC_BAD_ACCESS at 0x%08x in map %p (pmap %p) (%s)\n",
+                        (ANSI_COLOR_RED "%s[%d]: " ANSI_COLOR_BLUE "usermode data abort, EXC_BAD_ACCESS at 0x%08x in map %p (pmap %p) (%s)" ANSI_COLOR_RESET "\n",
                          proc_name_address(thread->task->bsd_info),
                          proc_pid(thread->task->bsd_info), dfar, map, map->pmap,
                          ifsr_to_human(dfsr));
@@ -490,12 +497,13 @@ void sleh_abort(void *context, int reason)
                            arm_ctx->r[8], arm_ctx->r[9], arm_ctx->r[10],
                            arm_ctx->r[11], arm_ctx->r[12], arm_ctx->sp,
                            arm_ctx->lr, arm_ctx->pc, arm_ctx->cpsr);
+                    printf("dyld_all_image_info_addr: 0x%08x   dyld_all_image_info_size: 0x%08x\n",
+                            thread->task->all_image_info_addr, thread->task->all_image_info_size);
                 } else {
                     /*
                      * Retry execution of instruction. 
                      */
                     ml_set_interrupts_enabled(TRUE);
-                    doexception(0, 0, 0);
                     return;
                 }
                 break;
@@ -747,7 +755,7 @@ void sleh_undef(arm_saved_state_t * state)
         }
 
         printf
-            ("%s[%d]: usermode undefined instruction, EXC_BAD_INSTRUCTION at 0x%08x in map %p (pmap %p)\n",
+            (ANSI_COLOR_RED "%s[%d]: " ANSI_COLOR_GREEN "usermode undefined instruction, EXC_BAD_INSTRUCTION at 0x%08x in map %p (pmap %p)" ANSI_COLOR_RESET "\n",
              proc_name_address(thread->task->bsd_info),
              proc_pid(thread->task->bsd_info), arm_ctx->pc, map, map->pmap);
         printf("Thread has ARM register state:\n"
@@ -760,6 +768,8 @@ void sleh_undef(arm_saved_state_t * state)
                arm_ctx->r[7], arm_ctx->r[8], arm_ctx->r[9], arm_ctx->r[10],
                arm_ctx->r[11], arm_ctx->r[12], arm_ctx->sp, arm_ctx->lr,
                arm_ctx->pc, arm_ctx->cpsr);
+        printf("dyld_all_image_info_addr: 0x%08x   dyld_all_image_info_size: 0x%08x\n",
+            thread->task->all_image_info_addr, thread->task->all_image_info_size);
         /*
          * xxx gate 
          */
