@@ -90,6 +90,11 @@ int PE_initialize_console( PE_Video * info, int op )
     return 0;
 }
 
+static void null_putc(int c)
+{
+    return;
+}
+
 /**
  * PE_init_platform
  *
@@ -144,6 +149,9 @@ void PE_init_platform(boolean_t vm_initialized, void *_args)
 
         if (PE_parse_boot_argn("kprintf", &boot_arg, sizeof(boot_arg)))
             PE_kputc = cnputc;
+
+        if (PE_parse_boot_argn("silence_kprintf", &boot_arg, sizeof(boot_arg)))
+            PE_kputc = null_putc;
 
         /*
          * XXX: Real iOS kernel does iBoot/debug-enabled init after the DTInit call. 

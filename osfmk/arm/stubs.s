@@ -117,8 +117,6 @@ UNIMPLEMENTED_STUB(_mapping_set_mod)
 UNIMPLEMENTED_STUB(_ml_nofault_copydeclare_stub)
 UNIMPLEMENTED_STUB(_ml_stack_remaining)
 
-UNIMPLEMENTED_STUB(_pmsControl)
-
 UNIMPLEMENTED_STUB(_sdt_invop)
 
 UNIMPLEMENTED_STUB(_slave_machine_init)

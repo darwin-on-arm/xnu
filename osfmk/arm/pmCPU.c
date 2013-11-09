@@ -56,3 +56,43 @@ void machine_idle(void)
      */
     ml_set_interrupts_enabled(TRUE);
 }
+
+/******************************************************************************
+ *
+ * All of the following are deprecated interfaces and no longer used.
+ *
+ ******************************************************************************/
+kern_return_t
+pmsControl(__unused uint32_t request, __unused user_addr_t reqaddr,
+	   __unused uint32_t reqsize)
+{
+    return(KERN_SUCCESS);
+}
+
+void
+pmsInit(void)
+{
+}
+
+void
+pmsStart(void)
+{
+}
+
+void
+pmsPark(void)
+{
+}
+
+void
+pmsRun(__unused uint32_t nstep)
+{
+}
+
+kern_return_t
+pmsBuild(__unused pmsDef *pd, __unused uint32_t pdsize,
+	 __unused pmsSetFunc_t *functab,
+	 __unused uint32_t platformData, __unused pmsQueryFunc_t queryFunc)
+{
+    return(KERN_SUCCESS);
+}
