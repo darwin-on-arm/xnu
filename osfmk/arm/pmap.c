@@ -3209,12 +3209,6 @@ kern_return_t pmap_nest(pmap_t grand, pmap_t subord, addr64_t va_start, addr64_t
          * Now, get the TTE address from the Grand map.
          */
         tte = pmap_tte(grand, vaddr);
-        if ((0 == tte) || ((*tte & ARM_PAGE_MASK_VALUE) != ARM_PAGE_PAGE_TABLE)) {
-            PMAP_UNLOCK(grand);
-            pmap_expand(grand, vaddr);
-            PMAP_LOCK(grand);
-            tte = pmap_tte(grand, vaddr);
-        }
         if (tte == 0)
             panic("pmap_nest: no tte, grand %p vaddr 0x%x", grand, vaddr);
 
