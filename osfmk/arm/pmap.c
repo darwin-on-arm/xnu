@@ -1641,6 +1641,29 @@ vm_page_t pmap_grab_page(void)
 }
 
 /**
+ * pmap_destroy_page
+ *
+ * Free a page from the internal VM object.
+ */
+void pmap_destroy_page(ppnum_t pa)
+{
+    vm_page_t m;
+
+    vm_object_lock(pmap_object);
+
+    m = vm_page_lookup(pmap_object, pa);
+    if (m == VM_PAGE_NULL)
+        return;
+
+    vm_object_unlock(pmap_object);
+
+    VM_PAGE_FREE(m);
+    kprintf("Freed page for PA %x\n", pa << PAGE_SHIFT);
+
+    return;
+}
+
+/**
  * pmap_create_sharedpage
  *
  * Create the system common page.
@@ -2930,7 +2953,7 @@ void pmap_deallocate_l1(pmap_t pmap)
 void pmap_destroy(pmap_t pmap)
 {
     spl_t spl;
-    int refcnt;
+    int refcnt, i;
 
     /*
      * Some necessary prerequisites.
@@ -2967,10 +2990,6 @@ void pmap_destroy(pmap_t pmap)
     if (refcnt != 0) {
         return;
     }
-
-    /*
-     * xxx we need to free pages from an expanded pmap.
-     */
 
     /*
      * Free the associated objects with the pmap first.

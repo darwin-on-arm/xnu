@@ -220,6 +220,9 @@ void sleh_abort(void *context, int reason)
     /*
      * Make sure we get the correct registers only if required. 
      */
+#if 0
+    kprintf("sleh_abort: pc %x lr %x far %x fsr %x psr %x\n", arm_ctx->pc, arm_ctx->lr, arm_ctx->far, arm_ctx->fsr, arm_ctx->cpsr);
+#endif
     if (reason == SLEH_ABORT_TYPE_DATA_ABORT) {
         dfsr = arm_ctx->fsr;
         dfar = arm_ctx->far;
@@ -327,6 +330,7 @@ void sleh_abort(void *context, int reason)
                              (dfsr & 0x800) ? (VM_PROT_READ | VM_PROT_WRITE)
                              : (VM_PROT_READ), FALSE, THREAD_UNINT, NULL,
                              vm_map_trunc_page(0));
+
                 if (code != KERN_SUCCESS) {
                     /*
                      * Still, die in a fire. 
@@ -418,11 +422,10 @@ void sleh_abort(void *context, int reason)
                  * Additionally, see if we can fault one page higher as the instruction
                  * may be on a page split boundary. libobjc and all require this???
                  *
-                 * XXX This is a bad hack? WHO KNOWS. The same thing probably needs
-                 * to also apply to data aborts? This needs *far* more looking into.
-                 * (probably).
+                 * Prefaulting the instruction before allows the prefetch mechanism
+                 * to not abort.
                  */
-                if((arm_ctx->pc & 0xff) >= 0xf0)
+                if((arm_ctx->pc & 0xfff) >= 0xff0)
                     vm_fault(map, vm_map_trunc_page(arm_ctx->pc) + PAGE_SIZE,
                              (VM_PROT_EXECUTE | VM_PROT_READ), FALSE,
                              THREAD_UNINT, NULL, vm_map_trunc_page(0));
@@ -486,7 +489,6 @@ void sleh_abort(void *context, int reason)
                              (dfsr & 0x800) ? (VM_PROT_READ | VM_PROT_WRITE)
                              : (VM_PROT_READ), FALSE, THREAD_UNINT, NULL,
                              vm_map_trunc_page(0));
-
                 if ((code != KERN_SUCCESS) && (code != KERN_ABORTED)) {
                     exception_type = EXC_BAD_ACCESS;
                     exception_subcode = 0;
