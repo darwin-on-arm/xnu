@@ -1975,6 +1975,26 @@ kern_return_t pmap_enter_options(pmap_t pmap, vm_map_offset_t va, ppnum_t pa,
         if (va == _COMM_PAGE_BASE_ADDRESS)
             template_pte |= L2_ACCESS_USER;
 
+        /*
+         * XXX add cacheability flags 
+         */
+        if (flags & VM_MEM_NOT_CACHEABLE) {
+            /*
+             * xxx arm 
+             */
+            template_pte |= mmu_texcb_small(MMU_DMA);
+        } else if (flags & VM_MEM_COHERENT) {
+           /*
+            * Writethrough cache by default. 
+            */
+           template_pte |= mmu_texcb_small(MMU_CODE);
+        } else {
+            /*
+             * Writethrough cache by default. 
+             */
+            template_pte |= mmu_texcb_small(MMU_DMA);
+        }
+
         *(uint32_t *) pte = template_pte;
 
         /*
