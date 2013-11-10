@@ -1662,7 +1662,7 @@ void pmap_create_sharedpage(void)
     /*
      * Memset it.
      */
-    memset((void *) _COMM_PAGE_BASE_ADDRESS, 0x77, PAGE_SIZE);
+    memset((void *) _COMM_PAGE_BASE_ADDRESS, 0x00, PAGE_SIZE);
     return;
 }
 
@@ -1892,9 +1892,9 @@ void pmap_expand(pmap_t map, vm_offset_t v)
     }
 
     /*
-     * Overwrite the old L1 mapping in this region with a fresh L2 descriptor.
+     * Overwrite the old L1 mapping in this region with a fresh L1 descriptor.
      */
-    *tte = ((page->phys_page << PAGE_SHIFT) & L1_PTE_ADDR_MASK) | L1_TYPE_PTE | (1 << 4);
+    *tte = ((page->phys_page << PAGE_SHIFT) & L1_PTE_ADDR_MASK) | L1_TYPE_PTE;
 
  Out:
 
@@ -2665,8 +2665,10 @@ pmap_t pmap_create(ledger_t ledger, vm_map_size_t size, __unused boolean_t is_64
     our_pmap->ledger = ledger;
     our_pmap->pm_asid = 0;
     pmap_common_init(our_pmap);
+#ifdef _NOTYET_
     pmap_asid_alloc_fast(our_pmap);
-
+#endif
+    
     /*
      * Grab a new page and set the new L1 region.
      */

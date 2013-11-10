@@ -238,7 +238,7 @@ void arm_init(boot_args * args)
     /*
      * If we return, something very bad is happening. 
      */
-    panic("20:02:14 <DHowett> wwwwwwwat is HAAAAAAAPPENING" \ n);
+    panic("20:02:14 <DHowett> wwwwwwwat is HAAAAAAAPPENING\n");
 
     /*
      * Last chance. 

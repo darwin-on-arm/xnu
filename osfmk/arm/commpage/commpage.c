@@ -33,5 +33,13 @@ commpage_populate(void)
 void
 commpage_set_timestamp(uint64_t tbr, uint64_t secs, uint32_t ticks_per_sec)
 {
-    ;
+
 }
+
+void clock_gettimeofday_set_commpage(uint64_t abstime, uint64_t epoch,
+                                     uint64_t offset, clock_sec_t * secs,
+                                     clock_usec_t * microsecs)
+{
+
+}
+

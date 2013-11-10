@@ -127,7 +127,6 @@ UNIMPLEMENTED_STUB(_thread_kdb_return)
 
 // SDKFASLDFLAKSDFLKASDf
 UNIMPLEMENTED_STUB(_act_thread_catt)
-UNIMPLEMENTED_STUB(_act_thread_csave)
 UNIMPLEMENTED_STUB(_adler32_vec)
 UNIMPLEMENTED_STUB(_bzero_phys_nc)
 UNIMPLEMENTED_STUB(_chudxnu_thread_ast)

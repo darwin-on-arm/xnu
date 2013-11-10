@@ -300,3 +300,34 @@ void thread_setentrypoint(thread_t thread, uint32_t entry)
     assert(thread);
     thread->machine.user_regs.pc = entry;
 }
+
+
+/** 
+ * ACT support.
+ */
+
+void *
+act_thread_csave(void)
+{
+    kern_return_t kret;
+    mach_msg_type_number_t val;
+    thread_t thr_act = current_thread();
+    struct arm_thread_state_t *ts;
+
+    ts = (struct arm_thread_state_t *)kalloc(sizeof(struct arm_thread_state));
+
+    if (ts == (struct arm_thread_state_t *)NULL)
+        return((void *)0);
+
+    val = ARM_THREAD_STATE; 
+    kret = machine_thread_get_state(thr_act, ARM_THREAD_STATE,
+           (thread_state_t) &ts, &val);
+    if (kret != KERN_SUCCESS) {
+        kfree(ts, sizeof(struct arm_thread_state));
+        return((void *)0);
+    }
+
+    return ts;
+}
+
+

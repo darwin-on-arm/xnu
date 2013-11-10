@@ -91,8 +91,6 @@
 /* dynamically generated at build time based on syscalls.master */
 extern const char *syscallnames[];
 
-#define kprintf(fmt, ...)
-
 /*
  * Function:	unix_syscall
  *
@@ -189,13 +187,13 @@ void unix_syscall(arm_saved_state_t * state)
     uthread->uu_rval[0] = 0;
     uthread->uu_rval[1] = 0;
 
-#if 0
-    kdb_printf("SYSCALL: %s (%d, routine %p), args %p, return %x (%x, %x) pc 0x%08x\n", syscallnames[code >= NUM_SYSENT ? 63 : code], code, callp->sy_call, (void *) uthread->uu_arg, error, uthread->uu_rval[0], uthread->uu_rval[1], state->pc);
-#endif
-
     AUDIT_SYSCALL_ENTER(code, p, uthread);
     error = (*(callp->sy_call)) (p, (void *) uthread->uu_arg, &(uthread->uu_rval[0]));
     AUDIT_SYSCALL_EXIT(code, p, uthread, error);
+
+#if 0
+    kprintf("SYSCALL: %s (%d, routine %p), args %p, return %x (%x, %x) pc 0x%08x\n", syscallnames[code >= NUM_SYSENT ? 63 : code], code, callp->sy_call, (void *) uthread->uu_arg, error, uthread->uu_rval[0], uthread->uu_rval[1], state->pc);
+#endif
 
 #if CONFIG_MACF
     mac_thread_userret(code, error, thread);
