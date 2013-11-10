@@ -1,7 +1,7 @@
 Table of contents:
 A. How to build XNU
 B. How to install a new header file from XNU
-C. Building XNU on a Linux/x64 host.
+C. Building XNU on a Linux x32/x64 host.
 
 (I am putting this up online as I no longer will have time to personally
  maintain this project.)
@@ -291,7 +291,7 @@ B. How to install a new header file from XNU
 	  $(DSTROOT)/System/Library/Frameworks/Kernel.framework/PrivateHeaders
 
 =============================================
-C. Building XNU on a Linux/x64 Host.
+C. Building XNU on a Linux x32/x64 Host.
 
 1) Type the following into your command line:
 
@@ -299,7 +299,7 @@ C. Building XNU on a Linux/x64 Host.
     HOST_BISON=bison HOST_FLEX=flex HOST_CODESIGN=/bin/true BUILD_NO_DEBUG=1  DEPLOYMENT_TARGET_FLAGS=  \
     RC_CFLAGS="-D__arm__ -DARM" MIG=/usr/bin/mig CC=clang CXX=clang++ RC_CFLAGS="-target arm-apple-darwin11" \
     VERBOSE=YES RC_LDFLAGS="-target arm-apple-darwin11 /usr/lib/libclang_rt.cc_kext.a" \
-    STRIP="arm-apple-darwin11-strip"
+    STRIP="arm-apple-darwin11-strip" NM="arm-apple-darwin11-nm"
 
   Make sure you have libclang_rt.cc_kext.a with the armv7/armv6 architectures inside it. You will also
   need a working MiG for Linux. You can either attempt to compile bootstrap_cmds for Linux, or,

@@ -101,8 +101,8 @@ $(SYMBOL_SET_BUILD): $(OBJPATH)/%.symbolset :  %.exports %.$(ARCH_CONFIG_LC).exp
 		$(KEXT_CREATE_SYMBOL_SET) \
 		$($(addsuffix $(ARCH_CONFIG),ARCH_FLAGS_)) \
 		-import $(OBJPATH)/allsymbols \
-		-export $*.exports \
-		-export $*.$(ARCH_CONFIG_LC).exports \
+		-export $(SRCROOT)/config/$*.exports \
+		-export $(SRCROOT)/config/$*.$(ARCH_CONFIG_LC).exports \
 		-output $@ $(_vstdout); \
 	fi
 	$(_v)if [ ! -e $@ ]; then	\
