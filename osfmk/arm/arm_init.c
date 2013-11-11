@@ -36,6 +36,8 @@
 #include <pexpert/arm/boot.h>
 #include <pexpert/arm/protos.h>
 #include <arm/armops.h>
+#include <arm/misc_protos.h>
+#include <kern/startup.h>
 
 extern uint8_t *irqstack;
 
@@ -118,7 +120,7 @@ void arm_init(boot_args * args)
     bootProcessorData = current_cpu_datap();
 
     bootProcessorData->cpu_number = 0;
-    bootProcessorData->cpu_active_stack = &irqstack;
+    bootProcessorData->cpu_active_stack = (vm_offset_t)&irqstack;
     bootProcessorData->cpu_phys_number = 0;
     bootProcessorData->cpu_preemption_level = 1;
     bootProcessorData->cpu_interrupt_level = 0;

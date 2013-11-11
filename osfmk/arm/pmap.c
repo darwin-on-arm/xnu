@@ -221,8 +221,6 @@ lock_t pmap_system_lock;
 }
 #endif
 
-#define PMAP_LOCK(pmap)
-#define PMAP_UNLOCK(pmap)
 
 /** The Free List. */
 pv_entry_t pv_free_list;        /* The free list should be populated when the pmaps are not locked. */
@@ -706,6 +704,7 @@ kern_return_t pmap_attribute_cache_sync(ppnum_t pn, vm_size_t size,
 unsigned int pmap_cache_attributes(ppnum_t pn)
 {
     panic("pmap_cache_attributes");
+    return -1;
 }
 
 /**

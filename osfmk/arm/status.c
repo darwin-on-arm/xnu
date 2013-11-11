@@ -87,6 +87,11 @@ kern_return_t thread_userstack(thread_t thread, int flavor,
     return KERN_SUCCESS;
 }
 
+/**
+ * sanitise_cpsr
+ *
+ * Clear the bad bits off the CPSR and set ModeBits to 0x10 (user)
+ */
 uint32_t sanitise_cpsr(uint32_t cpsr)
 {
     uint32_t final_cpsr;
@@ -100,6 +105,11 @@ uint32_t sanitise_cpsr(uint32_t cpsr)
     return final_cpsr;
 }
 
+/**
+ * thread_entrypoint
+ *
+ * Set the current thread entry point.
+ */
 kern_return_t thread_entrypoint(thread_t thread, int flavor,
                                 thread_state_t tstate, unsigned int count,
                                 mach_vm_offset_t * entry_point)
@@ -126,6 +136,11 @@ kern_return_t thread_entrypoint(thread_t thread, int flavor,
     return (KERN_SUCCESS);
 }
 
+/**
+ * thread_userstackdefault
+ *
+ * Set the default user stack.
+ */
 kern_return_t thread_userstackdefault(thread_t thread,
                                       mach_vm_offset_t * default_user_stack)
 {
@@ -138,7 +153,6 @@ kern_return_t thread_userstackdefault(thread_t thread,
  *
  *  Get the status of the specified thread.
  */
-
 kern_return_t machine_thread_get_state(thread_t thr_act, thread_flavor_t flavor,
                                        thread_state_t tstate,
                                        mach_msg_type_number_t * count)
@@ -216,6 +230,11 @@ kern_return_t machine_thread_get_state(thread_t thr_act, thread_flavor_t flavor,
     return (KERN_SUCCESS);
 }
 
+/**
+ * machine_thread_set_state
+ *
+ * Set the current thread state.
+ */
 kern_return_t machine_thread_set_state(thread_t thread, thread_flavor_t flavor,
                                        thread_state_t tstate,
                                        mach_msg_type_number_t count)
@@ -280,12 +299,22 @@ kern_return_t machine_thread_set_state(thread_t thread, thread_flavor_t flavor,
     return KERN_INVALID_ARGUMENT;
 }
 
+/**
+ * thread_setuserstack
+ *
+ * Set a sepcified user stack for sp.
+ */
 void thread_setuserstack(thread_t thread, mach_vm_address_t user_stack)
 {
     assert(thread);
     thread->machine.user_regs.sp = CAST_DOWN(unsigned int, user_stack);
 }
 
+/**
+ * thread_adjuserstack
+ *
+ * Decrement/increment user stack sp by adj amount.
+ */
 uint64_t thread_adjuserstack(thread_t thread, int adj)
 {
     assert(thread);
@@ -293,14 +322,23 @@ uint64_t thread_adjuserstack(thread_t thread, int adj)
     return thread->machine.user_regs.sp;
 }
 
+/**
+ * thread_setentrypoint
+ *
+ * Set the user pc/entrypoint.
+ */
 void thread_setentrypoint(thread_t thread, uint32_t entry)
 {
     assert(thread);
     thread->machine.user_regs.pc = entry;
 }
 
-void
-thread_set_parent(thread_t parent, int pid)
+/**
+ * thread_set_parent
+ *
+ * Set the parent owner of the specified thread.
+ */
+void thread_set_parent(thread_t parent, int pid)
 {
     struct arm_thread_state *iss;
     iss = parent->machine.uss;
@@ -312,11 +350,12 @@ thread_set_parent(thread_t parent, int pid)
 }
 
 /** 
- * ACT support.
+ * act_thread_csave
+ *
+ * Save the current thread context, used for the internal uthread structure.
+ * (We should also save VFP state...)
  */
-
-void *
-act_thread_csave(void)
+void *act_thread_csave(void)
 {
     kern_return_t kret;
     mach_msg_type_number_t val;
@@ -339,8 +378,13 @@ act_thread_csave(void)
     return ts;
 }
 
-void 
-act_thread_catt(void *ctx)
+/** 
+ * act_thread_catt
+ *
+ * Restore the current thread context, used for the internal uthread structure.
+ * (We should also restore VFP state...)
+ */
+void act_thread_catt(void *ctx)
 {
     thread_t thr_act = current_thread();
     kern_return_t kret;
@@ -355,3 +399,56 @@ act_thread_catt(void *ctx)
     kfree(ts, sizeof(struct arm_thread_state));
 }
 
+/**
+ * thread_set_child
+ *
+ * Set the child thread, used in forking.
+ */
+void thread_set_child(thread_t child, int pid)
+{
+    assert(child->machine.uss == &child->machine.user_regs);
+    child->machine.uss->r[0] = pid;
+    child->machine.uss->r[1] = 1;
+    return;
+}
+
+/**
+ * thread_set_wq_state32
+ *
+ * Set the thread state (used for psynch support).
+ */
+void thread_set_wq_state32(thread_t thread, thread_state_t tstate)
+{
+    arm_thread_state_t *state;
+    arm_saved_state_t *saved_state;
+    thread_t curth = current_thread();
+    spl_t s = 0;
+
+    saved_state = thread->machine.uss;
+    assert(thread->machine.uss == &thread->machine.user_regs);
+
+    state = (arm_thread_state_t *) tstate;
+
+    if (curth != thread) {
+        s = splsched();
+        thread_lock(thread);
+    }
+
+    bzero(saved_state, sizeof(arm_thread_state_t));
+    saved_state->r[0] = state->r[0];
+    saved_state->r[1] = state->r[1];
+    saved_state->r[2] = state->r[2];
+    saved_state->r[3] = state->r[3];
+    saved_state->r[4] = state->r[4];
+    saved_state->r[5] = state->r[5];
+
+    saved_state->sp = state->sp;
+    saved_state->lr = state->lr;
+    saved_state->pc = state->pc;
+    saved_state->cpsr = sanitise_cpsr(state->cpsr);
+
+    if (curth != thread) {
+        thread_unlock(thread);
+        splx(s);
+    }
+}

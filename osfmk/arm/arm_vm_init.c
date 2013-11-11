@@ -302,7 +302,7 @@ void arm_vm_init(uint32_t mem_limit, boot_args * args)
                "\tboot_args->virtBase:     0x%08x\n"
                "\tboot_args->physBase:     0x%08x\n"
                "\tboot_args->topOfKernel:  0x%08x\n"
-               "\tboot_args->memSize:      0x%08x\n", args, args->virtBase,
+               "\tboot_args->memSize:      0x%08x\n", (unsigned int)args, args->virtBase,
                args->physBase, args->topOfKernelData, args->memSize);
 
     /*
@@ -318,7 +318,7 @@ void arm_vm_init(uint32_t mem_limit, boot_args * args)
      * Map L2 tables for identity. The initial bootloader sets up section maps for one L1, so we are next. 
      */
     cpu_ttb = gTopOfKernel + L1_SIZE;
-    bzero(phys_to_virt(cpu_ttb), L1_SIZE);
+    bzero((void*)phys_to_virt(cpu_ttb), L1_SIZE);
 
     identityBaseVA = gVirtBase;
     identityCachePA = cpu_ttb + L1_SIZE;    /* After the first initial TTB. */
@@ -365,10 +365,10 @@ void arm_vm_init(uint32_t mem_limit, boot_args * args)
     /*
      * Map them... 
      */
-    uint32_t *vecpt_start = (first_avail), *vectp, *va_vecpt;
+    uint32_t *vecpt_start = (uint32_t*)(first_avail), *vectp, *va_vecpt;
     vectp = (uint32_t *) addr_to_tte(phys_to_virt(cpu_ttb), VECTORS_BASE);
     *vectp = (((uint32_t) vecpt_start) | L1_TYPE_PTE);
-    va_vecpt = phys_to_virt(vecpt_start) + pte_offset(VECTORS_BASE);
+    va_vecpt = (vm_offset_t)phys_to_virt(vecpt_start) + pte_offset(VECTORS_BASE);
     *va_vecpt =
         virt_to_phys(&ExceptionVectorsBase) | L2_ACCESS_PRW | L2_SMALL_PAGE;
 

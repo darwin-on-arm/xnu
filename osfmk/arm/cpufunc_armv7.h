@@ -42,27 +42,29 @@
 #ifndef _ARM32_CPUFUNC_H_
 #define _ARM32_CPUFUNC_H_
 
-void	armv7_setttb(u_int, bool);
+typedef int bool, vsize_t;
 
-void	armv7_icache_sync_range(vaddr_t, vsize_t);
-void	armv7_dcache_wb_range(vaddr_t, vsize_t);
-void	armv7_dcache_wbinv_range(vaddr_t, vsize_t);
-void	armv7_dcache_inv_range(vaddr_t, vsize_t);
-void	armv7_idcache_wbinv_range(vaddr_t, vsize_t);
+extern void	armv7_setttb(u_int, bool);
 
-void	armv7_icache_sync_all(void);
-void	armv7_cpu_sleep(int);
-void	armv7_context_switch(u_int);
-void	armv7_tlb_flushID_SE(u_int);
-void 	armv7_tlb_flushID_RANGE(u_int, u_int);
-void 	armv7_tlb_flushID(void);
-void 	armv7_tlb_flushID_ASID(u_int);
-void	armv7_drain_writebuf(void);
+extern void	armv7_icache_sync_range(vaddr_t, vsize_t);
+extern void	armv7_dcache_wb_range(vaddr_t, vsize_t);
+extern void	armv7_dcache_wbinv_range(vaddr_t, vsize_t);
+extern void	armv7_dcache_inv_range(vaddr_t, vsize_t);
+extern void	armv7_idcache_wbinv_range(vaddr_t, vsize_t);
 
-void	armv7_set_context_id(u_int);
+extern void	armv7_icache_sync_all(void);
+extern void	armv7_cpu_sleep(int);
+extern void	armv7_context_switch(u_int);
+extern void	armv7_tlb_flushID_SE(u_int);
+extern void 	armv7_tlb_flushID_RANGE(u_int, u_int);
+extern void 	armv7_tlb_flushID(void);
+extern void 	armv7_tlb_flushID_ASID(u_int);
+extern void	armv7_drain_writebuf(void);
 
-void	armv7_setup(char *string);
-void 	armv7_dcache_wbinv_all (void);
-void	armv7_idcache_wbinv_all(void);
+extern void	armv7_set_context_id(u_int);
+
+extern void	armv7_setup(char *string);
+extern void 	armv7_dcache_wbinv_all (void);
+extern void	armv7_idcache_wbinv_all(void);
 
 #endif

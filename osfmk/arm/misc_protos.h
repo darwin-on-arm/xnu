@@ -61,7 +61,7 @@ extern void arm_set_threadpid_user_readonly(uint64_t * address);
 extern void arm_set_threadpid_priv_readwrite(uint64_t * address);
 #endif
 
-extern arm_usimple_lock(usimple_lock_t l);
+extern int arm_usimple_lock(usimple_lock_t l);
 
 void panic_arm_backtrace(void *_frame, int nframes, const char *msg,
                          boolean_t regdump, arm_saved_state_t * regs);
@@ -69,5 +69,7 @@ void panic_arm_backtrace(void *_frame, int nframes, const char *msg,
 void arm_vm_init(uint32_t mem_limit, boot_args * args);
 
 void sleh_abort(void *context, int reason);
+
+void cache_initialize(void);
 
 #endif

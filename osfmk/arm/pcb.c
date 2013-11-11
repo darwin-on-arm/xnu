@@ -396,50 +396,6 @@ kern_return_t machine_thread_dup(thread_t self, thread_t target)
     return KERN_SUCCESS;
 }
 
-void thread_set_child(thread_t child, int pid)
-{
-    assert(child->machine.uss == &child->machine.user_regs);
-    child->machine.uss->r[0] = pid;
-    child->machine.uss->r[1] = 1;
-    return;
-}
-
-void thread_set_wq_state32(thread_t thread, thread_state_t tstate)
-{
-    arm_thread_state_t *state;
-    arm_saved_state_t *saved_state;
-    thread_t curth = current_thread();
-    spl_t s = 0;
-
-    saved_state = thread->machine.uss;
-    assert(thread->machine.uss == &thread->machine.user_regs);
-
-    state = (arm_thread_state_t *) tstate;
-
-    if (curth != thread) {
-        s = splsched();
-        thread_lock(thread);
-    }
-
-    bzero(saved_state, sizeof(arm_thread_state_t));
-    saved_state->r[0] = state->r[0];
-    saved_state->r[1] = state->r[1];
-    saved_state->r[2] = state->r[2];
-    saved_state->r[3] = state->r[3];
-    saved_state->r[4] = state->r[4];
-    saved_state->r[5] = state->r[5];
-
-    saved_state->sp = state->sp;
-    saved_state->lr = state->lr;
-    saved_state->pc = state->pc;
-    saved_state->cpsr = sanitise_cpsr(state->cpsr);
-
-    if (curth != thread) {
-        thread_unlock(thread);
-        splx(s);
-    }
-}
-
 /*
  * consider_machine_collect:
  *
