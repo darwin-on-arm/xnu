@@ -10420,7 +10420,7 @@ OSKext::updateLoadedKextSummary(OSKextLoadedKextSummary *summary)
 
 /*********************************************************************
 *********************************************************************/
-#if __i386__
+#if defined(__i386__) || defined(__arm__)
 /* static */
 kern_return_t
 OSKext::getKmodInfo(

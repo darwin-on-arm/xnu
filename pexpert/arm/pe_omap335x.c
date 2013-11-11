@@ -124,8 +124,10 @@ void Omap3_putc(int c)
 
 int Omap3_getc(void)
 {
-    while (!(HwReg32(gOmapSerialUartBase + LSR) & LSR_DR))
-        barrier();
+    int i = 0x80000;
+    while (!(HwReg32(gOmapSerialUartBase + LSR) & LSR_DR)) {
+        i--; if(!i) return -1;
+    }
 
     return (HwReg32(gOmapSerialUartBase + RBR));
 }

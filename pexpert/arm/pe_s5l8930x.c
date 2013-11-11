@@ -132,6 +132,8 @@ static void timer_configure(void)
 
 void S5L8930X_putc(int c)
 {
+    if(c == '\n') S5L8930X_putc('\r');
+
     /*
      * Wait for FIFO queue to empty. 
      */
@@ -147,10 +149,17 @@ int S5L8930X_getc(void)
     /*
      * Wait for a character. 
      */
-    while (HwReg(gS5L8930XUartBase + UFSTAT) & 1)
-        barrier();
+    int i = 0x80;
+    uint32_t ufstat = HwReg(gS5L8930XUartBase + UFSTAT);
+    boolean_t can_read = FALSE;
 
-    return HwReg(gS5L8930XUartBase + URXH);
+    can_read = (ufstat & UART_UFSTAT_RXFIFO_FULL) | (ufstat & 0xF);
+    if(can_read)
+        return HwReg(gS5L8930XUartBase + URXH);
+    else
+        return -1;
+
+    return -1;
 }
 
 void S5L8930X_uart_init(void)

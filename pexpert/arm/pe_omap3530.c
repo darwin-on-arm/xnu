@@ -87,7 +87,7 @@ static void timer_configure(void)
     uint64_t hz = 3276800;
     gPEClockFrequencyInfo.timebase_frequency_hz = hz;
 
-    clock_decrementer = 1000;
+    clock_decrementer = 500;
     kprintf(KPRINTF_PREFIX "decrementer frequency = %llu\n", clock_decrementer);
 
     rtc_configure(hz);
@@ -121,8 +121,10 @@ void Omap3_putc(int c)
 
 int Omap3_getc(void)
 {
-    while (!(HwReg(gOmapSerialUartBase + LSR) & LSR_DR))
-        barrier();
+    int i = 0x20000;
+    while (!(HwReg(gOmapSerialUartBase + LSR) & LSR_DR)) {
+        i--; if(!i) return -1;
+    }
 
     return (HwReg(gOmapSerialUartBase + RBR));
 }

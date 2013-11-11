@@ -148,11 +148,13 @@ kmod_get_info(
     kmod_info_array_t * kmod_list KMOD_MIG_UNUSED,
     mach_msg_type_number_t * kmodCount KMOD_MIG_UNUSED)
 {
-#if __i386__
+#if defined(__i386__)
     if (current_task() != kernel_task && task_has_64BitAddr(current_task())) {
         NOT_SUPPORTED_USER64();
         return KERN_NOT_SUPPORTED;
     }
+    return kext_get_kmod_info(kmod_list, kmodCount);
+#elif defined(__arm__)
     return kext_get_kmod_info(kmod_list, kmodCount);
 #else
     NOT_SUPPORTED_KERNEL();

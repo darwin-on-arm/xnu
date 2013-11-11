@@ -514,14 +514,6 @@ private:
      */
     virtual void               setCPPInitialized(bool initialized=true);
 
-#if __i386__
-   /* Backward compatibility for kmod_get_info() MIG call.
-    */
-    static kern_return_t getKmodInfo(
-        kmod_info_array_t      * kmodList,
-        mach_msg_type_number_t * kmodCount);
-#endif /* __i386__ */
-
 
 #if PRAGMA_MARK
 /**************************************/
@@ -608,6 +600,15 @@ public:
     virtual bool               isLoaded(void);
     virtual bool               isStarted(void);
     virtual bool               isCPPInitialized(void);
+
+#if defined(__i386__) || defined(__arm__)
+   /* Backward compatibility for kmod_get_info() MIG call.
+    */
+   static kern_return_t getKmodInfo(
+        kmod_info_array_t      * kmodList,
+        mach_msg_type_number_t * kmodCount);
+#endif /* __i386__ */
+
 };
 
 
