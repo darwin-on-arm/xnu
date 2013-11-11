@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html>
+
+  <head>
+    <meta charset='utf-8' />
+    <meta http-equiv="X-UA-Compatible" content="chrome=1" />
+    <meta name="description" content="Darwin/ARM Project (xnu kernel) : Porting the Darwin kernel to the ARM architecture." />
+
+    <link rel="stylesheet" type="text/css" media="screen" href="stylesheets/stylesheet.css">
+
+    <title>Darwin/ARM Project (xnu kernel)</title>
+  </head>
+
+  <body>
+
+    <!-- HEADER -->
+    <div id="header_wrap" class="outer">
+        <header class="inner">
+          <a id="forkme_banner" href="https://github.com/winocm/xnu">View on GitHub</a>
+
+          <h1 id="project_title">Darwin/ARM Project (xnu kernel)</h1>
+          <h2 id="project_tagline">Porting the Darwin kernel to the ARM architecture.</h2>
+
+            <section id="downloads">
+              <a class="zip_download_link" href="https://github.com/winocm/xnu/zipball/master">Download this project as a .zip file</a>
+              <a class="tar_download_link" href="https://github.com/winocm/xnu/tarball/master">Download this project as a tar.gz file</a>
+            </section>
+        </header>
+    </div>
+
+    <!-- MAIN CONTENT -->
+    <div id="main_content_wrap" class="outer">
+      <section id="main_content" class="inner">
+        <h2>
+<a name="welcome-to-darwinarm" class="anchor" href="#welcome-to-darwinarm"><span class="octicon octicon-link"></span></a>Welcome to Darwin/ARM</h2>
+
+<p>Welcome to Darwin/ARM. Darwin is the core operating system that lies under both iPhone OS and Mac OS X. It mainly consists of the kernel and various other core components such as <code>dyld</code>, <code>launchd</code> and such. Over time, Apple has not really paid much attention to their open-source releases as present on the <a href="http://opensource.apple.com">open source portal</a>, including not publishing code for the ARM version of the <code>xnu</code> kernel.</p>
+
+<p>This project aims to fill that gap.</p>
+
+<h3>
+<a name="irc" class="anchor" href="#irc"><span class="octicon octicon-link"></span></a>IRC</h3>
+
+<p>Feel free to join us in <code>##darwin-on-arm</code> on Freenode. </p>
+
+<h2>
+<a name="current-status" class="anchor" href="#current-status"><span class="octicon octicon-link"></span></a>Current Status</h2>
+
+<p>Darwin/ARM runs on a variety of ARM reference platforms and hardware such as:</p>
+
+<ul>
+<li>ARM RealView (Platform Baseboard for Cortex-A8/Emulation Baseboard)</li>
+<li>Texas Instruments DM3730 (BeagleBoard xM)</li>
+<li>Texas Instruments Sitara AM335x (BeagleBone)</li>
+<li>Samsung S5L89xx (All ARMv7 platforms from 8920 to 8930).</li>
+</ul><p>Currently, the kernel can perform a variety of tasks, including unmodified binaries from iPhone OS.</p>
+
+<h3>
+<a name="userspace" class="anchor" href="#userspace"><span class="octicon octicon-link"></span></a>Userspace</h3>
+
+<p>Currently, the userspace is very simple, with the FreeBSD <code>init</code>, a simple runcom script and a getty. Multiuser does work at the moment. Many CoreFoundation/IOKit apps run at the moment, such as <code>sw_vers</code>, or <code>ioreg</code>.</p>
+
+<p>The OS is incredibly volatile, so be warned! (There are dragons lurking around.)</p>
+
+<h3>
+<a name="screenshots" class="anchor" href="#screenshots"><span class="octicon octicon-link"></span></a>Screenshots</h3>
+
+<ul>
+<li><a href="http://cl.ly/image/3V3t3511050P"><code>dyld</code> crashing and demo of multiuser and privilege separation.</a></li>
+<li><a href="http://cl.ly/image/1L380u0l3Y1w"><code>ioreg</code>, <code>uname</code> and <code>hostinfo</code> output</a></li>
+<li><a href="http://cl.ly/image/0z3i1D2k2545">Multiuser <code>id</code> and <code>pwd</code> output for home directories</a></li>
+</ul><h2>
+<a name="building" class="anchor" href="#building"><span class="octicon octicon-link"></span></a>Building</h2>
+
+<p>Building is relatively simple if you're on OS X, simply compile <code>ctfmerge</code>, <code>ctfconvert</code> and <code>ctfdump</code> from the <code>dtrace</code> package. Then check out the kernel source and simply build for your platform using `make TARGET_CONFIGS="debug arm ".</p>
+
+<p>A sample boot loader is also available <a href="http://github.com/winocm/GenericBooter">here</a> for ARM RealView PB-A8 and OMAP3.</p>
+
+<p>General purpose kernelcache build support coming soon! (Kernelcaches can currently be used, but building is rather unorthodox at the moment)</p>
+
+<p>Have fun and happy hacking!</p>
+      </section>
+    </div>
+
+    <!-- FOOTER  -->
+    <div id="footer_wrap" class="outer">
+      <footer class="inner">
+        <p class="copyright">Darwin/ARM Project (xnu kernel) maintained by <a href="https://github.com/winocm">winocm</a></p>
+        <p>Published with <a href="http://pages.github.com">GitHub Pages</a></p>
+      </footer>
+    </div>
+
+    
+
+  </body>
+</html>
