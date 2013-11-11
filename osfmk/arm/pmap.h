@@ -146,7 +146,7 @@ typedef struct arm_l2_t {
 } arm_l2_t;
 #pragma pack()
 
-#define	PMAP_SWITCH_USER(th, map, my_cpu) th->map = map;
+#define	PMAP_SWITCH_USER(th, map, my_cpu) pmap_switch(map->pmap), th->map = map;
 
 #define pmap_kernel_va(VA)	\
 	(((VA) >= VM_MIN_KERNEL_ADDRESS) && ((VA) <= vm_last_addr))

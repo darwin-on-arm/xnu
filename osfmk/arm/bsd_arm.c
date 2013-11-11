@@ -184,7 +184,7 @@ kern_return_t machine_thread_get_state(thread_t thr_act, thread_flavor_t flavor,
             /*
              * First, copy everything:
              */
-            *state = *saved_state;
+            ovbcopy((void*)saved_state, (void*)state, sizeof(struct arm_thread_state));
 
             *count = ARM_THREAD_STATE_COUNT;
             break;
@@ -252,8 +252,6 @@ kern_return_t machine_thread_set_state(thread_t thread, thread_flavor_t flavor,
     assert(thread != NULL);
     assert(tstate);
 
-    thread->machine.uss = &thread->machine.user_regs;
-
     switch (flavor) {
     case ARM_THREAD_STATE:
         ts = (struct arm_thread_state *) tstate;
@@ -301,6 +299,17 @@ void thread_setentrypoint(thread_t thread, uint32_t entry)
     thread->machine.user_regs.pc = entry;
 }
 
+void
+thread_set_parent(thread_t parent, int pid)
+{
+    struct arm_thread_state *iss;
+    iss = parent->machine.uss;
+    assert(iss);
+
+    iss->r[0] = pid;
+    iss->r[1] = 0;
+    return;
+}
 
 /** 
  * ACT support.
@@ -319,9 +328,9 @@ act_thread_csave(void)
     if (ts == (struct arm_thread_state_t *)NULL)
         return((void *)0);
 
-    val = ARM_THREAD_STATE; 
+    val = ARM_THREAD_STATE_COUNT; 
     kret = machine_thread_get_state(thr_act, ARM_THREAD_STATE,
-           (thread_state_t) &ts, &val);
+           (thread_state_t) ts, &val);
     if (kret != KERN_SUCCESS) {
         kfree(ts, sizeof(struct arm_thread_state));
         return((void *)0);
@@ -330,4 +339,19 @@ act_thread_csave(void)
     return ts;
 }
 
+void 
+act_thread_catt(void *ctx)
+{
+    thread_t thr_act = current_thread();
+    kern_return_t kret;
+
+    if (ctx == (void *)NULL)
+        return;
+
+    struct arm_thread_state_t *ts = (struct arm_thread_state_t*)ctx;
+
+    machine_thread_set_state(thr_act, ARM_THREAD_STATE, (thread_state_t)ts, 
+                                    ARM_THREAD_STATE_COUNT);
+    kfree(ts, sizeof(struct arm_thread_state));
+}
 
