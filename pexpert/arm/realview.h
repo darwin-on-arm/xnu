@@ -33,8 +33,9 @@
 #ifndef _PEXPERT_ARM_REALVIEW_H_
 #define _PEXPERT_ARM_REALVIEW_H_
 
-#define AMBA_UART_FR(base)      (*(volatile unsigned char *)((base) + 0x18))
-#define AMBA_UART_DR(base)      (*(volatile unsigned char *)((base) + 0x00))
+#define AMBA_UART_FR(base)      (*(volatile unsigned int *)((base) + 0x18))
+#define AMBA_UART_DR(base)      (*(volatile unsigned int *)((base) + 0x00))
+#define AMBA_UART_ECR(base)	(*(volatile unsigned int *)((base) + 0x04))
 
 #define REALVIEW_UART0_BASE     0x10009000
 #define REALVIEW_PIC0_BASE      0x1E000000
@@ -44,7 +45,7 @@
 
 #define REALVIEW_EB_PIC0_BASE   0x10050000
 
-#define HARDWARE_REGISTER(x)    *((unsigned int*)(x)) 
+#define HARDWARE_REGISTER(x)    (*(unsigned int *)(x))
 
 #define LCDTIMING0_PPL(x)           ((((x) / 16 - 1) & 0x3f) << 2)
 #define LCDTIMING1_LPP(x)           (((x) & 0x3ff) - 1)
