@@ -38,25 +38,11 @@
 #include <arm/armops.h>
 #include <arm/misc_protos.h>
 #include <kern/startup.h>
+#include "proc_reg.h"
 
 extern uint8_t *irqstack;
 
 extern int disableConsoleOutput, serialmode;
-
-static inline uint32_t arm_processor_read_cpuidr(void)
-{
-    uint32_t ret;
-    __asm__ __volatile__("mrc p15, 0, %0, c0, c0, 0":"=r"(ret));
-    return ret;
-}
-
-static void arm_processor_feature_identify(void)
-{
-    /*
-     * todo 
-     */
-    return;
-}
 
 /**
  * arm_processor_identify
@@ -65,19 +51,8 @@ static void arm_processor_feature_identify(void)
  */
 void arm_processor_identify(void)
 {
-    char *cpu_name =
-#if __ARM_ARCH == 7
-        "ARMv7";
-#elif __ARM_ARCH == 6
-        "ARMv6";
-#else
-        "unknown ARM";
-#endif
-
-    uint32_t cpuidr = arm_processor_read_cpuidr();
-    kprintf("Current processor is an %s [0x%08x] revision %d.\n", cpu_name,
-            cpuidr, cpuidr & 15);
-    arm_processor_feature_identify();
+    get_cachetype_cp15();
+    identify_arm_cpu();
 }
 
 /**

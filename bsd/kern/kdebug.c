@@ -2340,6 +2340,8 @@ unsigned char *getProcName(struct proc *proc) {
 #define STACKSHOT_SUBSYS_UNLOCK() lck_mtx_unlock(&stackshot_subsys_mutex)
 #if defined(__i386__) || defined (__x86_64__)
 #define TRAP_DEBUGGER __asm__ volatile("int3");
+#elif defined(__arm__)
+#define TRAP_DEBUGGER __asm__ volatile("bkpt #0");
 #endif
 
 #define SANE_TRACEBUF_SIZE (8 * 1024 * 1024)
@@ -2425,7 +2427,7 @@ stack_snapshot2(pid_t pid, user_addr_t tracebuf, uint32_t tracebuf_size, uint32_
  * the trace buffer
  */
 
-	//TRAP_DEBUGGER;
+	TRAP_DEBUGGER;
 
 	ml_set_interrupts_enabled(istate);
 
