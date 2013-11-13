@@ -97,8 +97,10 @@ int RealView_getc(void)
     if (!gRealviewUartBase)
         return -1;
 
-    while (AMBA_UART_FR(gRealviewUartBase) & (1 << 4))
-        barrier();
+    int i = 0x80000;
+    while (AMBA_UART_FR(gRealviewUartBase) & (1 << 4)) {
+        --i; if (!i) return -1;
+    }
 
     c = AMBA_UART_DR(gRealviewUartBase);
 
