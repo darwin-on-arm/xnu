@@ -695,7 +695,8 @@ void sleh_undef(arm_saved_state_t * state)
          * NEON instruction. 
          */
         if (((OSSwapInt32(instruction) & 0xff100000) == 0xf4000000)
-            || ((OSSwapInt32(instruction) & 0xfe000000) == 0xf2000000)) {
+            || ((OSSwapInt32(instruction) & 0xfe000000) == 0xf2000000)
+            || (((instruction) & 0xff100000) == 0xf9000000)) {
             /*
              * NEON instruction. 
              */
@@ -785,6 +786,7 @@ void sleh_undef(arm_saved_state_t * state)
                arm_ctx->pc, arm_ctx->cpsr);
         printf("dyld_all_image_info_addr: 0x%08x   dyld_all_image_info_size: 0x%08x\n",
             thread->task->all_image_info_addr, thread->task->all_image_info_size);
+
         /*
          * xxx gate 
          */

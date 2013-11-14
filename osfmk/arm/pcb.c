@@ -317,7 +317,7 @@ vm_offset_t machine_stack_detach(thread_t thread)
 processor_t machine_choose_processor(processor_set_t pset,
                                      processor_t preferred)
 {
-    return (cpu_datap(cpu_number())->cpu_processor);
+    return preferred;
 }
 
 /**

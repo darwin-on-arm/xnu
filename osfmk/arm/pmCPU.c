@@ -50,11 +50,7 @@ boolean_t machine_processor_is_inactive(processor_t processor)
 
 void machine_idle(void)
 {
-    ml_set_interrupts_enabled(FALSE);
-    /*
-     * can use wfi? 
-     */
-    ml_set_interrupts_enabled(TRUE);
+    __asm__ __volatile("cpsie if");
 }
 
 /******************************************************************************
