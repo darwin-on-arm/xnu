@@ -61,7 +61,7 @@
 #include <libkern/OSBase.h>
 
 static uint32_t rtclock_sec_divisor;
-static uint64_t rtclock_min_decrementer = 1 * NSEC_PER_USEC;
+static uint64_t rtclock_min_decrementer = 0;
 static uint64_t rtclock_max_decrementer = 100000000;
 
 static uint64_t rtclock_scaler = 0;
@@ -73,9 +73,9 @@ static uint64_t deadline_to_decrementer(uint64_t deadline, uint64_t now)
     uint64_t delta;
 
     if (deadline <= now)
-        return rtclock_sec_divisor;
+        return 0;
     else {
-        delta = deadline - now;
+        delta = (deadline) - now;
         //kprintf("wat %llu %llu %llu %llu\n", delta, deadline, now, (deadline - now));
         return (delta);
     }
@@ -195,7 +195,7 @@ void clock_get_system_nanotime(clock_sec_t * secs, clock_nsec_t * nanosecs)
 
 void clock_get_system_microtime(clock_sec_t * secs, clock_usec_t * microsecs)
 {
-    uint64_t now = pe_arm_get_timebase(NULL);
+    uint64_t now = mach_absolute_time();
     uint32_t remain;
 
     *secs = (now * rtclock_scaler) / (uint64_t) NSEC_PER_SEC;
@@ -265,6 +265,8 @@ int rtclock_init(void)
     current_cpu_datap()->rtcPop = 0;
 
     clock_timebase_init();
+
+    etimer_resync_deadlines();
 
     return 1;
 }
