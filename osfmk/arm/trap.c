@@ -574,6 +574,14 @@ boolean_t irq_handler(void *context)
     return ret;
 }
 
+void irq_iokit_dispatch(uint32_t irq)
+{
+    cpu_data_t *datap = current_cpu_datap();
+    if(datap->handler) {
+        datap->handler(datap->target, NULL, datap->nub, irq);
+    }
+}
+
 /**
  * sleh_undef
  *

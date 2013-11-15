@@ -280,7 +280,10 @@ void Omap3_handle_interrupt(void *context)
         clock_had_irq = 1;
 
         return;
+    } else {
+        irq_iokit_dispatch(irq_number);
     }
+
     return;
 }
 

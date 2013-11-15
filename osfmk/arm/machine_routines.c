@@ -245,8 +245,16 @@ void ml_install_interrupt_handler(void *nub, int source, void *target,
                                   IOInterruptHandler handler, void *refCon)
 {
     boolean_t current_state;
+    cpu_data_t* datap;
 
     current_state = ml_get_interrupts_enabled();
+
+    datap = current_cpu_datap();
+    assert(datap);
+    datap->nub = nub;
+    datap->target = target;
+    datap->handler = handler;
+    datap->refCon = refCon;
 
     (void) ml_set_interrupts_enabled(current_state);
 

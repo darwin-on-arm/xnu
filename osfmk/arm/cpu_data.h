@@ -107,6 +107,12 @@ typedef struct cpu_data {
     rtclock_timer_t rt_timer;
     thread_t old_thread;
     thread_t new_thread;
+
+    IOInterruptHandler handler;     /* for IOKit */
+    void* nub;
+    void* target;
+    void* refCon;
+
 } cpu_data_t;
 
 extern cpu_data_t *cpu_data_ptr[];

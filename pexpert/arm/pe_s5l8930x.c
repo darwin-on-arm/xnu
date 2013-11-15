@@ -348,10 +348,11 @@ void S5L8930X_timebase_init(void)
 
 void S5L8930X_handle_interrupt(void *context)
 {
+    uint32_t current_irq = HwReg(gS5L8930XVic0Base + VICADDRESS);
     /*
      * Timer IRQs are handeled by us. 
      */
-    if (HwReg(gS5L8930XVic0Base + VICADDRESS) == 6) {
+    if (current_irq == 6) {
         /*
          * Disable timer 
          */
@@ -381,7 +382,10 @@ void S5L8930X_handle_interrupt(void *context)
          * We had an IRQ. 
          */
         clock_had_irq = TRUE;
+    } else {
+        irq_iokit_dispatch(current_irq);
     }
+
     return;
 }
 

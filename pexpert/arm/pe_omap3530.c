@@ -41,6 +41,7 @@
 #include <machine/machine_routines.h>
 #include <vm/pmap.h>
 #include <arm/pmap.h>
+#include <kern/cpu_data.h>
 
 /* XXX: timer is so god awfully borked */
 
@@ -283,7 +284,10 @@ void Omap3_handle_interrupt(void *context)
         clock_had_irq = 1;
 
         return;
+    } else {
+        irq_iokit_dispatch(irq_number);
     }
+    
     return;
 }
 
