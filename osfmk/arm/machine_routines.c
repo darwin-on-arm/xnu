@@ -285,7 +285,7 @@ int ml_get_max_affinity_sets(void)
 
 processor_set_t ml_affinity_to_pset(uint32_t affinity_num)
 {
-    return PROCESSOR_SET_NULL;
+    return processor_pset(master_processor);
 }
 
 vm_offset_t ml_static_ptovirt(vm_offset_t paddr)
@@ -370,20 +370,27 @@ boolean_t ml_thread_is64bit(thread_t thread)
  *  Routine:        ml_cpu_get_info
  *  Function:
  */
+extern int arm_pdcache_line_size, arm_pdcache_size, arm_picache_size;
+
 void
 ml_cpu_get_info(ml_cpu_info_t *ml_cpu_info)
 {
     if (ml_cpu_info == 0)
         return;
   
-    ml_cpu_info->vector_unit = 0;
-    ml_cpu_info->cache_line_size = 0;
-    ml_cpu_info->l1_icache_size = 0;
-    ml_cpu_info->l1_dcache_size = 0;
+    ml_cpu_info->vector_unit = 1;
+
+    ml_cpu_info->cache_line_size = arm_pdcache_line_size;
+
+    ml_cpu_info->l1_icache_size = arm_pdcache_size;
+    ml_cpu_info->l1_dcache_size = arm_picache_size;
+
     ml_cpu_info->l2_settings = 0;
     ml_cpu_info->l2_cache_size = 0xFFFFFFFF;
+
     ml_cpu_info->l3_settings = 0;
     ml_cpu_info->l3_cache_size = 0xFFFFFFFF;
+
     return;
 }
 
