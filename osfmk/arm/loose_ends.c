@@ -154,8 +154,7 @@ static void arc4_stir(void)
     union {
         uint32_t tsc;
         u_int rnd[128 / sizeof(u_int)];
-    }
-    rdat;
+    } rdat;
     int n;
 
     if (!rs_initialized) {
@@ -410,8 +409,7 @@ void fillPage(ppnum_t pa, unsigned int fill)
  *
  * Copy a memory address across a virtual/physical memory barrier.
  */
-kern_return_t copypv(addr64_t src64, addr64_t snk64, unsigned int size,
-                     int which)
+kern_return_t copypv(addr64_t src64, addr64_t snk64, unsigned int size, int which)
 {
     addr64_t src64_virt, snk64_virt;
     int bothphys = 0;
@@ -442,4 +440,9 @@ kern_return_t copypv(addr64_t src64, addr64_t snk64, unsigned int size,
         bcopy(src64, snk64, size);
 
     return KERN_SUCCESS;
+}
+
+void bzero_phys_nc(addr64_t src64, uint32_t bytes)
+{
+    bzero_phys(src64, bytes);
 }

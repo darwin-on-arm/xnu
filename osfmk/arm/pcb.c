@@ -114,8 +114,7 @@ uint64_t thread_get_cthread_self(void)
 /**
  * machine_thread_inherit_taskwide
  */
-kern_return_t machine_thread_inherit_taskwide(thread_t thread,
-                                              task_t parent_task)
+kern_return_t machine_thread_inherit_taskwide(thread_t thread, task_t parent_task)
 {
     return KERN_FAILURE;
 }
@@ -169,8 +168,7 @@ thread_t machine_switch_context(thread_t old, thread_continue_t continuation,
     cpu_data_t *datap;
     register thread_t retval;
 
-    kprintf("machine_switch_context: %p -> %p (cont: %p)\n", old, new,
-            continuation);
+    kprintf("machine_switch_context: %p -> %p (cont: %p)\n", old, new, continuation);
 
     if (old == new)
         panic("machine_switch_context: old = new thread (%p %p)", old, new);
@@ -278,8 +276,7 @@ void machine_stack_attach(thread_t thread, vm_offset_t stack)
     assert(stack != NULL);
     assert(thread != NULL);
 
-    kprintf("machine_stack_attach: setting stack %p for thread %p\n", stack,
-            thread);
+    kprintf("machine_stack_attach: setting stack %p for thread %p\n", stack, thread);
 
     uint32_t *kstack = (uint32_t *) STACK_IKS(stack);
 
@@ -314,8 +311,7 @@ vm_offset_t machine_stack_detach(thread_t thread)
 /*
  * Only one real processor.
  */
-processor_t machine_choose_processor(processor_set_t pset,
-                                     processor_t preferred)
+processor_t machine_choose_processor(processor_set_t pset, processor_t preferred)
 {
     return preferred;
 }
@@ -390,8 +386,7 @@ kern_return_t machine_thread_dup(thread_t self, thread_t target)
      * Save FP registers and copy.
      */
     save_vfp_context(self);
-    bcopy(&self->machine.vfp_regs, &target->machine.vfp_regs,
-          sizeof(arm_vfp_state_t));
+    bcopy(&self->machine.vfp_regs, &target->machine.vfp_regs, sizeof(arm_vfp_state_t));
     target->machine.cthread_self = self->machine.cthread_self;
     return KERN_SUCCESS;
 }
@@ -401,12 +396,17 @@ kern_return_t machine_thread_dup(thread_t self, thread_t target)
  *
  *  Try to collect machine-dependent pages
  */
-void
-consider_machine_collect(void)
+void consider_machine_collect(void)
 {
 }
 
-void
-consider_machine_adjust(void)
+void consider_machine_adjust(void)
 {
+}
+
+unsigned int get_useraddr(void)
+{
+    thread_t thr_act = current_thread();
+
+    return (thr_act->machine.iss->pc);
 }

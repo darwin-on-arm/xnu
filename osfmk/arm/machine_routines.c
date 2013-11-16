@@ -183,11 +183,9 @@ void bzero_phys(addr64_t src64, uint32_t bytes)
 void bcopy_phys(addr64_t src64, addr64_t dst64, vm_size_t bytes)
 {
 #ifndef __LP64__
-    bcopy(phys_to_virt((uint32_t) src64), phys_to_virt((uint32_t) dst64),
-          bytes);
+    bcopy(phys_to_virt((uint32_t) src64), phys_to_virt((uint32_t) dst64), bytes);
 #else
-    bcopy(phys_to_virt((uint64_t) src64), phys_to_virt((uint64_t) dst64),
-          bytes);
+    bcopy(phys_to_virt((uint64_t) src64), phys_to_virt((uint64_t) dst64), bytes);
 #endif
     return;
 }
@@ -245,7 +243,7 @@ void ml_install_interrupt_handler(void *nub, int source, void *target,
                                   IOInterruptHandler handler, void *refCon)
 {
     boolean_t current_state;
-    cpu_data_t* datap;
+    cpu_data_t *datap;
 
     current_state = ml_get_interrupts_enabled();
 
@@ -338,8 +336,7 @@ addr64_t kvtophys(vm_offset_t addr)
  *			the duration of the copy process.
  */
 
-vm_size_t ml_nofault_copy(vm_offset_t virtsrc, vm_offset_t virtdst,
-                          vm_size_t size)
+vm_size_t ml_nofault_copy(vm_offset_t virtsrc, vm_offset_t virtdst, vm_size_t size)
 {
     addr64_t cur_phys_dst, cur_phys_src;
     uint32_t count, nbytes = 0;
@@ -380,12 +377,11 @@ boolean_t ml_thread_is64bit(thread_t thread)
  */
 extern int arm_pdcache_line_size, arm_pdcache_size, arm_picache_size;
 
-void
-ml_cpu_get_info(ml_cpu_info_t *ml_cpu_info)
+void ml_cpu_get_info(ml_cpu_info_t * ml_cpu_info)
 {
     if (ml_cpu_info == 0)
         return;
-  
+
     ml_cpu_info->vector_unit = 1;
 
     ml_cpu_info->cache_line_size = arm_pdcache_line_size;
@@ -402,6 +398,10 @@ ml_cpu_get_info(ml_cpu_info_t *ml_cpu_info)
     return;
 }
 
+boolean_t ml_delay_should_spin(uint64_t interval)
+{
+    return FALSE;
+}
 
 /*
  * ml_phys_read_*.

@@ -118,6 +118,7 @@ EnterARM(ml_get_interrupts_enabled)
  */
 EnterARM(__disable_preemption)
 EnterARM(_disable_preemption)
+EnterARM(disable_preemption)
     LoadThreadRegister(r12)
     IncrementPreemptLevel(r12, r2)
     bx      lr
@@ -139,6 +140,7 @@ EnterARM(get_preemption_level)
  */
 EnterARM(__enable_preemption)
 EnterARM(_enable_preemption)
+EnterARM(enable_preemption)
     /* Get thread ID */
     LoadThreadRegister(r12)
     ldr     r2, [r12, MACHINE_THREAD_PREEMPT_COUNT]
