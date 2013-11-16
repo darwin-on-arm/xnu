@@ -245,7 +245,7 @@ EOF
 ###
 ### Add in the build environment variables from darwinxref
 ###
-build_string="$build_string $EXTERNAL_BUILD_FLAGS \"SRCROOT=$SRCROOT\" \"OBJROOT=$OBJROOT\" \"SYMROOT=$SYMROOT\" \"DSTROOT=$DSTROOT\" \"PLATFORM=iPhoneOS\" \"SDKVERSION=6.1\" \"TARGET_CONFIGS=$TARGET_CONFIGS\""
+build_string="$build_string $EXTERNAL_BUILD_FLAGS \"SRCROOT=$SRCROOT\" \"OBJROOT=$OBJROOT\" \"SYMROOT=$SYMROOT\" \"DSTROOT=$DSTROOT\" \"TARGET_CONFIGS=$TARGET_CONFIGS\""
 
 OLDIFS="$IFS"
 IFS=$'\n'

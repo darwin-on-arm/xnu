@@ -351,7 +351,7 @@ typedef struct pmc_methods {
  */
 #define PERF_REG_NAME1(a, b) a ## b
 #define PERF_REG_NAME(a, b) PERF_REG_NAME1(a, b)
-#define perf_monitor_register PERF_REG_NAME(perf_monitor_register_, VERSION_MAJOR)
+#define perf_monitor_register PERF_REG_NAME(perf_monitor_register_, 12/*VERSION_MAJOR*/)
 
 kern_return_t perf_monitor_register(perf_monitor_object_t monitor, perf_monitor_methods_t *methods);
 
