@@ -47,6 +47,7 @@ die("SRCROOT not defined") unless defined($ENV{'SRCROOT'});
 die("OBJROOT not defined") unless defined($ENV{'OBJROOT'});
 
 my $versfile = "MasterVersion";
+
 $versfile = "$ENV{'SRCROOT'}/config/$versfile";
 my $BUILD_SRCROOT=$ENV{'SRCROOT'};
 $BUILD_SRCROOT =~ s,/+$,,;

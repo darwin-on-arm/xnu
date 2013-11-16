@@ -159,8 +159,7 @@ else
 # generate set of standard embedded configs
 		export TARGET_CONFIGS = $(TARGET_CONFIGS_EMBEDDED)
 	else ifneq ($(filter %_devicemap,$(MAKECMDGOALS)),)
-		DEVICEMAP_PLATFORMS = $(shell $(EMBEDDED_DEVICE_MAP) -query SELECT DISTINCT Platform FROM Targets | $(TR) [:lower:] [:upper:])
-		export TARGET_CONFIGS = $(foreach my_kernel_config,$(KERNEL_CONFIGS_EMBEDDED),$(foreach my_arch,$(ARCH_CONFIGS),$(foreach my_machine_config,$(filter $(DEVICEMAP_PLATFORMS),$(SUPPORTED_$(my_arch)_MACHINE_CONFIGS)),$(my_kernel_config) $(my_arch) $(my_machine_config) )))
+		export TARGET_CONFIGS = $(strip $(foreach my_arch_config, $(ARCH_CONFIGS), $(foreach my_kern_config, $(KERNEL_CONFIGS), $(my_kern_config) $(my_arch_config) $(MACHINE_CONFIG))))
 	else
 # generate TARGET_CONFIGS using KERNEL_CONFIGS and ARCH_CONFIGS and MACHINE_CONFIG (which defaults to "DEFAULT")
 		export TARGET_CONFIGS = $(strip $(foreach my_arch_config, $(ARCH_CONFIGS), $(foreach my_kern_config, $(KERNEL_CONFIGS), $(my_kern_config) $(my_arch_config) $(MACHINE_CONFIG))))

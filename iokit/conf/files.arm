@@ -14,6 +14,7 @@ iokit/Drivers//KernelBuiltIn/ARM/AppleARMPlatform/AppleARMPE.cpp	optional iokitc
 iokit/Drivers/KernelBuiltIn/ARM/AppleARMPlatform/AppleS5L8930XIO.cpp    optional iokitcpp
 iokit/Drivers/KernelBuiltIn/ARM/AppleARMPlatform/AppleARMSoftIICController.cpp		optional iokitcpp
 iokit/Drivers/KernelBuiltIn/ARM/AppleARMPlatform/AppleARMNMI.cpp		optional iokitcpp
+iokit/Drivers/KernelBuiltIn/ARM/AppleARMPlatform/AppleARMCHRPNVRAM.cpp		optional iokitcpp
 
 # libIOKit
 

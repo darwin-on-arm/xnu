@@ -108,9 +108,9 @@ endif
 
 # Platform-specific tools
 ifneq ($(findstring iPhone,$(PRODUCT)),)
-ifeq ($(EMBEDDED_DEVICE_MAP),)
-	export EMBEDDED_DEVICE_MAP := $(shell $(XCRUN) -sdk $(SDKROOT) -find embedded_device_map)
-endif
+#ifeq ($(EMBEDDED_DEVICE_MAP),)
+#	export EMBEDDED_DEVICE_MAP := $(shell $(XCRUN) -sdk $(SDKROOT) -find embedded_device_map)
+#endif
 ifeq ($(IPHONEOS_OPTIMIZE),)
 	export IPHONEOS_OPTIMIZE := $(shell $(XCRUN) -sdk $(SDKROOT) -find iphoneos-optimize)
 endif
@@ -144,9 +144,9 @@ TR = /usr/bin/tr
 
 # Platform-specific tools
 ifeq (iPhoneOS,$(PLATFORM))
-ifeq ($(EMBEDDED_DEVICE_MAP),)
-	export EMBEDDED_DEVICE_MAP := $(shell $(XCRUN) -sdk $(SDKROOT) -find embedded_device_map || echo /usr/bin/true)
-endif
+#ifeq ($(EMBEDDED_DEVICE_MAP),)
+#	export EMBEDDED_DEVICE_MAP := $(shell $(XCRUN) -sdk $(SDKROOT) -find embedded_device_map || echo /usr/bin/true)
+#endif
 ifeq ($(IPHONEOS_OPTIMIZE),)
 	export IPHONEOS_OPTIMIZE := $(shell $(XCRUN) -sdk $(SDKROOT) -find iphoneos-optimize || echo /usr/bin/true)
 endif

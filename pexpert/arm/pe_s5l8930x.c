@@ -123,7 +123,7 @@ static void timer_configure(void)
     uint64_t hz = 24000000;
     gPEClockFrequencyInfo.timebase_frequency_hz = hz;
 
-    clock_decrementer = 10000;
+    clock_decrementer = 5000;
     kprintf(KPRINTF_PREFIX "decrementer frequency = %llu\n", clock_decrementer);
 
     rtc_configure(hz);
