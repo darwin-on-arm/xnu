@@ -87,6 +87,9 @@ void RealView_putc(int c)
     while (AMBA_UART_FR(gRealviewUartBase) & (1 << 5))
         barrier();
 
+    if(c == '\n')
+        RealView_putc('\r');
+
     AMBA_UART_DR(gRealviewUartBase) = c;
 }
 
