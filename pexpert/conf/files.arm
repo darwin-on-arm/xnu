@@ -12,3 +12,5 @@ pexpert/arm/pe_omap3530.c		standard
 pexpert/arm/pe_omap335x.c		standard
 pexpert/arm/pe_s5l8930x.c		standard
 pexpert/arm/pe_serial.c			standard
+pexpert/arm/pe_n900.c			standard
+
