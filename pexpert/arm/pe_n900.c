@@ -96,7 +96,7 @@ static void timer_configure(void)
     /*
      * xxx hack for etimer since it does not know time yet 
      */
-    uint64_t hz = 32768;
+    uint64_t hz = 327680;
     gPEClockFrequencyInfo.timebase_frequency_hz = hz;
 
     clock_decrementer = 1000;
