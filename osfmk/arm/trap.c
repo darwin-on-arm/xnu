@@ -292,6 +292,12 @@ void sleh_abort(void *context, int reason)
                              THREAD_UNINT, NULL, vm_map_trunc_page(0));
 
                 if (code != KERN_SUCCESS) {
+
+                    if (current_debugger) {
+                        if (kdp_raise_exception(EXC_BREAKPOINT, 0, 0, &arm_ctx))
+                            return;
+                    }
+                    
                     /*
                      * Still, die in a fire. 
                      */

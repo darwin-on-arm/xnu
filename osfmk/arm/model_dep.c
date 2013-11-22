@@ -311,9 +311,7 @@ void DebuggerCommon(__unused unsigned int reason, void *ctx,
     arm_saved_state_t st;
     __asm__ __volatile("mov %0, r7":"=r"(stackptr));
 
-    if (!ctx) {
-        bzero(&st, sizeof(st));
-        st.r[7] = stackptr;
+    {
         panic_backlog(stackptr);
 
         /*
@@ -332,28 +330,9 @@ void DebuggerCommon(__unused unsigned int reason, void *ctx,
         /*
          * Go into the debugger with a dummy state. 
          */
-        kdp_raise_exception(EXC_BREAKPOINT, 0, 0, &st);
-    } else {
-        arm_saved_state_t *st = (arm_saved_state_t *) ctx;
-        panic_backlog(st->r[7]);
-
-        /*
-         * Reboot if not debugging. 
-         */
-        if (PE_reboot_on_panic() && !panicDebugging) {
-            halt_all_cpus(TRUE);
+        if (current_debugger) {
+            __asm__ __volatile__("bkpt #0\n");
         }
-
-        /*
-         * Draw the panic dialog. 
-         */
-        if (!PE_reboot_on_panic())
-            draw_panic_dialog();
-
-        /*
-         * Go into the debugger. 
-         */
-        kdp_raise_exception(EXC_BREAKPOINT, 0, 0, &ctx);
     }
 #endif
 
