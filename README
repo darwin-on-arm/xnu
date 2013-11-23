@@ -25,15 +25,11 @@ A. How to build XNU:
   with symbols, mach_kernel.sys.
 
   Alternatively, you can edit "machine_configuration" to set the default targets to build
-  if you are using the xnu-build script. Use that script to set up a build if your code
-  is checked out in /SourceCache. Make sure to check it out to /SourceCache/xnu/xnu-2050.22.13,
-  if you put it somewhere else, fix the buildscript.
+  if you are using the xnu-build script.
 
   Here are the valid arm machine configs: 
-	OMAP3530 ARMPBA8
+	OMAP3530 OMAP3430_RX51 OMAP335X ARMPBA8 S5L8930X S5L8920X S5L8922X
 
-  (The other broken ones are: S5L8930X and SUN4I)
-	
   Examples:
 	/* make a debug kernel for OMAP3530 arm board */
 	make TARGET_CONFIGS="debug arm OMAP3530"
