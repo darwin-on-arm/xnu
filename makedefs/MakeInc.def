@@ -206,7 +206,7 @@ endif
 #
 # Kernel Configuration to install
 #
-#  supported install architecture : I386 X86_64 
+#  supported install architecture : I386 X86_64 ARM
 #
 export INSTALL_TYPE 	= $(DEFAULT_KERNEL_CONFIG)
 

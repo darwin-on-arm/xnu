@@ -171,4 +171,17 @@ ifeq ($(HOST_CODESIGN),)
 	export HOST_CODESIGN	:= $(shell $(XCRUN) -sdk $(HOST_SDKROOT) -find codesign)
 endif
 
+#
+# Command to build libkmod.a/libkmodc++.a, which are
+# linked into kext binaries, and should be built as if
+# they followed system-wide policies
+#
+ifeq ($(LIBKMOD_CC),)
+	ifneq ($(UNAME_S),Linux)
+		export LIBKMOD_CC	:= $(shell $(XCRUN) -sdk $(SDKROOT) -find clang)
+	else
+		export LIBKMOD_CC	:= $(HOST_CC)
+	endif
+endif
+
 # vim: set ft=make:
