@@ -22,6 +22,8 @@ do_all:
 	cd $(COMPOBJROOT)/kmod;						\
 	${MAKE} MAKEFILES=$(SOURCE)/Makefile.kmod			\
 		TARGET=$(TARGET)					\
+		SOURCE=$(SOURCE)					\
+		ARCH_CONFIG=$(ARCH_CONFIG)				\
 		do_build_all						\
 	)
 

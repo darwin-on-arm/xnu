@@ -223,6 +223,7 @@ endif
 #
 # Deployment target flag
 #
+ifeq ($(UNAME_S),Darwin)
 ifndef DEPLOYMENT_TARGET_FLAGS
 SDKVERSION=$(shell xcodebuild -sdk $(SDKROOT) -version SDKVersion | head -1)
 ifeq ($(PLATFORM),MacOSX)
@@ -234,6 +235,9 @@ else ifeq ($(PLATFORM),iPhoneSimulator)
 else
     export DEPLOYMENT_TARGET_FLAGS := 
 endif
+endif
+else
+	export DEPLOYMENT_TARGET_FLAGS :=
 endif
 
 #
@@ -290,13 +294,17 @@ endef
 #
 # Setup for parallel sub-makes based on 2 times number of logical CPUs
 #
+ifeq ($(UNAME_S),Darwin)
 ifndef MAKEJOBS
 export MAKEJOBS = --jobs=$(shell expr `/usr/sbin//sysctl -n hw.logicalcpu` \* 2)
+endif
+else
+export MAKEJOBS :=
 endif
 
 #
 # Default ARCH_FLAGS, for use with compiler/linker/assembler/mig drivers
-
+#
 ARCH_FLAGS_I386		  = -arch i386
 ARCH_FLAGS_X86_64	  = -arch x86_64
 ARCH_FLAGS_ARM64	= -arch arm64
@@ -315,6 +323,18 @@ ARCH_FLAGS_ARM_RASPBERRYPI	= -arch armv6
 #
 # Default CFLAGS
 #
+
+ifeq ($(UNAME_S),Linux)
+	# Get our toolchain prefix if we need it
+	ifeq ($(word 2, $(TARGET_CONFIGS_UC)),ARM)
+		TARGET_PROFILE ?= arm-apple-darwin11
+		TARGET_CRT ?= /usr/lib/libclang_rt.cc_kext.a
+		BUILD_NO_DEBUG := 1
+        	RC_CFLAGS := -D__arm__ -DARM -target $(TARGET_PROFILE)
+        	RC_LDFLAGS := -target $(TARGET_PROFILE) $(TARGET_CRT)
+	endif
+endif
+
 ifdef RC_CFLAGS
 export OTHER_CFLAGS	= $(subst $(addprefix -arch ,$(RC_ARCHS)),,$(RC_CFLAGS))
 endif

@@ -289,17 +289,13 @@ B. How to install a new header file from XNU
 	  $(DSTROOT)/System/Library/Frameworks/Kernel.framework/PrivateHeaders
 
 =============================================
+NOTE: Everything beyond this point assumes that you have xnu-deps-linux installed.
+
 C. Building XNU on a Linux x32/x64 Host.
 
 1) Type the following into your command line:
 
-    make TARGET_CONFIGS="debug arm armpba8" MAKEJOBS=  SDKVERSION=10.7 HOST_CC=clang HOST_YACC=yacc \
-    HOST_BISON=bison HOST_FLEX=flex HOST_CODESIGN=/bin/true BUILD_NO_DEBUG=1  DEPLOYMENT_TARGET_FLAGS=  \
-    RC_CFLAGS="-D__arm__ -DARM" MIG=/usr/bin/mig CC=clang CXX=clang++ RC_CFLAGS="-target arm-apple-darwin11" \
-    VERBOSE=YES RC_LDFLAGS="-target arm-apple-darwin11 /usr/lib/libclang_rt.cc_kext.a" \
-    STRIP="arm-apple-darwin11-strip" NM="arm-apple-darwin11-nm"
-
-  Make sure you have xnu-deps-linux installed before running this command.
+    make TARGET_CONFIGS="debug arm armpba8"
 
   More work needs to be done on this. (Fixing dtrace stuff such as ctfconvert, etc)
 
@@ -308,26 +304,11 @@ D. Installing XNU headers on a Linux x32/x64 Host.
 
 1) Type the following into your command line:
 
-    make TARGET_CONFIGS="debug arm armpba8" MAKEJOBS=  SDKVERSION=10.7 HOST_CC=clang HOST_YACC=yacc \
-    HOST_BISON=bison HOST_FLEX=flex HOST_CODESIGN=/bin/true BUILD_NO_DEBUG=1  DEPLOYMENT_TARGET_FLAGS= \
-    RC_CFLAGS="-D__arm__ -DARM" MIG=/usr/bin/mig CC=clang CXX=clang++ RC_CFLAGS="-target arm-apple-darwin11" \
-    VERBOSE=YES RC_LDFLAGS="-target arm-apple-darwin11 /usr/lib/libclang_rt.cc_kext.a" \
-    STRIP="arm-apple-darwin11-strip" NM="arm-apple-darwin11-nm" UNIFDEF="unifdef" \
-    DSTROOT="${HOME}/KernelSDK" installhdrs
+    make TARGET_CONFIGS="debug arm armpba8" DSTROOT="${HOME}/KernelSDK" installhdrs
 
 ==============================================
 E. Installing libkmod/libkmodc++ on a Linux x32/x64 Host.
 
-1) Set the RC_ProjectName variable. This tells the build system to only build a specific component.
-   Type the following into your command line:
+1) Type the following into your command line:
 
-    export RC_ProjectName=libkmod
-
-2) Then type the following into your command line to compile/install libkmod/libkmodc++:
-
-    make TARGET_CONFIGS="debug arm armpba8" MAKEJOBS=  SDKVERSION=10.7 HOST_CC=clang HOST_YACC=yacc \
-    HOST_BISON=bison HOST_FLEX=flex HOST_CODESIGN=/bin/true BUILD_NO_DEBUG=1  DEPLOYMENT_TARGET_FLAGS= \
-    RC_CFLAGS="-D__arm__ -DARM" MIG=/usr/bin/mig CC=clang CXX=clang++ RC_CFLAGS="-target arm-apple-darwin11" \
-    VERBOSE=YES RC_LDFLAGS="-target arm-apple-darwin11 /usr/lib/libclang_rt.cc_kext.a" \
-    STRIP="arm-apple-darwin11-strip" NM="arm-apple-darwin11-nm" LIBTOOL="arm-apple-darwin11-libtool" \
-    LIPO="arm-apple-darwin11-lipo" UNIFDEF="unifdef" DSTROOT="${HOME}/KernelSDK"
+    make TARGET_CONFIGS="debug arm armpba8" RC_ProjectName=libkmod DSTROOT="${HOME}/KernelSDK"
