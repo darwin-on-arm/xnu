@@ -71,6 +71,10 @@ mac_labelzone_alloc(int flags)
 void
 mac_labelzone_free(struct label *l)
 {
+#ifdef __arm__
+	/* xxx hack for now... */
+	return;
+#endif
 
 	if (l == NULL)
 		panic("Free of NULL MAC label\n");

@@ -165,7 +165,10 @@ static void arc4_stir(void)
     /*
      * Get current performance monitor ticks.
      */
-    __asm__ __volatile__("mcr p15, 0, %0, c9, c13, 0":"=r"(rdat.tsc));
+    rdat.tsc = 0;
+#if 0
+    __asm__ __volatile__("mrc p15, 0, %0, c9, c13, 0":"=r"(rdat.tsc));
+#endif
     arc4_addrandom((void *) &rdat, sizeof(rdat));
 
     /*
