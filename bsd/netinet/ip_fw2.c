@@ -3873,7 +3873,7 @@ ipfw_ctl(struct sockopt *sopt)
  * deleted while packets hold a reference to them. When this happens,
  * dummynet changes the reference to the default rule (it could well be a
  * NULL pointer, but this way we do not need to check for the special
- * case, plus here he have info on the default behaviour).
+ * case, plus here they have info on the default behaviour).
  */
 struct ip_fw *ip_fw_default_rule;
 

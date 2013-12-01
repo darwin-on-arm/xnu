@@ -758,7 +758,7 @@ void atalk_flush(gref)
 
 /*
  * Notify an appletalk user of an asynchronous error;
- * just wake up so that he can collect error status.
+ * just wake up so that they can collect error status.
  */
 void atalk_notify(gref, errno)
 	register gref_t *gref;

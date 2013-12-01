@@ -364,7 +364,7 @@ get_pcblist_n(short proto, struct sysctl_req *req, struct inpcbinfo *pcbinfo)
 		/*
 		 * Give the user an updated idea of our state.
 		 * If the generation differs from what we told
-		 * her before, she knows that something happened
+		 * them before, they know that something happened
 		 * while we were processing this request, and it
 		 * might be necessary to retry.
 		 */

@@ -906,7 +906,7 @@ ipc_object_copyout_name(
  *		Translates/consumes the destination right of a message.
  *		This is unlike normal copyout because the right is consumed
  *		in a funny way instead of being given to the receiving space.
- *		The receiver gets his name for the port, if he has receive
+ *		The receiver gets his name for the port, if they have receive
  *		rights, otherwise MACH_PORT_NULL.
  *	Conditions:
  *		The object is locked and active.  Nothing else locked.

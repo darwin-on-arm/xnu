@@ -858,7 +858,7 @@ error:
 
 /*
  * Notify a udp user of an asynchronous error;
- * just wake up so that he can collect error status.
+ * just wake up so that they can collect error status.
  */
 void
 udp_notify(inp, errno)
@@ -1060,7 +1060,7 @@ udp_pcblist SYSCTL_HANDLER_ARGS
 		/*
 		 * Give the user an updated idea of our state.
 		 * If the generation differs from what we told
-		 * her before, she knows that something happened
+		 * them before, they know that something happened
 		 * while we were processing this request, and it
 		 * might be necessary to retry.
 		 */

@@ -295,7 +295,7 @@ top:
     if ((sp->state == sOpen || sp->state == sClosing) && /* Correct state */
 	(!sp->waitingAck) &&	/* not waiting for an ACK */
 	(sp->sData) &&		/* have data to send */
-	(GTE(sp->sendWdwSeq,sp->sendSeq)) && /* he has room to accept it */
+	(GTE(sp->sendWdwSeq,sp->sendSeq)) && /* they have room to accept it */
 	(sp->pktSendCnt < sp->pktSendMax)) /* haven't sent too many pkts 
 					    * in a row. */
     {

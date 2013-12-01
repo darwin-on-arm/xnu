@@ -436,7 +436,7 @@ proc_shutdown(void)
 	self = (struct proc *)current_proc();
 	
 	/*
-	 * Signal the init with SIGTERM so that he does not launch
+	 * Signal the init with SIGTERM so that they do not launch
 	 * new processes 
 	 */
 	p = proc_find(1);

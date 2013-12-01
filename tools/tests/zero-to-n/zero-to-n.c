@@ -296,7 +296,7 @@ child_thread_func(void *arg)
 		} else {
 			/*
 			 * Everyone else waits to be woken up,
-			 * records when she wake up, and possibly
+			 * records when they wake up, and possibly
 			 * wakes up a friend.
 			 */
 			switch(g_waketype)  {

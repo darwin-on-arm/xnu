@@ -347,7 +347,7 @@ lock_acquire (lock_set_t lock_set, int lock_id)
 		switch (wait_result) {
 		case THREAD_AWAKENED:
 			/* lock transitioned from old locker to us */
-			/* he already made us owner */
+			/* they already made us owner */
 			return (ulock->unstable) ? KERN_LOCK_UNSTABLE :
 				                   KERN_SUCCESS;
 
@@ -624,7 +624,7 @@ lock_handoff (lock_set_t lock_set, int lock_id)
 		spl_t		s;
 
 		/*
-		 *  See who the lucky devil is, if he is still there waiting.
+		 *  See who the lucky devil is, if they are still there waiting.
 		 */
 		s = splsched();
 		wait_queue_lock(wq);
@@ -658,7 +658,7 @@ lock_handoff (lock_set_t lock_set, int lock_id)
 			/*
 			 * OOPS.  The accepting thread must have been aborted.
 			 * and is racing back to clear the flag that says is
-			 * waiting for an accept.  He will clear it when we
+			 * waiting for an accept. They will clear it when we
 			 * release the lock, so just fall thru and wait for
 			 * the next accept thread (that's the way it is
 			 * specified).
@@ -760,7 +760,7 @@ lock_handoff_accept (lock_set_t lock_set, int lock_id)
 		wait_queue_t	wq = &ulock->wait_queue;
 
 		/*
-		 *  See who the lucky devil is, if he is still there waiting.
+		 *  See who the lucky devil is, if they are still there waiting.
 		 */
 		assert(ulock->holder != THREAD_NULL);
 
@@ -782,7 +782,7 @@ lock_handoff_accept (lock_set_t lock_set, int lock_id)
 			
 		/*
 		 * OOPS.  The owner was aborted out of the handoff.
-		 * He will clear his own flag when he gets back.
+		 * They will clear his own flag when they get back.
 		 * in the meantime, we will wait as if we didn't
 		 * even see his flag (by falling thru).
 		 */
