@@ -67,6 +67,7 @@ EnterARM(_start)
 
     /* Adjust DACR register. */
     mov     r4, #0x1
+
     mcr     p15, 0, r4, c3, c0, 0
 #ifdef _ARM_ARCH_7
     isb     sy

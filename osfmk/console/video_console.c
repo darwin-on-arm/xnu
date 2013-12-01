@@ -1317,10 +1317,15 @@ vcputc(__unused int l, __unused int u, int c)
 /*
  * For the color support (Michel Pollet)
  */
+
 static unsigned char vc_color_index_table[33] = 
 	{  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 	   1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 0, 2 };
 
+#ifndef __arm__
+/*
+ * Platforms such as ix86 require 1555 (XRGB).
+ */
 static uint32_t vc_colors[8][4] = {
 	{ 0xFFFFFFFF, 0x00000000, 0x00000000, 0x00000000 },	/* black */
 	{ 0x23232323, 0x7C007C00, 0x00FF0000, 0x3FF00000 },	/* red	*/
@@ -1332,6 +1337,22 @@ static uint32_t vc_colors[8][4] = {
 	{ 0xb4b4b4b4, 0x03FF03FF, 0x0000FFFF, 0x000FFFFF },	/* cyan	*/
 	{ 0x00000000, 0x7FFF7FFF, 0x00FFFFFF, 0x3FFFFFFF }	/* white */
 };
+#else
+/*
+ * RGB565 values.
+ */
+static uint32_t vc_colors[8][4] = {
+	{ 0xFFFFFFFF, 0x00000000, 0x00000000, 0x00000000 },	/* black */
+	{ 0x23232323, 0xF800F800, 0x00FF0000, 0x3FF00000 },	/* red	*/
+	{ 0xb9b9b9b9, 0x07e007e0, 0x0000FF00, 0x000FFC00 },	/* green */
+	{ 0x05050505, 0xFFE0FFE0, 0x00FFFF00, 0x3FFFFC00 },	/* yellow */
+	{ 0xd2d2d2d2, 0x001f001f, 0x000000FF, 0x000003FF },	/* blue	 */
+//	{ 0x80808080, 0x31933193, 0x00666699, 0x00000000 },	/* blue	 */
+	{ 0x18181818, 0xF01FF01F, 0x00FF00FF, 0x3FF003FF },	/* magenta */
+	{ 0xb4b4b4b4, 0x03FF03FF, 0x0000FFFF, 0x000FFFFF },	/* cyan	*/
+	{ 0x00000000, 0xFFFFFFFF, 0x00FFFFFF, 0x3FFFFFFF }	/* white */
+};
+#endif
 
 static uint32_t vc_color_fore = 0;
 static uint32_t vc_color_back = 0;
@@ -1957,10 +1978,10 @@ vc_blit_rect_8(int x, int y, __unused int bx,
 #define CLUT_SHIFT_G	<< 2
 #define CLUT_SHIFT_B	>> 3
 #define MASK_R		0x7c00
-#define MASK_G		0x03e0
+#define MASK_G		0x07e0
 #define MASK_B		0x001f
 #define MASK_R_8	0x3fc00
-#define MASK_G_8	0x01fe0
+#define MASK_G_8	0x03fe0
 #define MASK_B_8	0x000ff
 
 static void vc_blit_rect_16( int x, int y, int bx,

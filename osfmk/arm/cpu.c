@@ -556,7 +556,7 @@ void get_cachetype_cp15()
 static void print_enadis(int enadis, char *s)
 {
 
-    printf(" %s %sabled", s, (enadis == 0) ? "dis" : "en");
+    kprintf(" %s %sabled", s, (enadis == 0) ? "dis" : "en");
 }
 
 int ctrl;
@@ -586,25 +586,25 @@ void identify_armv7(void)
 {
     u_int feature;
 
-    printf("Supported features:");
+    kprintf("Supported features:");
     /*
      * Get Processor Feature Register 0 
      */
     feature = cpu_pfr(0);
 
     if (feature & ARM_PFR0_ARM_ISA_MASK)
-        printf(" ARM_ISA");
+        kprintf(" ARM_ISA");
 
     if (feature & ARM_PFR0_THUMB2)
-        printf(" THUMB2");
+        kprintf(" THUMB2");
     else if (feature & ARM_PFR0_THUMB)
-        printf(" THUMB");
+        kprintf(" THUMB");
 
     if (feature & ARM_PFR0_JAZELLE_MASK)
-        printf(" JAZELLE");
+        kprintf(" JAZELLE");
 
     if (feature & ARM_PFR0_THUMBEE_MASK)
-        printf(" THUMBEE");
+        kprintf(" THUMBEE");
 
     /*
      * Get Processor Feature Register 1 
@@ -612,15 +612,15 @@ void identify_armv7(void)
     feature = cpu_pfr(1);
 
     if (feature & ARM_PFR1_ARMV4_MASK)
-        printf(" ARMv4");
+        kprintf(" ARMv4");
 
     if (feature & ARM_PFR1_SEC_EXT_MASK)
-        printf(" Security_Ext");
+        kprintf(" Security_Ext");
 
     if (feature & ARM_PFR1_MICROCTRL_MASK)
-        printf(" M_profile");
+        kprintf(" M_profile");
 
-    printf("\n");
+    kprintf("\n");
 }
 
 void identify_arm_cpu(void)
@@ -633,14 +633,14 @@ void identify_arm_cpu(void)
     ctrl = armreg_sctrl_read();
 
     if (cpuid == 0) {
-        printf("Processor failed probe - no CPU ID\n");
+        kprintf("Processor failed probe - no CPU ID\n");
         return;
     }
 
     for (i = 0; cpuids[i].cpuid != 0; i++)
         if (cpuids[i].cpuid == (cpuid & CPU_ID_CPU_MASK)) {
             cpu_class = cpuids[i].cpu_class;
-            printf("CPU: %s %s (%s core)\n",
+            kprintf("CPU: %s %s (%s core)\n",
                    cpuids[i].cpu_name,
                    cpuids[i].cpu_steppings[cpuid &
                                            CPU_ID_REVISION_MASK],
@@ -648,17 +648,17 @@ void identify_arm_cpu(void)
             break;
         }
     if (cpuids[i].cpuid == 0)
-        printf("unknown CPU (ID = 0x%x)\n", cpuid);
+        kprintf("unknown CPU (ID = 0x%x)\n", cpuid);
 
-    printf(" ");
+    kprintf(" ");
 
     if ((cpuid & CPU_ID_ARCH_MASK) == CPU_ID_CPUID_SCHEME) {
         identify_armv7();
     } else {
         if (ctrl & CPU_CONTROL_BEND_ENABLE)
-            printf(" Big-endian");
+            kprintf(" Big-endian");
         else
-            printf(" Little-endian");
+            kprintf(" Little-endian");
 
         switch (cpu_class) {
         case CPU_CLASS_ARM6:
@@ -685,11 +685,11 @@ void identify_arm_cpu(void)
             i = sheeva_control_ext(0, 0);
             print_enadis(i & MV_WA_ENABLE, "WA");
             print_enadis(i & MV_DC_STREAM_ENABLE, "DC streaming");
-            printf("\n ");
+            kprintf("\n ");
             print_enadis((i & MV_BTB_DISABLE) == 0, "BTB");
             print_enadis(i & MV_L2_ENABLE, "L2");
             print_enadis((i & MV_L2_PREFETCH_DISABLE) == 0, "L2 prefetch");
-            printf("\n ");
+            kprintf("\n ");
 #endif
             break;
         default:
@@ -699,19 +699,19 @@ void identify_arm_cpu(void)
 
     print_enadis(ctrl & CPU_CONTROL_WBUF_ENABLE, "WB");
     if (ctrl & CPU_CONTROL_LABT_ENABLE)
-        printf(" LABT");
+        kprintf(" LABT");
     else
-        printf(" EABT");
+        kprintf(" EABT");
 
     print_enadis(ctrl & CPU_CONTROL_BPRD_ENABLE, "branch prediction");
-    printf("\n");
+    kprintf("\n");
 
     if (arm_cache_level) {
-        printf("LoUU:%d LoC:%d LoUIS:%d \n", CPU_CLIDR_LOUU(arm_cache_level) + 1,
+        kprintf("LoUU:%d LoC:%d LoUIS:%d \n", CPU_CLIDR_LOUU(arm_cache_level) + 1,
                arm_cache_loc, CPU_CLIDR_LOUIS(arm_cache_level) + 1);
         i = 0;
         while (((type = CPU_CLIDR_CTYPE(arm_cache_level, i)) != 0) && i < 7) {
-            printf("Cache level %d: \n", i + 1);
+            kprintf("Cache level %d: \n", i + 1);
             if (type == CACHE_DCACHE || type == CACHE_UNI_CACHE ||
                 type == CACHE_SEP_CACHE) {
                 reg = arm_cache_type[2 * i];
@@ -721,18 +721,18 @@ void identify_arm_cpu(void)
                 size = (ways * sets * linesize) / 1024;
 
                 if (type == CACHE_UNI_CACHE)
-                    printf(" %dKB/%dB %d-way unified cache", size, linesize, ways);
+                    kprintf(" %dKB/%dB %d-way unified cache", size, linesize, ways);
                 else
-                    printf(" %dKB/%dB %d-way data cache", size, linesize, ways);
+                    kprintf(" %dKB/%dB %d-way data cache", size, linesize, ways);
                 if (reg & CPUV7_CT_CTYPE_WT)
-                    printf(" WT");
+                    kprintf(" WT");
                 if (reg & CPUV7_CT_CTYPE_WB)
-                    printf(" WB");
+                    kprintf(" WB");
                 if (reg & CPUV7_CT_CTYPE_RA)
-                    printf(" Read-Alloc");
+                    kprintf(" Read-Alloc");
                 if (reg & CPUV7_CT_CTYPE_WA)
-                    printf(" Write-Alloc");
-                printf("\n");
+                    kprintf(" Write-Alloc");
+                kprintf("\n");
             }
 
             if (type == CACHE_ICACHE || type == CACHE_SEP_CACHE) {
@@ -743,16 +743,16 @@ void identify_arm_cpu(void)
                 linesize = 1 << (CPUV7_CT_xSIZE_LEN(reg) + 4);
                 size = (ways * sets * linesize) / 1024;
 
-                printf(" %dKB/%dB %d-way instruction cache", size, linesize, ways);
+                kprintf(" %dKB/%dB %d-way instruction cache", size, linesize, ways);
                 if (reg & CPUV7_CT_CTYPE_WT)
-                    printf(" WT");
+                    kprintf(" WT");
                 if (reg & CPUV7_CT_CTYPE_WB)
-                    printf(" WB");
+                    kprintf(" WB");
                 if (reg & CPUV7_CT_CTYPE_RA)
-                    printf(" Read-Alloc");
+                    kprintf(" Read-Alloc");
                 if (reg & CPUV7_CT_CTYPE_WA)
-                    printf(" Write-Alloc");
-                printf("\n");
+                    kprintf(" Write-Alloc");
+                kprintf("\n");
             }
             i++;
         }
@@ -764,13 +764,13 @@ void identify_arm_cpu(void)
             return;
 
         if (arm_pcache_unified) {
-            printf("  %dKB/%dB %d-way %s unified cache\n",
+            kprintf("  %dKB/%dB %d-way %s unified cache\n",
                    arm_pdcache_size / 1024,
                    arm_pdcache_line_size, arm_pdcache_ways, wtnames[arm_pcache_type]);
         } else {
-            printf("  %dKB/%dB %d-way instruction cache\n",
+            kprintf("  %dKB/%dB %d-way instruction cache\n",
                    arm_picache_size / 1024, arm_picache_line_size, arm_picache_ways);
-            printf("  %dKB/%dB %d-way %s data cache\n",
+            kprintf("  %dKB/%dB %d-way %s data cache\n",
                    arm_pdcache_size / 1024,
                    arm_pdcache_line_size, arm_pdcache_ways, wtnames[arm_pcache_type]);
         }
@@ -970,14 +970,14 @@ ast_t *ast_pending(void)
  /*ARGSUSED*/
 kern_return_t cpu_control(int slot_num, processor_info_t info, unsigned int count)
 {
-    printf("cpu_control(%d,%p,%d) not implemented\n", slot_num, info, count);
+    kprintf("cpu_control(%d,%p,%d) not implemented\n", slot_num, info, count);
     return (KERN_FAILURE);
 }
 
 kern_return_t cpu_info(processor_flavor_t flavor, int slot_num, processor_info_t info,
                        unsigned int *count)
 {
-    printf("cpu_info(%d,%d,%p,%p) not implemented\n", flavor, slot_num, info, count);
+    kprintf("cpu_info(%d,%d,%p,%p) not implemented\n", flavor, slot_num, info, count);
     return (KERN_FAILURE);
 }
 
