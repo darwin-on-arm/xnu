@@ -365,12 +365,14 @@ void arm_vm_init(uint32_t mem_limit, boot_args * args)
     /*
      * Map them... 
      */
+#ifndef USE_VBAR_EXCVECT
     uint32_t *vecpt_start = (uint32_t*)(first_avail), *vectp, *va_vecpt;
     vectp = (uint32_t *) addr_to_tte(phys_to_virt(cpu_ttb), VECTORS_BASE);
     *vectp = (((uint32_t) vecpt_start) | L1_TYPE_PTE);
     va_vecpt = (vm_offset_t)phys_to_virt(vecpt_start) + pte_offset(VECTORS_BASE);
     *va_vecpt =
         virt_to_phys(&ExceptionVectorsBase) | L2_ACCESS_PRW | L2_SMALL_PAGE;
+#endif
 
     /*
      * Burn it away... 
@@ -465,10 +467,12 @@ void arm_vm_init(uint32_t mem_limit, boot_args * args)
     PE_init_kprintf(TRUE);
     kprintf("kprintf initialized!\n");
 
+#ifndef USE_VBAR_EXCVECT
     /*
      * Verify vectors are in the right place. 
      */
     verify_lowGlo();
+#endif
 
     return;
 }

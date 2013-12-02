@@ -160,10 +160,29 @@ fix_boot_args_hack_for_bootkit:
     mov     sp, #0
     str     sp, [r12]
 
+#if USE_VBAR_EXCVECT
+    /*
+     * VBAR Note:
+     * The exception vectors are mapped high also at 0xFFFF0000 for compatibility purposes.
+     */
+
+    /* Set low vectors. */
+    mrc     p15, 0, r4, c1, c0, 0
+    bic     r4, r4, #(1 << 13)
+    mcr     p15, 0, r4, c1, c0, 0
+
+    /* Set NS-VBAR to ExceptionVectorsBase */
+    LOAD_ADDR(r4, ExceptionVectorsBase)
+    mcr     p15, 0, r4, c12, c0, 0
+
+#else
+
     /* Now, the vectors could be mapped low. Fix that. */
     mrc     p15, 0, r4, c1, c0, 0
     orr     r4, r4, #(1 << 13)
     mcr     p15, 0, r4, c1, c0, 0
+
+#endif
 
     /*
      * MMU initialization end. ------------------------------------
@@ -220,6 +239,7 @@ _debstack:
 .space (8192), 0
 _debstack_top:
 
+LOAD_ADDR_GEN_DEF(ExceptionVectorsBase)
 LOAD_ADDR_GEN_DEF(arm_init)
 LOAD_ADDR_GEN_DEF(intstack_top)
 LOAD_ADDR_GEN_DEF(sectionOffset)
