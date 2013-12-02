@@ -455,17 +455,23 @@ static void _fb_putc(int c)
 
 void S5L8930X_framebuffer_init(void)
 {
+    char tempbuf[16];
+
     /*
-     * Technically, iBoot should initialize this.. 
+     * Technically, iBoot should initialize this.. Haven't bothered
+     * to reverse this part properly, if you're using a 16-bit panel, then use 
+     * the 'rgb565' boot-argument if you care about a working framebuffer...
      */
     PE_state.video.v_depth = 4 * (8);   // 32bpp
+    if (PE_parse_boot_argn("rgb565", tempbuf, sizeof(tempbuf))) {
+        PE_state.video.v_depth = 2 * (8);   // 16bpp
+    }
 
     kprintf(KPRINTF_PREFIX "framebuffer initialized\n");
 
     /*
      * Enable early framebuffer.
      */
-    char tempbuf[16];
 
     if (PE_parse_boot_argn("-early-fb-debug", tempbuf, sizeof(tempbuf))) {
         initialize_screen((void *) &PE_state.video, kPEAcquireScreen);
