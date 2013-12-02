@@ -533,6 +533,23 @@ ARMREG_WRITE_INLINE(dmb, "p15,0,%0,c7,c10,5") /* Data Memory Barrier */
 ARMREG_WRITE_INLINE(dccmvau, "p15,0,%0,c7,c14,1") /* Data Clean MVA to PoU */
 ARMREG_WRITE_INLINE(dccimvac, "p15,0,%0,c7,c14,1") /* Data Clean&Inv MVA to PoC */
 ARMREG_WRITE_INLINE(dccisw, "p15,0,%0,c7,c14,2") /* Data Clean&Inv Set/Way */
+/* cp15 c7 PA to VA translation */
+
+/* 
+ * N.B: Cortex-A8 TRM says these are used for both non-secure and secure
+ *      states. Cortex-A5 TRM says these are used only for secure state. (4-7)
+ *      ARM11 MPCore says to use 0-3. Which one is right for everything?
+ */
+ARMREG_WRITE_INLINE(va2pa_pr_ns,"p15,0,%0,c7,c8,0")	/* VA to PA, Privileged Read */
+ARMREG_WRITE_INLINE(va2pa_pw_ns,"p15,0,%0,c7,c8,1")	/* VA to PA, Privileged Write */
+ARMREG_WRITE_INLINE(va2pa_ur_ns,"p15,0,%0,c7,c8,2")	/* VA to PA, User Read */
+ARMREG_WRITE_INLINE(va2pa_uw_ns,"p15,0,%0,c7,c8,3")	/* VA to PA, User Write */
+
+ARMREG_WRITE_INLINE(va2pa_pr_s,"p15,0,%0,c7,c8,4")	/* VA to PA, Privileged Read */
+ARMREG_WRITE_INLINE(va2pa_pw_s,"p15,0,%0,c7,c8,5")	/* VA to PA, Privileged Write */
+ARMREG_WRITE_INLINE(va2pa_ur_s,"p15,0,%0,c7,c8,6")	/* VA to PA, User Read */
+ARMREG_WRITE_INLINE(va2pa_uw_s,"p15,0,%0,c7,c8,7")	/* VA to PA, User Write */
+
 /* cp15 c8 registers */
 ARMREG_WRITE_INLINE(tlbiallis, "p15,0,%0,c8,c3,0") /* Invalidate entire unified TLB, inner shareable */
 ARMREG_WRITE_INLINE(tlbimvais, "p15,0,%0,c8,c3,1") /* Invalidate unified TLB by MVA, inner shareable */

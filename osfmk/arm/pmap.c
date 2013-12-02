@@ -145,6 +145,7 @@
 #include <vm/vm_page.h>
 #include <arm/cpu_capabilities.h>
 #include "cpufunc_armv7.h"
+#include "proc_reg.h"
 
 /*
  * The pv_head_table contains a 'trunk' of mappings for each physical
@@ -1695,6 +1696,7 @@ void pmap_create_sharedpage(void)
  */
 vm_offset_t pmap_extract(pmap_t pmap, vm_offset_t virt)
 {
+#if USE_SLOW_EXTRACT
     spl_t spl;
     vm_offset_t ppn = 0;
     uint32_t tte, *ttep = pmap_tte(pmap, virt);
@@ -1778,6 +1780,59 @@ vm_offset_t pmap_extract(pmap_t pmap, vm_offset_t virt)
      */
     PMAP_UNLOCK(pmap);
     return ppn;
+#else
+    uint32_t va = (virt & L2_ADDR_MASK), par;
+    boolean_t is_priv = (pmap == kernel_pmap) ? TRUE : FALSE;
+
+    /*
+     * Fast VirtToPhys involves using the virtual address trnalsation
+     * register as present in Cortex-A and ARM11 MPCore systems.
+     *
+     * Privileged reads are only done on the kernel PMAP versus user
+     * pmaps getting user read/write state.
+     *
+     * The entire process should take much shorter compared to the
+     * older pmap_extract, which fully walked the page tables. You can
+     * still use the current behaviour however, by messing with
+     * the MASTER files.
+     *
+     * I swear, I need more stupid sleep.
+     */
+
+    /*
+     * Set the PAtoVA register and perform the operation.
+     */
+    if(is_priv)
+        armreg_va2pa_pr_ns_write(va);
+    else
+        armreg_va2pa_ur_ns_write(va);
+
+    /* 
+     * Wait for the instruction transaction to complete.
+     */
+    __asm__ __volatile__ ("isb sy");
+
+    /*
+     * See if the translation aborted, log any translation errors.
+     */
+    par = armreg_par_read();
+
+    /*
+     * Successful translation, we're done.
+     */
+    if(!(par & 1)) {
+        uint32_t pa = par & L2_ADDR_MASK;
+        pa |= (virt & ~(L2_ADDR_MASK));
+        return pa;
+    } else {
+        /*
+         * Log translation fault.
+         */
+        kprintf("pmap_extract: fast v2p failed, par %x\n", par);
+    }
+
+    return 0;
+#endif
 }
 
 /** 
