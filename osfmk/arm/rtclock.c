@@ -275,3 +275,18 @@ void clock_timebase_info(mach_timebase_info_t info)
 {
     info->numer = info->denom = 1;
 }
+
+
+void clock_gettimeofday_set_commpage(uint64_t abstime, uint64_t epoch,
+                                     uint64_t offset, clock_sec_t * secs,
+                                     clock_usec_t * microsecs)
+{
+    uint64_t now = abstime + offset;
+    uint32_t remain;
+
+    remain = _absolutetime_to_microtime(now, secs, microsecs);
+    *secs += (clock_sec_t)epoch;
+    commpage_set_timestamp(abstime - remain, *secs, 0);
+}
+
+

@@ -94,18 +94,3 @@ void commpage_set_timestamp(uint64_t tbr, uint64_t secs, uint32_t ticks_per_sec)
 
 	return;
 }
-
-void clock_gettimeofday_set_commpage(uint64_t abstime, uint64_t epoch,
-                                     uint64_t offset, clock_sec_t * secs,
-                                     clock_usec_t * microsecs)
-{
-	assert(common_page_ptr);
-
-	uint64_t now = abstime + offset;
-	uint32_t remain;
-
-	remain = _absolutetime_to_microtime(now, secs, microsecs);
-    *secs += (clock_sec_t)epoch;
-    commpage_set_timestamp(abstime - remain, *secs, 0);
-}
-
