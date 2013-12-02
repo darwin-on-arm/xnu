@@ -311,7 +311,33 @@ void machine_track_platform_idle(boolean_t entry)
 
 void ml_static_mfree(vm_offset_t vaddr, vm_size_t size)
 {
-    return;
+    addr64_t vaddr_cur;
+    ppnum_t ppn;
+    uint32_t freed_pages = 0;
+    assert(vaddr >= VM_MIN_KERNEL_ADDRESS);
+
+    assert((vaddr & (PAGE_SIZE-1)) == 0); /* must be page aligned */
+
+    /* Disconnect all mappings for the pages. */
+    for (vaddr_cur = vaddr;
+         vaddr_cur < round_page_64(vaddr+size);
+         vaddr_cur += PAGE_SIZE) {
+        ppn = pmap_find_phys(kernel_pmap, vaddr_cur);
+        if (ppn != (vm_offset_t)NULL) {
+                kernel_pmap->pm_stats.resident_count++;
+            if (kernel_pmap->pm_stats.resident_count >
+                kernel_pmap->pm_stats.resident_max) {
+                kernel_pmap->pm_stats.resident_max =
+                    kernel_pmap->pm_stats.resident_count;
+            }
+            pmap_remove(kernel_pmap, vaddr_cur, vaddr_cur+PAGE_SIZE);
+            freed_pages++;
+        }
+    }
+
+#if DEBUG   
+    kprintf("ml_static_mfree: Released 0x%x pages at VA %p, size:0x%llx, last ppn: 0x%x\n", freed_pages, (void *)vaddr, (uint64_t)size, ppn);
+#endif
 }
 
 /*

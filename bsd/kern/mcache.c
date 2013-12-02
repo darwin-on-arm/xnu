@@ -403,9 +403,11 @@ mcache_create_common(const char *name, size_t bufsize, size_t align,
 		mcache_update_timeout(NULL);
 	}
 	if (cp->mc_flags & MCF_DEBUG) {
+#ifndef __arm__			/* Silence some debug output. */
 		printf("mcache_create: %s (%s) arg %p bufsize %lu align %lu "
 		    "chunksize %lu bktsize %d\n", name, need_zone ? "i" : "e",
 		    arg, bufsize, cp->mc_align, chunksize, btp->bt_bktsize);
+#endif
 	}
 	return (cp);
 
