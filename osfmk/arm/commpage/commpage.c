@@ -46,20 +46,20 @@ decl_simple_lock_data(static,commpage_active_cpus_lock)
 
 void commpage_update_active_cpus(void)
 {
-	if(!common_page_ptr)
-		return;
+    if(!common_page_ptr)
+        return;
 
-	/* Lock the lock and update the global page value */
-	simple_lock(&commpage_active_cpus_lock);
-	*(uint32_t*)_COMMPAGE_NUMBER_OF_CPUS = processor_avail_count;
+    /* Lock the lock and update the global page value */
+    simple_lock(&commpage_active_cpus_lock);
+    *(uint32_t*)_COMMPAGE_NUMBER_OF_CPUS = processor_avail_count;
 
-	/* Done. */
-	simple_unlock(&commpage_active_cpus_lock);
+    /* Done. */
+    simple_unlock(&commpage_active_cpus_lock);
 }
 
 void commpage_populate(void)
 {
-	/* Map the commonpage first. */
+    /* Map the commonpage first. */
     pmap_create_sharedpage();
 
     /* Set the commonpage PtrValue. */
@@ -83,14 +83,14 @@ void commpage_populate(void)
 
 void commpage_set_timestamp(uint64_t tbr, uint64_t secs, uint32_t ticks_per_sec)
 {
-	assert(common_page_ptr);
+    assert(common_page_ptr);
 
-	/* Update the timestamp value. */
-	commpage_timeofday_data_t* tofd = (commpage_timeofday_data_t*)_COMMPAGE_TIMEBASE_INFO;
+    /* Update the timestamp value. */
+    commpage_timeofday_data_t* tofd = (commpage_timeofday_data_t*)_COMMPAGE_TIMEBASE_INFO;
 
-	tofd->TimeBase = tbr;
-	tofd->TimeStamp_sec = secs;
-	tofd->TimeBaseTicks_per_sec = 0;
+    tofd->TimeBase = tbr;
+    tofd->TimeStamp_sec = secs;
+    tofd->TimeBaseTicks_per_sec = 0;
 
-	return;
+    return;
 }
