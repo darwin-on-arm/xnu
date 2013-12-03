@@ -212,16 +212,13 @@ lock_t pmap_system_lock;
 #define SPLVM(spl)          spl = splhigh();
 #define SPLX(spl)           splx(spl);
 
-#if 1
-#define PMAP_LOCK(pmap) {       \
-    simple_lock(&(pmap)->lock); \
+#define PMAP_LOCK(pmap) {               \
+    simple_lock(&(pmap)->lock);         \
 }
 
-#define PMAP_UNLOCK(pmap) {         \
+#define PMAP_UNLOCK(pmap) {             \
     simple_unlock(&(pmap)->lock);       \
 }
-#endif
-
 
 /** The Free List. */
 pv_entry_t pv_free_list;        /* The free list should be populated when the pmaps are not locked. */
@@ -342,6 +339,17 @@ checks the rooted entry and then hashes and runs the hash list for the match. Th
 lengths are much smaller than the original pv lists that contained all aliases for the specific ppn.
 
 */
+
+/*
+ * OS level page bits.
+ */
+typedef enum {
+    PMAP_OSPTE_TYPE_VALID           = 0x0,
+    PMAP_OSPTE_TYPE_WIRED           = 0x1,
+    PMAP_OSPTE_TYPE_REFERENCED      = 0x2,
+    PMAP_OSPTE_TYPE_MODIFIED        = 0x4,
+    PMAP_OSPTE_TYPE_NOENCRYPT       = 0x8
+} __internal_pmap_ospte_bits_t;
 
 /*
  * The PV rooted hash stuff is from xnu-1228/osfmk/i386/pmap.c
@@ -667,7 +675,8 @@ void phys_attribute_set(ppnum_t pn, int bits)
 /**
  * pmap_adjust_unnest_parameters
  *
- * Invoked by the Mach VM to determine the platform specific unnest region.
+ * Invoked by the Mach VM to determine the platform specific unnest region. This
+ * is not used on ARM platforms.
  */
 boolean_t pmap_adjust_unnest_parameters(pmap_t p, vm_map_offset_t * s,
                                         vm_map_offset_t * e)
@@ -696,6 +705,7 @@ kern_return_t pmap_attribute_cache_sync(ppnum_t pn, vm_size_t size,
                                         vm_machine_attribute_t attr,
                                         vm_machine_attribute_val_t * attrp)
 {
+    Debugger("pmap_attribute_cache_sync");
     return KERN_SUCCESS;
 }
 
@@ -713,7 +723,9 @@ unsigned int pmap_cache_attributes(ppnum_t pn)
  */
 void pmap_clear_noencrypt(ppnum_t pn)
 {
-    return;
+    if(!pmap_initialized)
+        return;
+    phys_attribute_clear(pn, PMAP_OSPTE_TYPE_NOENCRYPT);
 }
 
 /**
@@ -721,7 +733,9 @@ void pmap_clear_noencrypt(ppnum_t pn)
  */
 boolean_t pmap_is_noencrypt(ppnum_t pn)
 {
-    return FALSE;
+    if(!pmap_initialized)
+        return FALSE;
+    return (phys_attribute_test(pn, PMAP_OSPTE_TYPE_NOENCRYPT));
 }
 
 /**
@@ -729,7 +743,9 @@ boolean_t pmap_is_noencrypt(ppnum_t pn)
  */
 void pmap_set_noencrypt(ppnum_t pn)
 {
-    return;
+    if(!pmap_initialized)
+        return;
+    phys_attribute_set(pn, PMAP_OSPTE_TYPE_NOENCRYPT);
 }
 
 /**
@@ -739,11 +755,14 @@ void pmap_set_noencrypt(ppnum_t pn)
  */
 void pmap_set_cache_attributes(ppnum_t pn, unsigned int cacheattr)
 {
+    Debugger("pmap_set_cache_attributes");
     return;
 }
 
 /**
  * compute_pmap_gc_throttle
+ *
+ * Unused.
  */
 void compute_pmap_gc_throttle(void *arg __unused)
 {
@@ -755,8 +774,47 @@ void compute_pmap_gc_throttle(void *arg __unused)
  *
  * Specify pageability.
  */
-void pmap_change_wiring(pmap_t pmap, vm_map_offset_t va, boolean_t wired)
+void pmap_change_wiring(pmap_t map, vm_map_offset_t va, boolean_t wired)
 {
+    pt_entry_t *pte;
+    uint32_t pa;
+
+    /*
+     * Lock the pmap.
+     */
+    PMAP_LOCK(map);
+
+    if((pte = pmap_pte(map, va)) == (pt_entry_t*)0)
+        panic("pmap_change_wiring: pte missing");
+
+    /*
+     * Use FVTP to get the physical PPN. This will not work with the old
+     * pmap_extract.
+     */
+    pa = pmap_extract(map, va);
+    assert(pa);
+
+    if(wired && phys_attribute_test(pa >> PAGE_SHIFT, PMAP_OSPTE_TYPE_WIRED)) {
+        /* 
+         * We are wiring down the mapping.
+         */
+        pmap_ledger_credit(map, task_ledgers.wired_mem, PAGE_SIZE);
+        OSAddAtomic(+1, &map->pm_stats.wired_count);
+        phys_attribute_set(pa >> PAGE_SHIFT, PMAP_OSPTE_TYPE_WIRED);
+    } else {
+        /*
+         * Unwiring the mapping.
+         */
+        assert(map->pm_stats.wired_count >= 1);
+        OSAddAtomic(-1, &map->pm_stats.wired_count);
+        phys_attribute_clear(pa >> PAGE_SHIFT, PMAP_OSPTE_TYPE_WIRED);
+        pmap_ledger_debit(map, task_ledgers.wired_mem, PAGE_SIZE);
+    }
+
+    /*
+     * Done, unlock the map.
+     */
+    PMAP_UNLOCK(map);
     return;
 }
 
@@ -1103,7 +1161,7 @@ void pmap_pageable(__unused pmap_t pmap, __unused vm_map_offset_t start,
  */
 void pmap_set_modify(ppnum_t pn)
 {
-    phys_attribute_set(pn, VM_MEM_MODIFIED);
+    phys_attribute_set(pn, PMAP_OSPTE_TYPE_MODIFIED);
 }
 
 /**
@@ -1113,7 +1171,7 @@ void pmap_set_modify(ppnum_t pn)
  */
 void pmap_clear_modify(ppnum_t pn)
 {
-    phys_attribute_clear(pn, VM_MEM_MODIFIED);
+    phys_attribute_clear(pn, PMAP_OSPTE_TYPE_MODIFIED);
 }
 
 /**
@@ -1123,7 +1181,7 @@ void pmap_clear_modify(ppnum_t pn)
  */
 void pmap_clear_reference(ppnum_t pn)
 {
-    phys_attribute_clear(pn, VM_MEM_REFERENCED);
+    phys_attribute_clear(pn, PMAP_OSPTE_TYPE_REFERENCED);
 }
 
 /**
@@ -1133,7 +1191,7 @@ void pmap_clear_reference(ppnum_t pn)
  */
 void pmap_set_reference(ppnum_t pn)
 {
-    phys_attribute_set(pn, VM_MEM_REFERENCED);
+    phys_attribute_set(pn, PMAP_OSPTE_TYPE_REFERENCED);
 }
 
 /**
@@ -1179,6 +1237,7 @@ boolean_t pmap_verify_free(vm_offset_t phys)
  */
 void pmap_sync_page_data_phys(__unused ppnum_t pa)
 {
+    Debugger("pmap_sync_page_data_phys");
     return;
 }
 
@@ -1189,6 +1248,7 @@ void pmap_sync_page_data_phys(__unused ppnum_t pa)
  */
 void pmap_sync_page_attributes_phys(ppnum_t pa)
 {
+    Debugger("pmap_sync_page_attributes_phys");
     return;
 }
 
@@ -1281,7 +1341,7 @@ void pmap_static_init(void)
  */
 boolean_t pmap_is_modified(vm_offset_t phys)
 {
-    return (phys_attribute_test(phys, VM_MEM_MODIFIED));
+    return (phys_attribute_test(phys, PMAP_OSPTE_TYPE_MODIFIED));
 }
 
 /**
@@ -1292,7 +1352,7 @@ boolean_t pmap_is_modified(vm_offset_t phys)
  */
 boolean_t pmap_is_referenced(vm_offset_t phys)
 {
-    return (phys_attribute_test(phys, VM_MEM_REFERENCED));
+    return (phys_attribute_test(phys, PMAP_OSPTE_TYPE_REFERENCED));
 }
 
 /**
@@ -1319,6 +1379,7 @@ ppnum_t pmap_find_phys(pmap_t pmap, addr64_t va)
      */
     disable_preemption();
 
+#if 1
     /*
      * Get the PTE. 
      */
@@ -1338,6 +1399,61 @@ ppnum_t pmap_find_phys(pmap_t pmap, addr64_t va)
     }
 
     ppn = pa_index(pte & L2_ADDR_MASK);
+#else
+    uint32_t virt = (va & L2_ADDR_MASK), par;
+    boolean_t is_priv = (pmap == kernel_pmap) ? TRUE : FALSE;
+
+    /*
+     * TTBCR split means that commonpage is at 0x40000000, in kernel_pmap.
+     */
+    if(virt == _COMM_PAGE_BASE_ADDRESS) {
+        ppn = 0;
+        goto out;
+    }
+
+    /*
+     * Fast VirtToPhys involves using the virtual address trnalsation
+     * register as present in Cortex-A and ARM11 MPCore systems.
+     *
+     * Privileged reads are only done on the kernel PMAP versus user
+     * pmaps getting user read/write state.
+     *
+     * The entire process should take much shorter compared to the
+     * older pmap_extract, which fully walked the page tables. You can
+     * still use the current behaviour however, by messing with
+     * the MASTER files.
+     *
+     * I swear, I need more stupid sleep.
+     */
+
+    /*
+     * Set the PAtoVA register and perform the operation.
+     */
+    if(is_priv)
+        armreg_va2pa_pr_ns_write(virt);
+    else
+        armreg_va2pa_ur_ns_write(virt);
+
+    /* 
+     * Wait for the instruction transaction to complete.
+     */
+    __asm__ __volatile__ ("isb sy");
+
+    /*
+     * See if the translation aborted, log any translation errors.
+     */
+    par = armreg_par_read();
+
+    /*
+     * Successful translation, we're done.
+     */
+    if(!(par & 1)) {
+        uint32_t pa = par & L2_ADDR_MASK;
+        ppn = pa_index(pa);
+    } else {
+        ppn = 0;
+    }
+#endif
  out:
     /*
      * Return. 
@@ -1579,11 +1695,11 @@ unsigned int pmap_get_refmod(ppnum_t pn)
     int refmod;
     unsigned int retval = 0;
 
-    refmod = phys_attribute_test(pn, VM_MEM_MODIFIED | VM_MEM_REFERENCED);
+    refmod = phys_attribute_test(pn, PMAP_OSPTE_TYPE_MODIFIED | PMAP_OSPTE_TYPE_REFERENCED);
 
-    if (refmod & VM_MEM_MODIFIED)
+    if (refmod & PMAP_OSPTE_TYPE_MODIFIED)
         retval |= VM_MEM_MODIFIED;
-    if (refmod & VM_MEM_REFERENCED)
+    if (refmod & PMAP_OSPTE_TYPE_REFERENCED)
         retval |= VM_MEM_REFERENCED;
 
     return (retval);
@@ -1637,6 +1753,12 @@ vm_page_t pmap_grab_page(void)
      * Done.
      */
     vm_object_unlock(pmap_object);
+
+    /*
+     * Set noencrypt bits.
+     */
+    pmap_set_noencrypt(page->phys_page);
+
     return page;
 }
 
@@ -2072,6 +2194,18 @@ kern_return_t pmap_enter_options(pmap_t pmap, vm_map_offset_t va, ppnum_t pa,
             template_pte |= mmu_texcb_small(MMU_DMA);
         }
 
+        if(wired) {
+            if(!phys_attribute_test(pa, PMAP_OSPTE_TYPE_WIRED)) {
+                OSAddAtomic(+1, &pmap->pm_stats.wired_count);
+                phys_attribute_set(pa, PMAP_OSPTE_TYPE_WIRED);
+                pmap_ledger_credit(pmap, task_ledgers.wired_mem, PAGE_SIZE);
+            } else {
+                assert(pmap->pm_stats.wired_count >= 1);
+                OSAddAtomic(-1, &pmap->pm_stats.wired_count);
+                pmap_ledger_debit(pmap, task_ledgers.wired_mem, PAGE_SIZE);
+            }
+        }
+
         *(uint32_t *) pte = template_pte;
 
         /*
@@ -2099,6 +2233,21 @@ kern_return_t pmap_enter_options(pmap_t pmap, vm_map_offset_t va, ppnum_t pa,
 
             if (!pmap_valid_page(pa))
                 goto EnterPte;
+
+            /*
+             * Set statistics and credit/debit internal pmap ledgers
+             */
+            {
+                pmap_ledger_debit(pmap, task_ledgers.phys_mem, PAGE_SIZE);
+                assert(pmap->pm_stats.resident_count >= 1);
+                OSAddAtomic(-1, &pmap->pm_stats.resident_count);
+            }
+
+            if(phys_attribute_test(pa, PMAP_OSPTE_TYPE_WIRED)) {
+                assert(pmap->pm_stats.wired_count >= 1);
+                OSAddAtomic(-1, &pmap->pm_stats.wired_count);
+                phys_attribute_clear(pa, PMAP_OSPTE_TYPE_WIRED);
+            }
 
             if (pv_h->pmap == PMAP_NULL) {
                 panic("pmap_enter_options: null pv_list\n");
@@ -2261,8 +2410,12 @@ kern_return_t pmap_enter_options(pmap_t pmap, vm_map_offset_t va, ppnum_t pa,
      * Enter and count the mapping.
      */
     pmap->pm_stats.resident_count++;
-    if (wired)
+    pmap_ledger_credit(pmap, task_ledgers.phys_mem, PAGE_SIZE);
+
+    if (wired) {
         pmap->pm_stats.wired_count++;
+        pmap_ledger_credit(pmap, task_ledgers.phys_mem, PAGE_SIZE);
+    }
 
     /*
      * Set VM protections
@@ -2302,6 +2455,13 @@ kern_return_t pmap_enter_options(pmap_t pmap, vm_map_offset_t va, ppnum_t pa,
      * Done, now invalidate the TLB for a single page.
      */
     armv7_tlb_flushID_SE(va);
+
+    if (pvh_e != PV_HASHED_ENTRY_NULL) {
+        PV_HASHED_FREE_LIST(pvh_e, pvh_e, 1);
+    }
+    if (pvh_new != PV_HASHED_ENTRY_NULL) {
+        PV_HASHED_KERN_FREE_LIST(pvh_new, pvh_new, 1);
+    }
 
     /*
      * The operation has completed successfully.
@@ -2540,6 +2700,11 @@ void pmap_remove_range(pmap_t pmap, vm_map_offset_t start_vaddr, pt_entry_t * sp
             continue;
         num_removed++;
 
+        if(phys_attribute_test(pai, PMAP_OSPTE_TYPE_WIRED)) {
+            phys_attribute_clear(pai, PMAP_OSPTE_TYPE_WIRED);
+            num_removed++;
+        }
+
         /*
          * Nuke the page table entry.
          */
@@ -2654,10 +2819,17 @@ void pmap_remove_range(pmap_t pmap, vm_map_offset_t start_vaddr, pt_entry_t * sp
     /*
      * Make sure the amount removed isn't... weird.
      */
+    if (pmap->pm_stats.resident_count < num_removed)
+            panic("pmap_remove_range: resident_count");
+    pmap_ledger_debit(pmap, task_ledgers.phys_mem, num_removed * PAGE_SIZE);
     assert(pmap->pm_stats.resident_count >= num_removed);
     OSAddAtomic(-num_removed, &pmap->pm_stats.resident_count);
+
+    if (pmap->pm_stats.wired_count < num_unwired)
+            panic("pmap_remove_range: wired_count");
     assert(pmap->pm_stats.wired_count >= num_unwired);
     OSAddAtomic(-num_unwired, &pmap->pm_stats.wired_count);
+    pmap_ledger_debit(pmap, task_ledgers.wired_mem, num_unwired * PAGE_SIZE);
 
     return;
 }
@@ -2879,6 +3051,7 @@ void pmap_page_protect(ppnum_t pn, vm_prot_t prot)
 #endif
                 assert(pmap->pm_stats.resident_count >= 1);
                 OSAddAtomic(-1, (SInt32 *) & pmap->pm_stats.resident_count);
+                pmap_ledger_debit(pmap, task_ledgers.phys_mem, PAGE_SIZE);
 
                 /*
                  * Deal with the pv_rooted_entry.

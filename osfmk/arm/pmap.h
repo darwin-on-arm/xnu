@@ -39,6 +39,7 @@
 #include <kern/kern_types.h>
 #include <kern/thread.h>
 #include <kern/lock.h>
+#include <kern/ledger.h>
 
 #ifdef MACH_KERNEL_PRIVATE
 #include <pexpert/arm/boot.h>
@@ -72,6 +73,7 @@
  * pmap locking
  */
 
+#if 0
 #define PMAP_LOCK(pmap) {		     \
     simple_lock(&(pmap)->lock);	    \
 }
@@ -79,6 +81,7 @@
 #define PMAP_UNLOCK(pmap) {			      \
     simple_unlock(&(pmap)->lock);		  \
 }
+#endif
 
 #define l2_size(size) ((uint32_t)((size >> 20) << 10))
 
@@ -269,7 +272,7 @@ extern void pmap_disable_NX(pmap_t pmap);
 
 extern boolean_t pmap_valid_page(ppnum_t pn);
 extern void pmap_deallocate_l1(pmap_t pmap);
-
+extern vm_offset_t pmap_pte(pmap_t pmap, vm_offset_t virt);
 extern void pt_fake_zone_init(int);
 extern void pt_fake_zone_info(int *, vm_size_t *, vm_size_t *, vm_size_t *,
                               vm_size_t *, uint64_t *, int *, int *, int *);
