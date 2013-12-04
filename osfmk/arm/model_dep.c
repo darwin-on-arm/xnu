@@ -70,6 +70,7 @@
 #include <kern/clock.h>
 #include <kern/cpu_data.h>
 #include <kern/machine.h>
+#include <arm/pmap.h>
 
 #include <arm/misc_protos.h>
 
@@ -207,7 +208,7 @@ void panic_backlog(uint32_t stackptr)
 
     kdb_printf("\nPanicked task %p: %d pages, %d threads: pid %d: %s\n"
                "panicked thread: %p, backtrace: 0x%08x\n", task,
-               task->all_image_info_size, task->thread_count,
+               task->map->pmap->pm_stats.resident_count, task->thread_count,
                (task->bsd_info != NULL) ? proc_pid(task->bsd_info) : 0, name,
                currthr, stackptr);
     panic_arm_thread_backtrace(stackptr, 32, NULL, FALSE, NULL, TRUE, "");
@@ -253,7 +254,7 @@ void panic_backlog(uint32_t stackptr)
                 continue;
 
             kdb_printf("Task 0x%x: %d pages, %d threads: pid %d: %s\n", task,
-                       task->all_image_info_size, task->thread_count,
+                       task->map->pmap->pm_stats.resident_count, task->thread_count,
                        (task->bsd_info != NULL) ? proc_pid(task->bsd_info) : 0,
                        name);
         }
@@ -529,7 +530,7 @@ void print_threads(uint32_t stackptr)
         }
 
         kdb_printf("Task 0x%x: %d pages, %d threads: pid %d: %s\n", task,
-                   task->all_image_info_size, task->thread_count,
+                   task->map->pmap->pm_stats.resident_count, task->thread_count,
                    (task->bsd_info != NULL) ? proc_pid(task->bsd_info) : 0,
                    name);
 
