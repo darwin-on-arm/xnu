@@ -59,6 +59,8 @@
 #include <mach/mig_errors.h>
 #include <mach/vm_statistics.h>
 
+#include <mach/mach_traps.h>
+
 #define MACH_MSG_TRAP(msg, opt, ssize, rsize, rname, to, not) \
 	 mach_msg_trap((msg), (opt), (ssize), (rsize), (rname), (to), (not))
 

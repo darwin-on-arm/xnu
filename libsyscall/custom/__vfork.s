@@ -133,7 +133,7 @@ L2:
 #include <arm/arch.h>
 		
 	.globl	cerror
-	MI_ENTRY_POINT(_vfork)
+	MI_ENTRY_POINT(___vfork)
 
 	MI_GET_ADDRESS(r3, __current_pid)	// get address of __current_pid
 #ifdef _ARM_ARCH_6

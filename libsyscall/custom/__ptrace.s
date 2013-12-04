@@ -52,7 +52,7 @@ LEAF(___ptrace, 0)
 
 #elif defined(__arm__)
 
-MI_ENTRY_POINT(_ptrace)
+MI_ENTRY_POINT(___ptrace)
 	MI_GET_ADDRESS(ip,_errno)
 	str	r8, [sp, #-4]!
 	mov     r8, #0

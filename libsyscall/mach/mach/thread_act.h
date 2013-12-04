@@ -29,6 +29,8 @@
 #include <mach/i386/thread_act.h>
 #elif defined(__x86_64__)
 #include <mach/x86_64/thread_act.h>
+#elif defined(__arm__)
+#include <mach/arm/thread_act.h>
 #else
 #error unknown architecture
 #endif 

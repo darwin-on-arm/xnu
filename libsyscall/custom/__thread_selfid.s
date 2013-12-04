@@ -38,7 +38,7 @@ __SYSCALL_INT(___thread_selfid, thread_selfid, 1)
 
 #elif defined(__arm__)
 
-__SYSCALL_INT(___thread_selfid, thread_selfid, 1)
+__SYSCALL(___thread_selfid, thread_selfid, 1)
 
 #else
 #error Unsupported architecture

@@ -23,9 +23,11 @@
 
 /* Get the cpu_capabilities bit vector out of the comm page */
 
+#ifndef __arm__
 #define	__APPLE_API_PRIVATE
 #include <machine/cpu_capabilities.h>
 #undef	__APPLE_API_PRIVATE
+#endif
 
 #if defined(__x86_64__)
 
@@ -52,6 +54,8 @@ __get_cpu_capabilities:
 	.align 2
 	.globl __get_cpu_capabilities
 __get_cpu_capabilities:
+	/* The SDK is stupid. */
+#define _COMMPAGE_CPU_CAPABILITIES			0x40000020
 	mov	r0, #_COMMPAGE_CPU_CAPABILITIES
 	ldr	r0, [r0]
 	bx	lr

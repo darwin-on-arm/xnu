@@ -343,8 +343,19 @@ name:
 _##pseudo:									;\
 	SYSCALL_NONAME(name, nargs)
 
+#define	PSEUDO2(pseudo, name, nargs)			\
+	.globl	pseudo						;\
+	.text									;\
+	.align  2								;\
+pseudo:									;\
+	SYSCALL_NONAME(name, nargs)
+
 #define __SYSCALL(pseudo, name, nargs)		\
 	PSEUDO(pseudo, name, nargs)				;\
+	bx lr
+
+#define __SYSCALL2(pseudo, name, nargs, cerror)		 \
+	PSEUDO2(pseudo, name, nargs)				;\
 	bx lr
 
 #else

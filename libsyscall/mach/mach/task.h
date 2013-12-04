@@ -29,6 +29,8 @@
 #include <mach/i386/task.h>
 #elif defined(__x86_64__)
 #include <mach/x86_64/task.h>
+#elif defined(__arm__)
+#include <mach/arm/task.h>
 #else
 #error unknown architecture
 #endif 

@@ -113,7 +113,7 @@ __current_pid:
 	 */
 	.long 0
 
-MI_ENTRY_POINT(_getpid)
+MI_ENTRY_POINT(___getpid)
 	ldr	r3, L__current_pid
 L1:	add	r3, pc, r3		// r3 = &__current_pid
 	ldr	r0, [r3]		// get the cached pid

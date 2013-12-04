@@ -105,7 +105,6 @@ L2:
 	MI_ENTRY_POINT(_fork)
 	stmfd	sp!, {r4, r7, lr}
 	add	r7, sp, #4
-	MI_CALL_EXTERNAL(__cthread_fork_prepare)
 	mov	r1, #1					// prime results
 	mov	r12, #SYS_fork
 	swi	#SWI_SYSCALL				// make the syscall
@@ -118,6 +117,7 @@ L2:
 	mov	r0, #0
 	str	r0, [r3]		// clear cached pid in child
 
+#if 0
 #if defined(__DYNAMIC__)
 // Here on the child side of the fork we need to tell the dynamic linker that
 // we have forked.  To do this we call __dyld_fork_child in the dyanmic
@@ -142,8 +142,8 @@ L0:	add	r0, pc, r0
 	mov	lr, pc
 	ldr	pc, [sp], #4				// call __dyld_fork_child indirectly and pop
 #endif
-	MI_CALL_EXTERNAL(__cthread_fork_child)		// let child get ready
 	mov	r0, #0
+#endif
         ldmfd   sp!, {r4, r7, pc}
 
 Lbotch:
@@ -152,15 +152,14 @@ Lbotch:
 	// fall thru
 	
 Lparent:	
-	mov	r4, r0					// save child pid
-	MI_CALL_EXTERNAL(__cthread_fork_parent)
-	mov	r0, r4					// restore child pid
 	ldmfd   sp!, {r4, r7, pc}			// pop and return
 
 	.align 2
+#if 0
 #if defined(__DYNAMIC__)
 LP0:
 	.long	LC0-(L0+8)
+#endif
 #endif
 
 #else

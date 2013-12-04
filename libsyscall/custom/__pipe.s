@@ -48,7 +48,7 @@ PSEUDO(___pipe, pipe, 0, cerror_nocancel)
 
 #elif defined(__arm__)
 
-MI_ENTRY_POINT(_pipe)
+MI_ENTRY_POINT(___pipe)
 	mov		r3,r0              // save fildes across syscall
 	SYSCALL_NONAME(pipe, 0)
 	str     r0, [r3, #0]
