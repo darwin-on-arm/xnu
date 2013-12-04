@@ -393,14 +393,14 @@ _ptmf2ptf(const OSMetaClassBase *self, void (OSMetaClassBase::*func)(void))
 
     map.fIn = func;
     
-    if (map.fVTOffset < 0x740) {    // This is wrong, need a better way to figure out if a function is a virtual or not.
-        // virtual
+    // High order function pointers are considered plain member functions
+    if (!(map.fVTOffset & 0x80000000)) {
         union {
             const OSMetaClassBase *fObj;
             _ptf_t **vtablep;
         } u;
         u.fObj = self;
-        // Virtual member function so dereference vtable
+        // Virtual member function so dereference vtable, no need to add +1.
         return *(_ptf_t*)(((uintptr_t)*u.vtablep) + map.fVTOffset);
     } else {
         // Not virtual, i.e. plain member func
