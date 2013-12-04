@@ -46,6 +46,16 @@ __get_cpu_capabilities:
 	movl	_COMM_PAGE_CPU_CAPABILITIES, %eax
 	ret
 
+#elif defined(__arm__)
+
+	.text
+	.align 2
+	.globl __get_cpu_capabilities
+__get_cpu_capabilities:
+	mov	r0, #_COMMPAGE_CPU_CAPABILITIES
+	ldr	r0, [r0]
+	bx	lr
+
 #else
 #error Unsupported architecture
 #endif

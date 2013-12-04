@@ -25,7 +25,7 @@
 #include <machine/cpu_capabilities.h>
 #undef	__APPLE_API_PRIVATE
 
-#if defined(__i386__) || defined(__x86_64__)
+#if defined(__i386__) || defined(__x86_64__) || defined(__arm__)
 
 /* Initialize the "_cpu_capabilities" vector on x86 processors. */
 

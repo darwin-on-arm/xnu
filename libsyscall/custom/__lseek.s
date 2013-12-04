@@ -36,6 +36,10 @@ __SYSCALL(___lseek, lseek, 3)
 
 __SYSCALL_INT(___lseek, lseek, 3)
 
+#elif defined(__arm__)
+
+__SYSCALL(__lseek, lseek, 4)
+
 #else
 #error Unsupported architecture
 #endif
