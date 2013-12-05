@@ -1179,7 +1179,9 @@ void pmap_change_wiring(pmap_t map, vm_map_offset_t va, boolean_t wired)
      * Use FVTP to get the physical PPN. This will not work with the old
      * pmap_extract.
      */
+    PMAP_UNLOCK(map);
     pa = pmap_extract(map, va);
+    PMAP_LOCK(map);
     assert(pa);
 
     if (wired && phys_attribute_test(pa >> PAGE_SHIFT, PMAP_OSPTE_TYPE_WIRED)) {
@@ -1836,6 +1838,77 @@ ppnum_t pmap_find_phys(pmap_t pmap, addr64_t va)
 }
 
 /**
+ * pmap_find_phys_fvtp
+ *
+ * pmap_find_phys returns the (4K) physical page number containing a
+ * given virtual address in a given pmap. This is used for KDP purposes
+ * only.
+ */
+ppnum_t pmap_find_phys_fvtp(pmap_t pmap, addr64_t va)
+{
+    uint32_t ptep, pte, ppn;
+    uint32_t virt = (va & L2_ADDR_MASK), par;
+    boolean_t is_priv = (pmap == kernel_pmap) ? TRUE : FALSE;
+
+    /*
+     * TTBCR split means that commonpage is at 0x40000000, in kernel_pmap.
+     */
+    if (virt == _COMM_PAGE_BASE_ADDRESS) {
+        ppn = 0;
+        goto out;
+    }
+
+    /*
+     * Fast VirtToPhys involves using the virtual address trnalsation
+     * register as present in Cortex-A and ARM11 MPCore systems.
+     *
+     * Privileged reads are only done on the kernel PMAP versus user
+     * pmaps getting user read/write state.
+     *
+     * The entire process should take much shorter compared to the
+     * older pmap_extract, which fully walked the page tables. You can
+     * still use the current behaviour however, by messing with
+     * the MASTER files.
+     *
+     * I swear, I need more stupid sleep.
+     */
+
+    /*
+     * Set the PAtoVA register and perform the operation.
+     */
+    if (is_priv)
+        armreg_va2pa_pr_ns_write(virt);
+    else
+        armreg_va2pa_ur_ns_write(virt);
+
+    /*
+     * Wait for the instruction transaction to complete.
+     */
+    __asm__ __volatile__("isb sy");
+
+    /*
+     * See if the translation aborted, log any translation errors.
+     */
+    par = armreg_par_read();
+
+    /*
+     * Successful translation, we're done.
+     */
+    if (!(par & 1)) {
+        uint32_t pa = par & L2_ADDR_MASK;
+        ppn = pa_index(pa);
+    } else {
+        ppn = 0;
+    }
+ out:
+    /*
+     * Return. 
+     */
+    enable_preemption();
+    return ppn;
+}
+
+/**
  * pmap_switch
  *
  * Switch the current user pmap to a new one.
@@ -2196,7 +2269,7 @@ void pmap_create_sharedpage(void)
  */
 vm_offset_t pmap_extract(pmap_t pmap, vm_offset_t virt)
 {
-#if USE_SLOW_EXTRACT
+#if 0
     spl_t spl;
     vm_offset_t ppn = 0;
     uint32_t tte, *ttep = pmap_tte(pmap, virt);
@@ -2328,7 +2401,7 @@ vm_offset_t pmap_extract(pmap_t pmap, vm_offset_t virt)
         /*
          * Log translation fault.
          */
-        kprintf("pmap_extract: fast v2p failed, par %x\n", par);
+        kprintf("pmap_extract: fast extraction failed, par 0x%x\n", par);
     }
 
     return 0;

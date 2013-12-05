@@ -49,6 +49,15 @@
 #include <libkern/kernel_mach_header.h>
 #include <arm/pmap.h>
 #include <arm/misc_protos.h>
+#include <arm/low_globals.h>
+
+extern void *version;
+extern void *kmod;
+extern void *kdp_trans_off;
+extern void *kdp_read_io;
+extern void *osversion;
+extern void *flag_kdp_trigger_reboot;
+extern void *manual_pkt;
 
 #define align_down(p, s)        ((uintptr_t)(p)&~(s-1))
 #define align_up(p, s)          align_down((uintptr_t)(p)+s-1, s)
@@ -129,6 +138,11 @@ extern void *ExceptionVectorsBase;
 #define LOWGLO_BASE     0xFFFF0040
 #define VECTORS_BASE    0xFFFF0000
 #define MANAGED_BASE    0xC0000000  /* Can also be 0xA0000000, but iPhone OS 5 uses this address. */
+
+/*
+ * VBARNS support will break kdp for now.
+ */
+lowglo* lowGlo = (lowglo*)VECTORS_BASE;
 
 /*
  * These both represent the first physical page we can use in the system,
@@ -472,6 +486,13 @@ void arm_vm_init(uint32_t mem_limit, boot_args * args)
      * Verify vectors are in the right place. 
      */
     verify_lowGlo();
+
+    /*
+     * Set up low globals
+     */
+    lowGlo->lgOSVersion = (uint32_t) &version;
+    lowGlo->lgRebootFlag = (uint32_t) &flag_kdp_trigger_reboot;
+    lowGlo->lgManualPacket = (uint32_t) &manual_pkt;
 #endif
 
     return;
