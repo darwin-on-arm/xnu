@@ -2357,7 +2357,7 @@ void pmap_expand_ttb(pmap_t map, vm_offset_t expansion_size)
     switch (expansion_size) {
     case 0x1000:
         panic("pmap_expand_ttb: attempting to expand an already-expanded pmap?");
-    case 0x2000...0 x3000:{
+    case 0x2000 ... 0x3000:{
             kern_return_t ret;
             vm_page_t pages;
 
