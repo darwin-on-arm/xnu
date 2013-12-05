@@ -1511,11 +1511,7 @@ boolean_t pmap_map_bd(vm_offset_t virt, vm_map_offset_t start, vm_map_offset_t e
     /*
      * Map the pages. 
      */
-    if ((flags & (VM_MEM_NOT_CACHEABLE | VM_WIMG_USE_DEFAULT)) == VM_MEM_NOT_CACHEABLE) {
-        l2_map_linear_range_no_cache(virt_to_phys(ptep), start, end);
-    } else {
-        l2_map_linear_range(virt_to_phys(ptep), start, end);        
-    }
+    l2_map_linear_range_no_cache(virt_to_phys(ptep), start, end);
 
     /*
      * Return. 
