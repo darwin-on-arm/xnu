@@ -254,8 +254,6 @@ kdp_machine_vm_write(caddr_t src, mach_vm_address_t dst, mach_vm_size_t len)
     unsigned int dummy;
     pmap_t pmap;
 
-    return 0; /* broken... */
-
     cur_virt_src = (addr64_t) src;
     cur_virt_dst = (addr64_t) (intptr_t) dst;
 
