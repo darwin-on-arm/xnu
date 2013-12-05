@@ -108,6 +108,7 @@ struct pmap {
     struct pmap_statistics pm_stats;
     uint32_t pm_l1_size;
     uint32_t pm_asid;
+    vm_object_t pm_obj;
 };
 
 typedef struct arm_l1_entry_t {

@@ -2136,11 +2136,11 @@ void pmap_enter(pmap_t pmap, vm_map_offset_t va, ppnum_t pa, vm_prot_t prot,
  *
  * Get a page from the global pmap object.
  */
-vm_page_t pmap_grab_page(void)
+vm_page_t pmap_grab_page(pmap_t pmap)
 {
     vm_page_t page;
     uint32_t ctr;
-    assert(pmap_initialized && kernel_map);
+    assert(pmap_initialized && kernel_map && pmap->pm_obj);
 
     /*
      * Grab pages from the global VM object.
@@ -2151,11 +2151,11 @@ vm_page_t pmap_grab_page(void)
     /*
      * Lock the global object to prevent interruptions.
      */
-    vm_object_lock(pmap_object);
+    vm_object_lock(pmap->pm_obj);
     assert((page->phys_page << PAGE_SHIFT) > gPhysBase);
     ctr = (page->phys_page) - (gPhysBase >> PAGE_SHIFT);
     bzero(phys_to_virt(page->phys_page << PAGE_SHIFT), PAGE_SIZE);
-    vm_page_insert(page, pmap_object, ctr);
+    vm_page_insert(page, pmap->pm_obj, ctr);
 
     /*
      * Wire our new page.
@@ -2167,7 +2167,7 @@ vm_page_t pmap_grab_page(void)
     /*
      * Done.
      */
-    vm_object_unlock(pmap_object);
+    vm_object_unlock(pmap->pm_obj);
 
     /*
      * Set noencrypt bits.
@@ -2222,7 +2222,7 @@ void pmap_create_sharedpage(void)
     /*
      * Grab a page...
      */
-    commpage = pmap_grab_page();
+    commpage = pmap_grab_page(kernel_pmap);
     assert(commpage);
 
     /*
@@ -2473,7 +2473,7 @@ void pmap_expand_ttb(pmap_t map, vm_offset_t expansion_size)
 void pmap_expand(pmap_t map, vm_offset_t v)
 {
     vm_offset_t *tte = (vm_offset_t *) pmap_tte(map, v);
-    vm_page_t page = pmap_grab_page();
+    vm_page_t page = pmap_grab_page(map);
     spl_t spl;
 
     /*
@@ -3019,6 +3019,7 @@ void pmap_init(void)
      */
     pmap_object = &pmap_object_store;
     _vm_object_allocate(mem_size, &pmap_object_store);
+    kernel_pmap->pm_obj = pmap_object;
 
     /*
      * Done initializing. 
@@ -3236,14 +3237,21 @@ pmap_t pmap_create(ledger_t ledger, vm_map_size_t size, __unused boolean_t is_64
     our_pmap->ledger = ledger;
     our_pmap->pm_asid = 0;
     pmap_common_init(our_pmap);
+
 #ifdef _NOTYET_
     pmap_asid_alloc_fast(our_pmap);
 #endif
     
     /*
+     * Create the pmap VM object. 
+     */
+    if (NULL == (our_pmap->pm_obj = vm_object_allocate((vm_object_size_t)(4096 * PAGE_SIZE))))
+        panic("pmap_create: pm_obj null");
+
+    /*
      * Grab a new page and set the new L1 region.
      */
-    new_l1 = pmap_grab_page();
+    new_l1 = pmap_grab_page(our_pmap);
     our_pmap->pm_l1_phys = new_l1->phys_page << PAGE_SHIFT;
     our_pmap->pm_l1_virt = phys_to_virt(new_l1->phys_page << PAGE_SHIFT);
     bzero(phys_to_virt(new_l1->phys_page << PAGE_SHIFT), PAGE_SIZE);
@@ -3328,11 +3336,9 @@ void pmap_page_protect(ppnum_t pn, vm_prot_t prot)
             pte = pmap_pte(pmap, vaddr);
 
             if (0 == pte) {
-                kprintf("pmap_page_protect pmap %p pn 0x%x vaddr 0x%lx\n", pmap, pn,
+                panic("pmap_page_protect(): null PTE pmap=%p pn=0x%x vaddr=0x%x\n", pmap, pn,
                         vaddr);
-                panic("pmap_page_protect");
             }
-
             nexth = (pv_hashed_entry_t) queue_next(&pvh_e->qlink);  /* if there is one */
 
             /*
@@ -3436,12 +3442,12 @@ void pmap_deallocate_l1(pmap_t pmap)
     /*
      * Lock the VM object. 
      */
-    vm_object_lock(pmap_object);
+    vm_object_lock(pmap->pm_obj);
 
     /*
      * Look up the page.
      */
-    m = vm_page_lookup(pmap_object,
+    m = vm_page_lookup(pmap->pm_obj,
                        (vm_object_offset_t) ((ttb_base >> PAGE_SHIFT) -
                                              (gPhysBase >> PAGE_SHIFT)));
     assert(m);
@@ -3454,7 +3460,7 @@ void pmap_deallocate_l1(pmap_t pmap)
     /*
      * Done.
      */
-    vm_object_unlock(pmap_object);
+    vm_object_unlock(pmap->pm_obj);
 
     /*
      * Remove one.
@@ -3518,6 +3524,13 @@ void pmap_destroy(pmap_t pmap)
      */
     pmap_deallocate_l1(pmap);
     ledger_dereference(pmap->ledger);
+
+    /* 
+     * Free the 'expanded' pages.
+     */
+    OSAddAtomic(-pmap->pm_obj->resident_page_count,  &inuse_ptepages_count);
+    PMAP_ZINFO_PFREE(pmap, pmap->pm_obj->resident_page_count * PAGE_SIZE);
+    vm_object_deallocate(pmap->pm_obj);
 
     /*
      * Free the actual pmap.
