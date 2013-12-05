@@ -538,6 +538,12 @@ uint64_t     pmap_pv_hashlist_walks = 0;
 uint64_t     pmap_pv_hashlist_cnts = 0;
 uint32_t     pmap_pv_hashlist_max = 0;
 
+unsigned int    inuse_ptepages_count = 0;
+unsigned int    bootstrap_wired_pages = 0;
+int             pt_fake_zone_index = -1;
+
+uint32_t   alloc_ptepages_count __attribute__((aligned(8))) = 0LL; /* aligned for atomic access */
+
 /* 
  * !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
  * !!!!!!!! Make SURE this remains in sync with arm_pte_prot_templates. !!!!!!!!! 
@@ -983,6 +989,28 @@ pmap_pv_remove_exit:
     return pvh_e;
 }
 
+__private_extern__ void
+pmap_pagetable_corruption_msg_log(int (*log_func)(const char * fmt, ...)__printflike(1,2)) {
+    if (pmap_pagetable_corruption_incidents > 0) {
+        int i, e = MIN(pmap_pagetable_corruption_incidents, PMAP_PAGETABLE_CORRUPTION_MAX_LOG);
+        (*log_func)("%u pagetable corruption incident(s) detected, timeout: %u\n", pmap_pagetable_corruption_incidents, pmap_pagetable_corruption_timeout);
+        for (i = 0; i < e; i++) {
+            (*log_func)("Incident 0x%x, reason: 0x%x, action: 0x%x, time: 0x%llx\n", pmap_pagetable_corruption_records[i].incident,  pmap_pagetable_corruption_records[i].reason, pmap_pagetable_corruption_records[i].action, pmap_pagetable_corruption_records[i].abstime);
+        }
+    }
+}
+
+static inline void
+pmap_pagetable_corruption_log_setup(void) {
+    if (pmap_pagetable_corruption_log_call == NULL) {
+        nanotime_to_absolutetime(20000, 0, &pmap_pagetable_corruption_interval_abstime);
+        thread_call_setup(&pmap_pagetable_corruption_log_call_data,
+            (thread_call_func_t) pmap_pagetable_corruption_msg_log,
+            (thread_call_param_t) &printf);
+        pmap_pagetable_corruption_log_call = &pmap_pagetable_corruption_log_call_data;
+    }
+}
+
 /**
  * pmap_vm_prot_to_page_flags
  */
@@ -1314,6 +1342,7 @@ mapping_adjust(void)
     int             i;
 
     if (mapping_adjust_call == NULL) {
+        pmap_pagetable_corruption_log_setup();
         thread_call_setup(&mapping_adjust_call_data,
                   (thread_call_func_t) mapping_adjust,
                   (thread_call_param_t) NULL);
@@ -2145,6 +2174,12 @@ vm_page_t pmap_grab_page(void)
      */
     pmap_set_noencrypt(page->phys_page);
 
+    /*
+     * Increment inuse ptepages.
+     */
+    OSAddAtomic(1, &inuse_ptepages_count);
+    OSAddAtomic(1, &alloc_ptepages_count);
+
     return page;
 }
 
@@ -2167,6 +2202,12 @@ void pmap_destroy_page(ppnum_t pa)
 
     VM_PAGE_FREE(m);
     kprintf("Freed page for PA %x\n", pa << PAGE_SHIFT);
+
+    /*
+     * Remove one.
+     */
+    OSAddAtomic(-1,  &inuse_ptepages_count);
+
 
     return;
 }
@@ -2403,6 +2444,9 @@ void pmap_expand_ttb(pmap_t map, vm_offset_t expansion_size)
             map->pm_l1_virt = phys_to_virt(pages->phys_page << PAGE_SHIFT);
             map->pm_l1_phys = pages->phys_page << PAGE_SHIFT;
             map->pm_l1_size = expansion_size;
+
+            OSAddAtomic((expansion_size >> PAGE_SHIFT), &inuse_ptepages_count);
+            OSAddAtomic((expansion_size >> PAGE_SHIFT), &alloc_ptepages_count);
 
             /*
              * Switch into the new TTB if it needs to be used.
@@ -3413,6 +3457,11 @@ void pmap_deallocate_l1(pmap_t pmap)
     vm_object_unlock(pmap_object);
 
     /*
+     * Remove one.
+     */
+    OSAddAtomic(-1,  &inuse_ptepages_count);
+
+    /*
      * Invalidation of the entire pmap should be done.
      */
     return;
@@ -3816,3 +3865,40 @@ void pmap_copy_part_rpage(vm_offset_t src, vm_offset_t src_offset, vm_offset_t d
 {
     panic("pmap_copy_part_rpage");
 }
+
+/**
+ * pmap_copy
+ *
+ * Unused.
+ */
+void pmap_copy(pmap_t dst, pmap_t src, vm_offset_t dst_addr, vm_size_t len, vm_offset_t src_addr)
+{
+    return;
+}
+
+/*
+ * These functions are used for bookkeeping.
+ */
+void
+pt_fake_zone_init(int zone_index)
+{
+    pt_fake_zone_index = zone_index;
+}
+
+void
+pt_fake_zone_info(int *count, 
+          vm_size_t *cur_size, vm_size_t *max_size, vm_size_t *elem_size, vm_size_t *alloc_size,
+          uint64_t *sum_size, int *collectable, int *exhaustable, int *caller_acct)
+{
+    *count      = inuse_ptepages_count;
+    *cur_size   = PAGE_SIZE * inuse_ptepages_count;
+    *max_size   = PAGE_SIZE * (inuse_ptepages_count + vm_page_inactive_count + vm_page_active_count + vm_page_free_count);
+    *elem_size  = PAGE_SIZE;
+    *alloc_size = PAGE_SIZE;
+    *sum_size   = alloc_ptepages_count * PAGE_SIZE;
+
+    *collectable = 1;
+    *exhaustable = 0;
+    *caller_acct = 1;
+}
+
