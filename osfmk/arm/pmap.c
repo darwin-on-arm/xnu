@@ -1511,7 +1511,11 @@ boolean_t pmap_map_bd(vm_offset_t virt, vm_map_offset_t start, vm_map_offset_t e
     /*
      * Map the pages. 
      */
-    l2_map_linear_range_no_cache(virt_to_phys(ptep), start, end);
+    if ((flags & (VM_MEM_NOT_CACHEABLE | VM_WIMG_USE_DEFAULT)) == VM_MEM_NOT_CACHEABLE) {
+        l2_map_linear_range_no_cache(virt_to_phys(ptep), start, end);
+    } else {
+        l2_map_linear_range(virt_to_phys(ptep), start, end);        
+    }
 
     /*
      * Return. 
@@ -3280,12 +3284,9 @@ void pmap_page_protect(ppnum_t pn, vm_prot_t prot)
                  */
                 *(pt_entry_t *) pte = 0;
                 armv7_tlb_flushID_SE(vaddr);
-                pv_h->flags &= (VM_MEM_MODIFIED | VM_MEM_REFERENCED);
-
-#if TESTING
+                phys_attribute_clear(pn, PMAP_OSPTE_TYPE_REFERENCED | PMAP_OSPTE_TYPE_MODIFIED);
                 if (pmap->pm_stats.resident_count < 1)
                     panic("pmap_page_protect: resident_count");
-#endif
                 assert(pmap->pm_stats.resident_count >= 1);
                 OSAddAtomic(-1, (SInt32 *) & pmap->pm_stats.resident_count);
                 pmap_ledger_debit(pmap, task_ledgers.phys_mem, PAGE_SIZE);
