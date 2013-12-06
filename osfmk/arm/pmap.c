@@ -2578,8 +2578,10 @@ kern_return_t pmap_enter_options(pmap_t pmap, vm_map_offset_t va, ppnum_t pa, vm
     /*
      * Only low addresses are supported for user pmaps.
      */
-    if (va > _COMM_PAGE_BASE_ADDRESS && pmap != kernel_pmap)
-        panic("pmap_enter_options: low address 0x%08X is invalid for pmap %p\n", va, pmap);
+    if (va > _COMM_PAGE_BASE_ADDRESS && pmap != kernel_pmap) {
+        kprintf("pmap_enter_options: low address 0x%08X is invalid for pmap %p\n", va, pmap);
+        return KERN_INVALID_ARGUMENT;
+    }
 
     pvh_new = PV_HASHED_ENTRY_NULL;
 
