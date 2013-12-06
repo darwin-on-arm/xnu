@@ -224,7 +224,7 @@ bsdthread_create(__unused struct proc *p, struct bsdthread_create_args  *uap, us
 #if defined(__i386__) || defined(__x86_64__)
 	stackaddr = 0xB0000000;
 #elif defined(__arm__)
-    stackaddr = 0x2FE00000;
+    stackaddr = 0x2FD00000;
 #else
 #error Need to define a stack address hint for this architecture
 #endif
