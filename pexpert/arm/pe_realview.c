@@ -357,13 +357,13 @@ void RealView_framebuffer_init(void)
     /*
      * Enable the TFT/LCD Display 
      */
-    HARDWARE_REGISTER(gRealviewPl111Base + PL111_CONTROL) = LCDCONTROL_LCDEN | LCDCONTROL_LCDTFT | LCDCONTROL_LCDPWR | LCDCONTROL_LCDBPP(4);
+    HARDWARE_REGISTER(gRealviewPl111Base + PL111_CONTROL) = LCDCONTROL_LCDEN | LCDCONTROL_LCDTFT | LCDCONTROL_LCDPWR | LCDCONTROL_LCDBPP(5);
 
     PE_state.video.v_baseAddr = (unsigned long) framebuffer_phys;
-    PE_state.video.v_rowBytes = width * 2;
+    PE_state.video.v_rowBytes = width * 4;
     PE_state.video.v_width = width;
     PE_state.video.v_height = height;
-    PE_state.video.v_depth = 2 * (8);   // 16bpp
+    PE_state.video.v_depth = 4 * (8);   // 16bpp
 
     kprintf(KPRINTF_PREFIX "framebuffer initialized\n");
     bzero(framebuffer, (pitch * height));
@@ -371,6 +371,10 @@ void RealView_framebuffer_init(void)
     char tempbuf[16];
     
 	if (PE_parse_boot_argn("-graphics-mode", tempbuf, sizeof(tempbuf))) {
+        /*
+         * BootX like framebuffer. 
+         */
+        memset(framebuffer, 0xb9, PE_state.video.v_rowBytes * PE_state.video.v_height);
         initialize_screen((void *) &PE_state.video, kPEGraphicsMode);
     } else {
 		initialize_screen((void *) &PE_state.video, kPETextMode);

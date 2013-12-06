@@ -390,6 +390,12 @@ omap_videomode omap_videomodes[] = {
 
 void Omap3_framebuffer_init(void)
 {
+    int dont_mess_with_this = 0;
+    if (PE_parse_boot_argn("-dont-fuck-with-framebuffer", tempbuf, sizeof(tempbuf))) {
+        /* Do not fuck with the framebuffer whatsoever, rely on whatever u-boot set. */
+        dont_mess_with_this = 1;
+    }
+
     /*
      * This *must* be page aligned. 
      */
@@ -415,37 +421,39 @@ void Omap3_framebuffer_init(void)
         }
     }
 
-    hbp = current_mode->left_margin;
-    hfp = current_mode->right_margin;
-    vbp = current_mode->upper_margin;
-    vfp = current_mode->lower_margin;
-    hsw = current_mode->hsync_len;
-    vsw = current_mode->vsync_len;
+    if(!dont_mess_with_this) {
+        hbp = current_mode->left_margin;
+        hfp = current_mode->right_margin;
+        vbp = current_mode->upper_margin;
+        vfp = current_mode->lower_margin;
+        hsw = current_mode->hsync_len;
+        vsw = current_mode->vsync_len;
 
-    timing_h = FLD_VAL(hsw - 1, 7, 0) | FLD_VAL(hfp - 1, 19, 8) | FLD_VAL(hbp - 1, 31, 20);
-    timing_v = FLD_VAL(vsw - 1, 7, 0) | FLD_VAL(vfp, 19, 8) | FLD_VAL(vbp, 31, 20);
+        timing_h = FLD_VAL(hsw - 1, 7, 0) | FLD_VAL(hfp - 1, 19, 8) | FLD_VAL(hbp - 1, 31, 20);
+        timing_v = FLD_VAL(vsw - 1, 7, 0) | FLD_VAL(vfp, 19, 8) | FLD_VAL(vbp, 31, 20);
 
-    uint32_t vs = FLD_VAL(current_mode->yres - 1, 26, 16) | FLD_VAL(current_mode->xres - 1, 10, 0);
+        uint32_t vs = FLD_VAL(current_mode->yres - 1, 26, 16) | FLD_VAL(current_mode->xres - 1, 10, 0);
 
-    OmapDispc->size_lcd = vs;
-    OmapDispc->timing_h = timing_h;
-    OmapDispc->timing_v = timing_v;
-    OmapDispc->pol_freq = 0x00007028;
-    OmapDispc->divisor = 0x00010001;
-    OmapDispc->config = (2 << 1);
-    OmapDispc->default_color0 = 0xffff0000;
-    OmapDispc->control = ((1 << 3) | (3 << 8));
+        OmapDispc->size_lcd = vs;
+        OmapDispc->timing_h = timing_h;
+        OmapDispc->timing_v = timing_v;
+        OmapDispc->pol_freq = 0x00007028;
+        OmapDispc->divisor = 0x00010001;
+        OmapDispc->config = (2 << 1);
+        OmapDispc->default_color0 = 0xffff0000;
+        OmapDispc->control = ((1 << 3) | (3 << 8));
 
-    /*
-     * Initialize display control 
-     */
-    OmapDispc->control |= DISPC_ENABLE;
-    OmapDispc->default_color0 = 0xffff0000;
+        /*
+         * Initialize display control 
+         */
+        OmapDispc->control |= DISPC_ENABLE;
+        OmapDispc->default_color0 = 0xffff0000;
 
-    /*
-     * initialize lcd defaults 
-     */
-    barrier();
+        /*
+         * initialize lcd defaults 
+         */
+        barrier();
+    }
 
     vs = OmapDispc->size_lcd;
     uint32_t lcd_width, lcd_height;

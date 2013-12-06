@@ -302,13 +302,13 @@ void sleh_abort(void *context, int reason)
                      * Still, die in a fire. 
                      */
                     panic_context(0, (void *) arm_ctx,
-                                  "sleh_abort: prefetch abort in kernel mode: fault_addr=0x%x\n"
+                                  "Kernel prefetch abort. (faulting address: 0x%08x, saved state 0x%08x)\n"
                                   "r0: 0x%08x  r1: 0x%08x  r2: 0x%08x  r3: 0x%08x\n"
                                   "r4: 0x%08x  r5: 0x%08x  r6: 0x%08x  r7: 0x%08x\n"
                                   "r8: 0x%08x  r9: 0x%08x r10: 0x%08x r11: 0x%08x\n"
                                   "12: 0x%08x  sp: 0x%08x  lr: 0x%08x  pc: 0x%08x\n"
                                   "cpsr: 0x%08x fsr: 0x%08x far: 0x%08x\n",
-                                  ifar, arm_ctx->r[0], arm_ctx->r[1],
+                                  ifar, arm_ctx, arm_ctx->r[0], arm_ctx->r[1],
                                   arm_ctx->r[2], arm_ctx->r[3], arm_ctx->r[4],
                                   arm_ctx->r[5], arm_ctx->r[6], arm_ctx->r[7],
                                   arm_ctx->r[8], arm_ctx->r[9], arm_ctx->r[10],
@@ -352,13 +352,13 @@ void sleh_abort(void *context, int reason)
                          */
                         if (!thread->recover) {
                             panic_context(0, (void *) arm_ctx,
-                                          "sleh_abort: data abort in kernel mode: fault_addr=0x%x\n"
+                                          "Kernel data abort. (faulting address: 0x%08x, saved state 0x%08x)\n"
                                           "r0: 0x%08x  r1: 0x%08x  r2: 0x%08x  r3: 0x%08x\n"
                                           "r4: 0x%08x  r5: 0x%08x  r6: 0x%08x  r7: 0x%08x\n"
                                           "r8: 0x%08x  r9: 0x%08x r10: 0x%08x r11: 0x%08x\n"
                                           "12: 0x%08x  sp: 0x%08x  lr: 0x%08x  pc: 0x%08x\n"
                                           "cpsr: 0x%08x fsr: 0x%08x far: 0x%08x\n",
-                                          dfar, arm_ctx->r[0], arm_ctx->r[1],
+                                          dfar, arm_ctx, arm_ctx->r[0], arm_ctx->r[1],
                                           arm_ctx->r[2], arm_ctx->r[3],
                                           arm_ctx->r[4], arm_ctx->r[5],
                                           arm_ctx->r[6], arm_ctx->r[7],
@@ -379,10 +379,6 @@ void sleh_abort(void *context, int reason)
                                 sleh_fatal_exception(arm_ctx,
                                                      "Current thread has no thread map, what?");
 
-                            kprintf
-                                ("[trap] data abort in kernel mode, transferring control to RecoveryRoutine %p, dfsr %x, dfar %x, pc %x, map %p pmap %p\n",
-                                 thread->recover, dfsr, dfar, arm_ctx->pc, map,
-                                 map->pmap);
                             arm_ctx->pc = thread->recover;
                             arm_ctx->cpsr &= ~(1 << 5);
                             thread->recover = NULL;
@@ -632,12 +628,12 @@ void sleh_undef(arm_saved_state_t * state)
         if (((OSSwapInt32(instruction) & 0xff100000) == 0xf4000000)
             || ((OSSwapInt32(instruction) & 0xfe000000) == 0xf2000000)) {
             panic_context(0, (void *) arm_ctx,
-                          "sleh_undef: NEON usage in kernel mode\n"
+                          "NEON usage in a kernel mode context. (saved state 0x%08x)\n"
                           "r0: 0x%08x  r1: 0x%08x  r2: 0x%08x  r3: 0x%08x\n"
                           "r4: 0x%08x  r5: 0x%08x  r6: 0x%08x  r7: 0x%08x\n"
                           "r8: 0x%08x  r9: 0x%08x r10: 0x%08x r11: 0x%08x\n"
                           "12: 0x%08x  sp: 0x%08x  lr: 0x%08x  pc: 0x%08x\n"
-                          "cpsr: 0x%08x\n", arm_ctx->r[0], arm_ctx->r[1],
+                          "cpsr: 0x%08x\n", arm_ctx, arm_ctx->r[0], arm_ctx->r[1],
                           arm_ctx->r[2], arm_ctx->r[3], arm_ctx->r[4],
                           arm_ctx->r[5], arm_ctx->r[6], arm_ctx->r[7],
                           arm_ctx->r[8], arm_ctx->r[9], arm_ctx->r[10],
@@ -654,12 +650,12 @@ void sleh_undef(arm_saved_state_t * state)
                  * VFP instruction. 
                  */
                 panic_context(0, (void *) arm_ctx,
-                              "sleh_undef: VFP usage in kernel mode\n"
+                              "VFP usage in a kernel mode context (saved state 0x%08x)\n"
                               "r0: 0x%08x  r1: 0x%08x  r2: 0x%08x  r3: 0x%08x\n"
                               "r4: 0x%08x  r5: 0x%08x  r6: 0x%08x  r7: 0x%08x\n"
                               "r8: 0x%08x  r9: 0x%08x r10: 0x%08x r11: 0x%08x\n"
                               "12: 0x%08x  sp: 0x%08x  lr: 0x%08x  pc: 0x%08x\n"
-                              "cpsr: 0x%08x\n", arm_ctx->r[0], arm_ctx->r[1],
+                              "cpsr: 0x%08x\n", arm_ctx, arm_ctx->r[0], arm_ctx->r[1],
                               arm_ctx->r[2], arm_ctx->r[3], arm_ctx->r[4],
                               arm_ctx->r[5], arm_ctx->r[6], arm_ctx->r[7],
                               arm_ctx->r[8], arm_ctx->r[9], arm_ctx->r[10],
@@ -672,12 +668,12 @@ void sleh_undef(arm_saved_state_t * state)
          * Fall through to bad kernel handler. 
          */
         panic_context(0, (void *) arm_ctx,
-                      "sleh_undef: undefined kernel instruction\n"
+                      "Kernel undefined instruction. (saved state 0x%08x)\n"
                       "r0: 0x%08x  r1: 0x%08x  r2: 0x%08x  r3: 0x%08x\n"
                       "r4: 0x%08x  r5: 0x%08x  r6: 0x%08x  r7: 0x%08x\n"
                       "r8: 0x%08x  r9: 0x%08x r10: 0x%08x r11: 0x%08x\n"
                       "12: 0x%08x  sp: 0x%08x  lr: 0x%08x  pc: 0x%08x\n"
-                      "cpsr: 0x%08x\n", arm_ctx->r[0], arm_ctx->r[1],
+                      "cpsr: 0x%08x\n", arm_ctx, arm_ctx->r[0], arm_ctx->r[1],
                       arm_ctx->r[2], arm_ctx->r[3], arm_ctx->r[4],
                       arm_ctx->r[5], arm_ctx->r[6], arm_ctx->r[7],
                       arm_ctx->r[8], arm_ctx->r[9], arm_ctx->r[10],

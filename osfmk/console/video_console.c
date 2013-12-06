@@ -235,7 +235,7 @@ enum vt100state_e {
 } gc_vt100state = ESnormal;
 
 #ifdef __arm__
-#ifndef BOARD_CONFIG_OMAP3530
+#if defined(BOARD_CONFIG_S5L8930X) || defined(BOARD_CONFIG_S5L8920X) || defined(BOARD_CONFIG_S5L8922X)
 #define CONFIG_VC_PROGRESS_WHITE 1
 #endif
 #endif
@@ -243,7 +243,7 @@ enum vt100state_e {
 #ifdef CONFIG_VC_PROGRESS_WHITE
 enum { kProgressAcquireDelay = 0 /* secs */ };
 #else
-enum { kProgressAcquireDelay = 5 /* secs */ };
+enum { kProgressAcquireDelay = 0 /* secs */ };
 #endif
 
 static int8_t vc_rotate_matr[4][2][2] = {

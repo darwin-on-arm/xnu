@@ -243,7 +243,6 @@ void PE_init_iokit(void)
     PE_init_printf(TRUE);
 
     StartIOKit(PE_state.deviceTreeHead, PE_state.bootArgs, (void *) 0, (void *) 0);
-
 }
 
 /**

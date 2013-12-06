@@ -402,12 +402,6 @@ kern_return_t IOFindBSDRoot( char * rootName, unsigned int rootNameSize,
 //	Now check if we are trying to root on a memory device
 //
 
-#ifdef __arm__
-#ifdef BOARD_CONFIG_ARMPBA8
-    rdBootVar = "md0";
-#endif
-#endif
-
 	if((rdBootVar[0] == 'm') && (rdBootVar[1] == 'd') && (rdBootVar[3] == 0)) {
 		dchar = xchar = rdBootVar[2];							/* Get the actual device */
 		if((xchar >= '0') && (xchar <= '9')) xchar = xchar - '0';	/* If digit, convert */

@@ -53,6 +53,8 @@ extern processor_t cpu_processor_alloc(boolean_t is_boot_cpu);
 extern void cpu_init(void);
 extern void cpu_bootstrap(void);
 
+extern void draw_panic_dialog(void);
+
 #ifndef __LP64__
 extern void arm_set_threadpid_user_readonly(uint32_t * address);
 extern void arm_set_threadpid_priv_readwrite(uint32_t * address);

@@ -522,23 +522,14 @@ extern uint32_t debug_enabled;
 #endif
 
 __private_extern__ void panic_display_system_configuration(void) {
-
-	//panic_display_process_name();
-#ifdef __arm__
-	{
-#else
+	panic_display_process_name();
 	if (OSCompareAndSwap(0, 1, &config_displayed)) {
-#endif
 		char buf[256];
 		if (strlcpy(buf, PE_boot_args(), sizeof(buf)))
 			kdb_printf("Boot args: %s\n", buf);
 		kdb_printf("\nMac OS version:\n%s\n",
 		    (osversion[0] != 0) ? osversion : "Not yet set");
 		kdb_printf("\nKernel version:\n%s\n",version);
-#ifdef __arm__
-		kdb_printf("\niBoot version: %s\n", firmware_version);
-		kdb_printf("Secure boot?: %s\n\n", debug_enabled ? "NO" : "YES");
-#endif
 		panic_display_kernel_uuid();
 		panic_display_kernel_aslr();
 		panic_display_pal_info();
