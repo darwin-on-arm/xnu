@@ -470,6 +470,7 @@ void populate_model_name(char *model_string) {
 }
 
 static void panic_display_model_name(void) {
+#ifndef __arm__
 	char tmp_model_name[sizeof(model_name)];
 
 	if (ml_nofault_copy((vm_offset_t) &model_name, (vm_offset_t) &tmp_model_name, sizeof(model_name)) != sizeof(model_name))
@@ -479,9 +480,13 @@ static void panic_display_model_name(void) {
 
 	if (tmp_model_name[0] != 0)
 		kdb_printf("System model name: %s\n", tmp_model_name);
+#else
+	kdb_printf("System model name: %s\n", model_name);
+#endif
 }
 
 static void panic_display_kernel_uuid(void) {
+#ifndef __arm__
 	char tmp_kernel_uuid[sizeof(kernel_uuid)];
 
 	if (ml_nofault_copy((vm_offset_t) &kernel_uuid, (vm_offset_t) &tmp_kernel_uuid, sizeof(kernel_uuid)) != sizeof(kernel_uuid))
@@ -489,6 +494,9 @@ static void panic_display_kernel_uuid(void) {
 
 	if (tmp_kernel_uuid[0] != '\0')
 		kdb_printf("Kernel UUID: %s\n", tmp_kernel_uuid);
+#else
+	kdb_printf("Kernel UUID: %s\n", kernel_uuid);
+#endif
 }
 
 static void panic_display_kernel_aslr(void) {
