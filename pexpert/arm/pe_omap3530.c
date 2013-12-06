@@ -391,6 +391,8 @@ omap_videomode omap_videomodes[] = {
 void Omap3_framebuffer_init(void)
 {
     int dont_mess_with_this = 0;
+    char tempbuf[16];
+
     if (PE_parse_boot_argn("-dont-fuck-with-framebuffer", tempbuf, sizeof(tempbuf))) {
         /* Do not fuck with the framebuffer whatsoever, rely on whatever u-boot set. */
         dont_mess_with_this = 1;
@@ -421,6 +423,7 @@ void Omap3_framebuffer_init(void)
         }
     }
 
+    uint32_t vs;
     if(!dont_mess_with_this) {
         hbp = current_mode->left_margin;
         hfp = current_mode->right_margin;
@@ -432,7 +435,7 @@ void Omap3_framebuffer_init(void)
         timing_h = FLD_VAL(hsw - 1, 7, 0) | FLD_VAL(hfp - 1, 19, 8) | FLD_VAL(hbp - 1, 31, 20);
         timing_v = FLD_VAL(vsw - 1, 7, 0) | FLD_VAL(vfp, 19, 8) | FLD_VAL(vbp, 31, 20);
 
-        uint32_t vs = FLD_VAL(current_mode->yres - 1, 26, 16) | FLD_VAL(current_mode->xres - 1, 10, 0);
+        vs = FLD_VAL(current_mode->yres - 1, 26, 16) | FLD_VAL(current_mode->xres - 1, 10, 0);
 
         OmapDispc->size_lcd = vs;
         OmapDispc->timing_h = timing_h;
@@ -501,8 +504,6 @@ void Omap3_framebuffer_init(void)
     /*
      * Enable early framebuffer.
      */
-    char tempbuf[16];
-
     if (PE_parse_boot_argn("-early-fb-debug", tempbuf, sizeof(tempbuf))) {
         initialize_screen((void *) &PE_state.video, kPEAcquireScreen);
     }
