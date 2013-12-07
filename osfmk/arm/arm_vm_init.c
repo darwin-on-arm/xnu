@@ -126,6 +126,12 @@ unsigned long sectSizePRELINK;
 vm_offset_t sectHIBB;
 unsigned long sectSizeHIB;
 
+vm_offset_t segHIBB;
+unsigned long segSizeHIB;
+vm_offset_t segPRELINKB;
+unsigned long segSizePRELINK;
+
+
 vm_offset_t sectCONSTB;
 unsigned long sectSizeConst;
 boolean_t doconstro_override = FALSE;
@@ -453,6 +459,11 @@ void arm_vm_init(uint32_t mem_limit, boot_args * args)
                     "__DATA");
     sectDCONST = getsectbynamefromheader(&_mh_execute_header,
                     "__DATA", "__const");
+
+    segHIBB  = (vm_offset_t) getsegdatafromheader(&_mh_execute_header,
+                    "__HIB", &segSizeHIB);
+    segPRELINKB = (vm_offset_t) getsegdatafromheader(&_mh_execute_header,
+                    "__PRELINK_TEXT", &segSizePRELINK);
 
     sectCONSTB = (vm_offset_t) sectDCONST->addr;
     sectSizeConst = sectDCONST->size;

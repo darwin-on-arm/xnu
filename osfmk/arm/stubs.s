@@ -57,9 +57,7 @@
         .asciz  genString(Function)         ;
 
 UNIMPLEMENTED_STUB(_LockTimeOut)
-
 UNIMPLEMENTED_STUB(__MachineStateCount)
-
 UNIMPLEMENTED_STUB(_aout_db_init)
 UNIMPLEMENTED_STUB(_aout_db_line_at_pc)
 UNIMPLEMENTED_STUB(_aout_db_lookup)
@@ -69,18 +67,12 @@ UNIMPLEMENTED_STUB(_aout_db_search_by_addr)
 UNIMPLEMENTED_STUB(_aout_db_search_symbol)
 UNIMPLEMENTED_STUB(_aout_db_sym_init)
 UNIMPLEMENTED_STUB(_aout_db_symbol_values)
-
-
 UNIMPLEMENTED_STUB(_coredumpok)
 UNIMPLEMENTED_STUB(_cpu_sleep)
-
 UNIMPLEMENTED_STUB(_db_inst_load)
-
 UNIMPLEMENTED_STUB(_dcache_incoherent_io_flush64)
 UNIMPLEMENTED_STUB(_dcache_incoherent_io_store64)
-
 UNIMPLEMENTED_STUB(_debug_task)
-
 UNIMPLEMENTED_STUB(_fasttrap_pid_getarg)
 UNIMPLEMENTED_STUB(_fasttrap_pid_probe)
 UNIMPLEMENTED_STUB(_fasttrap_return_probe)
@@ -88,15 +80,12 @@ UNIMPLEMENTED_STUB(_fasttrap_tracepoint_init)
 UNIMPLEMENTED_STUB(_fasttrap_tracepoint_install)
 UNIMPLEMENTED_STUB(_fasttrap_tracepoint_remove)
 UNIMPLEMENTED_STUB(_fasttrap_usdt_getarg)
-
 UNIMPLEMENTED_STUB(_fbt_invop)
 UNIMPLEMENTED_STUB(_fbt_perfCallback)
 UNIMPLEMENTED_STUB(_fbt_provide_module)
 UNIMPLEMENTED_STUB(_flush_dcache64)
-
 UNIMPLEMENTED_STUB(_gIOHibernateRestoreStack)
 UNIMPLEMENTED_STUB(_gIOHibernateRestoreStackEnd)
-
 UNIMPLEMENTED_STUB(_hibernate_machine_entrypoint)
 UNIMPLEMENTED_STUB(_hibernate_newruntime_map)
 UNIMPLEMENTED_STUB(_hibernate_page_list_allocate)
@@ -106,28 +95,18 @@ UNIMPLEMENTED_STUB(_hibernate_processor_setup)
 UNIMPLEMENTED_STUB(_hibernate_restore_phys_page)
 UNIMPLEMENTED_STUB(_hibernate_vm_lock)
 UNIMPLEMENTED_STUB(_hibernate_vm_unlock)
-
 UNIMPLEMENTED_STUB(_kdb_on)
-
 UNIMPLEMENTED_STUB(_kern_dump)
-
 UNIMPLEMENTED_STUB(_machine_signal_idle)
 UNIMPLEMENTED_STUB(_mapping_set_mod)
-
 UNIMPLEMENTED_STUB(_ml_nofault_copydeclare_stub)
 UNIMPLEMENTED_STUB(_ml_stack_remaining)
-
 UNIMPLEMENTED_STUB(_sdt_invop)
-
 UNIMPLEMENTED_STUB(_slave_machine_init)
-
 UNIMPLEMENTED_STUB(_tempDTraceTrapHook)
-
 UNIMPLEMENTED_STUB(_thread_kdb_return)
 
-// SDKFASLDFLAKSDFLKASDf
 UNIMPLEMENTED_STUB(_chudxnu_thread_ast)
-UNIMPLEMENTED_STUB(_commpage_text_populate)
 UNIMPLEMENTED_STUB(_cpu_data_ptr)
 UNIMPLEMENTED_STUB(_cpu_exit_wait)
 UNIMPLEMENTED_STUB(_cpuid_cpusubtype)
@@ -145,11 +124,7 @@ UNIMPLEMENTED_STUB(_hibernate_page_bitmap_pin)
 UNIMPLEMENTED_STUB(_hibernate_page_bitset)
 UNIMPLEMENTED_STUB(_hibernate_page_bittst)
 UNIMPLEMENTED_STUB(_hibernate_sum_page)
-UNIMPLEMENTED_STUB(_hw_lock_byte_init)
-UNIMPLEMENTED_STUB(_hw_lock_byte_lock)
-UNIMPLEMENTED_STUB(_hw_lock_byte_unlock)
 UNIMPLEMENTED_STUB(_kdp_machine_get_breakinsn)
-UNIMPLEMENTED_STUB(_lck_rw_grab_shared)
 UNIMPLEMENTED_STUB(_lockstat_probe)
 UNIMPLEMENTED_STUB(_lockstat_probemap)
 UNIMPLEMENTED_STUB(_machine_callstack)
@@ -159,14 +134,7 @@ UNIMPLEMENTED_STUB(_machine_task_set_state)
 UNIMPLEMENTED_STUB(_machine_timeout_suspended)
 UNIMPLEMENTED_STUB(_machine_trace_thread)
 UNIMPLEMENTED_STUB(_machine_trace_thread64)
-UNIMPLEMENTED_STUB(_ml_at_interrupt_context)
-UNIMPLEMENTED_STUB(_ml_interrupt_prewarm)
 UNIMPLEMENTED_STUB(_panic_display_pal_info)
 UNIMPLEMENTED_STUB(_save_kdebug_enable)
-UNIMPLEMENTED_STUB(_saved_state64)
-UNIMPLEMENTED_STUB(_segHIBB)
-UNIMPLEMENTED_STUB(_segPRELINKB)
-UNIMPLEMENTED_STUB(_segSizeHIB)
-UNIMPLEMENTED_STUB(_segSizePRELINK)
 UNIMPLEMENTED_STUB(_sigreturn)
 UNIMPLEMENTED_STUB(_thread_setsinglestep)

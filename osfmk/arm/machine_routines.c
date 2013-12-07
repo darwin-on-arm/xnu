@@ -430,6 +430,15 @@ boolean_t ml_delay_should_spin(uint64_t interval)
 }
 
 /*
+ * Not right now.
+ */
+boolean_t ml_at_interrupt_context(void)
+{
+    boolean_t ret = FALSE;
+    return(ret);
+}
+
+/*
  * ml_phys_read_*.
  */
 

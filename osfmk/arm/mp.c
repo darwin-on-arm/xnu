@@ -46,3 +46,15 @@ void cause_ast_check(processor_t processor)
 {
 
 }
+
+/*
+ * Not safe to call with interrupts disabled.
+ */
+kern_return_t ml_interrupt_prewarm(uint64_t deadline)
+{
+    if (ml_get_interrupts_enabled() == FALSE) {
+        panic("%s: Interrupts disabled?\n", __FUNCTION__);
+    }
+ 	return KERN_SUCCESS;
+}
+

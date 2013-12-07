@@ -257,6 +257,10 @@ void sleh_abort(void *context, int reason)
         sleh_fatal_exception(arm_ctx, "sleh_abort: current thread is null?");
     }
 
+    if(ml_at_interrupt_context()) {
+        sleh_fatal_exception(arm_ctx, "sleh_abort: Abort in interrupt handler");
+    }
+
     /*
      * See if the abort was in Kernel or User mode. 
      */
