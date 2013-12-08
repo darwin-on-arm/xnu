@@ -203,7 +203,8 @@ void l2_map_linear_range(uint32_t pa_cache_start, uint32_t phys_start,
         *ptv |= L2_SMALL_PAGE;
         *ptv |= L2_ACCESS_PRW;
 
-        *ptv |= mmu_texcb_small(MMU_CODE);
+        /* Writethrough, no write allocate. */
+        *ptv |= (MMU_TEXCB_CA_WT_NWA << 2);
 
         pte_iter += sizeof(unsigned int);
         phys_iter += PAGE_SIZE;

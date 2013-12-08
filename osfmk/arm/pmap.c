@@ -348,7 +348,9 @@ typedef enum {
     PMAP_OSPTE_TYPE_WIRED = 0x1,
     PMAP_OSPTE_TYPE_REFERENCED = 0x2,
     PMAP_OSPTE_TYPE_MODIFIED = 0x4,
-    PMAP_OSPTE_TYPE_NOENCRYPT = 0x8
+    PMAP_OSPTE_TYPE_NOENCRYPT = 0x8,
+    PMAP_OSPTE_TYPE_NOCACHE = 0x10,
+    PMAP_OSPTE_TYPE_PTA = 0x20,
 } __internal_pmap_ospte_bits_t;
 
 /*
@@ -567,6 +569,56 @@ typedef enum {
     ARM_PTE_PROT_KERNEL_RX_USER_RX,
     ARM_PTE_PROT_KERNEL_RX_USER_RX_2,
 } arm_prot_pte_definitions;
+
+/*
+ * Type Extension bits for ARM V6 and V7 MMU
+ *
+ * TEX C B                                    Shared
+ * 000 0 0  Strong order                      yes
+ * 000 0 1  Shared device                     yes
+ * 000 1 0  write through, no write alloc     S-bit
+ * 000 1 1  write back, no write alloc        S-bit
+ * 001 0 0  non-cacheable                     S-bit
+ * 001 0 1  reserved
+ * 001 1 0  reserved
+ * 001 1 1  write back, write alloc           S-bit
+ * 010 0 0  Non-shared device                 no
+ * 010 0 1  reserved
+ * 010 1 X  reserved
+ * 011 X X  reserved
+ * 1BB A A  BB for internal, AA for external  S-bit
+ *
+ *    BB    internal cache
+ *    0 0   Non-cacheable non-buffered
+ *    0 1   Write back, write alloc, buffered
+ *    1 0   Write through, no write alloc, buffered
+ *          (non-cacheable for MPCore)
+ *    1 1   Write back, no write alloc, buffered
+ *          (write back, write alloc for MPCore)
+ *    
+ *    AA    external cache 
+ *    0 0   Non-cacheable non-buffered
+ *    0 1   Write back, write alloc, buffered
+ *    1 0   Write through, no write alloc, buffered
+ *    1 1   Write back, no write alloc, buffered
+ */
+#define ARM_L2_C_BIT            0x00000004
+#define ARM_L2_B_BIT            0x00000008
+#define ARM_L2_4KB_TEX(x)       ((x & 0x7) << 6)  /* Type Extension */
+
+#define ARM_CACHEBIT_NONE_NO_BUFFERED         0
+#define ARM_CACHEBIT_WB_WA_BUFFERED           1
+#define ARM_CACHEBIT_WT_NWA_BUFFERED          2
+#define ARM_CACHEBIT_WB_NWA_BUFFERED          3
+
+#define ARM_L2_TEX_000          0
+#define ARM_L2_TEX_001          1
+#define ARM_L2_TEX_010          2
+#define ARM_L2_TEX_011          3
+#define ARM_L2_TEX_100          4
+#define ARM_L2_TEX_101          5
+#define ARM_L2_TEX_110          6
+#define ARM_L2_TEX_111          7
 
 /** Functions */
 
@@ -1083,7 +1135,7 @@ boolean_t pmap_adjust_unnest_parameters(pmap_t p, vm_map_offset_t * s, vm_map_of
  */
 kern_return_t pmap_attribute(pmap_t pmap, vm_offset_t address, vm_size_t size, vm_machine_attribute_t atte, vm_machine_attribute_val_t * attrp)
 {
-    return KERN_INVALID_ARGUMENT;
+    return KERN_INVALID_ADDRESS;
 }
 
 /**
@@ -1098,12 +1150,40 @@ kern_return_t pmap_attribute_cache_sync(ppnum_t pn, vm_size_t size, vm_machine_a
 }
 
 /**
+ * pmap_get_cache_attributes
+ */
+unsigned int pmap_get_cache_attributes(ppnum_t pn) {
+    /* If the pmap subsystem isn't up, just assume writethrough cache. */
+    if(!pmap_initialized)
+        return (ARM_CACHEBIT_WT_NWA_BUFFERED << 2) | (ARM_L2_4KB_TEX(ARM_L2_TEX_100 | ARM_CACHEBIT_WT_NWA_BUFFERED));
+
+    assert(pn != vm_page_fictitious_addr);
+    pv_rooted_entry_t pv_h = pai_to_pvh(pn);
+    assert(pv_h);
+
+    unsigned int attr = pv_h->flags;
+    unsigned int template = 0;
+    
+    if (attr & PMAP_OSPTE_TYPE_NOCACHE)
+        /* No cache, strongly ordered memory. */
+        template |= 0;
+    else
+        /* Assume writethrough, no write allocate for now. */
+        template |= (ARM_CACHEBIT_WT_NWA_BUFFERED << 2) | (ARM_L2_4KB_TEX(ARM_L2_TEX_100 | ARM_CACHEBIT_WT_NWA_BUFFERED));
+
+    return template;
+}
+
+
+/**
  * pmap_cache_attributes
  */
 unsigned int pmap_cache_attributes(ppnum_t pn)
 {
-    panic("pmap_cache_attributes");
-    return -1;
+    if (!pmap_get_cache_attributes(pn) & ARM_L2_C_BIT)
+        return (VM_WIMG_IO);
+    else
+        return (VM_WIMG_COPYBACK);
 }
 
 /**
@@ -1136,6 +1216,63 @@ void pmap_set_noencrypt(ppnum_t pn)
     phys_attribute_set(pn, PMAP_OSPTE_TYPE_NOENCRYPT);
 }
 
+
+/*
+ * Update cache attributes for all extant managed mappings.
+ * Assumes PV for this page is locked, and that the page
+ * is managed.
+ */
+
+static uint32_t cacheability_mask = ~((ARM_L2_TEX_011 << 2) | ARM_L2_4KB_TEX(ARM_L2_TEX_111));
+
+void
+pmap_update_cache_attributes_locked(ppnum_t pn, unsigned attributes) {
+    pv_rooted_entry_t pv_h, pv_e;
+    pv_hashed_entry_t pvh_e, nexth;
+    vm_map_offset_t vaddr;
+    pmap_t  pmap;
+    pt_entry_t  *ptep;
+
+    pv_h = pai_to_pvh(pn);
+    /* 
+     * TODO: translate the PHYS_* bits to PTE bits, while they're
+     * currently identical, they may not remain so
+     * Potential optimization (here and in page_protect),
+     * parallel shootdowns, check for redundant
+     * attribute modifications.
+     */
+    
+    /*
+     * Alter attributes on all mappings
+     */
+    if (pv_h->pmap != PMAP_NULL) {
+        pv_e = pv_h;
+        pvh_e = (pv_hashed_entry_t)pv_e;
+
+        do {
+            pmap = pv_e->pmap;
+            vaddr = pv_e->va;
+            ptep = pmap_pte(pmap, vaddr);
+        
+            if (0 == ptep)
+                panic("pmap_update_cache_attributes_locked: Missing PTE, pmap: %p, pn: 0x%x vaddr: 0x%x kernel_pmap: %p", pmap, pn, vaddr, kernel_pmap);
+
+            nexth = (pv_hashed_entry_t)queue_next(&pvh_e->qlink);
+
+            /*
+             * Update PTE.
+             */
+            pt_entry_t* cpte = (pt_entry_t*)ptep;
+            *cpte &= cacheability_mask;
+            *cpte |= attributes;
+            armv7_tlb_flushID_SE(vaddr);
+
+            pvh_e = nexth;
+        } while ((pv_e = (pv_rooted_entry_t)nexth) != pv_h);
+    }
+}
+
+
 /**
  * pmap_set_cache_attributes
  *
@@ -1143,7 +1280,45 @@ void pmap_set_noencrypt(ppnum_t pn)
  */
 void pmap_set_cache_attributes(ppnum_t pn, unsigned int cacheattr)
 {
-    Debugger("pmap_set_cache_attributes");
+    unsigned int current, template = 0;
+    int pai;
+
+    if (cacheattr & VM_MEM_NOT_CACHEABLE) {
+        /*
+         * Template of 0 is non-cacheable, strongly ordered memory.
+         */
+        template &= cacheability_mask;
+    } else {
+        /*
+         * Writethrough.
+         */
+        if(cacheattr == VM_WIMG_WTHRU)
+            template |= (ARM_CACHEBIT_WT_NWA_BUFFERED << 2) | (ARM_L2_4KB_TEX(ARM_L2_TEX_100 | ARM_CACHEBIT_WT_NWA_BUFFERED));
+        /*
+         * Writecombine/copyback = writeback.
+         */
+        else if(cacheattr == VM_WIMG_WCOMB || cacheattr == VM_WIMG_COPYBACK)
+            template |= (ARM_CACHEBIT_WB_WA_BUFFERED << 2) | (ARM_L2_4KB_TEX(ARM_L2_TEX_100 | ARM_CACHEBIT_WB_WA_BUFFERED));
+    }
+
+    /*
+     * On MP systems, interrupts must be enabled.
+     */
+    if (processor_avail_count > 1 && !ml_get_interrupts_enabled())
+        panic("interrupts must be enabled for pmap_set_cache_attributes");
+
+    assert((pn != vm_page_fictitious_addr) && (pn != vm_page_guard_addr));
+
+    LOCK_PVH(pai);
+    pmap_update_cache_attributes_locked(pn, template);
+
+    if(cacheattr & VM_MEM_NOT_CACHEABLE)
+        phys_attribute_set(pn, PMAP_OSPTE_TYPE_NOCACHE);
+    else 
+        phys_attribute_clear(pn, PMAP_OSPTE_TYPE_NOCACHE);
+
+    UNLOCK_PVH(pai);
+
     return;
 }
 
@@ -2622,24 +2797,9 @@ kern_return_t pmap_enter_options(pmap_t pmap, vm_map_offset_t va, ppnum_t pa, vm
             template_pte |= L2_ACCESS_USER;
 
         /*
-         * XXX add cacheability flags 
+         * Add cacheability attributes.
          */
-        if (flags & VM_MEM_NOT_CACHEABLE) {
-            /*
-             * xxx arm 
-             */
-            template_pte |= mmu_texcb_small(MMU_DMA);
-        } else if (flags & VM_MEM_COHERENT) {
-            /*
-             * Writethrough cache by default. 
-             */
-            template_pte |= mmu_texcb_small(MMU_CODE);
-        } else {
-            /*
-             * Writethrough cache by default. 
-             */
-            template_pte |= mmu_texcb_small(MMU_DMA);
-        }
+        template_pte |= pmap_get_cache_attributes(pa);
 
         if (wired) {
             if (!phys_attribute_test(pa, PMAP_OSPTE_TYPE_WIRED)) {
@@ -2811,24 +2971,10 @@ kern_return_t pmap_enter_options(pmap_t pmap, vm_map_offset_t va, ppnum_t pa, vm
         template_pte |= L2_ACCESS_USER;
 
     /*
-     * XXX add cacheability flags 
+     * Add cacheability attributes.
      */
-    if (flags & VM_MEM_NOT_CACHEABLE) {
-        /*
-         * xxx arm 
-         */
-        template_pte |= mmu_texcb_small(MMU_DMA);
-    } else if (flags & VM_MEM_COHERENT) {
-        /*
-         * Writethrough cache by default. 
-         */
-        template_pte |= mmu_texcb_small(MMU_CODE);
-    } else {
-        /*
-         * Writethrough cache by default. 
-         */
-        template_pte |= mmu_texcb_small(MMU_DMA);
-    }
+    template_pte |= pmap_get_cache_attributes(pa);
+
     *(uint32_t *) pte = template_pte;
 
  enter_options_done:
