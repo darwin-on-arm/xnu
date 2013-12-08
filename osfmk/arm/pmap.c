@@ -480,10 +480,21 @@ char *pv_hash_lock_table;
  * Locking protocols
  */
 
+#define lock_pvh_pai(pai)
+#define unlock_pvh_pai(pai)
+
 #define LOCK_PV_HASH(hash)
 #define UNLOCK_PV_HASH(hash)
-#define LOCK_PVH(index)
-#define UNLOCK_PVH(index)
+
+#define LOCK_PVH(index)     {          \
+    mp_disable_preemption();           \
+    lock_pvh_pai(index);               \
+}
+
+#define UNLOCK_PVH(index)  {      \
+    unlock_pvh_pai(index);        \
+    mp_enable_preemption();       \
+}
 
 /** ASID stuff */
 
@@ -2744,6 +2755,7 @@ kern_return_t pmap_enter_options(pmap_t pmap, vm_map_offset_t va, ppnum_t pa, vm
     pv_hashed_entry_t *hashp;
     int pvhash_idx;
     uint32_t pv_cnt;
+    boolean_t old_pvh_locked = FALSE;
 
     /*
      * Verify the address isn't fictitious.
@@ -2784,6 +2796,20 @@ kern_return_t pmap_enter_options(pmap_t pmap, vm_map_offset_t va, ppnum_t pa, vm
      */
     uint32_t old_pte = (*(uint32_t *) pte);
 
+    /*
+     * If it's a managed page, lock the pv entry right now.
+     */
+    if((old_pte & L2_ADDR_MASK) != 0) {
+        uint32_t pai = pa_index(old_pte & L2_ADDR_MASK);
+        LOCK_PVH(pai);
+        old_pvh_locked = TRUE;
+        old_pte = (*(uint32_t *) pte);
+        if(0 == old_pte) {
+            UNLOCK_PVH(pai);
+            old_pvh_locked = FALSE;
+        }
+    }
+
     if ((old_pte & L2_ADDR_MASK) == (pa << PAGE_SHIFT)) {
         /*
          * !!! IMPLEMENT 'pmap_vm_prot_to_page_flags' !!!
@@ -2819,6 +2845,11 @@ kern_return_t pmap_enter_options(pmap_t pmap, vm_map_offset_t va, ppnum_t pa, vm
          * The work here is done, the PTE will now have new permissions. Flush the TLBs for the
          * specific VA and then exit.
          */
+        if(old_pvh_locked) {
+            UNLOCK_PVH(pa);
+            old_pvh_locked = FALSE;
+        }
+
         goto enter_options_done;
     }
 
@@ -2868,6 +2899,11 @@ kern_return_t pmap_enter_options(pmap_t pmap, vm_map_offset_t va, ppnum_t pa, vm
         if (!pmap_valid_page(pa))
             goto EnterPte;
 
+        if(old_pvh_locked) {
+            UNLOCK_PVH(pai);
+            old_pvh_locked = FALSE;
+        }
+
 #if 0
         /*
          * Check to see if it exists, if it does, then make it null. The code later
@@ -2888,6 +2924,7 @@ kern_return_t pmap_enter_options(pmap_t pmap, vm_map_offset_t va, ppnum_t pa, vm
          *  Step 2) Enter the mapping in the PV list for this
          *  physical page.
          */
+        LOCK_PVH(pai);
 
         /*
          * This is definitely a new mapping.
@@ -2976,6 +3013,13 @@ kern_return_t pmap_enter_options(pmap_t pmap, vm_map_offset_t va, ppnum_t pa, vm
     template_pte |= pmap_get_cache_attributes(pa);
 
     *(uint32_t *) pte = template_pte;
+
+    /* 
+     * Unlock the pv. (if it is managed by us)
+     */
+    if(pmap_initialized && pmap_valid_page(pa)) {
+        UNLOCK_PVH(pa);
+    }
 
  enter_options_done:
     /*
@@ -3217,10 +3261,11 @@ void pmap_remove_range(pmap_t pmap, vm_map_offset_t start_vaddr, pt_entry_t * sp
          * Get the index for the PV table.
          */
         ppnum_t pai = pa_index(*cpte & L2_ADDR_MASK);
-        if (pai == 0)
+        if (pai == 0) {
             continue;
-        num_removed++;
+        }
 
+        num_removed++;
         if (phys_attribute_test(pai, PMAP_OSPTE_TYPE_WIRED)) {
             phys_attribute_clear(pai, PMAP_OSPTE_TYPE_WIRED);
             num_removed++;
@@ -3243,12 +3288,14 @@ void pmap_remove_range(pmap_t pmap, vm_map_offset_t start_vaddr, pt_entry_t * sp
         if (!pmap_valid_page(pai))
             continue;
 
+        LOCK_PVH(pai);
         /*
          *  Remove the mapping from the pvlist for
          *  this physical page.
          */
         {
             pvh_e = pmap_pv_remove(pmap, vaddr, (ppnum_t *) & pai, cpte);
+            UNLOCK_PVH(pai);
             if (pvh_e != PV_HASHED_ENTRY_NULL) {
                 pvh_e->qlink.next = (queue_entry_t) pvh_eh;
                 pvh_eh = pvh_e;
@@ -3259,7 +3306,6 @@ void pmap_remove_range(pmap_t pmap, vm_map_offset_t start_vaddr, pt_entry_t * sp
                 pvh_cnt++;
             }
         }                       /* removing mappings for this phy page */
-
     }
 
     if (pvh_eh != PV_HASHED_ENTRY_NULL) {
@@ -3470,6 +3516,7 @@ void pmap_page_protect(ppnum_t pn, vm_prot_t prot)
      * Walk down the PV listings and remove the entries.
      */
     pv_h = pai_to_pvh(pn);
+    LOCK_PVH(pn);
 
     /*
      * Walk down PV list, changing or removing all mappings.
@@ -3563,7 +3610,7 @@ void pmap_page_protect(ppnum_t pn, vm_prot_t prot)
     if (pvh_eh != PV_HASHED_ENTRY_NULL) {
         PV_HASHED_FREE_LIST(pvh_eh, pvh_et, pvh_cnt);
     }
-
+    UNLOCK_PVH(pn);
 }
 
 /**

@@ -642,6 +642,34 @@ rwtlepanic:
 rwtlePanicString:
     .asciz  "lck_rw_try_lock_exclusive: lock (0x%08x, 0x%08x)"
     
+/**
+ * bitlock
+ */
+EnterARM(hw_lock_bit)
+    mov     r12, #1
+    mov     r12, r12, lsl r1
+    LoadLockHardwareRegister(r9)
+    IncrementPreemptLevel(r9, r2)
+    ldrex    r3, [r0]
+    orr     r1, r3, r12
+    ands    r2, r12, r3
+    streq   r1, [r0]
+    bxeq    lr
+hwlbitpanic:
+    mov     r0, r1
+    adr     r0, hwlbitPanicString
+    blx     _panic
+hwlbitPanicString:
+    .asciz "hw_lock_bit: lock 0x%08x"
+
+EnterARM(hw_unlock_bit)
+    mov     r12, #1
+    mov     r12, r12, lsl r1
+    ldr     r3, [r0]
+    bic     r3, r3, r12
+    str     r3, [r0]
+    b       __enable_preemption
+
 LOAD_ADDR_GEN_DEF(thread_wakeup)
 LOAD_ADDR_GEN_DEF(lck_rw_lock_shared_gen)
 LOAD_ADDR_GEN_DEF(lck_rw_lock_exclusive_gen)
