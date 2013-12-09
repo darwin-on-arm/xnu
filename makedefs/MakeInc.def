@@ -299,7 +299,9 @@ ifndef MAKEJOBS
 export MAKEJOBS = --jobs=$(shell expr `/usr/sbin//sysctl -n hw.logicalcpu` \* 2)
 endif
 else
-export MAKEJOBS :=
+ifndef MAKEJOBS
+export MAKEJOBS := --jobs=$(shell expr `nproc` \* 2)
+endif
 endif
 
 #
