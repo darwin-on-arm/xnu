@@ -3268,7 +3268,7 @@ void pmap_remove_range(pmap_t pmap, vm_map_offset_t start_vaddr, pt_entry_t * sp
         num_removed++;
         if (phys_attribute_test(pai, PMAP_OSPTE_TYPE_WIRED)) {
             phys_attribute_clear(pai, PMAP_OSPTE_TYPE_WIRED);
-            num_removed++;
+            num_unwired++;
         }
 
         /*
@@ -3534,7 +3534,7 @@ void pmap_page_protect(ppnum_t pn, vm_prot_t prot)
             pte = pmap_pte(pmap, vaddr);
 
             if (0 == pte) {
-                panic("pmap_page_protect(): null PTE pmap=%p pn=0x%x vaddr=0x%x\n", pmap, pn, vaddr);
+                panic("pmap_page_protect(): null PTE pmap=%p pn=0x%x vaddr=0x%08x shadow=0x%08x\n", pmap, pn, vaddr, pv_e->flags);
             }
             nexth = (pv_hashed_entry_t) queue_next(&pvh_e->qlink);  /* if there is one */
 
