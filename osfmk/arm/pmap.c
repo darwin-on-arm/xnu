@@ -220,6 +220,8 @@ lock_t pmap_system_lock;
     simple_unlock(&(pmap)->lock);       \
 }
 
+#define ppn_to_pai
+
 /** The Free List. */
 pv_entry_t pv_free_list;        /* The free list should be populated when the pmaps are not locked. */
 decl_simple_lock_data(, pv_free_list_lock);
@@ -465,26 +467,32 @@ zone_t pv_hashed_list_zone;     /* zone of pv_hashed_entry structures */
 #define pai_to_pvh(pai)     (&pv_head_hash_table[pai - atop(gPhysBase)])
 
 /*
- *  Each entry in the pv_head_table is locked by a bit in the
+ *  Each entry in the pv_head_table is locked by a full spinlock in the
  *  pv_lock_table.  The lock bits are accessed by the physical
  *  address of the page they lock.
  */
 
 char *pv_lock_table;            /* pointer to array of bits */
-#define pv_lock_table_size(n)   (((n)+BYTE_SIZE-1)/BYTE_SIZE)
+#define pv_lock_table_size(n)   (((n) * sizeof(uint32_t)))
 
 char *pv_hash_lock_table;
-#define pv_hash_lock_table_size(n)  (((n)+BYTE_SIZE-1)/BYTE_SIZE)
+#define pv_hash_lock_table_size(n)  (((n) * sizeof(uint32_t)))
 
 /*
  * Locking protocols
  */
 
-#define lock_pvh_pai(pai)
-#define unlock_pvh_pai(pai)
+#define bit_lock(pai, l)    lck_spin_lock((uint32_t*)(l) + pai);
+#define bit_unlock(pai, l)  lck_spin_unlock((uint32_t*)(l) + pai);
 
-#define LOCK_PV_HASH(hash)
-#define UNLOCK_PV_HASH(hash)
+#define lock_pvh_pai(pai)       bit_lock(pai - atop(gPhysBase), (void *)pv_lock_table)
+#define unlock_pvh_pai(pai)     bit_unlock(pai - atop(gPhysBase), (void *)pv_lock_table)
+
+#define lock_hash_hash(hash)    bit_lock(hash, (void *)pv_hash_lock_table)
+#define unlock_hash_hash(hash)  bit_unlock(hash, (void *)pv_hash_lock_table)
+
+#define LOCK_PV_HASH(hash)  lock_hash_hash(hash)
+#define UNLOCK_PV_HASH(hash)    unlock_hash_hash(hash)
 
 #define LOCK_PVH(index)     {          \
     mp_disable_preemption();           \
@@ -2891,6 +2899,14 @@ kern_return_t pmap_enter_options(pmap_t pmap, vm_map_offset_t va, ppnum_t pa, vm
                 panic("pmap_enter_options: null pv_list\n");
             }
             pvh_e = pmap_pv_remove(pmap, va, (ppnum_t *) & pai, 0);
+
+            /*
+             * Unlock the old pvh since it's gone now
+             */
+            if(old_pvh_locked) {
+                UNLOCK_PVH(pai);
+                old_pvh_locked = FALSE;
+            }
         }
 
         pai = pa;
@@ -2898,11 +2914,6 @@ kern_return_t pmap_enter_options(pmap_t pmap, vm_map_offset_t va, ppnum_t pa, vm
 
         if (!pmap_valid_page(pa))
             goto EnterPte;
-
-        if(old_pvh_locked) {
-            UNLOCK_PVH(pai);
-            old_pvh_locked = FALSE;
-        }
 
 #if 0
         /*
@@ -3108,9 +3119,11 @@ void pmap_init(void)
 
     pv_lock_table = (char *) pv_root;
     pv_root = (vm_offset_t) (pv_lock_table + pv_lock_table_size(npages));
+    bzero(pv_lock_table, pv_lock_table_size(npages));
 
     pv_hash_lock_table = (char *) pv_root;
     pv_root = (vm_offset_t) (pv_hash_lock_table + pv_hash_lock_table_size((npvhash + 1)));
+    bzero(pv_hash_lock_table, pv_hash_lock_table_size((npvhash + 1)));
 
     bzero((void *) pv_head_hash_table, s);
     kprintf("pmap_init: pv_head_hash_table at %p\n", pv_head_hash_table);
