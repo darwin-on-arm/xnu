@@ -34,6 +34,7 @@
 extern uint64_t pmap_pv_hashlist_walks;
 extern uint64_t pmap_pv_hashlist_cnts;
 extern uint32_t pmap_pv_hashlist_max;
+extern uint32_t do_power_save;
 uint32_t pmap_kernel_text_ps = PAGE_SIZE;
 uint32_t pv_hashed_kern_low_water_mark = 100;
 
@@ -49,3 +50,8 @@ SYSCTL_INT     (_machdep_pmap, OID_AUTO, kernel_text_ps, CTLFLAG_RD | CTLFLAG_KE
 SYSCTL_INT     (_machdep_pmap, OID_AUTO, kern_pv_reserve, CTLFLAG_RW | CTLFLAG_KERN | CTLFLAG_LOCKED, &pv_hashed_kern_low_water_mark, 0, "");
 
 SYSCTL_NODE(_machdep, OID_AUTO, memmap, CTLFLAG_RD|CTLFLAG_LOCKED, NULL, "physical memory map");
+
+/* WFI loop enable */
+SYSCTL_NODE(_machdep, OID_AUTO, powersave, CTLFLAG_RW|CTLFLAG_LOCKED, 0,
+	"Power Saving");
+SYSCTL_INT     (_machdep_powersave, OID_AUTO, enable_wfi_loop, CTLFLAG_RW | CTLFLAG_KERN | CTLFLAG_LOCKED, &do_power_save, 0, "");

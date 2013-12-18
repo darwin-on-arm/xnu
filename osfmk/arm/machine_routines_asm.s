@@ -33,6 +33,7 @@
 #include <arm/arch.h>
 #include <arm/asm_help.h>
 #include <assym.s>
+#include <mach/arm/asm.h>
 
 /*
  * This is ARMv6 and later ONLY.
@@ -51,6 +52,29 @@ EnterARM(lck_mtx_ilk_unlock)
     bic     r3, r2, #1
     str     r3, [r0]
     b       __enable_preemption
+
+/**
+ * machine_idle
+ *
+ * Idle loop.
+ */
+EnterARM(machine_idle)
+    /* See if first we have power saving enabled. */
+    LOAD_ADDR(r0, do_power_save)
+    ldr     r0, [r0]
+
+    /* Disabled? We leave. */
+    teq     r0, #0
+    beq     .Lmachine_idle_return
+
+    /* Disable all interrupts and go into wfi mode. */
+.Lmachine_idle_wfi:
+    cpsid   if
+    wfi 
+    cpsie   if
+
+.Lmachine_idle_return:
+    bx      lr
 
 /**
  * ml_set_interrupts_enabled
@@ -277,3 +301,5 @@ EnterARM(Halt_system)
 
     /* Try again for a halt. */
     b        .L_deadloop
+
+LOAD_ADDR_GEN_DEF(do_power_save)

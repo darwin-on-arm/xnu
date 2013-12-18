@@ -38,6 +38,8 @@
 #include <kern/thread.h>
 #include <arm/misc_protos.h>
 
+boolean_t do_power_save = TRUE;
+
 void thread_tell_urgency(int urgency, uint64_t rt_period, uint64_t rt_deadline)
 {
     return;
@@ -46,11 +48,6 @@ void thread_tell_urgency(int urgency, uint64_t rt_period, uint64_t rt_deadline)
 boolean_t machine_processor_is_inactive(processor_t processor)
 {
     return (FALSE);
-}
-
-void machine_idle(void)
-{
-    __asm__ __volatile("cpsie if");
 }
 
 /******************************************************************************
