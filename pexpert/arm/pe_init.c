@@ -119,7 +119,7 @@ void PE_init_platform(boolean_t vm_initialized, void *_args)
         PE_state.video.v_depth = args->Video.v_depth;
         PE_state.video.v_display = args->Video.v_display;
 
-        strcpy(PE_state.video.v_pixelFormat, "PPPPPPPP");
+        strncpy(PE_state.video.v_pixelFormat, "PPPPPPPP", 8);
     }
 
     if (!vm_initialized) {

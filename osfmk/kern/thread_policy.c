@@ -226,6 +226,7 @@ thread_policy_set_internal(
 		return thread_affinity_set(thread, info->affinity_tag);
 	}
 
+#if 0
 #if CONFIG_EMBEDDED
 	case THREAD_BACKGROUND_POLICY:
 	{
@@ -237,6 +238,7 @@ thread_policy_set_internal(
 		return mach_do_background_thread(thread, info->priority);
 	}
 #endif /* CONFIG_EMBEDDED */
+#endif
 
 	default:
 		result = KERN_INVALID_ARGUMENT;

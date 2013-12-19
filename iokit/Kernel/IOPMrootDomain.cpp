@@ -770,7 +770,7 @@ static SYSCTL_PROC(_kern, OID_AUTO, willshutdown,
 	    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_NOAUTO | CTLFLAG_KERN | CTLFLAG_LOCKED,
 	    0, 0, sysctl_willshutdown, "I", "");
 
-#if !CONFIG_EMBEDDED
+#ifndef __arm__ /* !CONFIG_EMBEDDED */
 
 static int
 sysctl_progressmeterenable
@@ -1032,7 +1032,7 @@ bool IOPMrootDomain::start( IOService * nub )
     sysctl_register_oid(&sysctl__kern_sleeptime);
     sysctl_register_oid(&sysctl__kern_waketime);
     sysctl_register_oid(&sysctl__kern_willshutdown);
-#if !CONFIG_EMBEDDED
+#ifndef __arm__ /* !CONFIG_EMBEDDED */
     sysctl_register_oid(&sysctl__kern_progressmeterenable);
     sysctl_register_oid(&sysctl__kern_progressmeter);
 #endif /* !CONFIG_EMBEDDED */

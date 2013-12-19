@@ -262,6 +262,12 @@ strncasecmp(const char *s1, const char *s2, size_t n)
  * Deprecation Warning: 
  *	strcpy() is being deprecated. Please use strlcpy() instead.
  */
+ 
+#ifdef __arm__  /* I don't want to rebuild my symbolsets. */
+#undef CONFIG_EMBEDDED
+#define CONFIG_EMBEDDED 0
+#endif
+
 #if !CONFIG_EMBEDDED
 char *
 strcpy(

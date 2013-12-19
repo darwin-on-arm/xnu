@@ -446,6 +446,11 @@ vprintf(const char *fmt, va_list ap)
 	return 0;
 }
 
+#ifdef __arm__  /* I don't want to rebuild my symbolsets. */
+#undef CONFIG_EMBEDDED
+#define CONFIG_EMBEDDED 0
+#endif
+
 #if !CONFIG_EMBEDDED
 
 /*
