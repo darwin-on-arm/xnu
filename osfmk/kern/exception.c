@@ -312,12 +312,6 @@ exception_triage(
 	assert(exception != EXC_RPC_ALERT);
 
 	thread = current_thread();
-#ifdef __arm__
-	task = current_task();
-#endif
-
-#ifndef __arm__
-	/* xxx todo */
 
 	/*
 	 * Try to raise the exception at the activation level.
@@ -351,13 +345,7 @@ exception_triage(
 	/*
 	 * Nobody handled it, terminate the task.
 	 */
-#endif
-
 	(void) task_terminate(task);
-
-#ifdef __arm__
-	thread_terminate(thread);
-#endif
 
 out:
 	if ((exception != EXC_CRASH) && (exception != EXC_RESOURCE))

@@ -56,9 +56,9 @@
 EnterARM(copyin)
 EnterARM(copyinmsg)
     cmp     r2, #0
-    movle   r0, #0
-    movle   pc, lr
-    cmp     r1, #0xe0000000
+    moveq   r0, #0
+    bxeq    lr
+    cmp     r0, #0x80000000
     bcs     copyio_kernel
     stmfd   sp!,{r10,r11,lr}
     mov     r3, #0
@@ -475,9 +475,9 @@ EnterARM(copyinmsg)
 EnterARM(copyout)
 EnterARM(copyoutmsg)
     cmp r2, #0
-    movle r0, #0
-    movle pc, lr
-    cmp   r1, #0xe0000000
+    moveq r0, #0
+    bxeq  lr
+    cmp   r1, #0x80000000
     bcs copyio_kernel
     stmfd sp!,{r10,r11,lr}
     LoadThreadRegister(r10)
@@ -1018,14 +1018,7 @@ EnterARM(copyoutstr)
     bx      lr
 
 copyio_kernel:
-    /* Compare pmap, see if it's the kernel one or not, and then do operation */
-    LoadThreadRegister(r12)
-    ldr     r3, [r12, MACHINE_THREAD_CPU_DATA]
-    ldr     r3, [r3, CPU_PMAP]
-    LOAD_ADDR(r12, kernel_pmap)
-    ldr     r12, [r12]
-    cmp     r3, r12
-    bne     copyio_no_perms
+	/* We're open to attack here since we don't really verify the addresses being copied... */
     cmp     r2, #0x10
     blt     .Lcopyio_copy2
     orr     r3, r0, r1
@@ -1040,19 +1033,18 @@ copyio_kernel:
     subs    r2, r2, #8
     bge     .Lcopyio_copy8_loop
     adds    r2, r2, #8
+    beq 	.Lcopyio_exit
 .Lcopyio_copy2:
-    subs    r2, r2, #1
+    subs    r2, r2, #2
     ldrb    r3, [r0], #1
     ldrplb  r12, [r0], #1
-    strbt   r3, [r0], #1
+    strb    r3, [r0], #1
     strplb  r12, [r1], #1
     bhi     .Lcopyio_copy2
-    mov     r0, #0
+.Lcopyio_exit:
+    movs    r0, #0
     bx      lr
 copyio_no_perms:
-    LoadThreadRegister(r12)
-    mov     r3, #0
-    str     r3, [r12, TH_RECOVER]
     mov     r0, #0xE
     bx      lr
 

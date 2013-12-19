@@ -98,7 +98,7 @@ EnterARM(_start)
      *
      * !!! This will LIMIT your RAM amount !!!
      */
-    mov     r12, #0x10000000
+    mov     r12, #0x20000000
     mov     r10, #0x80000000
     mov     r11, #0x40000000
 #endif
