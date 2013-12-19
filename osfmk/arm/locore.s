@@ -91,6 +91,18 @@ EnterARM(_start)
     ldr     r11, [r0, BOOT_ARGS_PHYSBASE]
     ldr     r12, [r0, BOOT_ARGS_MEMSIZE]
 
+#if IOS_5_IBOOT_1219_BOOT_HACK
+    /*
+     * iBoot-1219.. boot-hack... boot-args struct change, remove this boot-hack
+     * one day.
+     *
+     * !!! This will LIMIT your RAM amount !!!
+     */
+    mov     r12, #0x10000000
+    mov     r10, #0x80000000
+    mov     r11, #0x40000000
+#endif
+
     orr     r5, r4, #0x18
 
     /* Now, we have to set our TTB to this value. */
