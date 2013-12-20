@@ -46,7 +46,7 @@
 /*
  * This is board specific stuff.
  */
-#ifdef BOARD_CONFIG_ARMPBA8
+#if defined(BOARD_CONFIG_ARMPBA8) || defined(BOARD_CONFIG_ARM_RVEB_V6)
 
 #define KPRINTF_PREFIX      "PE_RealView: "
 
