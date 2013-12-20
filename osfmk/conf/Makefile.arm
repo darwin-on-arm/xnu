@@ -1,7 +1,21 @@
-# pain.
+#
+# -O2 may work for you. -O2 might not. Your results
+# may vary.
+#
+
+export CFLAGS_RELEASEARM = -O0
+export CFLAGS_DEVELOPMENTARM = -O0
+export CFLAGS_DEBUGARM = -O0
+export CFLAGS_PROFILEARM = -O0
+
 bcopyinout.o_SFLAGS_ADD += -no-integrated-as
 
-ifeq (-arch armv6,$(ARCH_FLAGS_ARM))
-vm_pageout.o_CFLAGS_ADD += -Os
-vm_fault.o_CFLAGS_ADD += -Os
+ifeq (-arch armv7,$(ARCH_FLAGS_ARM))
+vm_pageout.o_CFLAGS_ADD += -O0
+vm_fault.o_CFLAGS_ADD += -O0
 endif
+
+rtclock.o_CFLAGS_ADD += -O0
+sched_prim.o_CFLAGS_ADD += -O0
+thread_call.o_CFLAGS_ADD += -O0
+device_server.o_CFLAGS_ADD += -O0

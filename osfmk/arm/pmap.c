@@ -482,8 +482,8 @@ char *pv_hash_lock_table;
  * Locking protocols
  */
 
-#define bit_lock(pai, l)    lck_spin_lock((uint32_t*)(l) + pai);
-#define bit_unlock(pai, l)  lck_spin_unlock((uint32_t*)(l) + pai);
+#define bit_lock(pai, l)    //lck_spin_lock((uint32_t*)(l) + pai);
+#define bit_unlock(pai, l)  //lck_spin_unlock((uint32_t*)(l) + pai);
 
 #define lock_pvh_pai(pai)       bit_lock(pai - atop(gPhysBase), (void *)pv_lock_table)
 #define unlock_pvh_pai(pai)     bit_unlock(pai - atop(gPhysBase), (void *)pv_lock_table)
