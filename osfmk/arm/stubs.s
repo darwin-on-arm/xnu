@@ -30,6 +30,8 @@
  * Unimplemented stubs.
  */
 
+#include <arm/arch.h>
+
 #define _genQuoteString(x) #x
 #define genString(x) _genQuoteString(x is not implemented.)
 
@@ -55,6 +57,20 @@
         .long   panicString_ ##Function     ;   \
     panicString_ ##Function:                ;   \
         .asciz  genString(Function)         ;
+
+#ifndef _ARM_ARCH_7
+#undef UNIMPLEMENTED_STUB
+#define UNIMPLEMENTED_STUB(Function)            \
+    .align 4;                                   \
+    .globl Function                         ;   \
+    Function:                               ;   \
+        ldr     r0, ps_ptr_ ##Function      ;   \
+        blx     _panic                      ;   \
+    ps_ptr_ ##Function:                     ;   \
+        .long   panicString_ ##Function     ;   \
+    panicString_ ##Function:                ;   \
+        .asciz  genString(Function)         ;
+#endif
 
 UNIMPLEMENTED_STUB(_LockTimeOut)
 UNIMPLEMENTED_STUB(__MachineStateCount)

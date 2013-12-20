@@ -144,8 +144,21 @@
 #include <vm/vm_object.h>
 #include <vm/vm_page.h>
 #include <arm/cpu_capabilities.h>
+#include <arm/arch.h>
 #include "cpufunc_armv7.h"
 #include "proc_reg.h"
+
+/*
+ * ARM11 support.
+ */
+#ifndef _ARM_ARCH_7
+#define armv7_set_context_id(args...)      /* No ASIDs. */
+#define armv7_context_switch       arm11_context_switch
+#define armv7_tlb_flushID_ASID     arm11_tlb_flushID
+#define armv7_tlb_flushID          arm11_tlb_flushID
+#define armv7_tlb_flushID_RANGE    arm11_tlb_flushID_RANGE
+#define armv7_tlb_flushID_SE       arm11_tlb_flushID_SE
+#endif
 
 /*
  * The pv_head_table contains a 'trunk' of mappings for each physical
@@ -2006,7 +2019,7 @@ ppnum_t pmap_find_phys(pmap_t pmap, addr64_t va)
     /*
      * Wait for the instruction transaction to complete.
      */
-    __asm__ __volatile__("isb sy");
+    __asm__ __volatile__("xisb sy");
 
     /*
      * See if the translation aborted, log any translation errors.
@@ -2040,6 +2053,7 @@ ppnum_t pmap_find_phys(pmap_t pmap, addr64_t va)
  */
 ppnum_t pmap_find_phys_fvtp(pmap_t pmap, addr64_t va)
 {
+#ifdef _ARM_ARCH_7
     uint32_t ptep, pte, ppn;
     uint32_t virt = (va & L2_ADDR_MASK), par;
     boolean_t is_priv = (pmap == kernel_pmap) ? TRUE : FALSE;
@@ -2100,6 +2114,9 @@ ppnum_t pmap_find_phys_fvtp(pmap_t pmap, addr64_t va)
      */
     enable_preemption();
     return ppn;
+#else
+    return 0;
+#endif
 }
 
 /**
@@ -2463,7 +2480,7 @@ void pmap_create_sharedpage(void)
  */
 vm_offset_t pmap_extract(pmap_t pmap, vm_offset_t virt)
 {
-#if 0
+#ifndef _ARM_ARCH_7
     spl_t spl;
     vm_offset_t ppn = 0;
     uint32_t tte, *ttep = pmap_tte(pmap, virt);

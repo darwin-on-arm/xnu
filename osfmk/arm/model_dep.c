@@ -86,6 +86,8 @@
 #include <mach-o/loader.h>
 #include <mach-o/nlist.h>
 
+#include <arm/arch.h>
+
 #include <libkern/kernel_mach_header.h>
 #include <libkern/OSKextLibPrivate.h>
 
@@ -368,7 +370,11 @@ Debugger(
     hw_atomic_add(&debug_mode, 1);   
     if (!panic_is_inited) {
         /* Halt forever. */
-        asm("cpsid if; wfi");
+#ifdef _ARM_ARCH_7
+        asm("cpsid if; wfi; b .");
+#else
+        asm("cpsid if; b .");
+#endif
     }
 
     printf("Debugger called: <%s>\n", message);

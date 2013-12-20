@@ -47,6 +47,7 @@ osfmk/arm/traps_lo.s		standard
 osfmk/arm/machine_routines_asm.s	standard
 
 osfmk/arm/armv/cache.s		standard
+osfmk/arm/armv/tlb-arm11.s	standard
 osfmk/arm/armv/tlb-armv7.s	standard
 osfmk/arm/armv/vfp.s		standard
 

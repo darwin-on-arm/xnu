@@ -24,7 +24,7 @@
 #define ldrex           ldr
 #endif
 
-#if __ARM_ARCH == 6
+#ifndef _ARM_ARCH_7
 #undef EnterThumb
 #define EnterThumb EnterARM
 #endif
@@ -166,7 +166,12 @@ rwlsloopres:
     str     r1, [r0]
     bx      lr
 rwlsopt:
+#ifndef _ARM_ARCH_7
+    mov     r2, #0x0001
+    orr     r2, r2, #0x8000
+#else
     mov     r2, #0x8001
+#endif
     ands    r2, r1, r2
     LOAD_ADDR(r12, lck_rw_lock_shared_gen)
     bx      r12
