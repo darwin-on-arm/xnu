@@ -12,7 +12,7 @@ DATAFILES = \
 	boolean.h exception.h \
 	processor_info.h kern_return.h ndr_def.h \
 	thread_status.h thread_state.h vm_param.h \
-	vm_types.h rpc.h \
+	vm_types.h rpc.h syscall_sw.h \
 	machine_types.defs  _structs.h  sdt_isa.h
 
 
