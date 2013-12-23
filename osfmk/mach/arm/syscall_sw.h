@@ -59,8 +59,6 @@
 #ifndef	_MACH_ARM_SYSCALL_SW_H_
 #define _MACH_ARM_SYSCALL_SW_H_
 
-#undef kernel_trap
-
 #define mach_syscall0to4_int(num)			\
 	mov	r12, #(num)			;	\
 	swi	#0x80				;	\
