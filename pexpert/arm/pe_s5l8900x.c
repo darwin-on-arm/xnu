@@ -60,28 +60,78 @@ vm_offset_t gS5L8900XClockGateBase;
 
 vm_offset_t gS5L8900XPmgrBase;
 
-/* The 8900 has 4 PL192 compatible VICs. */
+/* The 8900 has 2 PL192 compatible VICs. */
 vm_offset_t gS5L8900XVic0Base;
 vm_offset_t gS5L8900XVic1Base;
-vm_offset_t gS5L8900XVic2Base;
-vm_offset_t gS5L8900XVic3Base;
+vm_offset_t gS5L8900XEdgeICBase;
 
 vm_offset_t gS5L8900XTimerBase;
 
-#ifdef BOARD_CONFIG_S5L8900X
 static boolean_t avoid_uarts = FALSE;
-#else
-/* Busted... */
-static boolean_t avoid_uarts = TRUE;
-#endif
 
 static uint64_t clock_decrementer = 0;
 static boolean_t clock_initialized = FALSE;
 static boolean_t clock_had_irq = FALSE;
 static uint64_t clock_absolute_time = 0;
 
+#define barrier()               __asm__ __volatile__("": : :"memory");
+
+#define EDGEIC 0x38E02000
+#define EDGEICCONFIG0 0x0
+#define EDGEICCONFIG1 0x4
+#define EDGEICLOWSTATUS 0x8
+#define EDGEICHIGHSTATUS 0xC
+
+#define VIC0 0x38E00000
+#define VIC1 0x38E01000
+#define VIC_INTSEP  0x20
+#define VICIRQSTATUS 0x0
+#define VICRAWINTR 0x8
+#define VICINTSELECT 0xC
+#define VICINTENABLE 0x10
+#define VICINTENCLEAR 0x14
+#define VICSWPRIORITYMASK 0x24
+#define VICVECTADDRS 0x100
+#define VICADDRESS 0xF00
+#define VICPERIPHID0 0xFE0
+#define VICPERIPHID1 0xFE4
+#define VICPERIPHID2 0xFE8
+#define VICPERIPHID3 0xFEC
+
+#define TIMER_BASE      0x3E200000
+
+#define TM64_COUNTHIGH  0x80
+#define TM64_COUNTLOW   0x84
+#define TM64_CONTROL    0x88
+#define TM64_DATA0_H    0x8C
+#define TM64_DATA0_L    0x90
+#define TM64_DATA1_H    0x94
+#define TM64_DATA1_L    0x98
+
+#define TIMER_CONTROL   0xA0 + 0x0
+#define TIMER_COMMAND   0xA0 + 0x4
+#define TIMER_DATA0     0xA0 + 0x8
+#define TIMER_DATA1     0xA0 + 0xC
+#define TIMER_PRESCALER 0xA0 + 0x10
+#define TIMER_COUNTER   0xA0 + 0x14
+
+#define TIMER_IRQLATCH  0xF8
+
+#define TIMER_STATE_START  1
+#define TIMER_STATE_STOP   0
+
 static void timer_configure(void)
 {
+    /*
+     * DUMMY 
+     */
+    uint64_t hz = 12000000;
+    gPEClockFrequencyInfo.timebase_frequency_hz = hz;
+
+    clock_decrementer = 5000;
+    kprintf(KPRINTF_PREFIX "decrementer frequency = %llu\n", clock_decrementer);
+
+    rtc_configure(hz);
     return;
 }
 
@@ -97,11 +147,54 @@ int S5L8900X_getc(void)
 
 void S5L8900X_uart_init(void)
 {
+    /* Map the VICs. */
+    gS5L8900XVic0Base = ml_io_map(VIC0, PAGE_SIZE);
+    gS5L8900XVic1Base = ml_io_map(VIC1, PAGE_SIZE);
+    gS5L8900XEdgeICBase = ml_io_map(EDGEIC, PAGE_SIZE);
+    gS5L8900XTimerBase = ml_io_map(TIMER_BASE, PAGE_SIZE);
     return;
 }
 
 void S5L8900X_interrupt_init(void)
 {
+    assert(gS5L8900XVic0Base && gS5L8900XVic1Base && gS5L8900XEdgeICBase);
+
+    /* 
+     * Reset the EdgeIC.
+     */
+    HwReg(gS5L8900XEdgeICBase + EDGEICCONFIG0) = 0;
+    HwReg(gS5L8900XEdgeICBase + EDGEICCONFIG1) = 0;
+
+    /*
+     * Disable all interrupts. 
+     */
+    HwReg(gS5L8900XVic0Base + VICINTENCLEAR) = 0xFFFFFFFF;
+    HwReg(gS5L8900XVic1Base + VICINTENCLEAR) = 0xFFFFFFFF;
+
+    HwReg(gS5L8900XVic0Base + VICINTENABLE) = 0;
+    HwReg(gS5L8900XVic1Base + VICINTENABLE) = 0;
+
+    /*
+     * Please use IRQs. I don't want to implement a FIQ based timer decrementer handler. 
+     */
+    HwReg(gS5L8900XVic0Base + VICINTSELECT) = 0;
+    HwReg(gS5L8900XVic1Base + VICINTSELECT) = 0;
+
+    /*
+     * Unmask all interrupt levels. 
+     */
+    HwReg(gS5L8900XVic0Base + VICSWPRIORITYMASK) = 0xFFFF;
+    HwReg(gS5L8900XVic1Base + VICSWPRIORITYMASK) = 0xFFFF;
+
+    /*
+     * Set vector addresses to interrupt numbers. 
+     */
+    int i;
+    for (i = 0; i < 0x20; i++) {
+        HwReg(gS5L8900XVic0Base + VICVECTADDRS + (i * 4)) = (0x20 * 0) + i;
+        HwReg(gS5L8900XVic1Base + VICVECTADDRS + (i * 4)) = (0x20 * 1) + i;
+    }
+
     return;
 }
 
@@ -110,11 +203,83 @@ void S5L8900X_timer_enabled(int enable);
 
 void S5L8900X_timebase_init(void)
 {
+    assert(gS5L8900XTimerBase);
+
+    /*
+     * Set rtclock stuff 
+     */
+    timer_configure();
+
+    /*
+     * Disable the timer. 
+     */
+    S5L8900X_timer_enabled(FALSE);
+
+    /*
+     * Enable the interrupt. 
+     */
+    HwReg(gS5L8900XVic0Base + VICINTENABLE) = HwReg(gS5L8900XVic0Base + VICINTENABLE) | (1 << 7) | (1 << 6) | (1 << 5);
+
+    /*
+     * Enable interrupts. 
+     */
+    ml_set_interrupts_enabled(TRUE);
+
+    /*
+     * Wait for it. 
+     */
+    kprintf(KPRINTF_PREFIX "waiting for system timer to come up...\n");
+    S5L8900X_timer_enabled(TRUE);
+
+    clock_initialized = TRUE;
+
+    while (!clock_had_irq)
+        barrier();
+
     return;
 }
 
 void S5L8900X_handle_interrupt(void *context)
 {
+    uint32_t current_irq = HwReg(gS5L8900XVic0Base + VICADDRESS);
+
+    /*
+     * Timer IRQs are handled by us. 
+     */
+    if (current_irq == 0x5) {
+        /*
+         * Disable timer 
+         */
+        S5L8900X_timer_enabled(FALSE);
+
+        /*
+         * Update absolute time 
+         */
+        clock_absolute_time += clock_decrementer;
+
+        /*
+         * Resynchronize deadlines. 
+         */
+        rtclock_intr((arm_saved_state_t *) context);
+
+        /*
+         * EOI. 
+         */
+        HwReg(gS5L8900XVic0Base + VICADDRESS) = 0;
+
+        /*
+         * Enable timer. 
+         */
+        S5L8900X_timer_enabled(TRUE);
+
+        /*
+         * We had an IRQ. 
+         */
+        clock_had_irq = TRUE;
+    } else {
+        irq_iokit_dispatch(current_irq);
+    }
+
     return;
 }
 
@@ -139,12 +304,21 @@ uint64_t S5L8900X_get_timebase(void)
 
 uint64_t S5L8900X_timer_value(void)
 {
+    /* The 8900 does not have a true overflow timer, like the other platforms...? */
     uint64_t ret = 0;
     return ret;
 }
 
 void S5L8900X_timer_enabled(int enable)
 {
+    if(enable) {
+        HwReg(gS5L8900XTimerBase + TIMER_COUNTER) = TIMER_STATE_START;
+        HwReg(gS5L8900XTimerBase + TIMER_CONTROL) = 0x7000 | (1 << 6); /* IRQ enable. */
+        HwReg(gS5L8900XTimerBase + TIMER_DATA0) = clock_decrementer; /* Decrementer. */
+    } else {
+        HwReg(gS5L8900XTimerBase + TIMER_COUNTER) = TIMER_STATE_STOP;
+    }
+
     return;
 }
 
@@ -181,9 +355,9 @@ void S5L8900X_framebuffer_init(void)
      * Enable early framebuffer.
      */
 
-    if (PE_parse_boot_argn("-early-fb-debug", tempbuf, sizeof(tempbuf))) {
+    //if (PE_parse_boot_argn("-early-fb-debug", tempbuf, sizeof(tempbuf))) {
         initialize_screen((void *) &PE_state.video, kPEAcquireScreen);
-    }
+    //}
 
     if (PE_parse_boot_argn("-graphics-mode", tempbuf, sizeof(tempbuf))) {
         initialize_screen((void *) &PE_state.video, kPEGraphicsMode);
