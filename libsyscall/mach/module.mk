@@ -50,18 +50,6 @@ C_SRC_FILES := \
 	panic.c \
 	slot_name.c
 
-SRC_FILES := $(MIG_SRC_FILES) $(C_SRC_FILES)
-
-%User.o: %.defs
-	$(MIG) $(MIGFLAGS) -arch $(RC_ARCHS) -cc $(CC) -MD "$(CFLAGS)" -user $*User.c -server /dev/null -header $*.h -sheader /dev/null -dheader /dev/null $*.defs
-	$(CC) $(CFLAGS) -c $*User.c -o $*User.o
-	rm -f $(notdir $**.h) $(notdir $**.d)
-
-%Server.o: %.defs
-	$(MIG) $(MIGFLAGS) -arch $(RC_ARCHS) -cc $(CC) -MD "$(CFLAGS)" -server $*Server.c -user /dev/null -header /dev/null -sheader $*Server.h -dheader /dev/null $*.defs
-	$(CC) $(CFLAGS) -c $*Server.c -o $*Server.o
-	rm -f $(notdir $**.h) $(notdir $**.d)
-
 S_SRCS += $(addprefix $(SRC_DIR)/, $(S_SRC_FILES))
 C_SRCS += $(addprefix $(SRC_DIR)/, $(C_SRC_FILES))
 MIG_USR_SRCS += $(addprefix $(SRC_DIR)/, $(MIG_USR_SRC_FILES))
