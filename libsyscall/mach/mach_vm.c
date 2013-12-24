@@ -41,7 +41,7 @@
 
 kern_return_t
 mach_vm_allocate(
-		mach_port_name_t target,
+		vm_map_t target,
 		mach_vm_address_t *address,
 		mach_vm_size_t size,
 		int flags)
@@ -58,7 +58,7 @@ mach_vm_allocate(
 
 kern_return_t
 mach_vm_deallocate(
-	mach_port_name_t target,
+	vm_map_t target,
 	mach_vm_address_t address,
 	mach_vm_size_t size)
 {
@@ -74,7 +74,7 @@ mach_vm_deallocate(
 
 kern_return_t
 mach_vm_protect(
-	mach_port_name_t task,
+	vm_map_t task,
 	mach_vm_address_t address,
 	mach_vm_size_t size,
 	boolean_t set_maximum,
@@ -94,7 +94,7 @@ mach_vm_protect(
 
 kern_return_t
 vm_allocate(
-	mach_port_name_t task,
+	vm_map_t task,
 	vm_address_t *address,
 	vm_size_t size,
 	int flags)
@@ -115,7 +115,7 @@ vm_allocate(
 
 kern_return_t
 vm_deallocate(
-	mach_port_name_t task,
+	vm_map_t task,
 	vm_address_t address,
 	vm_size_t size)
 {
@@ -128,7 +128,7 @@ vm_deallocate(
 
 kern_return_t
 vm_protect(
-	mach_port_name_t task,
+	vm_map_t task,
 	vm_address_t address,
 	vm_size_t size,
 	boolean_t set_maximum,

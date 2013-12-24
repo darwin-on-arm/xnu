@@ -46,7 +46,10 @@ SERVER_HEADER_DST="$DSTROOT/usr/include/servers"
 MACHINE_ARCH=`echo $ARCHS | cut -d' ' -f 1`
 SRC="$SRCROOT/mach"
 MIG_INTERNAL_HEADER_DST="$DERIVED_SOURCES_DIR/mach"
-MIG_PRIVATE_DEFS_INCFLAGS="-I${SDKROOT}/System/Library/Frameworks/System.framework/PrivateHeaders"
+MIG_PRIVATE_DEFS_INCFLAGS="-I${SDKROOT}/System/Library/Frameworks/System.framework/Versions/B/PrivateHeaders"
+#MIG_PRIVATE_DEFS_INCFLAGS="-I${SDKROOT}/System/Library/Frameworks/System.framework/PrivateHeaders"
+
+MIG_ONLY_GEN_HEADERS="-user /dev/null -server /dev/null -sheader /dev/null"
 
 MIGS="clock.defs
 	clock_priv.defs
@@ -65,11 +68,10 @@ MIGS_PRIVATE=""
 
 MIGS_DUAL_PUBLIC_PRIVATE=""
 
-if [[ "$PLATFORM" = "iPhoneOS" || "$RC_ProjectName" = "Libsyscall_headers_Sim" ]]
-then
+if [ "$PLATFORM" = "iPhoneOS" -o "$RC_ProjectName" = "Libsyscall_headers_Sim" ]; then
 	MIGS_PRIVATE="mach_vm.defs"
 else
-	MIGS+=" mach_vm.defs"
+	MIGS="${MIGS} mach_vm.defs"
 fi
 
 
@@ -92,7 +94,7 @@ for hdr in $SERVER_HDRS; do
 done
 
 # special case because we only have one to do here
-$MIG -arch $MACHINE_ARCH -header "$SERVER_HEADER_DST/netname.h" $SRC/servers/netname.defs
+$MIG -arch $MACHINE_ARCH -header "$SERVER_HEADER_DST/netname.h" $MIG_ONLY_GEN_HEADERS $MIG_PRIVATE_DEFS_INCFLAGS $SRC/servers/netname.defs
 
 # install /usr/include/mach mig headers
 
@@ -100,14 +102,14 @@ mkdir -p $MIG_HEADER_DST
 
 for mig in $MIGS $MIGS_DUAL_PUBLIC_PRIVATE; do
 	MIG_NAME=`basename $mig .defs`
-	$MIG -arch $MACHINE_ARCH -cc $MIGCC -header "$MIG_HEADER_DST/$MIG_NAME.h" $MIG_DEFINES $SRC/$mig
+	$MIG -arch $MACHINE_ARCH -cc $MIGCC -header "$MIG_HEADER_DST/$MIG_NAME.h" $MIG_ONLY_GEN_HEADERS $MIG_DEFINES $MIG_PRIVATE_DEFS_INCFLAGS $SRC/$mig
 done
 
 mkdir -p $MIG_PRIVATE_HEADER_DST
 
 for mig in $MIGS_PRIVATE $MIGS_DUAL_PUBLIC_PRIVATE; do
 	MIG_NAME=`basename $mig .defs`
-	$MIG -arch $MACHINE_ARCH -cc $MIGCC -header "$MIG_PRIVATE_HEADER_DST/$MIG_NAME.h" $MIG_DEFINES $MIG_PRIVATE_DEFS_INCFLAGS $SRC/$mig
+	$MIG -arch $MACHINE_ARCH -cc $MIGCC -header "$MIG_PRIVATE_HEADER_DST/$MIG_NAME.h" $MIG_ONLY_GEN_HEADERS $MIG_DEFINES $MIG_PRIVATE_DEFS_INCFLAGS $SRC/$mig
 	if [ ! -e "$MIG_HEADER_DST/$MIG_NAME.h" ]; then
 	    echo "#error $MIG_NAME.h unsupported." > "$MIG_HEADER_DST/$MIG_NAME.h"
 	fi
@@ -122,7 +124,7 @@ mkdir -p $MIG_INTERNAL_HEADER_DST
  
 for mig in $MIGS_INTERNAL; do
 	MIG_NAME=`basename $mig .defs`
-	$MIG -arch $MACHINE_ARCH -cc $MIGCC -header "$MIG_INTERNAL_HEADER_DST/${MIG_NAME}_internal.h" $SRC/$mig
+	$MIG -arch $MACHINE_ARCH -cc $MIGCC -header "$MIG_INTERNAL_HEADER_DST/${MIG_NAME}_internal.h" $MIG_ONLY_GEN_HEADERS $MIG_DEFINES $MIG_PRIVATE_DEFS_INCFLAGS $SRC/$mig
 done
  
 ARCHS=`echo $ARCHS | sed -e 's/armv./arm/g'`
@@ -133,6 +135,6 @@ for arch in $ARCHS; do
 
 	for mig in $MIGS_ARCH; do
 		MIG_NAME=`basename $mig .defs`
-		$MIG -arch $MACHINE_ARCH -cc $MIGCC -header "$MIG_ARCH_DST/$MIG_NAME.h" $MIG_DEFINES $SRC/$mig
+		$MIG -arch $MACHINE_ARCH -cc $MIGCC -header "$MIG_ARCH_DST/$MIG_NAME.h" $MIG_ONLY_GEN_HEADERS $MIG_DEFINES $MIG_PRIVATE_DEFS_INCFLAGS $MIG_DEFINES $SRC/$mig
 	done	
 done
