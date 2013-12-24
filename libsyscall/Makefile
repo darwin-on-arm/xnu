@@ -174,7 +174,7 @@ setup:
 	mkdir -p $(BUILDOBJS)/sys
 	$(DEVELOPER_DIR)/Makefiles/bin/version.pl $(RC_ProjectName) > $(GENROOT)/$(RC_ProjectName)_version.c
 	$(CC) $(CFLAGS) -c $(GENROOT)/$(RC_ProjectName)_version.c -o $(BUILDROOT)/$(RC_ProjectName)_version.o
-	xcodescripts/create-syscalls.pl $(KERNEL_SOURCE)/bsd/kern/syscalls.master custom/ Platforms/ MacOSX $(BUILDOBJS)/sys
+	xcodescripts/create-syscalls.pl $(KERNEL_SOURCE)/bsd/kern/syscalls.master custom/ Platforms/ $(RC_PLATFORM) $(BUILDOBJS)/sys
 	xcodescripts/compile-syscalls.pl $(BUILDOBJS)/sys/stubs.list $(BUILDROOT)/syscalls.a
 	xcodescripts/mach_install_mig.sh
 
