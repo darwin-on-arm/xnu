@@ -4,7 +4,6 @@ MIG_USR_SRC_FILES := \
 	clock.defs \
 	clock_reply.defs \
 	host_priv.defs \
-	ledger.defs \
 	mach_host.defs \
 	mach_vm.defs \
 	processor.defs \

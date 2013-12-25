@@ -32,7 +32,6 @@ MIG_DEFS =	\
 	host_notify_reply.defs \
 	host_priv.defs \
 	host_security.defs \
-	ledger.defs \
 	lock_set.defs \
 	mach_exc.defs \
 	mach_host.defs \
@@ -76,7 +75,6 @@ MIG_UUHDRS = \
 	clock_priv.h \
 	host_priv.h \
 	host_security.h \
-	ledger.h \
 	lock_set.h \
 	mach_host.h \
 	mach_port.h \
@@ -255,7 +253,6 @@ MIG_KSHDRS = \
 	exc_server.h \
 	host_priv_server.h \
 	host_security_server.h \
-	ledger_server.h \
 	lock_set_server.h \
 	mach_exc_server.h \
 	mach_host_server.h \
@@ -281,7 +278,6 @@ MIG_KSSRC = \
 	exc_server.c \
 	host_priv_server.c \
 	host_security_server.c \
-	ledger_server.c \
 	lock_set_server.c \
 	mach_exc_server.c \
 	mach_host_server.c \
