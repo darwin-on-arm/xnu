@@ -180,7 +180,7 @@ setup:
 	xcodescripts/mach_install_mig.sh
 
 $(LIB): $(OBJS)
-	$(LIBTOOL) $(LIBTOOL_FLAGS) -static -filelist $(BUILDOBJS)/Objects.list $(BUILDROOT)/syscalls.a $(BUILDROOT)/Libsyscall_version.o -o $(BUILDROOT)/$@.a
+	$(LIBTOOL) $(LIBTOOL_FLAGS) -static -filelist $(BUILDOBJS)/Objects.list $(BUILDROOT)/syscalls.a $(BUILDROOT)/$(RC_ProjectName)_version.o -o $(BUILDROOT)/$@.a
 	$(CC) -arch $(ARCHS) -dynamiclib -isysroot $(SDKROOT) -L$(BUILDROOT) -F$(BUILDROOT) -install_name /usr/lib/system/$(LIB).dylib -nostdlib -mmacosx-version-min=10.8 -dead_strip -umbrella System -all_load -lsystem_kernel -single_module -compatibility_version 1 -o $(BUILDROOT)/$(LIB).dylib
 
 install: all

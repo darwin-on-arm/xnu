@@ -23,3 +23,14 @@ _sendto$NOCANCEL	___sendto_nocancel
 _waitid$NOCANCEL	___waitid_nocancel
 _write$NOCANCEL	___write_nocancel
 _writev$NOCANCEL	___writev_nocancel
+_stat$INODE64	___stat64
+_pwrite$UNIX2003	___pwrite
+_read$UNIX2003	___read
+_close$UNIX2003	___close
+_write$UNIX2003	___write
+_pread$UNIX2003	___pread
+_fstatfs$INODE64	___fstatfs64
+_getattrlist$UNIX2003	___getattrlist
+_lstat$INODE64	___lstat64
+_fstat$INODE64	___fstat64
+_open$UNIX2003	___open
