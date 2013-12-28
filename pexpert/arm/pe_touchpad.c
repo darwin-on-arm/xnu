@@ -26,6 +26,36 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
+/*
+ * Copyright (c) 2008, Google Inc.
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *  * Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ *  * Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in
+ *    the documentation and/or other materials provided with the
+ *    distribution.
+ *  * Neither the name of Google, Inc. nor the names of its contributors
+ *    may be used to endorse or promote products derived from this
+ *    software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
+ * FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
+ * COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
+ * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
+ * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS
+ * OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED
+ * AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+ * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT
+ * OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ */
 
 #include <mach/mach_types.h>
 
@@ -44,6 +74,9 @@
  * This is board specific stuff.
  */
 #if defined(BOARD_CONFIG_MSM8960_TOUCHPAD)
+
+#include "touchpad_msm.h"
+
 #define KPRINTF_PREFIX  "PE_TouchPad: "
 
 #define HwReg(x) *((volatile unsigned long*)(x))
@@ -54,23 +87,10 @@ extern void rtc_configure(uint64_t hz);
 #define uart_base   gTouchPadUartBase
 vm_offset_t gTouchPadUartBase;
 vm_offset_t gTouchPadClockGateBase;
-
 vm_offset_t gTouchPadPmgrBase;
-
-/* The 8720 has 4 PL192 compatible VICs. */
-vm_offset_t gTouchPadVic0Base;
-vm_offset_t gTouchPadVic1Base;
-vm_offset_t gTouchPadVic2Base;
-vm_offset_t gTouchPadVic3Base;
-
+vm_offset_t gTouchpadqGICCPUBase;
+vm_offset_t gTouchPadqGICDistributerBase;
 vm_offset_t gTouchPadTimerBase;
-
-#ifdef BOARD_CONFIG_TouchPad
-static boolean_t avoid_uarts = FALSE;
-#else
-/* Busted... */
-static boolean_t avoid_uarts = TRUE;
-#endif
 
 static uint64_t clock_decrementer = 0;
 static boolean_t clock_initialized = FALSE;
@@ -79,6 +99,16 @@ static uint64_t clock_absolute_time = 0;
 
 static void timer_configure(void)
 {
+    /*
+     * DUMMY DUMMY
+     */
+    uint64_t hz = 6750000;
+    gPEClockFrequencyInfo.timebase_frequency_hz = hz;
+
+    clock_decrementer = 5000;
+    kprintf(KPRINTF_PREFIX "decrementer frequency = %llu\n", clock_decrementer);
+
+    rtc_configure(hz);
     return;
 }
 
@@ -94,11 +124,79 @@ int TouchPad_getc(void)
 
 void TouchPad_uart_init(void)
 {
+    gTouchPadqGICDistributerBase = ml_io_map(MSM_GIC_DIST_BASE, PAGE_SIZE);
+    gTouchpadqGICCPUBase = ml_io_map(MSM_GIC_CPU_BASE, PAGE_SIZE);
+
+    gTouchPadTimerBase = ml_io_map(MSM_TMR_BASE, PAGE_SIZE);
     return;
+}
+
+
+/* Intialize distributor */
+static void qgic_dist_init(void)
+{
+    uint32_t i;
+    uint32_t num_irq = 0;
+    uint32_t cpumask = 1;
+
+    cpumask |= cpumask << 8;
+    cpumask |= cpumask << 16;
+
+    /* Disabling GIC */
+    HwReg(gTouchPadqGICDistributerBase + GIC_DIST_CTRL) = 0;
+
+    /*
+     * Find out how many interrupts are supported.
+     */
+    num_irq = HwReg(gTouchPadqGICDistributerBase + GIC_DIST_CTR) & 0x1f;
+    num_irq = (num_irq + 1) * 32;
+
+    /* Set each interrupt line to use N-N software model
+     * and edge sensitive, active high
+     */
+    for (i=32; i < num_irq; i += 16)
+        HwReg(gTouchPadqGICDistributerBase + GIC_DIST_CONFIG + i * 4/16) = 0xffffffff;
+
+    HwReg(gTouchPadqGICDistributerBase + GIC_DIST_CONFIG + 4) = 0xffffffff;
+
+    /* Set up interrupts for this CPU */
+    for (i = 32; i < num_irq; i += 4)
+        HwReg(gTouchPadqGICDistributerBase + GIC_DIST_TARGET + i * 4 / 4) = cpumask;
+
+    /* Set priority of all interrupts*/
+
+    /*
+     * In bootloader we dont care about priority so
+     * setting up equal priorities for all
+     */
+    for (i=0; i < num_irq; i += 4)
+        HwReg(gTouchPadqGICDistributerBase + GIC_DIST_PRI) = 0xa0a0a0a0;
+
+    /* Disabling interrupts*/
+    for (i=0; i < num_irq; i += 32)
+        HwReg(gTouchPadqGICDistributerBase + GIC_DIST_ENABLE_CLEAR + i * 4/32) = 0xffffffff;
+
+    HwReg(gTouchPadqGICDistributerBase + GIC_DIST_ENABLE_SET) = 0xffff;
+
+    /*Enabling GIC*/
+    HwReg(gTouchPadqGICDistributerBase + GIC_DIST_CTRL) = 0x1;
+}
+
+/* Intialize cpu specific controller */
+static void qgic_cpu_init(void)
+{
+    HwReg(gTouchpadqGICCPUBase + GIC_CPU_PRIMASK) = 0xf0;
+    HwReg(gTouchpadqGICCPUBase + GIC_CPU_CTRL) = 0x1;
 }
 
 void TouchPad_interrupt_init(void)
 {
+    assert(gTouchPadqGICDistributerBase && gTouchpadqGICCPUBase);
+
+    /* Initialize qGIC. */
+    qgic_dist_init();
+    qgic_cpu_init();
+
     return;
 }
 
@@ -107,11 +205,52 @@ void TouchPad_timer_enabled(int enable);
 
 void TouchPad_timebase_init(void)
 {
+    /* Set Rtclock stuff. */
+    timer_configure();
+
+    /* Disable timer. */
+    TouchPad_timer_enabled(FALSE);
+
+    /* Unmask interrupt. */
+    uint32_t reg = GIC_DIST_ENABLE_SET + (INT_DEBUG_TIMER_EXP/32)*4;
+    uint32_t bit = 1 << (INT_DEBUG_TIMER_EXP & 31);
+    HwReg(gTouchPadqGICDistributerBase + reg) = (bit);
+
+    /* Enable interrupts. */
+    ml_set_interrupts_enabled(TRUE);
+
+    /* ARM timer. */
+    TouchPad_timer_enabled(TRUE);
+
+    /* Wait for pong. */
+    clock_initialized = TRUE;
+    while(!clock_had_irq)
+        barrier();
+
     return;
 }
 
 void TouchPad_handle_interrupt(void *context)
 {
+    uint32_t irq_no = HwReg(gTouchpadqGICCPUBase + GIC_CPU_INTACK);
+    if(irq_no > NR_IRQS) {
+        kprintf(KPRINTF_PREFIX "Got a bogus IRQ?");
+        return;
+    }
+
+    /* Timer interrupt? */
+    if(irq_no == INT_DEBUG_TIMER_EXP) {
+        TouchPad_timer_enabled(FALSE);
+        clock_absolute_time += (clock_decrementer - (int64_t) TouchPad_timer_value());
+        rtclock_intr((arm_saved_state_t *) context);
+        TouchPad_timer_enabled(TRUE);
+        clock_had_irq = TRUE;
+    } else {
+        irq_iokit_dispatch(irq_no);
+    }
+
+    /* EOI. */
+    HwReg(gTouchpadqGICCPUBase + GIC_CPU_EOI) = irq_no;
     return;
 }
 
@@ -136,12 +275,23 @@ uint64_t TouchPad_get_timebase(void)
 
 uint64_t TouchPad_timer_value(void)
 {
+    /* Don't bother. HwReg(gTouchPadTimerBase + DGT_COUNT_VAL).. */
     uint64_t ret = 0;
     return ret;
 }
 
 void TouchPad_timer_enabled(int enable)
 {
+    if(enable) {
+        HwReg(gTouchPadTimerBase + DGT_MATCH_VAL) = clock_decrementer;
+        HwReg(gTouchPadTimerBase + DGT_CLEAR) = 0;
+        HwReg(gTouchPadTimerBase + DGT_ENABLE) = DGT_ENABLE_EN | DGT_ENABLE_CLR_ON_MATCH_EN;
+    } else {
+        HwReg(gTouchPadTimerBase + DGT_ENABLE) = 0;
+        barrier();
+        HwReg(gTouchPadTimerBase + DGT_CLEAR) = 0;
+        barrier();
+    }
     return;
 }
 
@@ -175,10 +325,15 @@ void TouchPad_framebuffer_init(void)
     /*
      * Enable early framebuffer.
      */
+    if (PE_parse_boot_argn("-early-fb-debug", tempbuf, sizeof(tempbuf))) {
+        initialize_screen((void *) &PE_state.video, kPEAcquireScreen);
+    }
 
-    initialize_screen((void *) &PE_state.video, kPEAcquireScreen);
-    initialize_screen((void *) &PE_state.video, kPETextMode);
-
+    if (PE_parse_boot_argn("-graphics-mode", tempbuf, sizeof(tempbuf))) {
+        initialize_screen((void *) &PE_state.video, kPEGraphicsMode);
+    } else {
+        initialize_screen((void *) &PE_state.video, kPETextMode);
+    }
     return;
 }
 
@@ -204,15 +359,6 @@ void PE_init_SocSupport_TouchPad(void)
     gPESocDispatch.timer_enabled = TouchPad_timer_enabled;
 
     gPESocDispatch.framebuffer_init = TouchPad_framebuffer_init;
-
-    char tempbuf[16];
-    if (PE_parse_boot_argn("-avoid-uarts", tempbuf, sizeof(tempbuf))) {
-        avoid_uarts = 1;
-    }
-
-    if (PE_parse_boot_argn("-force-uarts", tempbuf, sizeof(tempbuf))) {
-        avoid_uarts = 0;
-    }
 
     TouchPad_framebuffer_init();
     TouchPad_uart_init();
