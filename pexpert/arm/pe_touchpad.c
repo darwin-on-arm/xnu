@@ -102,10 +102,10 @@ static void timer_configure(void)
     /*
      * DUMMY DUMMY
      */
-    uint64_t hz = 6750000;
+    uint64_t hz = 67500 * 4;
     gPEClockFrequencyInfo.timebase_frequency_hz = hz;
 
-    clock_decrementer = 5000;
+    clock_decrementer = 1000;
     kprintf(KPRINTF_PREFIX "decrementer frequency = %llu\n", clock_decrementer);
 
     rtc_configure(hz);
