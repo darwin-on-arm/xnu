@@ -612,62 +612,6 @@ void sleh_undef(arm_saved_state_t * state)
      * Kernel mode. (ARM Supervisor) 
      */
     if (cpsr == 0x13) {
-        uint32_t instruction, thumb_offset;
-
-        /*
-         * Handle if it's a NEON/VFP instruction. 
-         */
-        thumb_offset = (state->cpsr & (1 << 5)) ? 1 : 0;
-        copyin((uint8_t *) (arm_ctx->pc + thumb_offset), &instruction,
-               sizeof(uint32_t));
-
-        /*
-         * Check the instruction encoding to see if it's a coprocessor instruction. 
-         */
-        instruction = OSSwapInt32(instruction);
-
-        /*
-         * NEON instruction. 
-         */
-        if (((OSSwapInt32(instruction) & 0xff100000) == 0xf4000000)
-            || ((OSSwapInt32(instruction) & 0xfe000000) == 0xf2000000)) {
-            panic_context(0, (void *) arm_ctx,
-                          "NEON usage in a kernel mode context. (saved state 0x%08x)\n"
-                          "r0: 0x%08x  r1: 0x%08x  r2: 0x%08x  r3: 0x%08x\n"
-                          "r4: 0x%08x  r5: 0x%08x  r6: 0x%08x  r7: 0x%08x\n"
-                          "r8: 0x%08x  r9: 0x%08x r10: 0x%08x r11: 0x%08x\n"
-                          "12: 0x%08x  sp: 0x%08x  lr: 0x%08x  pc: 0x%08x\n"
-                          "cpsr: 0x%08x\n", arm_ctx, arm_ctx->r[0], arm_ctx->r[1],
-                          arm_ctx->r[2], arm_ctx->r[3], arm_ctx->r[4],
-                          arm_ctx->r[5], arm_ctx->r[6], arm_ctx->r[7],
-                          arm_ctx->r[8], arm_ctx->r[9], arm_ctx->r[10],
-                          arm_ctx->r[11], arm_ctx->r[12], arm_ctx->sp,
-                          arm_ctx->lr, arm_ctx->pc, arm_ctx->cpsr);
-        }
-
-        if ((((instruction & 0xF000000) >> 24) == 0xE)
-            || (((instruction & 0xF000000) >> 24) == 0xD)
-            || (((instruction & 0xF000000) >> 24) == 0xC)) {
-            uint32_t cr = (instruction & 0xF00) >> 8;
-            if (cr == 10 || cr == 11) {
-                /*
-                 * VFP instruction. 
-                 */
-                panic_context(0, (void *) arm_ctx,
-                              "VFP usage in a kernel mode context (saved state 0x%08x)\n"
-                              "r0: 0x%08x  r1: 0x%08x  r2: 0x%08x  r3: 0x%08x\n"
-                              "r4: 0x%08x  r5: 0x%08x  r6: 0x%08x  r7: 0x%08x\n"
-                              "r8: 0x%08x  r9: 0x%08x r10: 0x%08x r11: 0x%08x\n"
-                              "12: 0x%08x  sp: 0x%08x  lr: 0x%08x  pc: 0x%08x\n"
-                              "cpsr: 0x%08x\n", arm_ctx, arm_ctx->r[0], arm_ctx->r[1],
-                              arm_ctx->r[2], arm_ctx->r[3], arm_ctx->r[4],
-                              arm_ctx->r[5], arm_ctx->r[6], arm_ctx->r[7],
-                              arm_ctx->r[8], arm_ctx->r[9], arm_ctx->r[10],
-                              arm_ctx->r[11], arm_ctx->r[12], arm_ctx->sp,
-                              arm_ctx->lr, arm_ctx->pc, arm_ctx->cpsr);
-            }
-        }
-
         /*
          * Fall through to bad kernel handler. 
          */
@@ -692,25 +636,27 @@ void sleh_undef(arm_saved_state_t * state)
         map = thread->map;
 
         /*
-         * Get the current instruction. 
+         * Get the current instruction. Do not let the pmaps change.
          */
+        spl_t spl = splhigh();
         thumb_offset = (arm_ctx->cpsr & (1 << 5)) ? 1 : 0;
         copyin((uint8_t *) (arm_ctx->pc + thumb_offset), &instruction,
                sizeof(uint32_t));
+        splx(spl);
 
-        /* i should really fix this crap proper... */
+        /* i should really fix this crap properly........ */
 
         /*
          * Check the instruction encoding to see if it's a coprocessor instruction. 
          */
         instruction = OSSwapInt32(instruction);
 
-        /*
-         * NEON instruction. 
+        /* 
+         * dyld's faulting one. I really just need to redo all of the VFP detection
+         * code, which will happen one day... I just hate myself for this.
          */
-        if (((OSSwapInt32(instruction) & 0xff100000) == 0xf4000000)
-            || ((OSSwapInt32(instruction) & 0xfe000000) == 0xf2000000)
-            || (((instruction) & 0xff100000) == 0xf9000000)) {
+        if(instruction != 0xfedeffe7)
+        {
             /*
              * NEON instruction. 
              */
@@ -727,61 +673,6 @@ void sleh_undef(arm_saved_state_t * state)
                 thread->machine.vfp_enable = TRUE;
             }
             return;
-        }
-
-        /*
-         * VFP instruction.. 
-         */
-        if ((((instruction & 0xF000000) >> 24) == 0xE)
-            || (((instruction & 0xF000000) >> 24) == 0xD)
-            || (((instruction & 0xF000000) >> 24) == 0xC)) {
-            uint32_t cr = (instruction & 0xF00) >> 8;
-            if (cr == 10 || cr == 11) {
-                /*
-                 * VFP instruction. 
-                 */
-                thread->machine.vfp_dirty = 0;
-                if (!thread->machine.vfp_enable) {
-                    /*
-                     * Enable VFP. 
-                     */
-                    vfp_enable_exception(TRUE);
-                    vfp_context_load(&thread->machine.vfp_regs);
-                    /*
-                     * Continue user execution. 
-                     */
-                    thread->machine.vfp_enable = TRUE;
-                }
-                return;
-            }
-        }
-
-        /*
-         * Try one last time.
-         */
-        instruction = OSSwapInt32(instruction);
-        if ((((instruction & 0xF000000) >> 24) == 0xE)
-            || (((instruction & 0xF000000) >> 24) == 0xD)
-            || (((instruction & 0xF000000) >> 24) == 0xC)) {
-            uint32_t cr = (instruction & 0xF00) >> 8;
-            if (cr == 10 || cr == 11) {
-                /*
-                 * VFP instruction. 
-                 */
-                thread->machine.vfp_dirty = 0;
-                if (!thread->machine.vfp_enable) {
-                    /*
-                     * Enable VFP. 
-                     */
-                    vfp_enable_exception(TRUE);
-                    vfp_context_load(&thread->machine.vfp_regs);
-                    /*
-                     * Continue user execution. 
-                     */
-                    thread->machine.vfp_enable = TRUE;
-                }
-                return;
-            }
         }
 
         printf
