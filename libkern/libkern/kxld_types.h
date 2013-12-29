@@ -63,7 +63,7 @@
 #endif
 
 /* For linking code specific to architectures that support common symbols */
-#if (!KERNEL || __i386__)
+#if (!KERNEL || __i386__ || __arm__)
     #define KXLD_USER_OR_COMMON 1
 #endif
 
@@ -73,7 +73,7 @@
 #endif
 
 /* For linking code specific to architectures that use MH_OBJECT */
-#if (!KERNEL || __i386__)
+#if (!KERNEL || __i386__ || __arm__)
     #define KXLD_USER_OR_OBJECT 1
 #endif
 
