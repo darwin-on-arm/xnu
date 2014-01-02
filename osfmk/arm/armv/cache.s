@@ -110,6 +110,17 @@ EnterARM(cache_initialize)
 #ifdef _ARM_ARCH_7
     mrc     p15, 0, r0, c1, c0, 1
     orr     r0, r0, #(1 << 1)
+
+#ifdef BOARD_CONFIG_MSM8960_TOUCHPAD
+    /* 
+     * Cortex-A9 specific.....? God knows what's in the TouchPad.
+     * Fuck Qualcomm and their stupid closed SoCs and their stupid
+     * implementational differences. 
+     */
+    orr     r0, r0, #(1 << 6)   /* Cache Coherency (Cortex-A9 SMP) */
+    orr     r0, r0, #(1 << 2)   /* L1 D-Cache Prefetch (Dside) */
+#endif
+
     mcr     p15, 0, r0, c1, c0, 1
 #endif
 
@@ -135,6 +146,7 @@ EnterARM(cache_initialize)
     mcr     p15, 0, r0, c7, c5, 4
     mcr     p15, 0, r0, c7, c10, 4
 #endif
+
 
     bx      lr
 

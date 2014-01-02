@@ -826,7 +826,7 @@ finish:
 *******************************************************************************/
 static boolean_t target_supports_object(const KXLDObject *object)
 {
-    return (object->cputype == CPU_TYPE_I386);
+    return (object->cputype == CPU_TYPE_I386) || (object->cputype == CPU_TYPE_ARM);
 }
 
 /*******************************************************************************

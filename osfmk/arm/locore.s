@@ -34,6 +34,7 @@
 #include <arm/asm_help.h>
 #include <assym.s>
 #include <mach/arm/asm.h>
+#include <arm/PlatformConfigs.h>
 
 /*
  * During system initialization, there are two possible methods of
@@ -113,7 +114,7 @@ EnterARM(_start)
     orr     r6, r6, #0x400      /* Permissions */
 
     /* Identity map UART for right now */
-    LoadConstantToReg((0x49000000 + 0x20000), r7)
+    LoadConstantToReg((0x7f600000), r7)
     mov     r7, r7, lsr#20
     add     r5, r4, r7, lsl#2
     mov     r7, r7, lsl#20
@@ -206,6 +207,13 @@ mmu_initialized:
      * doesn't go farther than it needs to.
      */
     mov     r7, #0
+
+#if __ARM_PROCESSOR_CLASS_CORTEX_A9__
+    /* Enable automatic-clock gating. */
+    mrc     p15, 0, r4, c15, c0, 0
+    orr     r4, r4, #1
+    mcr     p15, 0, r4, c15, c0, 0
+#endif
 
     /* Enable unaligned memory access and caching */
     mrc     p15, 0, r4, c1, c0, 0
