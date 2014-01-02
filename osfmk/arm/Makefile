@@ -16,6 +16,8 @@ EXPORT_ONLY_FILES = 	\
  
 INSTALL_MD_DIR = arm
 
+INSTALL_MD_LCL_LIST = cpu_capabilities.h
+
 EXPORT_MD_LIST = ${EXPORT_ONLY_FILES}
 
 EXPORT_MD_DIR = arm
