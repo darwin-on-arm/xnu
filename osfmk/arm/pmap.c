@@ -1189,6 +1189,10 @@ unsigned int pmap_get_cache_attributes(ppnum_t pn) {
     if(!pmap_initialized)
         return (ARM_CACHEBIT_WT_NWA_BUFFERED << 2) | (ARM_L2_4KB_TEX(ARM_L2_TEX_100 | ARM_CACHEBIT_WT_NWA_BUFFERED));
 
+    /* If it's out of memory, assume it's not cacheable at all. */
+    if(!pmap_valid_page(pn))
+        return 0;
+
     assert(pn != vm_page_fictitious_addr);
     pv_rooted_entry_t pv_h = pai_to_pvh(pn);
     assert(pv_h);
@@ -3295,6 +3299,12 @@ void pmap_remove_range(pmap_t pmap, vm_map_offset_t start_vaddr, pt_entry_t * sp
             continue;
         }
 
+        /*
+         * If it isn't a managed page, don't update the pv_table.
+         */
+        if (!pmap_valid_page(pai))
+            continue;
+
         num_removed++;
         if (phys_attribute_test(pai, PMAP_OSPTE_TYPE_WIRED)) {
             phys_attribute_clear(pai, PMAP_OSPTE_TYPE_WIRED);
@@ -3310,12 +3320,6 @@ void pmap_remove_range(pmap_t pmap, vm_map_offset_t start_vaddr, pt_entry_t * sp
          * Continue onwards if pmap isn't up yet.. (keep nuking pages!)
          */
         if (!pmap_initialized)
-            continue;
-
-        /*
-         * If it isn't a managed page, don't update the pv_table.
-         */
-        if (!pmap_valid_page(pai))
             continue;
 
         LOCK_PVH(pai);
