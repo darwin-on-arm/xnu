@@ -34,6 +34,7 @@
 
 #ifndef _STRUCT_MCONTEXT
 #if __DARWIN_UNIX03
+#if !defined(__LP64__)
 #define _STRUCT_MCONTEXT        struct __darwin_mcontext
 _STRUCT_MCONTEXT
 {
@@ -41,7 +42,7 @@ _STRUCT_MCONTEXT
 	_STRUCT_ARM_THREAD_STATE	__ss;
 	_STRUCT_ARM_VFP_STATE		__fs;
 };
-
+#else
 #define _STRUCT_MCONTEXT64	struct __darwin_mcontext64
 _STRUCT_MCONTEXT64
 {
@@ -49,8 +50,9 @@ _STRUCT_MCONTEXT64
 	_STRUCT_ARM_THREAD_STATE64	__ss;
 	_STRUCT_ARM_NEON_STATE64	__ns;
 };
-
+#endif /* !__LP64__ */
 #else /* !__DARWIN_UNIX03 */
+#if !defined(__PL64__)
 #define _STRUCT_MCONTEXT        struct mcontext
 _STRUCT_MCONTEXT
 {
@@ -58,7 +60,7 @@ _STRUCT_MCONTEXT
 	_STRUCT_ARM_THREAD_STATE	ss;
 	_STRUCT_ARM_VFP_STATE		fs;
 };
-
+#else
 #define _STRUCT_MCONTEXT64	struct mcontext64
 _STRUCT_MCONTEXT64
 {
@@ -66,6 +68,7 @@ _STRUCT_MCONTEXT64
 	_STRUCT_ARM_THREAD_STATE64	ss;
 	_STRUCT_ARM_NEON_STATE64	ns;
 };
+#endif /* !__LP64__ */
 #endif /* __DARWIN_UNIX03 */
 #endif /* _STRUCT_MCONTEXT */
 
