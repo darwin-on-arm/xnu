@@ -29,8 +29,8 @@
  * @OSF_COPYRIGHT@
  */
 
-#ifndef	_I386_MACHINE_ROUTINES_H_
-#define	_I386_MACHINE_ROUTINES_H_
+#ifndef	_ARM_MACHINE_ROUTINES_H_
+#define	_ARM_MACHINE_ROUTINES_H_
 
 #include <mach/mach_types.h>
 #include <mach/boolean.h>
@@ -261,4 +261,4 @@ void interrupt_reset_latency_stats(void);
 void interrupt_populate_latency_stats(char *, unsigned);
 
 #endif                          /* XNU_KERNEL_PRIVATE */
-#endif                          /* _I386_MACHINE_ROUTINES_H_ */
+#endif                          /* _ARM_MACHINE_ROUTINES_H_ */

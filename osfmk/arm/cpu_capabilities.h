@@ -41,14 +41,15 @@
 #define _COMM_PAGE_AREA_USED        _COMM_PAGE32_AREA_USED
 #define _COMM_PAGE_SIGS_OFFSET      _COMM_PAGE32_SIGS_OFFSET
 
-/* 
+/*
  * COMMPAGE Definitions
  */
-#define _COMMPAGE_CPUFAMILY 			0x40000080		/* Set to CPUFAMILY_ARM_13 for CortexA8 */
-#define _COMMPAGE_TIMEBASE_INFO         0x40000040
-#define _COMMPAGE_NUMBER_OF_CPUS		0x40000034
-#define _COMMPAGE_CPU_CAPABILITIES		0x40000020		
-#define _COMMPAGE_MYSTERY_VALUE			0x4000001E		/* This is a uint16_t with value of 3. */
+#define _COMM_PAGE_MEMORY_SIZE			0x400000A0		/* This is a uint64_t for maximum memory size */
+#define _COMM_PAGE_CPUFAMILY 			0x40000080		/* Set to CPUFAMILY_ARM_13 for CortexA8 */
+#define _COMM_PAGE_TIMEBASE_INFO		0x40000040
+#define _COMM_PAGE_NCPUS			0x40000034
+#define _COMM_PAGE_CPU_CAPABILITIES		0x40000020
+#define _COMM_PAGE_MYSTERY_VALUE		0x4000001E		/* This is a uint16_t with value of 3. */
 
 /*
  * CPU definitions.
