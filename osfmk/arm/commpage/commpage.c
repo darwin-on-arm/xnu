@@ -51,7 +51,7 @@ void commpage_update_active_cpus(void)
 
     /* Lock the lock and update the global page value */
     simple_lock(&commpage_active_cpus_lock);
-    *(uint32_t*)_COMMPAGE_NUMBER_OF_CPUS = processor_avail_count;
+    *(uint32_t*)_COMM_PAGE_NCPUS = processor_avail_count;
 
     /* Done. */
     simple_unlock(&commpage_active_cpus_lock);
@@ -59,22 +59,28 @@ void commpage_update_active_cpus(void)
 
 void commpage_populate(void)
 {
+    uint64_t ram_size;
+
     /* Map the commonpage first. */
     pmap_create_sharedpage();
 
     /* Set the commonpage PtrValue. */
     common_page_ptr = (void*)_COMM_PAGE_BASE_ADDRESS;
 
+    /* Get the ram size */
+    ram_size = ml_cpu_cache_size(0);
+
     /* Start stuffing things into the commonpage. */
-    *(uint32_t*)_COMMPAGE_CPUFAMILY = CPUFAMILY_ARM_13;	    /* Cortex-A8 */
-    *(uint16_t*)_COMMPAGE_MYSTERY_VALUE = 3;                /* It's a mystery! */
-    *(uint32_t*)_COMMPAGE_CPU_CAPABILITIES = kUP;           /* No capabilities, UP system. */
+    *(uint32_t*)_COMM_PAGE_CPUFAMILY = CPUFAMILY_ARM_13;     /* Cortex-A8 */
+    *(uint16_t*)_COMM_PAGE_MYSTERY_VALUE = 3;                /* It's a mystery! */
+    *(uint32_t*)_COMM_PAGE_CPU_CAPABILITIES = kUP;           /* No capabilities, UP system. */
+    *(uint64_t*)_COMM_PAGE_MEMORY_SIZE = ram_size;           /* Set our ram size */
 
     /* Update CPU count */
     simple_lock_init(&commpage_active_cpus_lock, 0);
     commpage_update_active_cpus();
 
-    if(*(uint32_t*)_COMMPAGE_NUMBER_OF_CPUS == 0) {
+    if(*(uint32_t*)_COMM_PAGE_NCPUS == 0) {
     	panic("commpage number_of_cpus == 0");
     }
 
@@ -86,7 +92,7 @@ void commpage_set_timestamp(uint64_t tbr, uint64_t secs, uint32_t ticks_per_sec)
     assert(common_page_ptr);
 
     /* Update the timestamp value. */
-    commpage_timeofday_data_t* tofd = (commpage_timeofday_data_t*)_COMMPAGE_TIMEBASE_INFO;
+    commpage_timeofday_data_t* tofd = (commpage_timeofday_data_t*)_COMM_PAGE_TIMEBASE_INFO;
 
     tofd->TimeBase = tbr;
     tofd->TimeStamp_sec = secs;

@@ -142,6 +142,7 @@ void machine_init(void)
 static void machine_conf(void)
 {
     machine_info.memory_size = (typeof(machine_info.memory_size)) mem_size;
+    machine_info.max_mem = (typeof(machine_info.max_mem)) max_mem;
 }
 
 unsigned int debug_boot_arg;

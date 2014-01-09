@@ -65,6 +65,7 @@
 
 #include <arm/machine_routines.h>
 #include <arm/io_map_entries.h>
+#include <arm/cpu_affinity.h>
 #include <mach/processor.h>
 #include <kern/processor.h>
 #include <kern/machine.h>
@@ -148,6 +149,24 @@ void ml_cpu_down(void)
     (void) hw_atomic_sub(&machine_info.physical_cpu, 1);
     (void) hw_atomic_sub(&machine_info.logical_cpu, 1);
     return;
+}
+
+/**
+ * ml_cpu_cache_size
+ *
+ * Get the cpu memory size based on the level requested.
+ * 0 == ram, 1 == L1 cache, 2 == L2 cache, ect.
+ */
+uint64_t ml_cpu_cache_size(unsigned int level)
+{
+    if (level == 0) {
+        return machine_info.max_mem;
+    } else if ( 1 <= level && level <= MAX_CACHE_DEPTH) {
+        /* TODO: get the cache size from cp15 */
+        return 0;
+    } else {
+        return 0;
+    }
 }
 
 /**
