@@ -459,6 +459,8 @@ static int arm_dcache_l2_nsets;
 static int arm_dcache_l2_assoc;
 static int arm_dcache_l2_linesize;
 
+arm_processor_id_t arm_processor_id;
+
 void get_cachetype_cp15()
 {
     u_int ctype, isize, dsize, cpuid;
@@ -469,6 +471,8 @@ void get_cachetype_cp15()
     __asm __volatile("mrc p15, 0, %0, c0, c0, 1":"=r"(ctype));
 
     cpuid = armreg_midr_read();
+    arm_processor_id.processor_midr = cpuid;
+
     /*
      * ...and thus spake the ARM ARM:
      *
@@ -592,33 +596,48 @@ void identify_armv7(void)
      */
     feature = cpu_pfr(0);
 
-    if (feature & ARM_PFR0_ARM_ISA_MASK)
+    if (feature & ARM_PFR0_ARM_ISA_MASK) {
         kprintf(" ARM_ISA");
+        arm_processor_id.processor_features |= kProcessorFeatureARM_ISA;
+    }
 
-    if (feature & ARM_PFR0_THUMB2)
-        kprintf(" THUMB2");
-    else if (feature & ARM_PFR0_THUMB)
+    if (feature & ARM_PFR0_THUMB2) {
+        kprintf(" THUMB2"); 
+        arm_processor_id.processor_features |= kProcessorFeatureThumb2 | kProcessorFeatureThumb;
+    } else if (feature & ARM_PFR0_THUMB) {
         kprintf(" THUMB");
+        arm_processor_id.processor_features |= kProcessorFeatureThumb;
+    }
 
-    if (feature & ARM_PFR0_JAZELLE_MASK)
+    if (feature & ARM_PFR0_JAZELLE_MASK) {
         kprintf(" JAZELLE");
+        arm_processor_id.processor_features |= kProcessorFeatureJazelle;
+    }
 
-    if (feature & ARM_PFR0_THUMBEE_MASK)
+    if (feature & ARM_PFR0_THUMBEE_MASK) {
         kprintf(" THUMBEE");
+        arm_processor_id.processor_features |= kProcessorFeatureThumbEE;
+    }
 
     /*
      * Get Processor Feature Register 1 
      */
     feature = cpu_pfr(1);
 
-    if (feature & ARM_PFR1_ARMV4_MASK)
+    if (feature & ARM_PFR1_ARMV4_MASK) {
         kprintf(" ARMv4");
+        arm_processor_id.processor_features |= kProcessorFeatureARMv4;
+    }
 
-    if (feature & ARM_PFR1_SEC_EXT_MASK)
+    if (feature & ARM_PFR1_SEC_EXT_MASK) {
         kprintf(" Security_Ext");
+        arm_processor_id.processor_features |= kProcessorFeatureSecurity;
+    }
 
-    if (feature & ARM_PFR1_MICROCTRL_MASK)
+    if (feature & ARM_PFR1_MICROCTRL_MASK) {
         kprintf(" M_profile");
+        arm_processor_id.processor_features |= kProcessorFeatureMicrocontroller;
+    }
 
     kprintf("\n");
 }
@@ -640,6 +659,7 @@ void identify_arm_cpu(void)
     for (i = 0; cpuids[i].cpuid != 0; i++)
         if (cpuids[i].cpuid == (cpuid & CPU_ID_CPU_MASK)) {
             cpu_class = cpuids[i].cpu_class;
+            arm_processor_id.processor_class = cpuids[i].cpu_name;
             kprintf("CPU: %s %s (%s core)\n",
                    cpuids[i].cpu_name,
                    cpuids[i].cpu_steppings[cpuid &
@@ -647,8 +667,10 @@ void identify_arm_cpu(void)
                    cpu_classes[cpu_class].class_name);
             break;
         }
-    if (cpuids[i].cpuid == 0)
+    if (cpuids[i].cpuid == 0) {
         kprintf("unknown CPU (ID = 0x%x)\n", cpuid);
+        arm_processor_id.processor_class = "Unknown";
+    }
 
     kprintf(" ");
 
@@ -719,6 +741,10 @@ void identify_arm_cpu(void)
                 sets = CPUV7_CT_xSIZE_SET(reg) + 1;
                 linesize = 1 << (CPUV7_CT_xSIZE_LEN(reg) + 4);
                 size = (ways * sets * linesize) / 1024;
+
+                arm_processor_id.cache_levels[i].linesize = linesize;
+                arm_processor_id.cache_levels[i].ways = ways;
+                arm_processor_id.cache_levels[i].size = (ways * sets * linesize);
 
                 if (type == CACHE_UNI_CACHE)
                     kprintf(" %dKB/%dB %d-way unified cache", size, linesize, ways);

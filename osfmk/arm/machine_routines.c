@@ -81,6 +81,8 @@
 
 #include <pexpert/arm/boot.h>
 
+#include <arm/cpuid.h>
+
 #define DBG(x...)	kprintf("DBG: " x)
 
 uint32_t MutexSpin;
@@ -162,8 +164,7 @@ uint64_t ml_cpu_cache_size(unsigned int level)
     if (level == 0) {
         return machine_info.max_mem;
     } else if ( 1 <= level && level <= MAX_CACHE_DEPTH) {
-        /* TODO: get the cache size from cp15 */
-        return 0;
+        return arm_processor_id.cache_levels[level - 1].size;
     } else {
         return 0;
     }
@@ -429,13 +430,13 @@ void ml_cpu_get_info(ml_cpu_info_t * ml_cpu_info)
 
     ml_cpu_info->vector_unit = 1;
 
-    ml_cpu_info->cache_line_size = arm_pdcache_line_size;
+    ml_cpu_info->cache_line_size = arm_processor_id.cache_levels[0].linesize;
 
-    ml_cpu_info->l1_icache_size = arm_pdcache_size;
-    ml_cpu_info->l1_dcache_size = arm_picache_size;
+    ml_cpu_info->l1_icache_size = arm_processor_id.cache_levels[0].size;
+    ml_cpu_info->l1_dcache_size = arm_processor_id.cache_levels[0].size;
 
-    ml_cpu_info->l2_settings = 0;
-    ml_cpu_info->l2_cache_size = 0xFFFFFFFF;
+    ml_cpu_info->l2_settings = (arm_processor_id.cache_levels[1].size > 0) ? 1 : 0;
+    ml_cpu_info->l2_cache_size = (arm_processor_id.cache_levels[1].size > 0) ? arm_processor_id.cache_levels[1].size : 0xFFFFFFFF;
 
     ml_cpu_info->l3_settings = 0;
     ml_cpu_info->l3_cache_size = 0xFFFFFFFF;
@@ -455,6 +456,14 @@ boolean_t ml_at_interrupt_context(void)
 {
     boolean_t ret = FALSE;
     return(ret);
+}
+
+/**
+ * ml_cpu_cache_sharing
+ */
+uint64_t ml_cpu_cache_sharing(unsigned int level)
+{
+    return 1;
 }
 
 /*

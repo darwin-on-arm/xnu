@@ -26,56 +26,41 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-/*
- * Other prototypes for the ARM platform.
- */
 
-#ifndef _ARM_MISC_PROTOS_H_
-#define _ARM_MISC_PROTOS_H_
+#ifndef _ARM_CPUID_H_
+#define _ARM_CPUID_H_
 
-#include <mach/mach_types.h>
-#include <pexpert/pexpert.h>
-#include <machine/machine_routines.h>
-#include <mach/vm_param.h>
-#include <kern/processor.h>
-#include <arm/cpuid.h>
+#include <arm/cpu_affinity.h>
 
-typedef struct _abort_information_context {
-    uint32_t r[13];
-    uint32_t sp;
-    uint32_t lr;
-    uint32_t pc;
-    uint32_t cpsr;
-    uint32_t fsr;
-    uint32_t far;
-} abort_information_context_t;
+typedef struct __arm_cache_level_t {
+    int linesize;
+    int ways;
+    int level;
+    int size;
+} arm_cache_level_t;
 
-extern processor_t cpu_processor_alloc(boolean_t is_boot_cpu);
-extern void cpu_init(void);
-extern void cpu_bootstrap(void);
+typedef enum
+{
+    kProcessorFeatureARM_ISA = 0x1,
+    kProcessorFeatureThumb = 0x2,
+    kProcessorFeatureThumb2 = 0x4,
+    kProcessorFeatureJazelle = 0x8,
+    kProcessorFeatureThumbEE = 0x10,
+    kProcessorFeatureARMv4 = 0x20,
+    kProcessorFeatureSecurity = 0x40,
+    kProcessorFeatureMicrocontroller = 0x80,
+} arm_processor_features_t;
 
-extern void draw_panic_dialog(void);
+typedef struct __arm_processor_id_t {
+    arm_cache_level_t cache_levels[MAX_CACHE_DEPTH]; 	/* 
+    													 * Hopefully, we won't need more cache levels, 
+     													 * modern ARM processors have L1 and L2 cache.
+     													 */
+    arm_processor_features_t processor_features;    	/* Supported processor features. */
+    char* processor_class;
+    uint32_t processor_midr;
+} arm_processor_id_t;
 
-#ifndef __LP64__
-extern void arm_set_threadpid_user_readonly(uint32_t * address);
-extern void arm_set_threadpid_priv_readwrite(uint32_t * address);
-#else
-extern void arm_set_threadpid_user_readonly(uint64_t * address);
-extern void arm_set_threadpid_priv_readwrite(uint64_t * address);
-#endif
+extern arm_processor_id_t arm_processor_id;
 
-extern int arm_usimple_lock(usimple_lock_t l);
-
-void panic_arm_backtrace(void *_frame, int nframes, const char *msg,
-                         boolean_t regdump, arm_saved_state_t * regs);
-
-void arm_vm_init(uint32_t mem_limit, boot_args * args);
-
-void sleh_abort(void *context, int reason);
-
-void cache_initialize(void);
-
-void get_cachetype_cp15();
-void identify_arm_cpu(void);
-
-#endif
+#endif /* _ARM_CPUID_H_ */
