@@ -344,7 +344,7 @@ sched_traditional_choose_thread(
 extern int debug_task;
 #define TLOG(a, fmt, args...) /* kprintf(fmt, ## args) */
 #else
-#define TLOG(a, fmt, args...) kprintf(fmt, ## args)
+#define TLOG(a, fmt, args...) /* kprintf(fmt, ## args) */
 #endif
 
 #if	DEBUG
