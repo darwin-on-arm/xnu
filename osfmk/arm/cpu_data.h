@@ -69,6 +69,9 @@ typedef struct rtclock_timer {
     boolean_t has_expired;
 } rtclock_timer_t;
 
+typedef uint16_t    asid_t;
+typedef uint8_t     asid_ref_t;
+
 /*
  * The core processor data. This is also referred to as the processor
  * control region block (PCRB) or processor control block (PCB). Use
@@ -107,6 +110,15 @@ typedef struct cpu_data {
     rtclock_timer_t rt_timer;
     thread_t old_thread;
     thread_t new_thread;
+
+    asid_t          cpu_active_asid;
+    asid_t          cpu_last_asid;
+    volatile asid_ref_t *cpu_pmap_asid_coherentp;
+    volatile asid_ref_t *cpu_pmap_asid_coherentp_kernel;
+#define PMAP_ASID_MAX_ASID      (0xFF)
+    asid_t          cpu_asid_free_hint;
+    asid_ref_t      cpu_asid_refcounts[PMAP_ASID_MAX_ASID];
+    pmap_t          cpu_asid_last_pmap_dispatched[PMAP_ASID_MAX_ASID];
 
     IOInterruptHandler handler;     /* for IOKit */
     void* nub;

@@ -107,8 +107,11 @@ struct pmap {
     task_map_t pm_task_map;     /* process task map */
     struct pmap_statistics pm_stats;
     uint32_t pm_l1_size;
-    uint32_t pm_asid;
+    uint32_t pm_asid;           /* Old... */
     vm_object_t pm_obj;
+#define PMAP_ASID_MAX_CPUS  (48)  /* Must be a multiple of 8 */
+    asid_t pmap_asid_cpus[PMAP_ASID_MAX_CPUS];
+    volatile uint8_t pmap_asid_coherency_vector[PMAP_ASID_MAX_CPUS];
 };
 
 typedef struct arm_l1_entry_t {

@@ -25,6 +25,7 @@ osfmk/arm/mp.c			standard
 osfmk/arm/pal.c			standard
 osfmk/arm/pcb.c			standard
 osfmk/arm/pmap.c		standard
+osfmk/arm/pmap_asid.c 	standard
 osfmk/arm/pmCPU.c		standard
 osfmk/arm/status.c		standard
 osfmk/arm/rtclock.c		standard

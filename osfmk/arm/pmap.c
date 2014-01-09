@@ -131,6 +131,7 @@
 #include <kern/cpu_number.h>
 #include <kern/thread.h>
 #include <arm/pmap.h>
+#include <arm/mp.h>
 #include <arm/misc_protos.h>
 #include <kern/ledger.h>
 #include <kern/zalloc.h>
@@ -145,6 +146,7 @@
 #include <vm/vm_page.h>
 #include <arm/cpu_capabilities.h>
 #include <arm/arch.h>
+#include <arm/pmap_asid.h>
 #include "cpufunc_armv7.h"
 #include "proc_reg.h"
 
@@ -576,6 +578,7 @@ unsigned int bootstrap_wired_pages = 0;
 int pt_fake_zone_index = -1;
 
 uint32_t alloc_ptepages_count __attribute__ ((aligned(8))) = 0LL;   /* aligned for atomic access */
+extern uint32_t pmap_asid_ncpus;
 
 /* 
  * !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -1253,6 +1256,67 @@ void pmap_set_noencrypt(ppnum_t pn)
 }
 
 
+/**
+ * pmap_flush_tlbs
+ */
+void
+pmap_flush_tlbs(pmap_t  pmap, vm_map_offset_t startv, vm_map_offset_t endv)
+{
+    unsigned int    cpu;
+    unsigned int    cpu_bit;
+    unsigned int    my_cpu = cpu_number();
+    pmap_paddr_t    ttb = pmap->pm_l1_phys;
+    boolean_t   flush_self = FALSE;
+    boolean_t   pmap_is_shared = (pmap->pm_shared || (pmap == kernel_pmap));
+
+    assert((processor_avail_count < 2) ||
+           (ml_get_interrupts_enabled() && get_preemption_level() != 0));
+
+    if (pmap_asid_ncpus) {
+        pmap_asid_invalidate_all_cpus(pmap);
+        __asm__ volatile("":::"memory");
+    }
+
+    for (cpu = 0, cpu_bit = 1; cpu < real_ncpus; cpu++, cpu_bit <<= 1) {
+        if (!cpu_datap(cpu)->cpu_running)
+            continue;
+        uint32_t ttbr_pmap = armreg_ttbr_read() & 0xFFFFFF00;
+
+        /* Current pmap is active, flush it. */
+        if ((ttb == ttbr_pmap) ||
+            (pmap_is_shared)) {
+            if (cpu == my_cpu) {
+                flush_self = TRUE;
+                continue;
+            }
+
+            /* xxx broadcast IPI to all other CPUs to flush */
+        }
+    }
+
+    /*
+     * Flush local tlb if required.
+     * Do this now to overlap with other processors responding.
+     */
+    if (flush_self) {
+        if (pmap_asid_ncpus) {
+            pmap_asid_validate_cpu(pmap, my_cpu);
+            if (pmap_is_shared)
+                armv7_tlb_flushID();
+            else
+                armv7_tlb_flushID_ASID(pmap->pm_asid & 0xFF);
+        }
+        else
+            armv7_tlb_flushID();
+    }
+
+    if (__improbable((pmap == kernel_pmap) && (flush_self != TRUE))) {
+        panic("pmap_flush_tlbs: pmap == kernel_pmap && flush_self != TRUE");
+    }
+}
+
+/**
+
 /*
  * Update cache attributes for all extant managed mappings.
  * Assumes PV for this page is locked, and that the page
@@ -1301,7 +1365,7 @@ pmap_update_cache_attributes_locked(ppnum_t pn, unsigned attributes) {
             pt_entry_t* cpte = (pt_entry_t*)ptep;
             *cpte &= cacheability_mask;
             *cpte |= attributes;
-            armv7_tlb_flushID_SE(vaddr);
+            pmap_flush_tlbs(pmap, vaddr, vaddr + PAGE_SIZE);
 
             pvh_e = nexth;
         } while ((pv_e = (pv_rooted_entry_t)nexth) != pv_h);
@@ -1563,7 +1627,7 @@ void mapping_adjust(void)
     mappingrecurse = 0;
 }
 
-/**
+/*
  * pmap_map
  *
  * Map specified virtual address range to a physical one.
@@ -2149,10 +2213,12 @@ void pmap_switch(pmap_t new_pmap)
     if (current_cpu_datap()->user_pmap == new_pmap) {
         goto switch_return;
     } else {
+        if (pmap_asid_ncpus) {
+            pmap_asid_activate(new_pmap, cpu_number());
+        }
         current_cpu_datap()->user_pmap = new_pmap;
         armv7_set_context_id(new_pmap->pm_asid & 0xFF);
         armv7_context_switch(new_pmap->pm_l1_phys);
-        armv7_tlb_flushID_ASID(new_pmap->pm_asid & 0xFF);
     }
 
     /*
@@ -2277,6 +2343,8 @@ static inline void pmap_asid_reset(pmap_t map)
     return;
 }
 
+extern long __stack_chk_guard[];
+
 /**
  * pmap_bootstrap
  *
@@ -2319,7 +2387,7 @@ void pmap_bootstrap(__unused uint64_t msize, vm_offset_t * __first_avail, __unus
     /*
      * ASID initialization.
      */
-    pmap_asid_init();
+    pmap_asid_initialize_kernel(kernel_pmap);
 
     /*
      * Initialize kernel pmap.
@@ -2688,7 +2756,6 @@ void pmap_expand_ttb(pmap_t map, vm_offset_t expansion_size)
              */
             if (map == current_cpu_datap()->user_pmap) {
                 armv7_context_switch(map->pm_l1_phys);
-                armv7_tlb_flushID_ASID(map->pm_asid & 0xFF);
             }
 
             return;
@@ -2763,7 +2830,7 @@ void pmap_expand(pmap_t map, vm_offset_t v)
     /*
      * Flush the TLBs since we updated the page tables.
      */
-    armv7_tlb_flushID_SE(v);
+    pmap_flush_tlbs(map, v, v + PAGE_SIZE);
     PMAP_UNLOCK(map);
     return;
 }
@@ -3057,7 +3124,7 @@ kern_return_t pmap_enter_options(pmap_t pmap, vm_map_offset_t va, ppnum_t pa, vm
     /*
      * Done, now invalidate the TLB for a single page.
      */
-    armv7_tlb_flushID_SE(va);
+    pmap_flush_tlbs(pmap, va, va + PAGE_SIZE);
 
     if (pvh_e != PV_HASHED_ENTRY_NULL) {
         PV_HASHED_FREE_LIST(pvh_e, pvh_e, 1);
@@ -3242,7 +3309,7 @@ void pmap_init(void)
     /*
      * Just flush the entire TLB since we messed with quite a lot of mappings.
      */
-    armv7_tlb_flushID();
+    pmap_flush_tlbs(kernel_pmap, 0, 0xFFFFFFFF);
 
     SPLX(spl);
 
@@ -3252,6 +3319,13 @@ void pmap_init(void)
     pmap_object = &pmap_object_store;
     _vm_object_allocate(mem_size, &pmap_object_store);
     kernel_pmap->pm_obj = pmap_object;
+
+#ifdef _ARM_ARCH_7
+    /*
+     * Initialize ASID subsystem properly.
+     */
+    pmap_asid_configure();
+#endif
 
     /*
      * Done initializing. 
@@ -3350,7 +3424,7 @@ void pmap_remove_range(pmap_t pmap, vm_map_offset_t start_vaddr, pt_entry_t * sp
     /*
      * Invalidate all TLBs.
      */
-    armv7_tlb_flushID_RANGE(start_vaddr, vaddr);
+    pmap_flush_tlbs(pmap, start_vaddr, vaddr);
 
     /*
      * Make sure the amount removed isn't... weird.
@@ -3432,7 +3506,7 @@ void pmap_remove(pmap_t map, vm_offset_t sva, vm_offset_t eva)
     /*
      * Flush TLBs since we modified page table entries.
      */
-    armv7_tlb_flushID_RANGE(sva, eva);
+    pmap_flush_tlbs(map, sva, eva);
 
     /*
      * Return. 
@@ -3478,6 +3552,9 @@ pmap_t pmap_create(ledger_t ledger, vm_map_size_t size, __unused boolean_t is_64
      */
     if (NULL == (our_pmap->pm_obj = vm_object_allocate((vm_object_size_t) (4096 * PAGE_SIZE))))
         panic("pmap_create: pm_obj null");
+
+    if (pmap_asid_ncpus)
+        pmap_asid_initialize(our_pmap);
 
     /*
      * Grab a new page and set the new L1 region.
@@ -3581,7 +3658,7 @@ void pmap_page_protect(ppnum_t pn, vm_prot_t prot)
                  * Remove the mapping, collecting any modify bits.
                  */
                 *(pt_entry_t *) pte = 0;
-                armv7_tlb_flushID_SE(vaddr);
+                pmap_flush_tlbs(pmap, vaddr, vaddr + PAGE_SIZE);
                 phys_attribute_clear(pn, PMAP_OSPTE_TYPE_REFERENCED | PMAP_OSPTE_TYPE_MODIFIED);
                 if (pmap->pm_stats.resident_count < 1)
                     panic("pmap_page_protect: resident_count");
@@ -3615,7 +3692,7 @@ void pmap_page_protect(ppnum_t pn, vm_prot_t prot)
                  * Write-protect.
                  */
                 *(pt_entry_t *) pte |= (L2_ACCESS_APX);
-                armv7_tlb_flushID_SE(vaddr);
+                pmap_flush_tlbs(pmap, vaddr, vaddr + PAGE_SIZE);
             }
 
             pvh_e = nexth;
@@ -3727,10 +3804,9 @@ void pmap_destroy(pmap_t pmap)
      */
     refcnt = --pmap->pm_refcnt;
     if (refcnt == 0) {
-        /*
-         * We might be using this pmap, invalidate all TLBs.
-         */
-        armv7_tlb_flushID();
+        pmap_flush_tlbs(pmap, 0, 0xFFFFFFFF);
+        if (pmap_asid_ncpus)
+            pmap_destroy_asid_sync(pmap);
     }
 
     /*
@@ -3875,7 +3951,7 @@ void pmap_protect(pmap_t map, vm_map_offset_t sva, vm_map_offset_t eva, vm_prot_
     /*
      * We're done with that, bye.
      */
-    armv7_tlb_flushID_RANGE(sva, eva);
+    pmap_flush_tlbs(map, sva, eva);
     PMAP_UNLOCK(map);
 
     return;
@@ -3980,7 +4056,7 @@ kern_return_t pmap_nest(pmap_t grand, pmap_t subord, addr64_t va_start, addr64_t
     /*
      * Out. Flush all TLBs.
      */
-    armv7_tlb_flushID_RANGE(va_start, va_start + size);
+    pmap_flush_tlbs(grand, va_start, va_start + size);
 
     return KERN_SUCCESS;
 }
@@ -4029,7 +4105,7 @@ kern_return_t pmap_unnest(pmap_t grand, addr64_t vaddr, uint64_t size)
     /*
      * The operation has now completed.
      */
-    armv7_tlb_flushID_RANGE(vaddr, vaddr + size);
+    pmap_flush_tlbs(grand, vaddr, vaddr + size);
 
     PMAP_UNLOCK(grand);
 
