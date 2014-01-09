@@ -62,15 +62,16 @@ vm_offset_t gRealviewPicDistribBase;
 
 vm_offset_t gRealviewPl111Base;
 
-static uint64_t clock_decrementer = 0;
+uint64_t clock_decrementer = 0;
+
 static boolean_t clock_initialized = FALSE;
 static boolean_t clock_had_irq = FALSE;
 static uint64_t clock_absolute_time = 0;
 
 static void timer_configure(void)
 {
-    uint64_t hz = 320000;
-    clock_decrementer = (hz / 7);   // For 500Hz.
+    uint64_t hz = 1000000;      // Proper default rate.
+    clock_decrementer = 5000;   // 5kHz decrementer.
 
     gPEClockFrequencyInfo.timebase_frequency_hz = hz;
 
