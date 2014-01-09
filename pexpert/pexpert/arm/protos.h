@@ -7,6 +7,7 @@ extern uint32_t pe_arm_init_interrupts(void *args);
 extern uint32_t pe_arm_init_timebase(void* args);
 extern boolean_t pe_arm_dispatch_interrupt(void* context);
 extern uint64_t pe_arm_get_timebase(void* args);
+extern void pe_arm_set_timer_enabled(boolean_t enable);
 
 int serial_init(void);
 int serial_getc(void);
