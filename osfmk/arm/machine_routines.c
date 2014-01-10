@@ -454,7 +454,12 @@ boolean_t ml_delay_should_spin(uint64_t interval)
  */
 boolean_t ml_at_interrupt_context(void)
 {
-    boolean_t ret = FALSE;
+    boolean_t ret;
+    cpu_data_t* datap = current_cpu_datap();
+    assert(datap);
+
+    ret = (datap->cpu_interrupt_level) ? TRUE : FALSE;
+
     return(ret);
 }
 

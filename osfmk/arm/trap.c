@@ -563,6 +563,13 @@ void sleh_abort(void *context, int reason)
 boolean_t irq_handler(void *context)
 {
     /*
+     * Increase/decrease CPU interrupt level.
+     */
+    cpu_data_t *datap = current_cpu_datap();
+    assert(datap);
+    datap->cpu_interrupt_level++;
+
+    /*
      * Disable system preemption, dispatch the interrupt and go. 
      */
     __disable_preemption();
@@ -575,6 +582,8 @@ boolean_t irq_handler(void *context)
     /*
      * Go. 
      */
+    datap->cpu_interrupt_level--;
+
     __enable_preemption();
 
     return ret;

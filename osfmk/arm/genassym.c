@@ -239,6 +239,9 @@ int main(int argc, char **argv)
     DECLARE("CPU_PROCESSOR", offsetof(cpu_data_t *, cpu_processor));
     DECLARE("CPU_ONFAULT", offsetof(cpu_data_t *, cpu_onfault));
 
+    DECLARE("CPU_INTERRUPT_LEVEL",
+            offsetof(cpu_data_t *, cpu_interrupt_level));
+
     /*
      *  usimple_lock fields
      */
