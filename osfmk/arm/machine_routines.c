@@ -301,7 +301,7 @@ kern_return_t ml_processor_register(cpu_id_t cpu_id,
 void ml_thread_policy(__unused thread_t thread, __unused unsigned policy_id,
                       __unused unsigned policy_info)
 {
-    kprintf("ml_thread_policy is unimplemented\n");
+
 }
 
 int ml_get_max_affinity_sets(void)
