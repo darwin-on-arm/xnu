@@ -79,7 +79,7 @@ static boolean_t avoid_uarts = FALSE;
 static boolean_t avoid_uarts = TRUE;
 #endif
 
-static uint64_t clock_decrementer = 0;
+uint64_t clock_decrementer = 0;
 static boolean_t clock_initialized = FALSE;
 static boolean_t clock_had_irq = FALSE;
 static uint64_t clock_absolute_time = 0;

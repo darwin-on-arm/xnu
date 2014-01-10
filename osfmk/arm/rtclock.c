@@ -103,6 +103,15 @@ static uint64_t deadline_to_decrementer(uint64_t deadline, uint64_t now)
     }
 }
 
+/*
+ * The units are a 64-bit fixed point integer which contains a high 32-bit integer part
+ * and a low 32-bit fractional part.
+ */
+uint64_t tmrCvt(uint64_t time, uint64_t unit)
+{
+    return ((time * unit) >> 32);
+}
+
 static uint64_t rtclock_internal_arm_timer(uint64_t deadline, uint64_t now)
 {
     uint64_t current = pe_arm_get_timebase(NULL);
@@ -115,24 +124,26 @@ static uint64_t rtclock_internal_arm_timer(uint64_t deadline, uint64_t now)
         set = now + delta;
 
         /* Convert to Absolute frequency. */
-        delta_abs = (delta / tscFreq);
+        delta_abs = tmrCvt(delta, tscFCvtn2t);
 
+#if CONFIG_TICKLESS
         /* Set internal decrementer and rearm. */        
-#if 0
         clock_decrementer = delta_abs;
 #endif
+
     } else {
-#if 0
+#if CONFIG_TICKLESS
+        printf("disarming timer...\n");
         clock_decrementer = EndOfAllTime;
 #endif
     }
 
-#if 0  
+#if CONFIG_TICKLESS
     /* Rearm decrementer by disable-reenable. This resets the timer. */
     pe_arm_set_timer_enabled(FALSE);
     pe_arm_set_timer_enabled(TRUE);
 #endif
-
+    
     return set;
 }
 
