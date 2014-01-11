@@ -3239,6 +3239,8 @@ void pmap_init(void)
     }
     SPLVM(spl);
 
+    kprintf("Kernel ASLR slide: 0x%08x, virtual base: 0x%08x\n", vm_kernel_slide, gVirtBase);
+
     /*
      * Rewrite the kernel PTEs.
      */

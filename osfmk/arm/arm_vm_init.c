@@ -90,6 +90,8 @@ unsigned long gTopOfKernel;
 
 addr64_t vm_last_addr = VM_MAX_KERNEL_ADDRESS;
 
+#define VM_KERNEL_BASE_ADDRESS          0x80000000
+
 /*
  * Break down the KASLR. (pronunced like "castle" but with a twangy accent).
  */
@@ -450,7 +452,9 @@ void arm_vm_init(uint32_t mem_limit, boot_args * args)
     edata = (vm_offset_t) sectDATAB + sectSizeDATA;
     sdata = (vm_offset_t) sectDATAB;
     end = round_page(getlastaddr());    /* Force end to next page */
-    vm_kernel_slide = 0;
+
+    vm_kernel_slide = (gVirtBase - VM_KERNEL_BASE_ADDRESS);
+
     vm_kernel_etext = etext;
     vm_kernel_stext = sectTEXTB;
     vm_kernel_top = phys_to_virt(gTopOfKernel);

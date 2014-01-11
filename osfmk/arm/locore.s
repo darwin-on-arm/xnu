@@ -85,9 +85,6 @@ mmu_reinitialize:
      * Create a dumb mapping for right now. This mapping lies
      * at the top of kernel data.
      */
-    mov     r10, #0x80000000    /* xxx kaslr, remaining part is patching __nl_symbol_ptr */
-    str     r10, [r0, BOOT_ARGS_VIRTBASE]
-
     ldr     r4, [r0, BOOT_ARGS_TOP_OF_KERNEL]
     ldr     r10, [r0, BOOT_ARGS_VIRTBASE]
     ldr     r11, [r0, BOOT_ARGS_PHYSBASE]
