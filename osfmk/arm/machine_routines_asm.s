@@ -52,7 +52,7 @@ EnterARM(lck_mtx_ilk_unlock)
     bic     r3, r2, #1
     str     r3, [r0]
     b       __enable_preemption
-
+    
 /**
  * machine_idle
  *

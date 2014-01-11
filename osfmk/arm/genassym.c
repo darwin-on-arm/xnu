@@ -155,6 +155,7 @@ int main(int argc, char **argv)
     /*
      * Boot-args 
      */
+    DECLARE("BOOT_ARGS_VERSION", offsetof(boot_args *, Version));
     DECLARE("BOOT_ARGS_VIRTBASE", offsetof(boot_args *, virtBase));
     DECLARE("BOOT_ARGS_PHYSBASE", offsetof(boot_args *, physBase));
     DECLARE("BOOT_ARGS_MEMSIZE", offsetof(boot_args *, memSize));

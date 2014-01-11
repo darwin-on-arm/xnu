@@ -51,6 +51,8 @@ int pe_initialized = 0;
 extern uint32_t debug_enabled;
 extern void pe_identify_machine(void *args);
 
+boot_args *BootArgs;
+
 int PE_initialize_console( PE_Video * info, int op )
 {
     static int   last_console = -1;
@@ -120,6 +122,8 @@ void PE_init_platform(boolean_t vm_initialized, void *_args)
         PE_state.video.v_display = args->Video.v_display;
 
         strncpy(PE_state.video.v_pixelFormat, "PPPPPPPP", 8);
+
+        BootArgs = args;
     }
 
     if (!vm_initialized) {

@@ -60,6 +60,7 @@ EnterARM(_start)
     cmp     r4, #0x1
     beq     mmu_initialized
 
+mmu_reinitialize:
     /*
      * MMU initialization part begins here. -----------------------
      *
@@ -90,20 +91,20 @@ EnterARM(_start)
     ldr     r4, [r0, BOOT_ARGS_TOP_OF_KERNEL]
     ldr     r10, [r0, BOOT_ARGS_VIRTBASE]
     ldr     r11, [r0, BOOT_ARGS_PHYSBASE]
+
+    /* Is it bootArgs revision 3? */
+    ldrh    r12, [r0, BOOT_ARGS_VERSION]
+    cmp     r12, #3
+
+    /* Align the memory size to 1MB for compatibility. */
+    ldreq   r5, [r0, BOOT_ARGS_MEMSIZE]
+    andeq   r5, r5, #0xFFF000000
+    streq   r5, [r0, BOOT_ARGS_MEMSIZE]
+
+    /* Load memory size value after fixup. */
     ldr     r12, [r0, BOOT_ARGS_MEMSIZE]
 
-#if IOS_5_IBOOT_1219_BOOT_HACK
-    /*
-     * iBoot-1219.. boot-hack... boot-args struct change, remove this boot-hack
-     * one day.
-     *
-     * !!! This will LIMIT your RAM amount !!!
-     */
-    mov     r12, #0x20000000
-    mov     r10, #0x80000000
-    mov     r11, #0x40000000
-#endif
-
+    /* MMU cacheability value. */
     orr     r5, r4, #0x18
 
     /* Now, we have to set our TTB to this value. */
@@ -238,6 +239,57 @@ mmu_initialized:
 
     /* Boot to ARM init. */
     bx      lr
+
+/**
+ * sleep_test
+ */
+EnterARM(sleep_test)
+    /* Get physical base. */
+    ldr     r8, [r1, BOOT_ARGS_PHYSBASE]
+    ldr     r9, [r1, BOOT_ARGS_VIRTBASE]
+    ldr     r4, [r1, BOOT_ARGS_TOP_OF_KERNEL]
+
+    /* Set new page tables. (kernel bootstrap page table) */
+    orr     r6, r4, #0x18
+    mcr     p15, 0, r6, c2, c0, 0
+    mcr     p15, 0, r6, c2, c0, 1
+
+    sub     r4, r4, r8
+    add     r4, r4, r9
+
+    /* Create boot page table entry for trampoline. */
+    ldr     r10, [r1, BOOT_ARGS_MEMSIZE]
+    mov     r6, #0xE
+    mov     r1, #1
+    orr     r6, r6, r1, lsl#10
+    add     r5, r4, r8, lsr#18
+    orr     r11, r8, r6
+    str     r11, [r5]
+
+    /* Clear unified TLB */
+    mov     r1, #0
+    mcr     p15, 0, r1, c8, c7, 0
+    isb     sy
+
+    /* Clear MMU-EN bit in SCTLR */
+    mrc     p15, 0, r11, c1, c0, 0
+    bic     r11, r11, #1
+    isb     sy
+
+    /* Jump to physical trampoline. */
+    adr     r4, sleep_tramp
+    sub     r4, r4, r9
+    add     r4, r4, r8
+    bx      r4
+sleep_tramp:
+    cpsid   if, #0x13
+    mcr     p15, 0, r11, c1, c0, 0
+    nop
+    nop
+    nop
+    nop
+    bx      r2
+
 
 /*
  * Initial stack
