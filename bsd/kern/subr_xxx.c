@@ -181,6 +181,11 @@ int
 nosys(struct proc *p, __unused struct nosys_args *args, __unused int32_t *retval)
 {
 #if CONFIG_KERNEL_0DAY_SYSCALL_HANDLER && __arm__
+#warning !!!
+#warning THIS IS A BIG PROBLEM
+#warning AND YOU SHOULD PROBABLY NOT USE THIS KERNEL CONFIG
+#warning THANKS
+#warning !!!
 	/* Kernel jump trampoline 'test' code. Even more insecure!!! */
 	printf("!!! WARNING !!! - !!! THE KERNEL JUMP TRAMPOLINE IS ACTIVE !!!\n");
 	struct tramp_args_t {
