@@ -203,6 +203,14 @@ int main(int argc, char **argv)
     DECLARE("CPU_PENDING_AST", offsetof(cpu_data_t *, cpu_pending_ast));
     DECLARE("CPU_PREEMPT_COUNT", offsetof(cpu_data_t *, cpu_preemption_level));
 
+    DECLARE("CPU_FLEH_RESET", offsetof(cpu_data_t *, fleh_reset));
+    DECLARE("CPU_FLEH_UNDEF", offsetof(cpu_data_t *, fleh_undef));
+    DECLARE("CPU_FLEH_SWI", offsetof(cpu_data_t *, fleh_swi));
+    DECLARE("CPU_FLEH_PREFETCH", offsetof(cpu_data_t *, fleh_prefabt));
+    DECLARE("CPU_FLEH_DATAABORT", offsetof(cpu_data_t *, fleh_dataabt));
+    DECLARE("CPU_FLEH_DATAEXC", offsetof(cpu_data_t *, fleh_prefabt));
+    DECLARE("CPU_FLEH_IRQ", offsetof(cpu_data_t *, fleh_irq));
+
     DECLARE("CPU_PMAP", offsetof(cpu_data_t *, user_pmap));
 
     DECLARE("TH_TASK", offsetof(thread_t, task));

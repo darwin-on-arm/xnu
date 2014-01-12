@@ -120,6 +120,14 @@ typedef struct cpu_data {
     asid_ref_t      cpu_asid_refcounts[PMAP_ASID_MAX_ASID];
     pmap_t          cpu_asid_last_pmap_dispatched[PMAP_ASID_MAX_ASID];
 
+    uint32_t fleh_reset;
+    uint32_t fleh_undef;
+    uint32_t fleh_swi;
+    uint32_t fleh_prefabt;
+    uint32_t fleh_dataabt;
+    uint32_t fleh_dataexc;
+    uint32_t fleh_irq;
+
     IOInterruptHandler handler;     /* for IOKit */
     void* nub;
     void* target;

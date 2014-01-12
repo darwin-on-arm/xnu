@@ -39,6 +39,7 @@ osfmk/arm/bzero.s		standard
 osfmk/arm/cpu_number.s		standard
 osfmk/arm/cswitch.s		standard
 osfmk/arm/exctramps.s		standard
+osfmk/arm/exctramps_hi.s		standard
 osfmk/arm/hw_lock.s		standard
 osfmk/arm/locore.s		standard
 osfmk/arm/memcmp.s		standard

@@ -171,7 +171,7 @@ fix_boot_args_hack_for_bootkit:
     mov     sp, #0
     str     sp, [r12]
 
-#if USE_VBAR_EXCVECT
+#ifdef _ARM_ARCH_7
     /*
      * VBAR Note:
      * The exception vectors are mapped high also at 0xFFFF0000 for compatibility purposes.

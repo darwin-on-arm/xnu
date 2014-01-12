@@ -33,44 +33,12 @@
 #include <arm/arch.h>
 #include <assym.s>
 
-/*
- * PLEASE DO NOT MESS WITH THE STRUCTURE OF THIS FILE. IT IS MAPPED
- * TO HIGH MEMORY AND IF YOU MESS ANYTHING UP, EXCEPTION HANDLERS
- * WILL NOT WORK. PLEASE DO NOT TOUCH THE ALIGNMENT OR ANYTHING.
- *
- * IF YOU ARE INTENT ON CHANGING THE lowGloVerification STRING
- * ALSO LOOK AT arm_vm_init.c. THANK YOU FOR LISTENING.
- */
-
+/* VBAR support. */
 .align 12
-.text
-.code 32
-/*
- * I honestly wish llvm supported the "ldr rX, =var" syntax.
- */
-.globl  _ExceptionVectorsBase
-_ExceptionVectorsBase:
-    ldr     pc, [pc, #24]       // reset
-    ldr     pc, [pc, #24]       // undef
-    ldr     pc, [pc, #24]       // swi
-    ldr     pc, [pc, #24]       // prefetch
-    ldr     pc, [pc, #24]       // data abort
-    ldr     pc, [pc, #24]       // dataexc
-    ldr     pc, [pc, #24]       // irq
-    mov     pc, r9
-
-_vectorTable:
-    .long   _fleh_reset
-    .long   _fleh_undef
-    .long   _fleh_swi
-    .long   _fleh_prefabt
-    .long   _fleh_dataabt
-    .long   _fleh_dataexc
-    .long   _fleh_irq
-    .long   0x0
-
-lowGloVerification:
+.globl _HighExceptionVectorsBase
+_HighExceptionVectorsBase:
+    .rept 64	/* Pad out. */
+    .byte 0
+    .endr
     .asciz  "Scolecit"
-
 .org 4096
-

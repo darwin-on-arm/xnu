@@ -821,6 +821,16 @@ void cpu_bootstrap(void)
  *
  * Initialize more core processor data for CPU #0 during initialization.
  */
+
+/* Stub definitions. */
+extern void fleh_reset(void);
+extern void fleh_swi(void);
+extern void fleh_undef(void);
+extern void fleh_prefabt(void);
+extern void fleh_dataabt(void);
+extern void fleh_dataexc(void);
+extern void fleh_irq(void);
+
 void cpu_init(void)
 {
     cpu_data_t *cdp = current_cpu_datap();
@@ -836,6 +846,14 @@ void cpu_init(void)
 #else
     cdp->cpu_subtype = CPU_SUBTYPE_ARM_ALL;
 #endif
+
+    cdp->fleh_reset = (uint32_t)&fleh_reset;
+    cdp->fleh_swi = (uint32_t)&fleh_swi;
+    cdp->fleh_undef = (uint32_t)&fleh_undef;
+    cdp->fleh_prefabt = (uint32_t)&fleh_prefabt;
+    cdp->fleh_dataabt = (uint32_t)&fleh_dataabt;
+    cdp->fleh_dataexc = (uint32_t)&fleh_dataexc;
+    cdp->fleh_irq = (uint32_t)&fleh_irq;
 }
 
 /**
