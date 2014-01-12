@@ -72,6 +72,9 @@
 #include <kern/machine.h>
 #include <arm/pmap.h>
 
+#include <mach_debug.h>
+#include <arm/low_globals.h>
+
 #include <arm/misc_protos.h>
 
 #include <pexpert/pexpert.h>
@@ -410,6 +413,16 @@ Debugger(
     hw_atomic_sub(&debug_mode, 1);   
 }
 
+#define VECTORS_BASE 0xFFFF0000
+
+/*
+ * VBARNS support will break kdp for now.
+ */
+lowglo* lowGlo = (lowglo*)VECTORS_BASE;
+
+extern void *flag_kdp_trigger_reboot;
+extern void *manual_pkt;
+
 /**
  * machine_startup
  *
@@ -429,6 +442,13 @@ void machine_startup(void)
             systemLogDiags = TRUE;
         if (debug_boot_arg & DB_LOG_PI_SCRN)
             logPanicDataToScreen = TRUE;
+
+        /*
+         * Set up low globals
+         */
+        lowGlo->lgOSVersion = (uint32_t) version;
+        lowGlo->lgRebootFlag = (uint32_t) &flag_kdp_trigger_reboot;
+        lowGlo->lgManualPacket = (uint32_t) &manual_pkt;
     } else {
         debug_boot_arg = 0;
     }
