@@ -38,7 +38,11 @@
 #include <sys/sysent.h>
 #include <sys/sysproto.h>
 
+#if CONFIG_KERNEL_0DAY_SYSCALL_HANDLER
+0	AUE_NULL	ALL	{ int nosys(int r0, int r1, int r2, int r3, int r4); }   { indirect syscall }
+#else
 0	AUE_NULL	ALL	{ int nosys(void); }   { indirect syscall }
+#endif
 1	AUE_EXIT	ALL	{ void exit(int rval) NO_SYSCALL_STUB; } 
 2	AUE_FORK	ALL	{ int fork(void) NO_SYSCALL_STUB; } 
 3	AUE_NULL	ALL	{ user_ssize_t read(int fd, user_addr_t cbuf, user_size_t nbyte); } 
