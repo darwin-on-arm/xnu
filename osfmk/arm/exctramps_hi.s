@@ -37,8 +37,85 @@
 .align 12
 .globl _HighExceptionVectorsBase
 _HighExceptionVectorsBase:
-    .rept 64	/* Pad out. */
     .byte 0
-    .endr
+    .byte 0
+    .byte 0
+    .byte 0
+
+    .byte 0
+    .byte 0
+    .byte 0
+    .byte 0
+
+    .byte 0
+    .byte 0
+    .byte 0
+    .byte 0
+
+    .byte 0
+    .byte 0
+    .byte 0
+    .byte 0
+
+    .byte 0
+    .byte 0
+    .byte 0
+    .byte 0
+
+    .byte 0
+    .byte 0
+    .byte 0
+    .byte 0
+
+    .byte 0
+    .byte 0
+    .byte 0
+    .byte 0
+
+    .byte 0
+    .byte 0
+    .byte 0
+    .byte 0
+
+    .byte 0
+    .byte 0
+    .byte 0
+    .byte 0
+
+    .byte 0
+    .byte 0
+    .byte 0
+    .byte 0
+
+    .byte 0
+    .byte 0
+    .byte 0
+    .byte 0
+
+    .byte 0
+    .byte 0
+    .byte 0
+    .byte 0
+
+    .byte 0
+    .byte 0
+    .byte 0
+    .byte 0
+
+    .byte 0
+    .byte 0
+    .byte 0
+    .byte 0
+
+    .byte 0
+    .byte 0
+    .byte 0
+    .byte 0
+
+    .byte 0
+    .byte 0
+    .byte 0
+    .byte 0
+
     .asciz  "Scolecit"
 .org 4096
