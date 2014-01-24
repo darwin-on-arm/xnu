@@ -87,6 +87,18 @@
 #include "proc_reg.h"
 
 /*
+ * ARM11 support.
+ */
+#ifndef _ARM_ARCH_7
+#define armv7_set_context_id(args...)      /* No ASIDs. */
+#define armv7_context_switch       arm11_context_switch
+#define armv7_tlb_flushID_ASID     arm11_tlb_flushID
+#define armv7_tlb_flushID          arm11_tlb_flushID
+#define armv7_tlb_flushID_RANGE    arm11_tlb_flushID_RANGE
+#define armv7_tlb_flushID_SE       arm11_tlb_flushID_SE
+#endif
+
+/*
  * asid (Process context identifier) aka tagged TLB support.
  * On processors with this feature, unless disabled via the -pmap_asid_disable
  * boot-arg, the following algorithm is in effect:
