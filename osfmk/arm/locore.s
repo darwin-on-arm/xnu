@@ -266,14 +266,14 @@ EnterARM(sleep_test)
     /* Clear unified TLB */
     mov     r1, #0
     mcr     p15, 0, r1, c8, c7, 0
-#if _ARM_ARCH_7
+#ifdef _ARM_ARCH_7
     isb     sy
 #endif
 
     /* Clear MMU-EN bit in SCTLR */
     mrc     p15, 0, r11, c1, c0, 0
     bic     r11, r11, #1
-#if _ARM_ARCH_7
+#ifdef _ARM_ARCH_7
     isb     sy
 #endif
 
