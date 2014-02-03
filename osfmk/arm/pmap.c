@@ -401,7 +401,9 @@ pv_hashed_entry_t *pv_hash_table;   /* hash lists */
 uint32_t npvhash = 0;
 
 /* #define PV_DEBUG 1   uncomment to enable some PV debugging code */
-#define PV_DEBUG 1
+// #define PV_DEBUG 1
+#define kprintf(args...)
+
 
 #ifdef PV_DEBUG
 #define CHK_NPVHASH() if(0 == npvhash) panic("npvhash uninitialized");
