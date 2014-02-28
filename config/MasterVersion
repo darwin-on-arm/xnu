@@ -1,4 +1,9 @@
-12.4.0d1
+13.0.0
+
+#
+# iPhoneOS likes to bump its versions up by one? I don't even know why.
+# - winocm.
+#
 
 # The first line of this file contains the master version number for the kernel.
 # All other instances of the kernel version in xnu are derived from this file.

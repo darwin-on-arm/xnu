@@ -60,7 +60,7 @@ void IOKitInitializeTime( void )
 {
 	mach_timespec_t		t;
 
-	t.tv_sec = 30;
+	t.tv_sec = 2;
 	t.tv_nsec = 0;
 
 	IOService::waitForService(IOService::resourceMatching("IORTC"), &t );

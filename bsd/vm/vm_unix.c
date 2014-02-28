@@ -108,7 +108,7 @@ SYSCTL_INT(_vm, OID_AUTO, vm_debug_events, CTLFLAG_RW | CTLFLAG_LOCKED, &vm_debu
  * Sysctl's related to data/stack execution.  See osfmk/vm/vm_map.c
  */
 
-#ifndef SECURE_KERNEL
+#if !SECURE_KERNEL
 extern int allow_stack_exec, allow_data_exec;
 
 SYSCTL_INT(_vm, OID_AUTO, allow_stack_exec, CTLFLAG_RW | CTLFLAG_LOCKED, &allow_stack_exec, 0, "");
@@ -1268,16 +1268,6 @@ _shared_region_map(
 		goto done;
 	}
 #endif /* MAC */
-
-#if CONFIG_PROTECT
-	/* check for content protection access */
-	{
-		error = cp_handle_vnop(vp, CP_READ_ACCESS | CP_WRITE_ACCESS, 0);
-		if (error) { 
-			goto done;
-		}
-	}
-#endif /* CONFIG_PROTECT */
 
 	/* make sure vnode is on the process's root volume */
 	root_vp = p->p_fd->fd_rdir;

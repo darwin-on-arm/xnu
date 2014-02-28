@@ -121,9 +121,31 @@ kext_alloc_init(void)
 	   VM_KERNEL_UNSLIDE(text->vmaddr + text->vmsize));
 
 #else
+    kernel_segment_command_t *text = NULL;
+    kernel_segment_command_t *prelinkTextSegment = NULL;
+    mach_vm_offset_t text_end, text_start;
+    mach_vm_size_t text_size;
+    mach_vm_size_t kext_alloc_size;
+
+    /* Determine the start of the kernel's __TEXT segment and determine the
+     * lower bound of the allocated submap for kext allocations.
+     */
+
+    text = getsegbyname(SEG_TEXT);
+    text_start = vm_map_trunc_page(text->vmaddr);
+    text_start &= ~((512ULL * 1024 * 1024 * 1024) - 1);
+    text_end = vm_map_round_page(text->vmaddr + text->vmsize);
+    text_size = text_end - text_start;
+
     g_kext_map = kernel_map;
     kext_alloc_base = VM_MIN_KERNEL_ADDRESS;
     kext_alloc_max = VM_MAX_KERNEL_ADDRESS;
+
+    printf("kext submap [0x%lx - 0x%lx], kernel text [0x%lx - 0x%lx]\n",
+       VM_KERNEL_UNSLIDE(kext_alloc_base),
+       VM_KERNEL_UNSLIDE(kext_alloc_max),
+       VM_KERNEL_UNSLIDE(text->vmaddr),
+       VM_KERNEL_UNSLIDE(text->vmaddr + text->vmsize));
 #endif /* CONFIG_KEXT_BASEMENT */
 }
 

@@ -458,7 +458,7 @@ kmod_dump_log(
 * Compatibility implementation for kmod_get_info() host_priv routine.
 * Only supported on old 32-bit architectures.
 *********************************************************************/
-#if __i386__
+#if defined(__i386__) || defined(__arm__)
 kern_return_t
 kext_get_kmod_info(
     kmod_info_array_t      * kmod_list,

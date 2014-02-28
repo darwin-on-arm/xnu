@@ -29,8 +29,8 @@
  * @OSF_COPYRIGHT@
  */
 
-#ifndef	_I386_MACHINE_ROUTINES_H_
-#define	_I386_MACHINE_ROUTINES_H_
+#ifndef	_ARM_MACHINE_ROUTINES_H_
+#define	_ARM_MACHINE_ROUTINES_H_
 
 #include <mach/mach_types.h>
 #include <mach/boolean.h>
@@ -73,7 +73,8 @@ void ml_init_interrupt(void);
 void ml_cause_interrupt(void);
 
 /* Initialize Interrupts */
-void ml_install_interrupt_handler(void *nub, int source, void *target, IOInterruptHandler handler, void *refCon);
+void ml_install_interrupt_handler(void *nub, int source, void *target,
+                                  IOInterruptHandler handler, void *refCon);
 
 void ml_get_timebase(unsigned long long *timestamp);
 void ml_init_lock_timeout(void);
@@ -91,7 +92,8 @@ vm_offset_t ml_static_malloc(vm_size_t size);
 /* virtual to physical on wired pages */
 vm_offset_t ml_vtophys(vm_offset_t vaddr);
 
-vm_size_t ml_nofault_copy(vm_offset_t virtsrc, vm_offset_t virtdst, vm_size_t size);
+vm_size_t ml_nofault_copy(vm_offset_t virtsrc, vm_offset_t virtdst,
+                          vm_size_t size);
 
 /* Machine topology info */
 uint64_t ml_cpu_cache_size(unsigned int level);
@@ -142,7 +144,9 @@ struct ml_processor_info {
 typedef struct ml_processor_info ml_processor_info_t;
 
 /* Register a processor */
-kern_return_t ml_processor_register(cpu_id_t cpu_id, processor_t * processor_out, ipi_handler_t * ipi_handler);
+kern_return_t ml_processor_register(cpu_id_t cpu_id,
+                                    processor_t * processor_out,
+                                    ipi_handler_t * ipi_handler);
 
 /* PCI config cycle probing */
 boolean_t ml_probe_read(vm_offset_t paddr, unsigned int *val);
@@ -201,7 +205,8 @@ typedef struct ml_cpu_info ml_cpu_info_t;
 /* Get processor info */
 void ml_cpu_get_info(ml_cpu_info_t * ml_cpu_info);
 
-void ml_thread_policy(thread_t thread, unsigned policy_id, unsigned policy_info);
+void ml_thread_policy(thread_t thread, unsigned policy_id,
+                      unsigned policy_info);
 
 #define MACHINE_GROUP					0x00000001
 #define MACHINE_NETWORK_GROUP			0x10000000
@@ -256,4 +261,4 @@ void interrupt_reset_latency_stats(void);
 void interrupt_populate_latency_stats(char *, unsigned);
 
 #endif                          /* XNU_KERNEL_PRIVATE */
-#endif                          /* _I386_MACHINE_ROUTINES_H_ */
+#endif                          /* _ARM_MACHINE_ROUTINES_H_ */

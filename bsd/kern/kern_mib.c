@@ -117,7 +117,9 @@ extern vm_map_t bsd_pageable_map;
 #include <i386/cpuid.h>	/* for cpuid_info() */
 #endif
 
-
+#if defined(__arm__)
+#include <arm/cpuid.h>
+#endif
 
 #ifndef MAX
 #define MAX(a,b) (a >= b ? a : b)
@@ -436,7 +438,23 @@ SYSCTL_INT(_hw_optional, OID_AUTO, rdrand, CTLFLAG_RD | CTLFLAG_KERN | CTLFLAG_L
 SYSCTL_INT(_hw_optional, OID_AUTO, f16c, CTLFLAG_RD | CTLFLAG_KERN | CTLFLAG_LOCKED, &f16c_flag, 0, "");
 SYSCTL_INT(_hw_optional, OID_AUTO, enfstrg, CTLFLAG_RD | CTLFLAG_KERN | CTLFLAG_LOCKED, &enfstrg_flag, 0, "");
 #elif defined (__arm__)
-#warning - Sysctl - I need to be implemented!
+int arm_isa_flag = -1;
+int arm_thumb_flag = -1;
+int arm_thumb2_flag = -1;
+int arm_jazelle_flag = -1;
+int arm_thumbee_flag = -1;
+int arm_armv4_flag = -1;
+int arm_security_flag = -1;
+int arm_armvm_flag = -1;
+
+SYSCTL_INT(_hw_optional, OID_AUTO, arm_isa, CTLFLAG_RD | CTLFLAG_KERN | CTLFLAG_LOCKED, &arm_isa_flag, 0, "");
+SYSCTL_INT(_hw_optional, OID_AUTO, thumb, CTLFLAG_RD | CTLFLAG_KERN | CTLFLAG_LOCKED, &arm_thumb_flag, 0, "");
+SYSCTL_INT(_hw_optional, OID_AUTO, thumb2, CTLFLAG_RD | CTLFLAG_KERN | CTLFLAG_LOCKED, &arm_thumb2_flag, 0, "");
+SYSCTL_INT(_hw_optional, OID_AUTO, jazelle, CTLFLAG_RD | CTLFLAG_KERN | CTLFLAG_LOCKED, &arm_jazelle_flag, 0, "");
+SYSCTL_INT(_hw_optional, OID_AUTO, thumbee, CTLFLAG_RD | CTLFLAG_KERN | CTLFLAG_LOCKED, &arm_thumbee_flag, 0, "");
+SYSCTL_INT(_hw_optional, OID_AUTO, armv4, CTLFLAG_RD | CTLFLAG_KERN | CTLFLAG_LOCKED, &arm_armv4_flag, 0, "");
+SYSCTL_INT(_hw_optional, OID_AUTO, security, CTLFLAG_RD | CTLFLAG_KERN | CTLFLAG_LOCKED, &arm_security_flag, 0, "");
+SYSCTL_INT(_hw_optional, OID_AUTO, microcontroller, CTLFLAG_RD | CTLFLAG_KERN | CTLFLAG_LOCKED, &arm_armvm_flag, 0, "");
 #else
 #error Unsupported arch
 #endif /* !__i386__ && !__x86_64 && !__arm__ */
@@ -484,7 +502,7 @@ sysctl_mib_init(void)
 #if defined(__i386__) || defined (__x86_64__)
     cpu64bit = (_get_cpu_capabilities() & k64Bit) == k64Bit;
 #elif defined(__arm__)
-    kprintf("sysctl_mib_init: NEED ARM DEFINES\n");
+
 #else
 #error Unsupported arch
 #endif
@@ -538,7 +556,40 @@ sysctl_mib_init(void)
 	packages = roundup(ml_cpu_cache_sharing(0), cpuid_info()->thread_count)
 			/ cpuid_info()->thread_count;
 #elif defined(__arm__)
-    kprintf("sysctl_mib_init: shortcircuiting to finish, reimplement\n");
+
+#define OrBits(var, feat) \
+	var = (arm_processor_id.processor_features & feat) ? 1 : 0;
+
+	OrBits(arm_isa_flag, kProcessorFeatureARM_ISA);
+	OrBits(arm_thumb_flag, kProcessorFeatureThumb);
+	OrBits(arm_thumbee_flag, kProcessorFeatureThumbEE);
+	OrBits(arm_thumb2_flag, kProcessorFeatureThumb2);
+	OrBits(arm_jazelle_flag, kProcessorFeatureJazelle);
+	OrBits(arm_armv4_flag, kProcessorFeatureARMv4);
+	OrBits(arm_security_flag, kProcessorFeatureSecurity);
+	OrBits(arm_armvm_flag, kProcessorFeatureMicrocontroller);
+#undef OrBits
+
+	/* hw.cpufamily */
+	cpufamily = CPUFAMILY_ARM_13;
+
+	/* hw.cacheconfig */
+	cacheconfig[0] = ml_cpu_cache_sharing(0);
+	cacheconfig[1] = ml_cpu_cache_sharing(1);
+	cacheconfig[2] = ml_cpu_cache_sharing(2);
+	cacheconfig[3] = ml_cpu_cache_sharing(3);
+	cacheconfig[4] = 0;
+
+	/* hw.cachesize */
+	cachesize[0] = ml_cpu_cache_size(0);
+	cachesize[1] = ml_cpu_cache_size(1);
+	cachesize[2] = ml_cpu_cache_size(2);
+	cachesize[3] = ml_cpu_cache_size(3);
+	cachesize[4] = 0;
+
+	/* hw.packages */
+	packages = 1;
+
 #else
 #error unknown architecture
 #endif /* !__i386__ && !__x86_64 && !__arm__ */

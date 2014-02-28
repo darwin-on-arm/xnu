@@ -232,7 +232,7 @@ typedef struct ccb {
     unsigned waitingAck:1;	/* We're waiting for an ack packet */
     unsigned rData:1;		/* There's data in the receive queue */
     unsigned resentData:1;	/* True when we resend data due to timeout */
-    unsigned sendDataAck:1;	/* True if he requested an ack */
+    unsigned sendDataAck:1;	/* True if they requested an ack */
     unsigned sendAttnAck:1;	/* Must send attn acknowlege */
     unsigned sendAttnData:1;	/* Must send attn data */
     unsigned callSend:1;	/* Must call CheckSend() */

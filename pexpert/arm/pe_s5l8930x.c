@@ -79,7 +79,7 @@ static boolean_t avoid_uarts = FALSE;
 static boolean_t avoid_uarts = TRUE;
 #endif
 
-static uint64_t clock_decrementer = 0;
+uint64_t clock_decrementer = 0;
 static boolean_t clock_initialized = FALSE;
 static boolean_t clock_had_irq = FALSE;
 static uint64_t clock_absolute_time = 0;
@@ -132,6 +132,8 @@ static void timer_configure(void)
 
 void S5L8930X_putc(int c)
 {
+    if(c == '\n') S5L8930X_putc('\r');
+
     /*
      * Wait for FIFO queue to empty. 
      */
@@ -147,10 +149,17 @@ int S5L8930X_getc(void)
     /*
      * Wait for a character. 
      */
-    while (HwReg(gS5L8930XUartBase + UFSTAT) & 1)
-        barrier();
+    int i = 0x80;
+    uint32_t ufstat = HwReg(gS5L8930XUartBase + UFSTAT);
+    boolean_t can_read = FALSE;
 
-    return HwReg(gS5L8930XUartBase + URXH);
+    can_read = (ufstat & UART_UFSTAT_RXFIFO_FULL) | (ufstat & 0xF);
+    if(can_read)
+        return HwReg(gS5L8930XUartBase + URXH);
+    else
+        return -1;
+
+    return -1;
 }
 
 void S5L8930X_uart_init(void)
@@ -339,10 +348,11 @@ void S5L8930X_timebase_init(void)
 
 void S5L8930X_handle_interrupt(void *context)
 {
+    uint32_t current_irq = HwReg(gS5L8930XVic0Base + VICADDRESS);
     /*
      * Timer IRQs are handeled by us. 
      */
-    if (HwReg(gS5L8930XVic0Base + VICADDRESS) == 6) {
+    if (current_irq == 6) {
         /*
          * Disable timer 
          */
@@ -372,7 +382,10 @@ void S5L8930X_handle_interrupt(void *context)
          * We had an IRQ. 
          */
         clock_had_irq = TRUE;
+    } else {
+        irq_iokit_dispatch(current_irq);
     }
+
     return;
 }
 
@@ -442,17 +455,23 @@ static void _fb_putc(int c)
 
 void S5L8930X_framebuffer_init(void)
 {
+    char tempbuf[16];
+
     /*
-     * Technically, iBoot should initialize this.. 
+     * Technically, iBoot should initialize this.. Haven't bothered
+     * to reverse this part properly, if you're using a 16-bit panel, then use 
+     * the 'rgb565' boot-argument if you care about a working framebuffer...
      */
     PE_state.video.v_depth = 4 * (8);   // 32bpp
+    if (PE_parse_boot_argn("rgb565", tempbuf, sizeof(tempbuf))) {
+        PE_state.video.v_depth = 2 * (8);   // 16bpp
+    }
 
     kprintf(KPRINTF_PREFIX "framebuffer initialized\n");
 
     /*
      * Enable early framebuffer.
      */
-    char tempbuf[16];
 
     if (PE_parse_boot_argn("-early-fb-debug", tempbuf, sizeof(tempbuf))) {
         initialize_screen((void *) &PE_state.video, kPEAcquireScreen);

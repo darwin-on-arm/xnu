@@ -148,9 +148,11 @@ get_rand_ifid(
 
 	/* generate 8 bytes of pseudo-random value. */
 	bzero(&ctxt, sizeof(ctxt));
+#ifndef __arm__
 	SHA1Init(&ctxt);
 	SHA1Update(&ctxt, hostname, hostnlen);
 	SHA1Final(digest, &ctxt);
+#endif
 
 	/* assumes sizeof(digest) > sizeof(ifid) */
 	bcopy(digest, &in6->s6_addr[8], 8);
@@ -205,9 +207,11 @@ generate_tmp_ifid(
 
 	/* generate 16 bytes of pseudo-random value. */
 	bzero(&ctxt, sizeof(ctxt));
+#ifndef __arm__
 	SHA1Init(&ctxt);
 	SHA1Update(&ctxt, seed, sizeof(seed));
 	SHA1Final(digest, &ctxt);
+#endif
 
 	/*
 	 * RFC 4941 3.2.1. (3)
@@ -702,11 +706,13 @@ in6_nigroup(
 
 	/* generate 8 bytes of pseudo-random value. */
 	bzero(&ctxt, sizeof(ctxt));
+#if 0
 	SHA1Init(&ctxt);
 	SHA1Update(&ctxt, &l, sizeof(l));
 	SHA1Update(&ctxt, n, l);
 	SHA1Final(digest, &ctxt);
-
+#endif
+	
 	bzero(in6, sizeof(*in6));
 	in6->s6_addr16[0] = IPV6_ADDR_INT16_MLL;
 	in6->s6_addr8[11] = 2;

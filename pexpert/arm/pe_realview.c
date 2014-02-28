@@ -46,7 +46,7 @@
 /*
  * This is board specific stuff.
  */
-#ifdef BOARD_CONFIG_ARMPBA8
+#if defined(BOARD_CONFIG_ARMPBA8) || defined(BOARD_CONFIG_ARM_RVEB_V6)
 
 #define KPRINTF_PREFIX      "PE_RealView: "
 
@@ -62,15 +62,16 @@ vm_offset_t gRealviewPicDistribBase;
 
 vm_offset_t gRealviewPl111Base;
 
-static uint64_t clock_decrementer = 0;
+uint64_t clock_decrementer = 0;
+
 static boolean_t clock_initialized = FALSE;
 static boolean_t clock_had_irq = FALSE;
 static uint64_t clock_absolute_time = 0;
 
 static void timer_configure(void)
 {
-    uint64_t hz = 32000;
-    clock_decrementer = (hz / 7);   // For 500Hz.
+    uint64_t hz = 1000000;      // Proper default rate.
+    clock_decrementer = 5000;   // 5kHz decrementer.
 
     gPEClockFrequencyInfo.timebase_frequency_hz = hz;
 
@@ -87,6 +88,9 @@ void RealView_putc(int c)
     while (AMBA_UART_FR(gRealviewUartBase) & (1 << 5))
         barrier();
 
+    if(c == '\n')
+        RealView_putc('\r');
+
     AMBA_UART_DR(gRealviewUartBase) = c;
 }
 
@@ -96,8 +100,10 @@ int RealView_getc(void)
     if (!gRealviewUartBase)
         return -1;
 
-    while (AMBA_UART_FR(gRealviewUartBase) & (1 << 4))
-        barrier();
+    int i = 0x80000;
+    while (AMBA_UART_FR(gRealviewUartBase) & (1 << 4)) {
+        i--; if(!i) return -1;
+    }
 
     c = AMBA_UART_DR(gRealviewUartBase);
     return c;
@@ -352,19 +358,28 @@ void RealView_framebuffer_init(void)
     /*
      * Enable the TFT/LCD Display 
      */
-    HARDWARE_REGISTER(gRealviewPl111Base + PL111_CONTROL) = LCDCONTROL_LCDEN | LCDCONTROL_LCDTFT | LCDCONTROL_LCDPWR | LCDCONTROL_LCDBPP(4);
+    HARDWARE_REGISTER(gRealviewPl111Base + PL111_CONTROL) = LCDCONTROL_LCDEN | LCDCONTROL_LCDTFT | LCDCONTROL_LCDPWR | LCDCONTROL_LCDBPP(5);
 
     PE_state.video.v_baseAddr = (unsigned long) framebuffer_phys;
-    PE_state.video.v_rowBytes = width * 2;
+    PE_state.video.v_rowBytes = width * 4;
     PE_state.video.v_width = width;
     PE_state.video.v_height = height;
-    PE_state.video.v_depth = 2 * (8);   // 16bpp
+    PE_state.video.v_depth = 4 * (8);   // 16bpp
 
     kprintf(KPRINTF_PREFIX "framebuffer initialized\n");
     bzero(framebuffer, (pitch * height));
 
     char tempbuf[16];
-    initialize_screen((void *) &PE_state.video, kPETextMode);
+    
+	if (PE_parse_boot_argn("-graphics-mode", tempbuf, sizeof(tempbuf))) {
+        /*
+         * BootX like framebuffer. 
+         */
+        memset(framebuffer, 0xb9, PE_state.video.v_rowBytes * PE_state.video.v_height);
+        initialize_screen((void *) &PE_state.video, kPEGraphicsMode);
+    } else {
+		initialize_screen((void *) &PE_state.video, kPETextMode);
+	}
 }
 
 void PE_init_SocSupport_realview(void)

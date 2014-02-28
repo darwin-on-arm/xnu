@@ -40,7 +40,7 @@
 #define NO_EXCLUSIVES 1
 #endif
 
-#ifdef BOARD_CONFIG_OMAP3530
+#if defined(BOARD_CONFIG_OMAP3530) || defined(BOARD_CONFIG_OMAP335X)
 //#define NO_EXCLUSIVES 1
 #endif
 

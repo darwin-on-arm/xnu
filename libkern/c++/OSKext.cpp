@@ -4504,12 +4504,13 @@ OSKext::load(
     if (isExecutable()) {
         OSKext::updateLoadedKextSummaries();
         savePanicString(/* isLoading */ true);
-
+#ifndef __arm__
 #if CONFIG_DTRACE
         registerWithDTrace();
 #else
         jettisonLinkeditSegment();
 #endif /* CONFIG_DTRACE */
+#endif
     }
 
 loaded:
@@ -5331,7 +5332,7 @@ OSKext_protect(
     vm_prot_t  new_prot,
     boolean_t  set_max)
 {
-    return KERN_FAILURE;
+    return KERN_SUCCESS;
 }
 
 
@@ -5343,7 +5344,7 @@ OSKext_wire(
     vm_prot_t  access_type,
     boolean_t       user_wire)
 {
-	return KERN_FAILURE;
+	return KERN_SUCCESS;
 }
 #else
 static inline kern_return_t
@@ -5582,7 +5583,6 @@ boolean_t
 OSKext::verifySegmentMapping(kernel_segment_command_t *seg)
 {
     mach_vm_address_t address = 0;
-
     if (!segmentShouldBeWired(seg)) return true;
 
     for (address = seg->vmaddr;
@@ -5599,7 +5599,6 @@ OSKext::verifySegmentMapping(kernel_segment_command_t *seg)
             return false;
         }
     }
-
     return true;
 }
 
@@ -9885,20 +9884,20 @@ void OSKext::printSummary(
          kmod_ref; 
          kmod_ref = kmod_ref->next) {
         kmod_info_t * rinfo;
-        
+
         if (pmap_find_phys(kernel_pmap, (addr64_t)((uintptr_t)kmod_ref)) == 0) {
             (*printf_func)("            kmod dependency scan stopped "
                            "due to missing dependency page: %p\n", kmod_ref);
             break;
         }
         rinfo = kmod_ref->info;
-        
+
         if (pmap_find_phys(kernel_pmap, (addr64_t)((uintptr_t)rinfo)) == 0) {
             (*printf_func)("            kmod dependency scan stopped "
                            "due to missing kmod page: %p\n", rinfo);
             break;
         }
-        
+
         if (!rinfo->address) {
             continue; // skip fake entries for built-ins
         }
@@ -10421,7 +10420,7 @@ OSKext::updateLoadedKextSummary(OSKextLoadedKextSummary *summary)
 
 /*********************************************************************
 *********************************************************************/
-#if __i386__
+#if defined(__i386__) || defined(__arm__)
 /* static */
 kern_return_t
 OSKext::getKmodInfo(

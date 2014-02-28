@@ -38,9 +38,10 @@
 #include <machine/machine_routines.h>
 #include <mach/vm_param.h>
 #include <kern/processor.h>
+#include <arm/cpuid.h>
 
 typedef struct _abort_information_context {
-    uint32_t gprs[13];
+    uint32_t r[13];
     uint32_t sp;
     uint32_t lr;
     uint32_t pc;
@@ -53,6 +54,8 @@ extern processor_t cpu_processor_alloc(boolean_t is_boot_cpu);
 extern void cpu_init(void);
 extern void cpu_bootstrap(void);
 
+extern void draw_panic_dialog(void);
+
 #ifndef __LP64__
 extern void arm_set_threadpid_user_readonly(uint32_t * address);
 extern void arm_set_threadpid_priv_readwrite(uint32_t * address);
@@ -61,12 +64,18 @@ extern void arm_set_threadpid_user_readonly(uint64_t * address);
 extern void arm_set_threadpid_priv_readwrite(uint64_t * address);
 #endif
 
-extern arm_usimple_lock(usimple_lock_t l);
+extern int arm_usimple_lock(usimple_lock_t l);
 
-void panic_arm_backtrace(void *_frame, int nframes, const char *msg, boolean_t regdump, arm_saved_state_t * regs);
+void panic_arm_backtrace(void *_frame, int nframes, const char *msg,
+                         boolean_t regdump, arm_saved_state_t * regs);
 
 void arm_vm_init(uint32_t mem_limit, boot_args * args);
 
 void sleh_abort(void *context, int reason);
+
+void cache_initialize(void);
+
+void get_cachetype_cp15();
+void identify_arm_cpu(void);
 
 #endif

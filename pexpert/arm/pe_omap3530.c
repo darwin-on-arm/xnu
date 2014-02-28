@@ -41,6 +41,7 @@
 #include <machine/machine_routines.h>
 #include <vm/pmap.h>
 #include <arm/pmap.h>
+#include <kern/cpu_data.h>
 
 /* XXX: timer is so god awfully borked */
 
@@ -87,7 +88,7 @@ static void timer_configure(void)
     uint64_t hz = 3276800;
     gPEClockFrequencyInfo.timebase_frequency_hz = hz;
 
-    clock_decrementer = 1000;
+    clock_decrementer = 500;
     kprintf(KPRINTF_PREFIX "decrementer frequency = %llu\n", clock_decrementer);
 
     rtc_configure(hz);
@@ -121,8 +122,10 @@ void Omap3_putc(int c)
 
 int Omap3_getc(void)
 {
-    while (!(HwReg(gOmapSerialUartBase + LSR) & LSR_DR))
-        barrier();
+    int i = 0x20000;
+    while (!(HwReg(gOmapSerialUartBase + LSR) & LSR_DR)) {
+        i--; if(!i) return -1;
+    }
 
     return (HwReg(gOmapSerialUartBase + RBR));
 }
@@ -281,7 +284,10 @@ void Omap3_handle_interrupt(void *context)
         clock_had_irq = 1;
 
         return;
+    } else {
+        irq_iokit_dispatch(irq_number);
     }
+    
     return;
 }
 
@@ -339,51 +345,105 @@ static void _fb_putc(int c)
     Omap3_putc(c);
 }
 
-/* ModeDB inspired by Linux kernel. */
-typedef struct omap_videomode {
-    const char *name;
-    uint32_t refresh;
-    uint32_t xres;
-    uint32_t yres;
-    uint32_t pixclock;
-    uint32_t left_margin;       /* HBP */
-    uint32_t right_margin;      /* HFP */
-    uint32_t upper_margin;      /* VBP */
-    uint32_t lower_margin;      /* VFP */
-    uint32_t hsync_len;         /* HSW */
-    uint32_t vsync_len;         /* VSW */
-    uint32_t sync, vmode, flag;
-} omap_videomode;
+struct video_mode {
+    short width, height;
+    char *name;
+    uint32_t dispc_size;
+    uint32_t dispc_timing_h;
+    uint32_t dispc_timing_v;
+    uint32_t dispc_divisor;
+    uint32_t dss_divisor;
+};
 
-omap_videomode omap_videomodes[] = {
-    /*
-     * Note, our pixelclock runs at 96MHz. 
-     */
+/* DISPC_TIMING_H bits and masks */
+#define DISPCB_HBP 20
+#define DISPCB_HFP 8
+#define DISPCB_HSW 0
+#define DISPCM_HBP 0xfff00000
+#define DISPCM_HFP 0x000fff00
+#define DISPCM_HSW 0x000000ff
 
-    /*
-     * 1280x720 @ ~75Hz and friends 
-     */
-    {"dvi:1280x720", 60, 1280, 720, 0, 220, 440, 20, 5, 40, 5, 0, 0, 0},
-    {"dvi:1280x768", 60, 1280, 768, 0, 220, 440, 20, 5, 40, 5, 0, 0, 0},
-    {"dvi:1280x800", 60, 1280, 800, 0, 220, 440, 20, 5, 40, 5, 0, 0, 0},
+/* DISPC_TIMING_V bits and masks */
+#define DISPCB_VBP 20
+#define DISPCB_VFP 8
+#define DISPCB_VSW 0
+#define DISPCM_VBP 0x0ff00000
+#define DISPCM_VFP 0x0000ff00
+#define DISPCM_VSW 0x0000003f
 
-    /*
-     * 1024x768 @ 70Hz. 
-     */
-    {"dvi:1024x768", 60, 1024, 768, 0, 331, 37, 44, 5, 202, 10, 0, 0, 0},
-
-    /*
-     * !!! EXPERIMENTAL 1080P MODE !!! MAKES SOME MONITORS GO WACKO !!! 
-     */
-    {"dvi:1920x1080", 24, 1920, 1080, 0, 440, 1024, 20, 50, 80, 5, 0, 0, 0},
-
-    /*
-     * Please put more modes in here! 
-     */
+// Master clock is 864 Mhz, and changing it is a pita since it cascades to other
+// devices.
+// Pixel clock is  864 / cm_clksel_dss.dss1_alwan_fclk / dispc_divisor.divisor.pcd
+// So most of these modes are just approximate.
+// List must be in ascending order.
+struct video_mode modes[] = {
+    // 640x480@72    31.500        640    24    40    128      480    9    3    28
+    {
+        640, 480, "640x480-71",
+        ((480-1) << 16) | (640-1),
+        (128 << DISPCB_HBP) | (24 << DISPCB_HFP) | (40 << DISPCB_HSW),
+        (28 << DISPCB_VBP) | (9 << DISPCB_VFP) | (3 << DISPCB_VSW),
+        2, 14
+    },
+    //      800x600, 60Hz      40.000      800    40    128    88      600    1    4    23
+    {
+        800, 600, "800x600-59",
+        ((600-1) << 16) | (800-1),
+        (88 << DISPCB_HBP) | (40 << DISPCB_HFP) | (128 << DISPCB_HSW),
+        (23 << DISPCB_VBP) | (1 << DISPCB_VFP) | (4 << DISPCB_VSW),
+        2, 11
+    },             
+    // 1024x768, 60Hz      65.000      1024    24    136    160      768    3    6    29
+    {
+        1024, 768, "1024x768-61",
+        ((768-1) << 16) | (1024-1),
+        (160 << DISPCB_HBP) | (24 << DISPCB_HFP) | (136 << DISPCB_HSW),
+        (29 << DISPCB_VBP) | (3 << DISPCB_VFP) | (6 << DISPCB_VSW),
+        1, 13
+    },
+    {
+        1280, 1024, "1280x1024-60",
+        ((1024-1) << 16) | (1280-1),
+        (248 << DISPCB_HBP) | (48 << DISPCB_HFP) | (112 << DISPCB_HSW),
+        (38 << DISPCB_VBP) | (1 << DISPCB_VFP) | (3 << DISPCB_VSW),
+        1, 8
+    },
+    /* 1280x800, dotclock 83.46MHz, approximated 86.4MHz */
+    {
+        1280, 800, "1280x800-60",
+        ((800 - 1) << 16) | (1280 - 1),
+        (200 << DISPCB_HBP) | (64 < DISPCB_HBP) | (136 << DISPCB_HSW),
+        (24 << DISPCB_VBP) | (1 << DISPCB_VFP) | (3 << DISPCB_HSW),
+        2, 5
+    },
+    /* 1366x768, dotclock 85.86MHz, approximated 86.4MHz */
+    {
+        1366, 768, "1366x768-60",
+        ((768 - 1) << 16) | (1366 - 1),
+        (216 << DISPCB_HBP) | (72 < DISPCB_HBP) | (144 << DISPCB_HSW),
+        (23 << DISPCB_VBP) | (1 << DISPCB_VFP) | (3 << DISPCB_HSW),
+        2, 5
+    },
+    /* 1440x900, dotclock 106.47MHz, approximated 108MHz */
+    {
+        1440, 900, "1440x900-60",
+        ((900 - 1) << 16) | (1440 - 1),
+        (232 << DISPCB_HBP) | (80 < DISPCB_HBP) | (152 << DISPCB_HSW),
+        (28 << DISPCB_VBP) | (1 << DISPCB_VFP) | (28 << DISPCB_HSW),
+        2, 4
+    },
 };
 
 void Omap3_framebuffer_init(void)
 {
+    int dont_mess_with_this = 0;
+    char tempbuf[16];
+
+    if (PE_parse_boot_argn("-dont-fuck-with-framebuffer", tempbuf, sizeof(tempbuf))) {
+        /* Do not fuck with the framebuffer whatsoever, rely on whatever u-boot set. */
+        dont_mess_with_this = 1;
+    }
+
     /*
      * This *must* be page aligned. 
      */
@@ -396,50 +456,42 @@ void Omap3_framebuffer_init(void)
     uint32_t hbp, hfp, hsw, vsw, vfp, vbp;
 
     char tmpbuf[16];
-    omap_videomode *current_mode = &omap_videomodes[0];
+    struct video_mode *current_mode = &modes[0];
 
     if (PE_parse_boot_argn("omapfbres", tmpbuf, sizeof(tmpbuf))) {
         int cur = 0;
-        while (cur != (sizeof(omap_videomodes) / sizeof(omap_videomode))) {
-            if (!strcmp(tmpbuf, omap_videomodes[cur].name)) {
-                current_mode = &omap_videomodes[cur];
+        while (cur != (sizeof(modes) / sizeof(struct video_mode))) {
+            if (!strcmp(tmpbuf, modes[cur].name)) {
+                current_mode = &modes[cur];
                 break;
             }
             cur++;
         }
     }
 
-    hbp = current_mode->left_margin;
-    hfp = current_mode->right_margin;
-    vbp = current_mode->upper_margin;
-    vfp = current_mode->lower_margin;
-    hsw = current_mode->hsync_len;
-    vsw = current_mode->vsync_len;
+    uint32_t vs;
+    if(!dont_mess_with_this) {
+        OmapDispc->size_lcd = current_mode->dispc_size;
+        OmapDispc->timing_h = current_mode->dispc_timing_h;
+        OmapDispc->timing_v = current_mode->dispc_timing_v;
+        OmapDispc->pol_freq = 0x00007028;
+        OmapDispc->divisor = current_mode->dispc_divisor;
+        HwReg(gOmapPrcmBase + 0xE00 + 0x40) = current_mode->dss_divisor;
+        OmapDispc->config = (2 << 1);
+        OmapDispc->default_color0 = 0xffff0000;
+        OmapDispc->control = ((1 << 3) | (3 << 8));
 
-    timing_h = FLD_VAL(hsw - 1, 7, 0) | FLD_VAL(hfp - 1, 19, 8) | FLD_VAL(hbp - 1, 31, 20);
-    timing_v = FLD_VAL(vsw - 1, 7, 0) | FLD_VAL(vfp, 19, 8) | FLD_VAL(vbp, 31, 20);
+        /*
+         * Initialize display control 
+         */
+        OmapDispc->control |= DISPC_ENABLE;
+        OmapDispc->default_color0 = 0xffff0000;
 
-    uint32_t vs = FLD_VAL(current_mode->yres - 1, 26, 16) | FLD_VAL(current_mode->xres - 1, 10, 0);
-
-    OmapDispc->size_lcd = vs;
-    OmapDispc->timing_h = timing_h;
-    OmapDispc->timing_v = timing_v;
-    OmapDispc->pol_freq = 0x00007028;
-    OmapDispc->divisor = 0x00010001;
-    OmapDispc->config = (2 << 1);
-    OmapDispc->default_color0 = 0xffff0000;
-    OmapDispc->control = ((1 << 3) | (3 << 8));
-
-    /*
-     * Initialize display control 
-     */
-    OmapDispc->control |= DISPC_ENABLE;
-    OmapDispc->default_color0 = 0xffff0000;
-
-    /*
-     * initialize lcd defaults 
-     */
-    barrier();
+        /*
+         * initialize lcd defaults 
+         */
+        barrier();
+    }
 
     vs = OmapDispc->size_lcd;
     uint32_t lcd_width, lcd_height;
@@ -487,8 +539,6 @@ void Omap3_framebuffer_init(void)
     /*
      * Enable early framebuffer.
      */
-    char tempbuf[16];
-
     if (PE_parse_boot_argn("-early-fb-debug", tempbuf, sizeof(tempbuf))) {
         initialize_screen((void *) &PE_state.video, kPEAcquireScreen);
     }

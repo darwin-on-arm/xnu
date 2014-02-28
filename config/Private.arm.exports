@@ -1,0 +1,8 @@
+__ZN22IOInterruptEventSource7warmCPUEy
+_kext_get_vm_map
+_xts_decrypt
+_xts_done
+_xts_encrypt
+_xts_start
+_aes_decrypt
+_PE_reboot_on_panic

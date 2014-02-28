@@ -13,41 +13,46 @@ osfmk/console/video_console.c        optional  vc device-driver
 osfmk/console/arm/video_scroll.c	optional vc device-driver
 osfmk/console/arm/serial_console.c	optional vc
 
-osfmk/arm/bcopy.s	standard
-osfmk/arm/bzero.s	standard
-osfmk/arm/cpu_number.s		standard
-osfmk/arm/memcmp.s		standard
-osfmk/arm/loose_ends.c		standard
+osfmk/arm/arm_init.c		standard
+osfmk/arm/arm_vm_init.c		standard
+osfmk/arm/conf.c		standard
+osfmk/arm/cpu.c			standard
+osfmk/arm/etimer.c		standard
+osfmk/arm/locks_arm.c		standard
+osfmk/arm/machine_routines.c	standard
+osfmk/arm/model_dep.c		standard
+osfmk/arm/mp.c			standard
+osfmk/arm/pal.c			standard
+osfmk/arm/pcb.c			standard
+osfmk/arm/pmap.c		standard
+osfmk/arm/pmap_asid.c 	standard
+osfmk/arm/pmCPU.c		standard
+osfmk/arm/status.c		standard
+osfmk/arm/rtclock.c		standard
+osfmk/arm/trap.c		standard
+osfmk/arm/loose_ends.c	standard
+osfmk/arm/commpage/commpage.c	standard
 osfmk/arm/atomic.s		standard
-osfmk/arm/lockshw.s		standard
-osfmk/arm/cache.s		standard
+osfmk/arm/bcopy.s		standard
+osfmk/arm/bcopyinout.s		standard
+osfmk/arm/bzero.s		standard
+osfmk/arm/cpu_number.s		standard
+osfmk/arm/cswitch.s		standard
+osfmk/arm/exctramps.s		standard
+osfmk/arm/exctramps_hi.s		standard
+osfmk/arm/hw_lock.s		standard
+osfmk/arm/locore.s		standard
+osfmk/arm/memcmp.s		standard
 osfmk/arm/stubs.s		standard
 osfmk/arm/stacks.s		standard
-osfmk/arm/flehsleh.s		standard
-osfmk/arm/model_dep.c		standard
-osfmk/arm/locks_arm.c		standard
-osfmk/arm/pal.c			standard
-osfmk/arm/arm_vm_init.c		standard
-osfmk/arm/machine_routines.s	standard
-osfmk/arm/machroutines.c	standard
-osfmk/arm/bcopyinout.s	standard
-osfmk/arm/system_startup.s	standard
-osfmk/arm/intvect.s		standard
-osfmk/arm/arm_init.c		standard
-osfmk/arm/cpu.c			standard
-osfmk/arm/thredinit.c		standard
-osfmk/arm/pmap.c		standard
-osfmk/arm/trapc.c		standard
-osfmk/arm/rtclock.c		standard
-osfmk/arm/vfp.s			standard
-osfmk/arm/mp.c			standard
-osfmk/arm/commpage/commpage.c	standard
-osfmk/arm/ctxswitch.s		standard
-osfmk/arm/pmCPU.c		standard
-osfmk/arm/etimer.c		standard
-osfmk/arm/conf.c		standard
-osfmk/arm/bcopystub.c		standard
-osfmk/arm/bsd_arm.c		standard
+osfmk/arm/traps_lo.s		standard
+osfmk/arm/machine_routines_asm.s	standard
+
+osfmk/arm/armv/cache.s		standard
+osfmk/arm/armv/tlb-arm11.s	standard
+osfmk/arm/armv/tlb-armv7.s	standard
+osfmk/arm/armv/vfp.s		standard
+
 
 osfmk/kdp/ml/arm/kdp_machdep.c         optional        mach_kdp
 osfmk/kdp/ml/arm/kdp_vm.c              optional        mach_kdp

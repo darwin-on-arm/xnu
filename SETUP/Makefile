@@ -14,8 +14,6 @@ SETUP_SUBDIRS = 	\
 
 ifeq ($(UNAME_S),Darwin)
 	SETUP_SUBDIRS += kextsymboltool
-endif
-ifneq ($(UNAME_S),Linux)
 	SETUP_SUBDIRS += setsegname
 endif
 

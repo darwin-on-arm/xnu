@@ -71,7 +71,7 @@ typedef	void	mach_munge_t(const void *, void *);
 typedef struct {
 	int			mach_trap_arg_count;
 	kern_return_t		(*mach_trap_function)(void *);
-#if	MACH_ASSERT
+#if	1
 	const char*		mach_trap_name;
 #endif /* MACH_ASSERT */
 } mach_trap_t;
@@ -92,8 +92,8 @@ extern int			mach_trap_count;
 #endif /* !MACH_ASSERT */
 #elif defined(__arm__)
 #if	!MACH_ASSERT
-#define	MACH_TRAP(name, arg_count, munge32, munge64)	\
-	{ (arg_count), (kern_return_t (*)(void *)) (name)  }
+#define MACH_TRAP(name, arg_count, munge32, munge64)		\
+	{ (arg_count), (kern_return_t (*)(void *)) (name), #name }
 #else
 #define MACH_TRAP(name, arg_count, munge32, munge64)		\
 	{ (arg_count), (kern_return_t (*)(void *)) (name), #name }

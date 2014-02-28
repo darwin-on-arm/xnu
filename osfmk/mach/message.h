@@ -542,7 +542,7 @@ typedef natural_t mach_msg_type_number_t;
 
 /*
  *  Values received/carried in messages.  Tells the receiver what
- *  sort of port right he now has.
+ *  sort of port right they now have.
  *
  *  MACH_MSG_TYPE_PORT_NAME is used to transfer a port name
  *  which should remain uninterpreted by the kernel.  (Port rights

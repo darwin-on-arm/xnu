@@ -33,7 +33,7 @@
 #include <arm/arch.h>
 #include <arm/asm_help.h>
 
-#ifdef BOARD_CONFIG_OMAP3530
+#if defined(BOARD_CONFIG_OMAP3530) || defined(BOARD_CONFIG_OMAP335X)
 //#define ldrex    ldr
 #endif
 

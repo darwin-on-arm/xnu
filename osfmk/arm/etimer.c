@@ -114,7 +114,8 @@ void etimer_resync_deadlines(void)
      * If we have a clock timer set, pick that.
      */
     mytimer = &pp->rt_timer;
-    if (!mytimer->has_expired && 0 < mytimer->deadline && mytimer->deadline < EndOfAllTime)
+    if (!mytimer->has_expired && 0 < mytimer->deadline
+        && mytimer->deadline < EndOfAllTime)
         deadline = mytimer->deadline;
 
     /*
@@ -215,7 +216,8 @@ uint64_t timer_call_slop(uint64_t deadline)
  *
  * Remove a timer from the queue.
  */
-void timer_queue_cancel(mpqueue_head_t * queue, uint64_t deadline, uint64_t new_deadline)
+void timer_queue_cancel(mpqueue_head_t * queue, uint64_t deadline,
+                        uint64_t new_deadline)
 {
     if (queue == &current_cpu_datap()->rt_timer.queue) {
         if (deadline < new_deadline) {

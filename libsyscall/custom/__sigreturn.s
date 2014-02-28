@@ -36,6 +36,10 @@ __SYSCALL(___sigreturn, sigreturn, 2)
 
 __SYSCALL_INT(___sigreturn, sigreturn, 2)
 
+#elif defined(__arm__)
+
+__SYSCALL(__sigreturn, sigreturn, 2)
+
 #else
 #error Unsupported architecture
 #endif

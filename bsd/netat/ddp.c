@@ -423,7 +423,7 @@ void  ddp_rem_if(ifID)
  * The user may have registered an NVE with the NBP on a socket.  When the
  * socket is closed, the NVE should be deleted from NBP's name table.  The
  * user should delete the NVE before the socket is shut down, but there
- * may be circumstances when he can't.  So, whenever a DDP socket is closed,
+ * may be circumstances when they can't.  So, whenever a DDP socket is closed,
  * this routine is used to notify NBP of the socket closure.  This would
  * help NBP get rid of all NVE's registered on the socket.
  */

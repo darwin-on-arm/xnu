@@ -831,7 +831,6 @@ pmap_startup(
 		fillval = 0xDEB8F177;
 	}
 #endif
-    fill = 0;
     
 	if (fill)
 		kprintf("Filling vm_pages with pattern: 0x%x\n", fillval);

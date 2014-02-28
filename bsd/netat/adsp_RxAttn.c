@@ -146,7 +146,7 @@ int RXAttention(sp, mp, f, len)	/* (CCBPtr sp, ADSP_FRAMEPtr f, word len) */
 
     if ((f->descriptor == 
 	 (char)(ADSP_ATTENTION_BIT | ADSP_ACK_REQ_BIT)) && /* Attention Data */
-	((sp->userFlags & eAttention) == 0)) /* & he read the previous */
+	((sp->userFlags & eAttention) == 0)) /* & they read the previous */
     {
 	diff = UAL_VALUE_NTOH(f->pktFirstByteSeq) - sp->attnRecvSeq;
 	if (diff > 0)		/* Hey, he missed one */

@@ -99,6 +99,19 @@ uint64_t pe_arm_get_timebase(__unused void *args)
     return gPESocDispatch.get_timebase();
 }
 
+/**
+ * pe_arm_get_timebase
+ *
+ * Get current system timebase from the SoC handler.
+ */
+void pe_arm_set_timer_enabled(boolean_t enable)
+{
+    if (gPESocDispatch.timer_enabled == NULL)
+        panic("gPESocDispatch.interrupt_init was null, did you forget to set up the table?");
+
+    gPESocDispatch.timer_enabled(enable);
+}
+
 /*
  * iOS like functionality.
  */

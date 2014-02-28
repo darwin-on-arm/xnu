@@ -5,17 +5,21 @@
 
 ifeq ($(findstring Libsyscall,$(RC_ProjectName)),Libsyscall)
 installhdrs:
-	cd libsyscall ; \
-		sdk="$(SDKROOT)" ;								\
+	cd libsyscall ; 								\
+		sdk="$(SDKROOT)" ;							\
 		if [ $${sdk} = / ] ; then						\
-			sdk="" ;									\
-		fi;												\
-		xcrun -sdk "$(SDKROOT)" xcodebuild installhdrs 	\
-			"SRCROOT=$(SRCROOT)/libsyscall" 				\
-			"OBJROOT=$(OBJROOT)" 						\
-			"SYMROOT=$(SYMROOT)" 						\
-			"DSTROOT=$(DSTROOT)"						\
-			"SDKROOT=$${sdk}"
+			sdk="" ;							\
+		fi;									\
+		if [ $(UNAME_S) != "Linux" ]; then					\
+			xcrun -sdk "$(SDKROOT)" xcodebuild installhdrs 			\
+				"SRCROOT=$(SRCROOT)/libsyscall" 			\
+				"OBJROOT=$(OBJROOT)" 					\
+				"SYMROOT=$(SYMROOT)" 					\
+				"DSTROOT=$(DSTROOT)"					\
+				"SDKROOT=$${sdk}"					\
+		else									\
+			# Can't build this yet, ignore					\
+		fi									
 else ifeq ($(findstring libkxld,$(RC_ProjectName)),libkxld)
 installhdrs:
 	make -C libkern/kxld/ installhdrs
@@ -383,17 +387,21 @@ build_setup: $(BUILD_SETUP_SUBDIRS_TARGETS)
 
 ifeq ($(RC_ProjectName),Libsyscall)
 all:
-	cd libsyscall ; \
+	cd libsyscall ; 								\
 		sdk="$(SDKROOT)" ;							\
 		if [ $${sdk} = / ] ; then						\
 			sdk="" ;							\
 		fi;									\
-		xcrun -sdk "$(SDKROOT)" xcodebuild install	 			\
-			"SRCROOT=$(SRCROOT)/libsyscall"					\
-			"OBJROOT=$(OBJROOT)" 						\
-			"SYMROOT=$(SYMROOT)" 						\
-			"DSTROOT=$(DSTROOT)"						\
-			"SDKROOT=$${sdk}"
+		if [ $(UNAME_S) != "Linux" ]; then					\
+			xcrun -sdk "$(SDKROOT)" xcodebuild install	 		\
+				"SRCROOT=$(SRCROOT)/libsyscall"				\
+				"OBJROOT=$(OBJROOT)" 					\
+				"SYMROOT=$(SYMROOT)" 					\
+				"DSTROOT=$(DSTROOT)"					\
+				"SDKROOT=$${sdk}"					\
+		else									\
+			# Can't build this yet, ignore					\
+		fi
 else ifeq ($(RC_ProjectName),libkxld)
 all:
 	make -C libkern/kxld/ install
@@ -402,17 +410,26 @@ all:
 	make -C libkern/kxld/ install PRODUCT_TYPE=ARCHIVE
 else ifeq ($(RC_ProjectName),libkmod)
 all:
-	cd libkern/kmod ; \
+	cd libkern/kmod ; 								\
 		sdk="$(SDKROOT)" ;							\
 		if [ $${sdk} = / ] ; then						\
 			sdk="" ;							\
 		fi;									\
-		xcrun -sdk "$(SDKROOT)" xcodebuild install	 			\
-			"SRCROOT=$(SRCROOT)/libkern/kmod"				\
-			"OBJROOT=$(OBJROOT)" 						\
-			"SYMROOT=$(SYMROOT)" 						\
-			"DSTROOT=$(DSTROOT)"						\
-			"SDKROOT=$${sdk}"
+		if [ $(UNAME_S) != "Linux" ]; then					\
+			xcrun -sdk "$(SDKROOT)" xcodebuild install	 		\
+				"SRCROOT=$(SRCROOT)/libkern/kmod"			\
+				"OBJROOT=$(OBJROOT)" 					\
+				"SYMROOT=$(SYMROOT)" 					\
+				"DSTROOT=$(DSTROOT)"					\
+				"SDKROOT=$${sdk}";					\
+		else									\
+			make								\
+				TARGET=$(TARGET)					\
+				SYMROOT=$(SYMROOT)					\
+				COMPONENT=libkern					\
+				SDKROOT=$${sdk}						\
+				do_install;						\
+		fi
 else ifeq ($(findstring _headers_Sim,$(RC_ProjectName)),_headers_Sim) # Libsyscall/xnu _headers_Sim
 all: exporthdrs
 else # xnu or xnu_debug

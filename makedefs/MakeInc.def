@@ -122,8 +122,9 @@ endif
 #
 export SUPPORTED_I386_MACHINE_CONFIGS := DEFAULT
 export SUPPORTED_X86_64_MACHINE_CONFIGS := DEFAULT
-export SUPPORTED_ARM_MACHINE_CONFIGS := S5L8920X S5L8922X S5L8930X ARMPBA8 SUN4I OMAP3530 RASPBERRYPI
-export SUPPORTED_ARM64_MACHINE_CONFIGS := DEFAULT VEXPRESS
+export SUPPORTED_ARM_MACHINE_CONFIGS := S5L8920X S5L8922X S5L8930X ARMPBA8 SUN4I OMAP3530 OMAP335X RASPBERRYPI \
+					OMAP3430_RX51 ARM_RVEB_V6 S5L8720X S5L8900XRB MSM8960_TOUCHPAD
+export SUPPORTED_ARM64_MACHINE_CONFIGS := DEFAULT VEXPRESS 
 
 #
 # Target configuration options.  NOTE - target configurations will 
@@ -133,7 +134,7 @@ export SUPPORTED_ARM64_MACHINE_CONFIGS := DEFAULT VEXPRESS
 # kernel configuration, the second is the architecture configuration,
 # and the third is the machine configuration.  You may pass in as
 # many groups of configurations as you wish.  Each item passed in is
-# separated by whitespace.
+# separated by whitespace.$
 #
 # Example:
 #	TARGET_CONFIGS="release x86_64 default debug i386 default release arm S5l8920X"
@@ -159,8 +160,7 @@ else
 # generate set of standard embedded configs
 		export TARGET_CONFIGS = $(TARGET_CONFIGS_EMBEDDED)
 	else ifneq ($(filter %_devicemap,$(MAKECMDGOALS)),)
-		DEVICEMAP_PLATFORMS = $(shell $(EMBEDDED_DEVICE_MAP) -query SELECT DISTINCT Platform FROM Targets | $(TR) [:lower:] [:upper:])
-		export TARGET_CONFIGS = $(foreach my_kernel_config,$(KERNEL_CONFIGS_EMBEDDED),$(foreach my_arch,$(ARCH_CONFIGS),$(foreach my_machine_config,$(filter $(DEVICEMAP_PLATFORMS),$(SUPPORTED_$(my_arch)_MACHINE_CONFIGS)),$(my_kernel_config) $(my_arch) $(my_machine_config) )))
+		export TARGET_CONFIGS = $(strip $(foreach my_arch_config, $(ARCH_CONFIGS), $(foreach my_kern_config, $(KERNEL_CONFIGS), $(my_kern_config) $(my_arch_config) $(MACHINE_CONFIG))))
 	else
 # generate TARGET_CONFIGS using KERNEL_CONFIGS and ARCH_CONFIGS and MACHINE_CONFIG (which defaults to "DEFAULT")
 		export TARGET_CONFIGS = $(strip $(foreach my_arch_config, $(ARCH_CONFIGS), $(foreach my_kern_config, $(KERNEL_CONFIGS), $(my_kern_config) $(my_arch_config) $(MACHINE_CONFIG))))
@@ -206,7 +206,7 @@ endif
 #
 # Kernel Configuration to install
 #
-#  supported install architecture : I386 X86_64 
+#  supported install architecture : I386 X86_64 ARM
 #
 export INSTALL_TYPE 	= $(DEFAULT_KERNEL_CONFIG)
 
@@ -223,6 +223,7 @@ endif
 #
 # Deployment target flag
 #
+ifeq ($(UNAME_S),Darwin)
 ifndef DEPLOYMENT_TARGET_FLAGS
 SDKVERSION=$(shell xcodebuild -sdk $(SDKROOT) -version SDKVersion | head -1)
 ifeq ($(PLATFORM),MacOSX)
@@ -234,6 +235,9 @@ else ifeq ($(PLATFORM),iPhoneSimulator)
 else
     export DEPLOYMENT_TARGET_FLAGS := 
 endif
+endif
+else
+	export DEPLOYMENT_TARGET_FLAGS :=
 endif
 
 #
@@ -290,13 +294,19 @@ endef
 #
 # Setup for parallel sub-makes based on 2 times number of logical CPUs
 #
+ifeq ($(UNAME_S),Darwin)
 ifndef MAKEJOBS
 export MAKEJOBS = --jobs=$(shell expr `/usr/sbin//sysctl -n hw.logicalcpu` \* 2)
+endif
+else
+ifndef MAKEJOBS
+export MAKEJOBS := --jobs=$(shell expr `nproc` \* 2)
+endif
 endif
 
 #
 # Default ARCH_FLAGS, for use with compiler/linker/assembler/mig drivers
-
+#
 ARCH_FLAGS_I386		  = -arch i386
 ARCH_FLAGS_X86_64	  = -arch x86_64
 ARCH_FLAGS_ARM64	= -arch arm64
@@ -306,13 +316,31 @@ ARCH_FLAGS_ARM		  = $($(addsuffix $(MACHINE_CONFIG),ARCH_FLAGS_ARM_))
 ARCH_FLAGS_ARM_S5L8930X	= -arch armv7
 ARCH_FLAGS_ARM_S5L8922X	= -arch armv7
 ARCH_FLAGS_ARM_S5L8920X	= -arch armv7
+ARCH_FLAGS_ARM_S5L8720X	= -arch armv6
+ARCH_FLAGS_ARM_S5L8900XRB	= -arch armv6
 ARCH_FLAGS_ARM_OMAP3530	= -arch armv7
+ARCH_FLAGS_ARM_OMAP3430_RX51 = -arch armv7
+ARCH_FLAGS_ARM_OMAP335X	= -arch armv7
 ARCH_FLAGS_ARM_ARMPBA8	= -arch armv7
+ARCH_FLAGS_ARM_MSM8960_TOUCHPAD	= -arch armv7
 ARCH_FLAGS_ARM_RASPBERRYPI	= -arch armv6
+ARCH_FLAGS_ARM_ARM_RVEB_V6	= -arch armv6
 
 #
 # Default CFLAGS
 #
+
+ifeq ($(UNAME_S),Linux)
+	# Get our toolchain prefix if we need it
+	ifeq ($(word 2, $(TARGET_CONFIGS_UC)),ARM)
+		TARGET_PROFILE ?= arm-apple-darwin11
+		TARGET_CRT ?= /usr/lib/libclang_rt.cc_kext.a
+		BUILD_NO_DEBUG := 1
+        	RC_CFLAGS := -D__arm__ -DARM -target $(TARGET_PROFILE)
+        	RC_LDFLAGS := -target $(TARGET_PROFILE) $(TARGET_CRT)
+	endif
+endif
+
 ifdef RC_CFLAGS
 export OTHER_CFLAGS	= $(subst $(addprefix -arch ,$(RC_ARCHS)),,$(RC_CFLAGS))
 endif
@@ -531,21 +559,21 @@ export LDFLAGS_KERNEL_DEVELOPMENTX86_64 = $(LDFLAGS_KERNEL_RELEASEX86_64)
 export LDFLAGS_KERNEL_PROFILEX86_64 = $(LDFLAGS_KERNEL_RELEASEX86_64)
 
 export LDFLAGS_KERNEL_RELEASEARM     = \
+	-Wl,-pie \
 	-Wl,-static \
 	-Wl,-image_base,0x80001000 \
+	-Wl,-seg_page_size,__TEXT,0x1000 \
+	-Wl,-sectalign,__DATA,__const,0x1000 \
+	-Wl,-sectalign,__DATA,__sysctl_set,0x1000 \
 	-Wl,-exported_symbols_list,$(TARGET)/kernel-kpi.exp
 
 export LDFLAGS_KERNEL_DEVELOPMENTARM     = \
+	-Wl,-pie \
 	-Wl,-static \
+	-Wl,-seg_page_size,__TEXT,0x1000 \
+	-Wl,-sectalign,__DATA,__const,0x1000 \
+	-Wl,-sectalign,__DATA,__sysctl_set,0x1000 \
 	-Wl,-image_base,0x80001000
-
-ifeq ($(NO_PIE), 1)
-	LDFLAGS_KERNEL_RELEASEARM +=
-	LDFLAGS_KERNEL_DEVELOPMENTARM +=
-else
-	LDFLAGS_KERNEL_RELEASEARM += -Wl,-pie
-	LDFLAGS_KERNEL_DEVELOPMENTARM += -Wl,-pie
-endif
 
 export LDFLAGS_KERNEL_DEBUGARM = $(LDFLAGS_KERNEL_DEVELOPMENTARM)
 

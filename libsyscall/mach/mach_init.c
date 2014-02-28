@@ -63,7 +63,7 @@
 #include "mig_reply_port.h"
 
 mach_port_t	mach_task_self_ = MACH_PORT_NULL;
-#ifdef __i386__
+#if defined(__i386__) || defined(__arm__)
 mach_port_t	mach_host_self_ = MACH_PORT_NULL;
 #endif
 

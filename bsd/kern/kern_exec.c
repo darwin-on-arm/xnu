@@ -954,6 +954,9 @@ grade:
 		ap = thread_adjuserstack(thread, -new_ptr_size);
 		error = copyoutptr(load_result.mach_header, ap, new_ptr_size);
 
+		/* Print out information. */
+		kprintf("exec_mach_imgact: mach_header = %x, sp %llx\n", load_result.mach_header, ap);
+
 		if (error) {
 		        if (vfexec || spawn)
 			        vm_map_switch(old_map);

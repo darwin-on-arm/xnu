@@ -138,12 +138,14 @@ typedef _STRUCT_ARM_LEGACY_DEBUG_STATE		arm_debug_state_t;
 #define MACHINE_THREAD_STATE 		ARM_THREAD_STATE
 #define MACHINE_THREAD_STATE_COUNT	ARM_UNIFIED_THREAD_STATE_COUNT
 
-
-
 /*
  * Largest state on this machine:
  */
 #define THREAD_MACHINE_STATE_MAX	THREAD_STATE_MAX
 
+static inline void *saved_state64(void *iss)
+{
+    return iss;
+}
 
 #endif    /* _ARM_THREAD_STATUS_H_ */

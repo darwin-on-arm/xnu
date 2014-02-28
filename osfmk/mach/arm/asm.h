@@ -201,6 +201,10 @@
  *   LOAD_ADDR_GEN_DEF(arm_init_cpu)
  */
 
+#ifdef _ARM_ARCH_7
+#define SLIDABLE 1
+#endif
+
 #if SLIDABLE
 /* Definitions for a position dependent kernel using non-lazy pointers.
  */

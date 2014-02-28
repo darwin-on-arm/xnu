@@ -11,13 +11,13 @@ DATAFILES = \
 	_structs.h	endian.h	param.h		types.h \
 	_limits.h	_types.h	limits.h	setjmp.h \
 	_param.h	arch.h		locks.h		signal.h \
-	_mcontext.h
+	_mcontext.h	vmparam.h
 
 KERNELFILES = \
 	_structs.h	endian.h	param.h		types.h \
 	_limits.h	_types.h	limits.h	setjmp.h \
 	_param.h	arch.h		locks.h		signal.h \
-	_mcontext.h
+	_mcontext.h	vmparam.h
 
 
 INSTALL_MD_LIST = ${DATAFILES}

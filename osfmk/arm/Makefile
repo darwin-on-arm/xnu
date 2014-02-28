@@ -12,9 +12,11 @@ EXPORT_ONLY_FILES = 	\
 		    locks.h lock.h cpu_number.h \
 		cpu_capabilities.h mp.h io_map_entries.h \
 		thread.h task.h ast.h ast_types.h \
-		pmap.h machlimits.h cpu_affinity.h  asm_help.h
+		pmap.h machlimits.h cpu_affinity.h  asm_help.h cpu_data.h cpuid.h
  
 INSTALL_MD_DIR = arm
+
+INSTALL_MD_LCL_LIST = cpu_capabilities.h
 
 EXPORT_MD_LIST = ${EXPORT_ONLY_FILES}
 

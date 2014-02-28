@@ -55,18 +55,16 @@ bool AppleARMPE::start(IOService * provider)
     publishResource("IORTC");
 #endif
 
-    if (kSuccess == DTLookupEntry(NULL, "/", &entry)) {
-        /*
-         * What's the device name? 
-         */
-        if (kSuccess == DTGetProperty(entry, "compatible", (void **) &dtype, &size)) {
-            populate_model_name(dtype);
-        } else {
-            populate_model_name("Generic ARM Device");
-        }
-    } else {
-        populate_model_name("Generic ARM Device");
-    }
+    OSData *        prop;
+    bool        ok = false;
+
+    prop = (OSData *) getProvider()->getProperty( gIODTModelKey );
+    ok = (0 != prop);
+
+    if( ok )
+        populate_model_name((char *) prop->getBytesNoCopy());
+    else
+        populate_model_name("Power Macintosh");
 
     return true;
 }
@@ -88,6 +86,17 @@ IOService *AppleARMPE::probe(IOService * provider, SInt32 * score)
 
 bool AppleARMPE::getMachineName(char *name, int maxLength)
 {
-    strncpy(name, "generic-arm", maxLength);
-    return true;
+    OSData *        prop;
+    bool        ok = false;
+
+    maxLength--;
+    prop = (OSData *) getProvider()->getProperty( gIODTModelKey );
+    ok = (0 != prop);
+
+    if( ok )
+        strlcpy( name, (const char *) prop->getBytesNoCopy(), maxLength );
+    else 
+        strlcpy( name, "Power Macintosh", maxLength );
+    
+    return(true);
 }

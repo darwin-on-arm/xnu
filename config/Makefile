@@ -51,6 +51,12 @@ else
 OBJPATH = $(OBJROOT)/$(KERNEL_CONFIG)_$(ARCH_CONFIG)
 endif
 
+ifeq ($(ARCH_CONFIG),ARM)
+SUPPORT_SYSTEM60_KEXT	= 1
+else
+SUPPORT_SYSTEM60_KEXT	= 0
+endif
+
 ifeq ($(ARCH_CONFIG),I386)
 SUPPORT_SYSTEM60_KEXT	= 1
 else
@@ -95,8 +101,8 @@ $(SYMBOL_SET_BUILD): $(OBJPATH)/%.symbolset :  %.exports %.$(ARCH_CONFIG_LC).exp
 		$(KEXT_CREATE_SYMBOL_SET) \
 		$($(addsuffix $(ARCH_CONFIG),ARCH_FLAGS_)) \
 		-import $(OBJPATH)/allsymbols \
-		-export $*.exports \
-		-export $*.$(ARCH_CONFIG_LC).exports \
+		-export $(SRCROOT)/config/$*.exports \
+		-export $(SRCROOT)/config/$*.$(ARCH_CONFIG_LC).exports \
 		-output $@ $(_vstdout); \
 	fi
 	$(_v)if [ ! -e $@ ]; then	\

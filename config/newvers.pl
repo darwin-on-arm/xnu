@@ -47,6 +47,7 @@ die("SRCROOT not defined") unless defined($ENV{'SRCROOT'});
 die("OBJROOT not defined") unless defined($ENV{'OBJROOT'});
 
 my $versfile = "MasterVersion";
+
 $versfile = "$ENV{'SRCROOT'}/config/$versfile";
 my $BUILD_SRCROOT=$ENV{'SRCROOT'};
 $BUILD_SRCROOT =~ s,/+$,,;
@@ -61,7 +62,7 @@ $BUILDER2 =~ s/[\n\t]//g;
 my $HOST=`hostname -f`;
 $HOST =~ s/[\n\t]//g;
 
-my $BUILDER = $BUILDER2 . "(" . $HOST . ")";
+my $BUILDER = $BUILDER2;
 
 # Handle two scenarios:
 # SRCROOT=/tmp/xnu

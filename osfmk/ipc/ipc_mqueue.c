@@ -886,7 +886,7 @@ ipc_mqueue_receive_on_thread(
  *	Routine:	ipc_mqueue_select_on_thread
  *	Purpose:
  *		A receiver discovered that there was a message on the queue
- *		before he had to block.  Pick the message off the queue and
+ *		before they had to block.  Pick the message off the queue and
  *		"post" it to thread.
  *	Conditions:
  *		mqueue locked.

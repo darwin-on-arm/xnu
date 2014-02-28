@@ -50,8 +50,6 @@ fcntl(int fd, int cmd, ...)
 	 case F_GETPATH:
 	 case F_GETPATH_MTMINFO:
 	 case F_PATHPKG_CHECK:
-	 case F_OPENFROM:
-	 case F_UNLINKFROM:
 	 case F_ADDSIGS:
 	 case F_ADDFILESIGS:
 		arg = va_arg(ap, void *);

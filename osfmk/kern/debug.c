@@ -311,11 +311,16 @@ panic_epilogue(spl_t	s)
 	/* NOTREACHED */
 }
 
+extern int enable_timing;
+
 void
 panic(const char *str, ...)
 {
 	va_list	listp;
 	spl_t	s;
+
+	if(enable_timing)
+		enable_timing = 0;
 
 	/* panic_caller is initialized to 0.  If set, don't change it */
 	if ( ! panic_caller )
@@ -333,6 +338,8 @@ panic(const char *str, ...)
 	/*
 	 * Release panicwait indicator so that other cpus may call Debugger().
 	 */
+	enable_timing = 1;
+
 	panicwait = 0;
 	Debugger("panic");
 	panic_epilogue(s);
@@ -463,6 +470,7 @@ void populate_model_name(char *model_string) {
 }
 
 static void panic_display_model_name(void) {
+#ifndef __arm__
 	char tmp_model_name[sizeof(model_name)];
 
 	if (ml_nofault_copy((vm_offset_t) &model_name, (vm_offset_t) &tmp_model_name, sizeof(model_name)) != sizeof(model_name))
@@ -472,9 +480,13 @@ static void panic_display_model_name(void) {
 
 	if (tmp_model_name[0] != 0)
 		kdb_printf("System model name: %s\n", tmp_model_name);
+#else
+	kdb_printf("System model name: %s\n", model_name);
+#endif
 }
 
 static void panic_display_kernel_uuid(void) {
+#ifndef __arm__
 	char tmp_kernel_uuid[sizeof(kernel_uuid)];
 
 	if (ml_nofault_copy((vm_offset_t) &kernel_uuid, (vm_offset_t) &tmp_kernel_uuid, sizeof(kernel_uuid)) != sizeof(kernel_uuid))
@@ -482,6 +494,9 @@ static void panic_display_kernel_uuid(void) {
 
 	if (tmp_kernel_uuid[0] != '\0')
 		kdb_printf("Kernel UUID: %s\n", tmp_kernel_uuid);
+#else
+	kdb_printf("Kernel UUID: %s\n", kernel_uuid);
+#endif
 }
 
 static void panic_display_kernel_aslr(void) {
@@ -515,23 +530,14 @@ extern uint32_t debug_enabled;
 #endif
 
 __private_extern__ void panic_display_system_configuration(void) {
-
-	//panic_display_process_name();
-#ifdef __arm__
-	{
-#else
+	panic_display_process_name();
 	if (OSCompareAndSwap(0, 1, &config_displayed)) {
-#endif
 		char buf[256];
 		if (strlcpy(buf, PE_boot_args(), sizeof(buf)))
 			kdb_printf("Boot args: %s\n", buf);
 		kdb_printf("\nMac OS version:\n%s\n",
 		    (osversion[0] != 0) ? osversion : "Not yet set");
 		kdb_printf("\nKernel version:\n%s\n",version);
-#ifdef __arm__
-		kdb_printf("\niBoot version: %s\n", firmware_version);
-		kdb_printf("Secure boot?: %s\n\n", debug_enabled ? "NO" : "YES");
-#endif
 		panic_display_kernel_uuid();
 		panic_display_kernel_aslr();
 		panic_display_pal_info();

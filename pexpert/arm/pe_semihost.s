@@ -51,6 +51,9 @@ _semihost_buffer_ptr:
 _semihost_buffer_ptr_ptr:
     .long _semihost_buffer_ptr
 
+#ifdef BOARD_CONFIG_ARMPBA8
+#define SEMIHOSTING_ONLY 1
+#endif
 
 /**
  * PE_semihost_write_char
@@ -59,6 +62,7 @@ _semihost_buffer_ptr_ptr:
  */
 #ifndef __LP64__
 EnterARM(PE_semihost_write_char)
+#if 0
 #ifndef SEMIHOSTING_ONLY
     ldr     r1, _semihost_buffer_ptr
     strb    r0, [r1]
@@ -66,10 +70,11 @@ EnterARM(PE_semihost_write_char)
     ldr     r2, _semihost_buffer_ptr_ptr
     str     r1, [r2]
 #else
-    ldr     r1, _semihost_buffer_ptr
+    ldr     r1, _semihost_buffer
     strb    r0, [r1]
     mov     r0, #0x03       // SYS_WRITEC
     svc     0x123456
+#endif
 #endif
     bx      lr
 #else

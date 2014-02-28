@@ -345,7 +345,6 @@ exception_triage(
 	/*
 	 * Nobody handled it, terminate the task.
 	 */
-
 	(void) task_terminate(task);
 
 out:

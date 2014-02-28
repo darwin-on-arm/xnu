@@ -56,7 +56,8 @@ int pal_serial_getc(void)
  * even though they're not used on this platform.
  */
 #undef pal_dbg_page_fault
-void pal_dbg_page_fault(thread_t thread __unused, user_addr_t vaddr __unused, kern_return_t kr __unused)
+void pal_dbg_page_fault(thread_t thread __unused, user_addr_t vaddr __unused,
+                        kern_return_t kr __unused)
 {
 }
 

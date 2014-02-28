@@ -106,7 +106,7 @@ typedef int		vm_prot_t;
 #define VM_PROT_NO_CHANGE	((vm_prot_t) 0x08)
 
 /* 
- *      When a caller finds that he cannot obtain write permission on a
+ *      When a caller finds that they cannot obtain write permission on a
  *      mapped entry, the following flag can be used.  The entry will
  *      be made "needs copy" effectively copying the object (using COW),
  *      and write permission will be added to the maximum protections

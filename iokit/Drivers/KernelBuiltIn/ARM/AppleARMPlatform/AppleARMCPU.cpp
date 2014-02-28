@@ -49,6 +49,21 @@ bool AppleARMCPU::start(IOService * provider)
 
     registerService();
 
+
+    ml_processor_info_t info;
+    info.cpu_id = this;
+    info.boot_cpu = 1;
+    info.l2cr_value = 0;
+    info.start_paddr = 0x100;
+    info.supports_nap = 0;
+    info.time_base_enable = NULL;
+
+    kern_return_t result = ml_processor_register(&info, &machProcessor, &ipi_handler);
+    assert(result == KERN_SUCCESS);
+    IOLog("AppleARMCPU::start: registered processor with Mach subsystem.\n");
+    processor_start(machProcessor);  
+  
+
     return true;
 }
 

@@ -132,9 +132,15 @@ int main(int argc, char **argv)
     DECLARE("MUTEX_PTR", offsetof(lck_mtx_t *, lck_mtx_ptr));
     DECLARE("MUTEX_ASSERT_OWNED", LCK_MTX_ASSERT_OWNED);
     DECLARE("MUTEX_ASSERT_NOTOWNED", LCK_MTX_ASSERT_NOTOWNED);
-    DECLARE("GRP_MTX_STAT_UTIL", offsetof(lck_grp_t *, lck_grp_stat.lck_grp_mtx_stat.lck_grp_mtx_util_cnt));
-    DECLARE("GRP_MTX_STAT_MISS", offsetof(lck_grp_t *, lck_grp_stat.lck_grp_mtx_stat.lck_grp_mtx_miss_cnt));
-    DECLARE("GRP_MTX_STAT_WAIT", offsetof(lck_grp_t *, lck_grp_stat.lck_grp_mtx_stat.lck_grp_mtx_wait_cnt));
+    DECLARE("GRP_MTX_STAT_UTIL",
+            offsetof(lck_grp_t *,
+                     lck_grp_stat.lck_grp_mtx_stat.lck_grp_mtx_util_cnt));
+    DECLARE("GRP_MTX_STAT_MISS",
+            offsetof(lck_grp_t *,
+                     lck_grp_stat.lck_grp_mtx_stat.lck_grp_mtx_miss_cnt));
+    DECLARE("GRP_MTX_STAT_WAIT",
+            offsetof(lck_grp_t *,
+                     lck_grp_stat.lck_grp_mtx_stat.lck_grp_mtx_wait_cnt));
 
     /*
      * Per-mutex statistic element 
@@ -149,6 +155,7 @@ int main(int argc, char **argv)
     /*
      * Boot-args 
      */
+    DECLARE("BOOT_ARGS_VERSION", offsetof(boot_args *, Version));
     DECLARE("BOOT_ARGS_VIRTBASE", offsetof(boot_args *, virtBase));
     DECLARE("BOOT_ARGS_PHYSBASE", offsetof(boot_args *, physBase));
     DECLARE("BOOT_ARGS_MEMSIZE", offsetof(boot_args *, memSize));
@@ -158,9 +165,13 @@ int main(int argc, char **argv)
     /*
      * The use of this field is somewhat at variance with the alias.
      */
-    DECLARE("GRP_MTX_STAT_DIRECT_WAIT", offsetof(lck_grp_t *, lck_grp_stat.lck_grp_mtx_stat.lck_grp_mtx_held_cnt));
+    DECLARE("GRP_MTX_STAT_DIRECT_WAIT",
+            offsetof(lck_grp_t *,
+                     lck_grp_stat.lck_grp_mtx_stat.lck_grp_mtx_held_cnt));
 
-    DECLARE("GRP_MTX_STAT_HELD_MAX", offsetof(lck_grp_t *, lck_grp_stat.lck_grp_mtx_stat.lck_grp_mtx_held_max));
+    DECLARE("GRP_MTX_STAT_HELD_MAX",
+            offsetof(lck_grp_t *,
+                     lck_grp_stat.lck_grp_mtx_stat.lck_grp_mtx_held_max));
     /*
      * Reader writer lock types 
      */
@@ -171,7 +182,8 @@ int main(int argc, char **argv)
     DECLARE("TH_CONTINUATION", offsetof(thread_t, continuation));
     DECLARE("TH_KERNEL_STACK", offsetof(thread_t, kernel_stack));
     DECLARE("TH_MUTEX_COUNT", offsetof(thread_t, mutex_count));
-    DECLARE("TH_WAS_PROMOTED_ON_WAKEUP", offsetof(thread_t, was_promoted_on_wakeup));
+    DECLARE("TH_WAS_PROMOTED_ON_WAKEUP",
+            offsetof(thread_t, was_promoted_on_wakeup));
 
     DECLARE("TH_SYSCALLS_MACH", offsetof(thread_t, syscalls_mach));
     DECLARE("TH_SYSCALLS_UNIX", offsetof(thread_t, syscalls_unix));
@@ -182,12 +194,22 @@ int main(int argc, char **argv)
      * These fields are being added on demand 
      */
     DECLARE("MACHINE_THREAD", offsetof(thread_t, machine));
-    DECLARE("MACHINE_THREAD_PREEMPT_COUNT", offsetof(thread_t, machine.preempt_count));
+    DECLARE("MACHINE_THREAD_PREEMPT_COUNT",
+            offsetof(thread_t, machine.preempt_count));
     DECLARE("MACHINE_THREAD_CPU_DATA", offsetof(thread_t, machine.cpu_data));
-    DECLARE("MACHINE_THREAD_CTHREAD_SELF", offsetof(thread_t, machine.cthread_self));
+    DECLARE("MACHINE_THREAD_CTHREAD_SELF",
+            offsetof(thread_t, machine.cthread_self));
 
     DECLARE("CPU_PENDING_AST", offsetof(cpu_data_t *, cpu_pending_ast));
     DECLARE("CPU_PREEMPT_COUNT", offsetof(cpu_data_t *, cpu_preemption_level));
+
+    DECLARE("CPU_FLEH_RESET", offsetof(cpu_data_t *, fleh_reset));
+    DECLARE("CPU_FLEH_UNDEF", offsetof(cpu_data_t *, fleh_undef));
+    DECLARE("CPU_FLEH_SWI", offsetof(cpu_data_t *, fleh_swi));
+    DECLARE("CPU_FLEH_PREFETCH", offsetof(cpu_data_t *, fleh_prefabt));
+    DECLARE("CPU_FLEH_DATAABORT", offsetof(cpu_data_t *, fleh_dataabt));
+    DECLARE("CPU_FLEH_DATAEXC", offsetof(cpu_data_t *, fleh_prefabt));
+    DECLARE("CPU_FLEH_IRQ", offsetof(cpu_data_t *, fleh_irq));
 
     DECLARE("CPU_PMAP", offsetof(cpu_data_t *, user_pmap));
 
@@ -220,10 +242,14 @@ int main(int argc, char **argv)
     DECLARE("CPU_INT_STACK_TOP", offsetof(cpu_data_t *, cpu_int_stack_top));
 
 #if	MACH_RT
-    DECLARE("CPU_PREEMPTION_LEVEL", offsetof(cpu_data_t *, cpu_preemption_level));
+    DECLARE("CPU_PREEMPTION_LEVEL",
+            offsetof(cpu_data_t *, cpu_preemption_level));
 #endif                          /* MACH_RT */
     DECLARE("CPU_PROCESSOR", offsetof(cpu_data_t *, cpu_processor));
     DECLARE("CPU_ONFAULT", offsetof(cpu_data_t *, cpu_onfault));
+
+    DECLARE("CPU_INTERRUPT_LEVEL",
+            offsetof(cpu_data_t *, cpu_interrupt_level));
 
     /*
      *  usimple_lock fields
@@ -237,7 +263,8 @@ int main(int argc, char **argv)
 
 #if	CONFIG_DTRACE
     DECLARE("LS_LCK_MTX_LOCK_ACQUIRE", LS_LCK_MTX_LOCK_ACQUIRE);
-    DECLARE("LS_LCK_MTX_TRY_SPIN_LOCK_ACQUIRE", LS_LCK_MTX_TRY_SPIN_LOCK_ACQUIRE);
+    DECLARE("LS_LCK_MTX_TRY_SPIN_LOCK_ACQUIRE",
+            LS_LCK_MTX_TRY_SPIN_LOCK_ACQUIRE);
     DECLARE("LS_LCK_MTX_UNLOCK_RELEASE", LS_LCK_MTX_UNLOCK_RELEASE);
     DECLARE("LS_LCK_MTX_TRY_LOCK_ACQUIRE", LS_LCK_MTX_TRY_LOCK_ACQUIRE);
     DECLARE("LS_LCK_RW_LOCK_SHARED_ACQUIRE", LS_LCK_RW_LOCK_SHARED_ACQUIRE);
@@ -246,9 +273,11 @@ int main(int argc, char **argv)
     DECLARE("LS_LCK_MTX_TRY_EXT_LOCK_ACQUIRE", LS_LCK_MTX_TRY_EXT_LOCK_ACQUIRE);
     DECLARE("LS_LCK_MTX_EXT_UNLOCK_RELEASE", LS_LCK_MTX_EXT_UNLOCK_RELEASE);
     DECLARE("LS_LCK_RW_LOCK_EXCL_ACQUIRE", LS_LCK_RW_LOCK_EXCL_ACQUIRE);
-    DECLARE("LS_LCK_RW_LOCK_SHARED_TO_EXCL_UPGRADE", LS_LCK_RW_LOCK_SHARED_TO_EXCL_UPGRADE);
+    DECLARE("LS_LCK_RW_LOCK_SHARED_TO_EXCL_UPGRADE",
+            LS_LCK_RW_LOCK_SHARED_TO_EXCL_UPGRADE);
     DECLARE("LS_LCK_RW_TRY_LOCK_EXCL_ACQUIRE", LS_LCK_RW_TRY_LOCK_EXCL_ACQUIRE);
-    DECLARE("LS_LCK_RW_TRY_LOCK_SHARED_ACQUIRE", LS_LCK_RW_TRY_LOCK_SHARED_ACQUIRE);
+    DECLARE("LS_LCK_RW_TRY_LOCK_SHARED_ACQUIRE",
+            LS_LCK_RW_TRY_LOCK_SHARED_ACQUIRE);
     DECLARE("LS_LCK_MTX_LOCK_SPIN_ACQUIRE", LS_LCK_MTX_LOCK_SPIN_ACQUIRE);
 #endif
 

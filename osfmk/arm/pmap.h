@@ -1,4 +1,31 @@
-// stolen from ppc
+/*
+ * Copyright 2013, winocm. <winocm@icloud.com>
+ * All rights reserved.
+ * 
+ * Redistribution and use in source and binary forms, with or without modification,
+ * are permitted provided that the following conditions are met:
+ * 
+ *   Redistributions of source code must retain the above copyright notice, this
+ *   list of conditions and the following disclaimer.
+ * 
+ *   Redistributions in binary form must reproduce the above copyright notice, this
+ *   list of conditions and the following disclaimer in the documentation and/or
+ *   other materials provided with the distribution.
+ * 
+ *   If you are going to use this software in any form that does not involve
+ *   releasing the source to this project or improving it, let me know beforehand.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+ * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
+ * ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+ * ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+ * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
 
 #ifndef _ARM_PMAP_H_
 #define _ARM_PMAP_H_
@@ -12,6 +39,7 @@
 #include <kern/kern_types.h>
 #include <kern/thread.h>
 #include <kern/lock.h>
+#include <kern/ledger.h>
 
 #ifdef MACH_KERNEL_PRIVATE
 #include <pexpert/arm/boot.h>
@@ -45,6 +73,7 @@
  * pmap locking
  */
 
+#if 0
 #define PMAP_LOCK(pmap) {		     \
     simple_lock(&(pmap)->lock);	    \
 }
@@ -52,6 +81,7 @@
 #define PMAP_UNLOCK(pmap) {			      \
     simple_unlock(&(pmap)->lock);		  \
 }
+#endif
 
 #define l2_size(size) ((uint32_t)((size >> 20) << 10))
 
@@ -76,6 +106,12 @@ struct pmap {
     int pm_nx;                  /* protection for pmap */
     task_map_t pm_task_map;     /* process task map */
     struct pmap_statistics pm_stats;
+    uint32_t pm_l1_size;
+    uint32_t pm_asid;           /* Old... */
+    vm_object_t pm_obj;
+#define PMAP_ASID_MAX_CPUS  (48)  /* Must be a multiple of 8 */
+    asid_t pmap_asid_cpus[PMAP_ASID_MAX_CPUS];
+    volatile uint8_t pmap_asid_coherency_vector[PMAP_ASID_MAX_CPUS];
 };
 
 typedef struct arm_l1_entry_t {
@@ -117,7 +153,7 @@ typedef struct arm_l2_t {
 } arm_l2_t;
 #pragma pack()
 
-#define	PMAP_SWITCH_USER(th, map, my_cpu) th->map = map;
+#define	PMAP_SWITCH_USER(th, map, my_cpu) pmap_switch(map->pmap), th->map = map;
 
 #define pmap_kernel_va(VA)	\
 	(((VA) >= VM_MIN_KERNEL_ADDRESS) && ((VA) <= vm_last_addr))
@@ -139,6 +175,8 @@ typedef struct arm_l2_t {
 /* write combining mode, aka store gather */
 #define VM_WIMG_WCOMB		(VM_MEM_NOT_CACHEABLE | VM_MEM_COHERENT)
 #define	VM_WIMG_INNERWBACK	VM_MEM_COHERENT
+
+#define L1SHIFT       20
 
 /* 
  * prototypes.
@@ -181,6 +219,7 @@ typedef struct arm_l2_t {
 #define L2_ACCESS_PRO 0x210
 
 #define L2_ACCESS_USER      (1 << 5)
+#define L2_ACCESS_APX       (1 << 9)
 
 #define tte_is_page_table(tte) ((tte & L1_TYPE_MASK) == L1_TYPE_PTE)
 
@@ -193,12 +232,19 @@ typedef struct arm_l2_t {
 
 extern addr64_t kvtophys(vm_offset_t va);   /* Get physical address from kernel virtual */
 extern vm_map_offset_t kvtophys64(vm_map_offset_t va);  /* Get 64-bit physical address from kernel virtual */
-extern vm_offset_t pmap_map(vm_offset_t virt, vm_map_offset_t start, vm_map_offset_t end, vm_prot_t prot, unsigned int flags);
+extern vm_offset_t pmap_map(vm_offset_t virt, vm_map_offset_t start,
+                            vm_map_offset_t end, vm_prot_t prot,
+                            unsigned int flags);
 
-extern boolean_t pmap_map_bd(vm_offset_t virt, vm_map_offset_t start, vm_map_offset_t end, vm_prot_t prot, unsigned int flags);
+extern boolean_t pmap_map_bd(vm_offset_t virt, vm_map_offset_t start,
+                             vm_map_offset_t end, vm_prot_t prot,
+                             unsigned int flags);
 
-extern kern_return_t pmap_add_physical_memory(vm_offset_t spa, vm_offset_t epa, boolean_t available, unsigned int attr);
-extern void pmap_bootstrap(uint64_t msize, vm_offset_t * first_avail, unsigned int kmapsize);
+extern kern_return_t pmap_add_physical_memory(vm_offset_t spa, vm_offset_t epa,
+                                              boolean_t available,
+                                              unsigned int attr);
+extern void pmap_bootstrap(uint64_t msize, vm_offset_t * first_avail,
+                           unsigned int kmapsize);
 
 extern vm_offset_t pmap_get_phys(pmap_t pmap, void *virt);
 
@@ -213,21 +259,27 @@ extern void invalidate_dcache(vm_offset_t va, unsigned length, boolean_t phys);
 extern void invalidate_dcache64(addr64_t va, unsigned length, boolean_t phys);
 extern void invalidate_icache(vm_offset_t va, unsigned length, boolean_t phys);
 extern void invalidate_icache64(addr64_t va, unsigned length, boolean_t phys);
-extern void pmap_map_block(pmap_t pmap, addr64_t va, ppnum_t pa, uint32_t size, vm_prot_t prot, int attr, unsigned int flags);
-extern int pmap_map_block_rc(pmap_t pmap, addr64_t va, ppnum_t pa, uint32_t size, vm_prot_t prot, int attr, unsigned int flags);
+extern void pmap_map_block(pmap_t pmap, addr64_t va, ppnum_t pa, uint32_t size,
+                           vm_prot_t prot, int attr, unsigned int flags);
+extern int pmap_map_block_rc(pmap_t pmap, addr64_t va, ppnum_t pa,
+                             uint32_t size, vm_prot_t prot, int attr,
+                             unsigned int flags);
 
 extern ppnum_t pmap_find_phys(pmap_t pmap, addr64_t va);
 extern void MapUserMemoryWindowInit(void);
 extern addr64_t MapUserMemoryWindow(vm_map_t map, addr64_t va);
 extern boolean_t pmap_eligible_for_execute(ppnum_t pa);
-extern int pmap_list_resident_pages(struct pmap *pmap, vm_offset_t * listp, int space);
+extern int pmap_list_resident_pages(struct pmap *pmap, vm_offset_t * listp,
+                                    int space);
 extern void pmap_init_sharedpage(vm_offset_t cpg);
 extern void pmap_disable_NX(pmap_t pmap);
 
 extern boolean_t pmap_valid_page(ppnum_t pn);
-
+extern void pmap_deallocate_l1(pmap_t pmap);
+extern vm_offset_t pmap_pte(pmap_t pmap, vm_offset_t virt);
 extern void pt_fake_zone_init(int);
-extern void pt_fake_zone_info(int *, vm_size_t *, vm_size_t *, vm_size_t *, vm_size_t *, uint64_t *, int *, int *, int *);
+extern void pt_fake_zone_info(int *, vm_size_t *, vm_size_t *, vm_size_t *,
+                              vm_size_t *, uint64_t *, int *, int *, int *);
 
 extern void pmap_create_sharedpage(void);
 
@@ -239,7 +291,6 @@ static inline void pmap_set_4GB_pagezero(__unused pmap_t pmap)
 static inline void pmap_clear_4GB_pagezero(__unused pmap_t pmap)
 {
 }
-#endif
 
 typedef struct mem_region {
     vm_offset_t start;          /* Address of base of region */
@@ -256,7 +307,10 @@ extern int pmap_mem_regions_count;
 void pmap_common_init(pmap_t pmap);
 void pmap_static_init(void);
 
-void l2_map_linear_range(uint32_t pa_cache_start, uint32_t phys_start, uint32_t phys_end);
-void l2_cache_to_range(uint32_t pa_cache_start, uint32_t va, uint32_t tteb, uint32_t size, int zero);
+void l2_map_linear_range(uint32_t pa_cache_start, uint32_t phys_start,
+                         uint32_t phys_end);
+void l2_cache_to_range(uint32_t pa_cache_start, uint32_t va, uint32_t tteb,
+                       uint32_t size, int zero);
+#endif
 
 #endif

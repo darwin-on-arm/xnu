@@ -508,3 +508,9 @@ ipf_init(void)
 	
 	return error;
 }
+
+int 
+ipflow_fastforward(struct mbuf *m)
+{
+    return 0;
+}

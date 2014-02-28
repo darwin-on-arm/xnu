@@ -65,7 +65,7 @@ const char * gIOKernelConfigTables =
 "   },"
 "   {"
 "       'IOClass'           = AppleARMCHRPNVRAM;"
-"       'IOProviderClass'   = AppleARMNORFlashDevice;"
+"       'IOProviderClass'   = AppleARMIODevice;"
 "       'IONameMatch'       = 'nvram,chrp';"
 "   },"
 "  	{"

@@ -90,14 +90,22 @@ chmod 1777 "$BuildRoot/$vartmp"
 
 DARWIN_BUILDROOT="/private/var/tmp/BuildRoot"
 
+project_tag=$(git describe --dirty)
+
 buildtool="make"
 version="${project/$projnam-/}"
-build_version=$(($(GetBuildVersion $DARWIN_BUILDROOT/{Logs,Symbols,Headers,Roots}/$projnam/$project.*) + 1))
+build_version=$(($(GetBuildVersion $DARWIN_BUILDROOT/{Logs,Symbols,Headers,Roots}/$projnam/$project_tag.*) + 1))
 
-REAL_SRCROOT="$(pwd)"
-REAL_OBJROOT="$BuildRoot/$vartmp/$projnam/$project.obj~$build_version"
-REAL_SYMROOT="$BuildRoot/$vartmp/$projnam/$project.sym~$build_version"
-REAL_DSTROOT="$BuildRoot/$vartmp/$projnam/$project.root~$build_version"
+REAL_SRCROOT="/SourceCache/$projnam/$project_tag"
+
+if [ -e $REAL_SRCROOT ]; then
+	rm -rf $REAL_SRCROOT
+fi
+
+git clone $(pwd) $REAL_SRCROOT
+REAL_OBJROOT="$BuildRoot/$vartmp/$projnam/Objects/$project_tag~$build_version"
+REAL_SYMROOT="$BuildRoot/$vartmp/$projnam/Symbols/$project_tag~$build_version"
+REAL_DSTROOT="$BuildRoot/$vartmp/$projnam/Roots/$project_tag~$build_version"
 
 mkdir -p $REAL_SRCROOT $REAL_OBJROOT $REAL_SYMROOT $REAL_DSTROOT
 
@@ -105,8 +113,8 @@ mkdir -p $REAL_SRCROOT $REAL_OBJROOT $REAL_SYMROOT $REAL_DSTROOT
 ### Read in the environment
 ###
 
-LOG="$DARWIN_BUILDROOT/Logs/$projnam/$project.log~$build_version"
-TRACELOG="$BuildRoot/private/var/tmp/$projnam/$project.trace~$build_version"
+LOG="$DARWIN_BUILDROOT/Logs/$projnam/$project_tag.log~$build_version"
+TRACELOG="$BuildRoot/private/var/tmp/$projnam/$project_tag.trace~$build_version"
 mkdir -p "$DARWIN_BUILDROOT/Logs/$projnam"
 
 if [ "$USE_CHROOT" == "YES" ]; then
@@ -122,7 +130,7 @@ export DSTROOT="${REAL_DSTROOT/$prefix/}"
 TARGET_CONFIGS=$(cat machine_configuration | xargs)
 
 # Hide this variable from the unset
-export -n SRCROOT OBJROOT SYMROOT DSTROOT
+export -n SRCROOT OBJROOT SYMROOT DSTROOT PLATFORM
 export -n DARWIN_BUILDROOT DARWINBUILD_BUILD DARWINXREF_DB_FILE
 export -n USE_CHROOT INSTALL_XCODE TARGET_CONFIGS EXTERNAL_BUILD_FLAGS
 
@@ -170,12 +178,12 @@ fi
 ### up from the chroot.
 ###
 
-SCRIPT="$BuildRoot/$vartmp/$projnam/build-$project~$build_version.sh"
+SCRIPT="$BuildRoot/$vartmp/$projnam/build-$project_tag~$build_version.sh"
 
 cat <<-EOF > $SCRIPT
 	#!/bin/sh
 	echo '++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++'
-	echo "BUILDING $project~$build_version on \$(date 2>/dev/null)"
+	echo "BUILDING $project_tag~$build_version on \$(date 2>/dev/null)"
 	echo '++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++'
 	echo 'Build configuration:'
 	echo "    Build host:           \$(hostname 2>/dev/null)"
@@ -347,13 +355,13 @@ if [ "$USE_CHROOT" == "YES" ] ; then
 	###
 	### Actually invoke the build tool here
 	###
-	chroot -u root -g wheel $BuildRoot $vartmp/$projnam/build-$project~$build_version.sh 2>&1 | tee -a "$LOG";
+	chroot -u root -g wheel $BuildRoot $vartmp/$projnam/build-$project_tag~$build_version.sh 2>&1 | tee -a "$LOG";
 	EXIT_STATUS="${PIPESTATUS[0]}"
 else
 	###
 	### Actually invoke the build tool here
 	###
-	$BuildRoot/$vartmp/$projnam/build-$project~$build_version.sh 2>&1 | tee -a "$LOG"
+	$BuildRoot/$vartmp/$projnam/build-$project_tag~$build_version.sh 2>&1 | tee -a "$LOG"
 	EXIT_STATUS="${PIPESTATUS[0]}"
 
 	###
@@ -384,10 +392,10 @@ if [ "$EXIT_STATUS" == "0" ]; then
 		ditto "$REAL_DSTROOT" "$DARWIN_BUILDROOT/Headers/$projnam/$project.hdrs~$build_version"
 	else
 		mkdir -p "$DARWIN_BUILDROOT/Roots/$projnam/"
-		rm -f "$DARWIN_BUILDROOT/Roots/$projnam/$project.root"
-		rm -f "$DARWIN_BUILDROOT/Roots/$projnam/$project.sym"
-		ln -s "$REAL_DSTROOT" "$DARWIN_BUILDROOT/Roots/$projnam/$project.root" 
-		ln -s "$REAL_SYMROOT" "$DARWIN_BUILDROOT/Roots/$projnam/$project.sym"  
+		rm -f "$DARWIN_BUILDROOT/Roots/$projnam/$project_tag.root"
+		rm -f "$DARWIN_BUILDROOT/Roots/$projnam/$project_tag.sym"
+		ln -s "$REAL_DSTROOT" "$DARWIN_BUILDROOT/Roots/$projnam/$project_tag.root" 
+		ln -s "$REAL_SYMROOT" "$DARWIN_BUILDROOT/Roots/$projnam/$project_tag.sym"  
 	fi
 fi
 

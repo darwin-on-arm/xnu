@@ -23,7 +23,7 @@
 
 #include <sys/types.h>
 
-#if defined(__ppc64__) || defined(__i386__) || defined(__x86_64__)
+#if defined(__ppc64__) || defined(__i386__) || defined(__x86_64__) || defined(__arm__)
 static int64_t __remove_counter = 0;
 #else
 static int32_t __remove_counter = 0;

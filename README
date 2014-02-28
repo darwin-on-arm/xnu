@@ -1,7 +1,9 @@
 Table of contents:
 A. How to build XNU
 B. How to install a new header file from XNU
-C. Building XNU on a Linux/x64 host.
+C. Building XNU on a Linux x32/x64 host.
+D. Installing XNU headers on a Linux x32/x64 host.
+E. Installing libkmod/libkmodc++ on a Linux x32/x64 host.
 
 (I am putting this up online as I no longer will have time to personally
  maintain this project.)
@@ -25,15 +27,14 @@ A. How to build XNU:
   with symbols, mach_kernel.sys.
 
   Alternatively, you can edit "machine_configuration" to set the default targets to build
-  if you are using the xnu-build script. Use that script to set up a build if your code
-  is checked out in /SourceCache. Make sure to check it out to /SourceCache/xnu/xnu-2050.22.13,
-  if you put it somewhere else, fix the buildscript.
+  if you are using the xnu-build script.
 
   Here are the valid arm machine configs: 
-	OMAP3530 ARMPBA8
+	OMAP3530 OMAP3430_RX51 OMAP335X ARMPBA8 S5L8930X S5L8920X S5L8922X
 
-  (The other broken ones are: S5L8930X and SUN4I)
-	
+  Here are the valid armv6 machine configs: (YOU WILL *NEED* TO USE Xcode 4.4.1 or similar.)
+	S5L8720X S5L8900XRB ARM_RVEB_V6
+
   Examples:
 	/* make a debug kernel for OMAP3530 arm board */
 	make TARGET_CONFIGS="debug arm OMAP3530"
@@ -291,20 +292,25 @@ B. How to install a new header file from XNU
 	  $(DSTROOT)/System/Library/Frameworks/Kernel.framework/PrivateHeaders
 
 =============================================
-C. Building XNU on a Linux/x64 Host.
+C. Building XNU on a Linux x32/x64 Host.
+[Note: Everything beyond this point assumes that you have xnu-deps-linux installed]
 
 1) Type the following into your command line:
 
-    make TARGET_CONFIGS="debug arm armpba8" MAKEJOBS=  SDKVERSION=10.7 HOST_CC=clang HOST_YACC=yacc \
-    HOST_BISON=bison HOST_FLEX=flex HOST_CODESIGN=/bin/true BUILD_NO_DEBUG=1  DEPLOYMENT_TARGET_FLAGS=  \
-    RC_CFLAGS="-D__arm__ -DARM" MIG=/usr/bin/mig CC=clang CXX=clang++ RC_CFLAGS="-target arm-apple-darwin11" \
-    VERBOSE=YES RC_LDFLAGS="-target arm-apple-darwin11 /usr/lib/libclang_rt.cc_kext.a" \
-    STRIP="arm-apple-darwin11-strip"
-
-  Make sure you have libclang_rt.cc_kext.a with the armv7/armv6 architectures inside it. You will also
-  need a working MiG for Linux. You can either attempt to compile bootstrap_cmds for Linux, or,
-  you can use "dyld" from the darling project and Mig/Migcom from a somewhat recent Xcode revision.
-
-  You will also need a relatively recent cctools and ld64 compiled for your system.
+    make TARGET_CONFIGS="debug arm armpba8"
 
   More work needs to be done on this. (Fixing dtrace stuff such as ctfconvert, etc)
+
+=============================================
+D. Installing XNU headers on a Linux x32/x64 Host.
+
+1) Type the following into your command line:
+
+    make TARGET_CONFIGS="debug arm armpba8" DSTROOT="${HOME}/KernelSDK" installhdrs
+
+==============================================
+E. Installing libkmod/libkmodc++ on a Linux x32/x64 Host.
+
+1) Type the following into your command line:
+
+    make TARGET_CONFIGS="debug arm armpba8" RC_ProjectName=libkmod DSTROOT="${HOME}/KernelSDK"

@@ -14,3 +14,22 @@ iokit/Drivers//KernelBuiltIn/ARM/AppleARMPlatform/AppleARMPE.cpp	optional iokitc
 iokit/Drivers/KernelBuiltIn/ARM/AppleARMPlatform/AppleS5L8930XIO.cpp    optional iokitcpp
 iokit/Drivers/KernelBuiltIn/ARM/AppleARMPlatform/AppleARMSoftIICController.cpp		optional iokitcpp
 iokit/Drivers/KernelBuiltIn/ARM/AppleARMPlatform/AppleARMNMI.cpp		optional iokitcpp
+iokit/Drivers/KernelBuiltIn/ARM/AppleARMPlatform/AppleARMCHRPNVRAM.cpp		optional iokitcpp
+
+# libIOKit
+
+iokit/Kernel/IOSyncer.cpp                               optional iokitcpp
+
+# Shared lock
+
+# iokit/Kernel/i386/IOSharedLock.s                            standard
+# iokit/Kernel/i386/IOAsmSupport.s                            standard
+
+# Power Domains
+iokit/Kernel/IOPMrootDomain.cpp                             optional iokitcpp
+
+# Key Store helper
+#iokit/Kernel/i386/IOKeyStoreHelper.cpp                      standard
+
+iokit/Families/IONVRAM/IONVRAMController.cpp			optional iokitcpp
+

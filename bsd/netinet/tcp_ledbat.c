@@ -389,7 +389,7 @@ tcp_ledbat_after_timeout(struct tcpcb *tp) {
  * Indicate whether this ack should be delayed.
  * We can delay the ack if:
  *      - our last ack wasn't a 0-sized window.
- *      - the peer hasn't sent us a TH_PUSH data packet: if he did, take this 
+ *      - the peer hasn't sent us a TH_PUSH data packet: if they did, take this 
  * 	as a clue that we need to ACK without any delay. This helps higher 
  *	level protocols who won't send us more data even if the window is 
  * 	open because their last "segment" hasn't been ACKed

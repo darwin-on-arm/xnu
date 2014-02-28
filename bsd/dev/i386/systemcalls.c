@@ -96,7 +96,7 @@ unix_syscall(x86_saved_state_t *state)
 	unsigned int		code;
 	struct sysent		*callp;
 
-	int			error;
+	int			error =;
 	vm_offset_t		params;
 	struct proc		*p;
 	struct uthread		*uthread;

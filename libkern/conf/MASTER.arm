@@ -1,6 +1,6 @@
 ######################################################################
 #
-#  RELEASE	= [ intel mach libkerncpp hibernation networking config_dtrace crypto allcrypto zlib config_kxld config_static_cppinit iokitstats vm_pressure_events ]
+#  RELEASE	= [ intel mach libkerncpp hibernation networking config_dtrace crypto allcrypto zlib config_kxld config_static_cppinit iokitstats vm_pressure_events secure_kernel ]
 #  PROFILE	= [ RELEASE profile ]
 #  DEBUG	= [ RELEASE debug ]
 #

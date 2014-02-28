@@ -51,6 +51,52 @@ int pe_initialized = 0;
 extern uint32_t debug_enabled;
 extern void pe_identify_machine(void *args);
 
+boot_args *BootArgs;
+
+int PE_initialize_console( PE_Video * info, int op )
+{
+    static int   last_console = -1;
+
+    if (info) {
+    info->v_offset  = 0;
+    info->v_length  = 0;
+    info->v_display = GRAPHICS_MODE;
+    }
+
+    switch ( op ) {
+
+        case kPEDisableScreen:
+            initialize_screen(info, op);
+            kprintf("kPEDisableScreen %d\n", last_console);
+        if (!console_is_serial())
+        last_console = switch_to_serial_console();
+            break;
+
+        case kPEEnableScreen:
+            initialize_screen(info, op);
+            if (info) PE_state.video = *info;
+            kprintf("kPEEnableScreen %d\n", last_console);
+            if( last_console != -1)
+                switch_to_old_console( last_console);
+            break;
+    
+        case kPEBaseAddressChange:
+            if (info) PE_state.video = *info;
+            /* fall thru */
+
+        default:
+            initialize_screen(info, op);
+            break;
+    }
+
+    return 0;
+}
+
+static void null_putc(int c)
+{
+    return;
+}
+
 /**
  * PE_init_platform
  *
@@ -75,7 +121,9 @@ void PE_init_platform(boolean_t vm_initialized, void *_args)
         PE_state.video.v_depth = args->Video.v_depth;
         PE_state.video.v_display = args->Video.v_display;
 
-        strcpy(PE_state.video.v_pixelFormat, "PPPPPPPP");
+        strncpy(PE_state.video.v_pixelFormat, "PPPPPPPP", 8);
+
+        BootArgs = args;
     }
 
     if (!vm_initialized) {
@@ -101,6 +149,13 @@ void PE_init_platform(boolean_t vm_initialized, void *_args)
          * Reset kputc. 
          */
         PE_kputc = gPESocDispatch.uart_putc;
+        unsigned int boot_arg;
+
+        if (PE_parse_boot_argn("kprintf", &boot_arg, sizeof(boot_arg)))
+            PE_kputc = cnputc;
+
+        if (PE_parse_boot_argn("silence_kprintf", &boot_arg, sizeof(boot_arg)))
+            PE_kputc = null_putc;
 
         /*
          * XXX: Real iOS kernel does iBoot/debug-enabled init after the DTInit call. 
@@ -192,7 +247,6 @@ void PE_init_iokit(void)
     PE_init_printf(TRUE);
 
     StartIOKit(PE_state.deviceTreeHead, PE_state.bootArgs, (void *) 0, (void *) 0);
-
 }
 
 /**

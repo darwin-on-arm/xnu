@@ -30,6 +30,8 @@
 #ifndef _MACH_ARM_SDT_ISA_H
 #define	_MACH_ARM_SDT_ISA_H
 
+#include <arm/arch.h>
+
 /* #pragma ident	"@(#)sdt.h	1.7	05/06/08 SMI" */
 
 /*
@@ -61,8 +63,13 @@
 
 #ifdef __arm__
 
+#ifdef _ARM_ARCH_7
 #define DTRACE_NOPS			\
 	"nop"			"\n\t"
+#else
+#define DTRACE_NOPS			\
+	""			"\n\t"
+#endif
 
 #define DTRACE_CALL_INSN(p,n)						\
 	"blx _dtracetest" DTRACE_STRINGIFY(_##p##_##n)	"\n\t"

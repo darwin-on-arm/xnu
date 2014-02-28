@@ -341,9 +341,15 @@ ipc_kobject_server(
 	 * to perform the kernel function
 	 */
 	{
+#if 0
+	    kprintf("[Mach] Message has routine %p", ptr->routine);
+	    panic_print_symbol_name(ptr->routine);
+	    kprintf("\n");
+#endif
 	    if (ptr) {	
 		(*ptr->routine)(request->ikm_header, reply->ikm_header);
 		kernel_task->messages_received++;
+
 	    }
 	    else {
 		if (!ipc_kobject_notify(request->ikm_header, reply->ikm_header)){
