@@ -323,7 +323,7 @@ kdp_sync_cache(void)
 void
 kdp_call(void)
 {
-    
+	__asm__ volatile ("bkpt #3"); /* Let the processor do the work */
 }
 
 static struct kdp_callout {
