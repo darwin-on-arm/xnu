@@ -326,6 +326,16 @@ kdp_call(void)
 	__asm__ volatile ("bkpt #3"); /* Let the processor do the work */
 }
 
+void
+kdp_machine_get_breakinsn(
+	uint8_t *bytes,
+	uint32_t *size
+)
+{
+	*(uint32_t *)bytes = 0xe1200070;
+	*size = sizeof(uint32_t);
+}
+
 static struct kdp_callout {
 	struct kdp_callout	*callout_next;
 	kdp_callout_fn_t	callout_fn;
