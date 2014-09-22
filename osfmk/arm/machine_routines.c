@@ -86,6 +86,7 @@
 #define DBG(x...)	kprintf("DBG: " x)
 
 uint32_t MutexSpin;
+uint32_t LockTimeOut;
 
 /**
  * ml_io_map
@@ -225,7 +226,7 @@ void ml_init_lock_timeout(void)
         default_timeout_ns = slto * NSEC_PER_USEC;
 
     /*
-     * LockTimeOut is absolutetime, LockTimeOutTSC is in TSC ticks 
+     * LockTimeOut is absolutetime
      */
     nanoseconds_to_absolutetime(default_timeout_ns, &abstime);
     LockTimeOut = (uint32_t) abstime;
@@ -237,8 +238,8 @@ void ml_init_lock_timeout(void)
     } else {
         nanoseconds_to_absolutetime(10 * NSEC_PER_USEC, &abstime);
     }
-    MutexSpin = (unsigned int) abstime;
 
+    MutexSpin = (unsigned int) abstime;
 }
 
 /**

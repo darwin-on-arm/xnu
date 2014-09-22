@@ -54,7 +54,6 @@ typedef usimple_lock_data_t simple_lock_data_t;
 
 #endif                          /* !defined(decl_simple_lock_data) */
 
-extern unsigned int LockTimeOutTSC;
 extern unsigned int LockTimeOut;
 
 #endif

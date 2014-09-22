@@ -322,6 +322,8 @@ int rtclock_init(void)
         clock_timebase_init();
     }
 
+    ml_init_lock_timeout();
+
     return 1;
 }
 
