@@ -47,6 +47,26 @@
 
 thread_t CurrentThread;
 
+/* TODO: fill these out */
+uint32_t _MachineStateCount[] = {
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+};
+
 /* etimer is *still* broken and so are threads. :| */
 #define kprintf(args...)
 
