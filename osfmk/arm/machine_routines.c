@@ -119,6 +119,22 @@ vm_offset_t ml_vtophys(vm_offset_t vaddr)
 }
 
 /**
+ * ml_stack_remaining
+ *
+ * return the remaining kernel stack size
+ */
+vm_offset_t ml_stack_remaining(void)
+{
+    uintptr_t local = (uintptr_t)&local;
+
+    if (ml_at_interrupt_context() != 0) {
+        return (local - (current_cpu_datap()->cpu_int_stack_top - INTSTACK_SIZE));
+    } else {
+        return (local - current_thread()->kernel_stack);
+    }
+}
+
+/**
  * ml_init_interrupt
  *
  * Set interrupts enabled to true.

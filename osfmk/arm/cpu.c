@@ -87,6 +87,12 @@
 #include <arm/arch.h>
 #include "proc_reg.h"
 
+/*
+ * Initial stack for first CPU.
+ */
+extern uint32_t intstack_top[]; /* top */
+extern uint32_t intstack[];     /* bottom */
+
 struct processor BootProcessor;
 cpu_data_t cpu_data_master;
 
@@ -814,6 +820,7 @@ void cpu_bootstrap(void)
 
     cpu_data_master.cpu_this = &cpu_data_master;
     cpu_data_master.cpu_processor = &BootProcessor;
+    cpu_data_master.cpu_int_stack_top = (vm_offset_t)intstack_top;
 }
 
 /**

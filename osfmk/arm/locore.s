@@ -315,4 +315,5 @@ _debstack_top:
 LOAD_ADDR_GEN_DEF(ExceptionVectorsBase)
 LOAD_ADDR_GEN_DEF(arm_init)
 LOAD_ADDR_GEN_DEF(intstack_top)
+LOAD_ADDR_GEN_DEF(intstack)
 LOAD_ADDR_GEN_DEF(sectionOffset)
