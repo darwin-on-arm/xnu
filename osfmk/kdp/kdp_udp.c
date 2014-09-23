@@ -2132,7 +2132,7 @@ kdp_init(void)
 
 	if (debug_boot_arg & DB_REBOOT_POST_CORE)
 		kdp_flag |= REBOOT_POST_CORE;
-#if	defined(__x86_64__)	
+#if	defined(__x86_64__) || defined(__arm__)
 	kdp_machine_init();
 #endif
 
