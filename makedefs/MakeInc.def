@@ -334,10 +334,9 @@ ifeq ($(UNAME_S),Linux)
 	# Get our toolchain prefix if we need it
 	ifeq ($(word 2, $(TARGET_CONFIGS_UC)),ARM)
 		TARGET_PROFILE ?= arm-apple-darwin11
-		TARGET_CRT ?= /usr/lib/libclang_rt.cc_kext.a
 		BUILD_NO_DEBUG := 1
         	RC_CFLAGS := -D__arm__ -DARM -target $(TARGET_PROFILE)
-        	RC_LDFLAGS := -target $(TARGET_PROFILE) $(TARGET_CRT)
+        	RC_LDFLAGS := -target $(TARGET_PROFILE)
 	endif
 endif
 

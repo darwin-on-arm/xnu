@@ -53,6 +53,12 @@ osfmk/arm/armv/tlb-arm11.s	standard
 osfmk/arm/armv/tlb-armv7.s	standard
 osfmk/arm/armv/vfp.s		standard
 
+osfmk/arm/crt/divsi3.S		standard
+osfmk/arm/crt/memcpy.S		standard
+osfmk/arm/crt/memcpy4.S		standard
+osfmk/arm/crt/memset.S		standard
+osfmk/arm/crt/udivsi3.S		standard
+osfmk/arm/crt/umodsi3.S		standard
 
 osfmk/kdp/ml/arm/kdp_arm_common.c      optional        mach_kdp
 osfmk/kdp/ml/arm/kdp_machdep.c         optional        mach_kdp
