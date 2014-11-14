@@ -12,9 +12,7 @@
 
 #include <arm/asm_help.h>
 
-.extern ___udivsi3
-
-EnterARM(__umodsi3):
+EnterARM(__umodsi3)
   stmfd  sp!, {r4, r5, r7, lr}
   add  r7, sp, #8
   mov  r5, r0

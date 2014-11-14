@@ -18,18 +18,18 @@ EnterARM(_aeabi_memcpy4)
     subs    r2, r2, #32     /* 0x20 */
     bcc     memcpy4_label2
 memcpy4_label1:
-    ldmcsia r1!, {r3, r4, ip, lr}
-    stmcsia r0!, {r3, r4, ip, lr}
-    ldmcsia r1!, {r3, r4, ip, lr}
-    stmcsia r0!, {r3, r4, ip, lr}
-    subcss  r2, r2, #32     /* 0x20 */
+    ldmiacs r1!, {r3, r4, ip, lr}
+    stmiacs r0!, {r3, r4, ip, lr}
+    ldmiacs r1!, {r3, r4, ip, lr}
+    stmiacs r0!, {r3, r4, ip, lr}
+    subscs  r2, r2, #32     /* 0x20 */
     bcs     memcpy4_label1
 memcpy4_label2:
     movs    ip, r2, lsl #28
-    ldmcsia r1!, {r3, r4, ip, lr}
-    stmcsia r0!, {r3, r4, ip, lr}
-    ldmmiia r1!, {r3, r4}
-    stmmiia r0!, {r3, r4}
+    ldmiacs r1!, {r3, r4, ip, lr}
+    stmiacs r0!, {r3, r4, ip, lr}
+    ldmiami r1!, {r3, r4}
+    stmiami r0!, {r3, r4}
     ldmia   sp!, {r4, lr}
     movs    ip, r2, lsl #30
     ldrcs   r3, [r1], #4
@@ -37,8 +37,8 @@ memcpy4_label2:
     bxeq    lr
 _memcpy4_lastbytes_aligned:
     movs    r2, r2, lsl #31
-    ldrcsh  r3, [r1], #2
-    ldrmib  r2, [r1], #1
-    strcsh  r3, [r0], #2
-    strmib  r2, [r0], #1
+    ldrhcs  r3, [r1], #2
+    ldrbmi  r2, [r1], #1
+    strhcs  r3, [r0], #2
+    strbmi  r2, [r0], #1
     bx      lr

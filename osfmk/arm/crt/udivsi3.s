@@ -23,7 +23,7 @@ EnterARM(__udivsi3)
   rsb  r3, r3, r2
   cmp  r3, #31
   bhi  l2
-  ldmeqfd  sp!, {r4, r5, r7, pc}
+  ldmfdeq  sp!, {r4, r5, r7, pc}
   add  r5, r3, #1
   rsb  r3, r3, #31
   mov  lr, #0
