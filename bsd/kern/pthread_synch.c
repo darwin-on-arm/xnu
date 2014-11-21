@@ -353,14 +353,20 @@ bsdthread_create(__unused struct proc *p, struct bsdthread_create_args  *uap, us
 		arm_thread_state_t state;
 		arm_thread_state_t *ts = &state;
 
+		/* Set r7 and lr to zero for better stack tracing */
+		ts->lr = 0;
+		ts->r[7] = 0;
+
 		ts->pc = (uint32_t)p->p_threadstart;
 		ts->sp = (int)((vm_offset_t)(th_stack-C_32_STK_ALIGN));
+
 		ts->r[0] = (uint32_t)th_pthread;
 		ts->r[1] = (uint32_t)th_thport;
 		ts->r[2] = (uint32_t)user_func;
 		ts->r[3] = (uint32_t)user_funcarg;
 		ts->r[4] = (uint32_t)user_stacksize;
 		ts->r[5] = (uint32_t)uap->flags;
+
 		thread_set_wq_state32(th, (thread_state_t)ts);
 	}
 #else
