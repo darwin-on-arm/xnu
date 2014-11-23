@@ -47,24 +47,16 @@
 
 thread_t CurrentThread;
 
-/* TODO: fill these out */
+/*
+ * Maps state flavor to number of words in the state:
+ */
 uint32_t _MachineStateCount[] = {
+    /* FLAVOR_LIST */
     0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0
+    ARM_THREAD_STATE_COUNT,
+    ARM_VFP_STATE_COUNT,
+    ARM_EXCEPTION_STATE_COUNT,
+    ARM_DEBUG_STATE_COUNT,
 };
 
 /* etimer is *still* broken and so are threads. :| */
