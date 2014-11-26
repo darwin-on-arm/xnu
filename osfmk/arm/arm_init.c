@@ -40,6 +40,8 @@
 #include <kern/startup.h>
 #include "proc_reg.h"
 
+int debug_task;
+
 extern uint8_t *irqstack;
 
 extern int disableConsoleOutput, serialmode;
