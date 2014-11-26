@@ -70,10 +70,37 @@ EnterARM(machine_idle)
     /* Disable all interrupts and go into wfi mode. */
 .Lmachine_idle_wfi:
     cpsid   if
-    wfi 
+    wfi
     cpsie   if
 
 .Lmachine_idle_return:
+    bx      lr
+
+/**
+ * machine_signal_idle
+ */
+EnterThumb(machine_signal_idle)
+    bx      lr
+
+/**
+ * machine_callstack
+ */
+EnterThumb(machine_callstack)
+    bx      lr
+
+
+/**
+ * machine_trace_thread
+ */
+EnterARM(machine_trace_thread)
+    movs    r0, #0
+    bx      lr
+
+/**
+ * machine_trace_thread64
+ */
+EnterARM(machine_trace_thread64)
+    movs    r0, #0
     bx      lr
 
 /**
@@ -267,8 +294,8 @@ EnterARM(set_mmu_ttbcr)
 #endif
     bx      lr
 
-/*
- * Things I put here because I am far too lazy to write them in C.
+/**
+ * ml_cause_interrupt
  */
 EnterThumb(ml_cause_interrupt)
     bx      lr
