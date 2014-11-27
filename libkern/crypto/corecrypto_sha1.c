@@ -1,4 +1,8 @@
 
+#if defined(__arm__)
+#include "localcrypto_sha1.c" /* We can't use corecrypto.kext yet, so use local version for now. */
+#else
+
 #include <libkern/crypto/crypto_internal.h>
 #include <libkern/crypto/sha1.h>
 #include <kern/debug.h>
@@ -108,3 +112,5 @@ void sha1_hardware_hook(Boolean option, InKernelPerformSHA1Func func, void *ref)
 		SHA1Ref = NULL;
 	}
 }
+
+#endif /* !__arm__ */

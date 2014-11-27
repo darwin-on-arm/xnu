@@ -4187,6 +4187,16 @@ void pmap_copy(pmap_t dst, pmap_t src, vm_offset_t dst_addr, vm_size_t len, vm_o
     return;
 }
 
+/**
+ * coredumpok
+ *
+ * Unused.
+ */
+boolean_t coredumpok(__unused vm_map_t map, __unused vm_offset_t va)
+{
+    return TRUE;
+}
+
 /*
  * These functions are used for bookkeeping.
  */
