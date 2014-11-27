@@ -57,6 +57,7 @@
 #ifndef _PMAP_ASID_H_
 #define _PMAP_ASID_H_
 
+void pmap_asid_configure(void);
 void pmap_asid_initialize(pmap_t);
 void pmap_asid_initialize_kernel(pmap_t);
 asid_t	pmap_asid_allocate_asid(int);
@@ -66,5 +67,7 @@ void	pmap_destroy_asid_sync(pmap_t);
 void	pmap_asid_lazy_flush(pmap_t);
 void	pmap_asid_activate(pmap_t, int);
 asid_t	asid_for_pmap_cpu_tuple(pmap_t, int);
+void pmap_asid_invalidate_all_cpus(pmap_t tpmap);
+void pmap_asid_validate_cpu(pmap_t tpmap, int ccpu);
 
 #endif

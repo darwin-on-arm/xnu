@@ -309,6 +309,8 @@ void pmap_static_init(void);
 
 void l2_map_linear_range(uint32_t pa_cache_start, uint32_t phys_start,
                          uint32_t phys_end);
+void l2_map_linear_range_no_cache(uint32_t pa_cache_start, uint32_t phys_start,
+                                  uint32_t phys_end);
 void l2_cache_to_range(uint32_t pa_cache_start, uint32_t va, uint32_t tteb,
                        uint32_t size, int zero);
 #endif
