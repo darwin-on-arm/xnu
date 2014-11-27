@@ -217,12 +217,30 @@ kern_return_t machine_thread_get_state(thread_t thr_act, thread_flavor_t flavor,
             /*
              * First, copy everything:
              */
-            *state = *saved_state;
+            ovbcopy((void*)saved_state, (void*)state, sizeof(struct arm_vfp_state)); /* *state = *saved_state; */
 
             *count = ARM_VFP_STATE_COUNT;
             break;
         }
+    case ARM_EXCEPTION_STATE:
+        {
+            struct arm_exception_state *state;
+            struct arm_exception_state *saved_state;
 
+            if (*count < ARM_EXCEPTION_STATE_COUNT)
+                return (KERN_INVALID_ARGUMENT);
+
+            state = (struct arm_exception_state *)tstate;
+            saved_state = (struct arm_exception_state *) &thr_act->machine.es;
+
+            /*
+             * First, copy everything:
+             */
+            ovbcopy((void*)saved_state, (void*)state, sizeof(struct arm_exception_state));
+
+            *count = ARM_EXCEPTION_STATE_COUNT;
+            break;
+        }
     default:
         return (KERN_INVALID_ARGUMENT);
     }
@@ -239,7 +257,6 @@ kern_return_t machine_thread_set_state(thread_t thread, thread_flavor_t flavor,
                                        thread_state_t tstate,
                                        mach_msg_type_number_t count)
 {
-    struct arm_thread_state *ts;
 
     switch (flavor) {           /* Validate the count before we do anything else */
     case ARM_THREAD_STATE:
@@ -273,7 +290,11 @@ kern_return_t machine_thread_set_state(thread_t thread, thread_flavor_t flavor,
 
     switch (flavor) {
     case ARM_THREAD_STATE:
+        {
+        struct arm_thread_state *ts;
+
         ts = (struct arm_thread_state *) tstate;
+
         thread->machine.user_regs.r[0] = ts->r[0];
         thread->machine.user_regs.r[1] = ts->r[1];
         thread->machine.user_regs.r[2] = ts->r[2];
@@ -291,7 +312,34 @@ kern_return_t machine_thread_set_state(thread_t thread, thread_flavor_t flavor,
         thread->machine.user_regs.lr = ts->lr;
         thread->machine.user_regs.pc = ts->pc;
         thread->machine.user_regs.cpsr = sanitise_cpsr(ts->cpsr);
+
         return KERN_SUCCESS;
+        }
+    case ARM_VFP_STATE:
+        {
+        int i;
+        struct arm_vfp_state *fs;
+
+        fs = (struct arm_vfp_state *) tstate;
+
+        for (i = 1; i <= 64; i++)
+            thread->machine.vfp_regs.r[i] = fs->r[i];
+        thread->machine.vfp_regs.fpscr = fs->fpscr;
+
+        return KERN_SUCCESS;
+        }
+    case ARM_EXCEPTION_STATE:
+        {
+        struct arm_exception_state *es;
+
+        es = (struct arm_exception_state *) tstate;
+
+        thread->machine.es.fsr = es->fsr;
+        thread->machine.es.far = es->far;
+        thread->machine.es.exception = es->exception;
+
+        return KERN_SUCCESS;
+        }
     default:
         return KERN_INVALID_ARGUMENT;
     }
@@ -349,55 +397,67 @@ void thread_set_parent(thread_t parent, int pid)
     return;
 }
 
+struct arm_act_context {
+    arm_saved_state_t ss;
+    arm_vfp_state_t fs;
+};
+
 /** 
  * act_thread_csave
  *
  * Save the current thread context, used for the internal uthread structure.
- * (We should also save VFP state...)
  */
 void *act_thread_csave(void)
 {
     kern_return_t kret;
     mach_msg_type_number_t val;
     thread_t thr_act = current_thread();
-    struct arm_thread_state_t *ts;
 
-    ts = (struct arm_thread_state_t *)kalloc(sizeof(struct arm_thread_state));
+    struct arm_act_context *ic;
 
-    if (ts == (struct arm_thread_state_t *)NULL)
+    ic = (struct arm_act_context *)kalloc(sizeof(struct arm_act_context));
+
+    if (ic == (struct arm_act_context *)NULL)
         return((void *)0);
 
     val = ARM_THREAD_STATE_COUNT; 
-    kret = machine_thread_get_state(thr_act, ARM_THREAD_STATE,
-           (thread_state_t) ts, &val);
-    if (kret != KERN_SUCCESS) {
-        kfree(ts, sizeof(struct arm_thread_state));
+    if (machine_thread_get_state(thr_act, ARM_THREAD_STATE, (thread_state_t) &ic->ss, &val) != KERN_SUCCESS) {
+        kfree(ic, sizeof(struct arm_act_context));
         return((void *)0);
     }
 
-    return ts;
+    val = ARM_VFP_STATE_COUNT; 
+    if (machine_thread_get_state(thr_act, ARM_THREAD_STATE, (thread_state_t) &ic->fs, &val) != KERN_SUCCESS) {
+        kfree(ic, sizeof(struct arm_act_context));
+        return((void *)0);
+    }
+
+    return (ic);
 }
 
 /** 
  * act_thread_catt
  *
  * Restore the current thread context, used for the internal uthread structure.
- * (We should also restore VFP state...)
  */
 void act_thread_catt(void *ctx)
 {
-    thread_t thr_act = current_thread();
     kern_return_t kret;
+    thread_t thr_act = current_thread();
+
+    struct arm_act_context *ic;
 
     if (ctx == (void *)NULL)
         return;
 
-    struct arm_thread_state_t *ts = (struct arm_thread_state_t*)ctx;
+    ic = (struct arm_act_context *)ctx;
 
-    machine_thread_set_state(thr_act, ARM_THREAD_STATE, (thread_state_t)ts, 
-                                    ARM_THREAD_STATE_COUNT);
-    kfree(ts, sizeof(struct arm_thread_state));
+    if (machine_thread_set_state(thr_act, ARM_THREAD_STATE, (thread_state_t) &ic->ss, ARM_THREAD_STATE_COUNT) == KERN_SUCCESS)
+        (void)machine_thread_set_state(thr_act, ARM_VFP_STATE, (thread_state_t) &ic->fs, ARM_VFP_STATE_COUNT);
+
+    kfree(ic, sizeof(struct arm_act_context));
 }
+
 
 /**
  * thread_set_child
