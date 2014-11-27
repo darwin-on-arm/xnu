@@ -33,7 +33,7 @@
 #include <arm/arch.h>
 #include <arm/asm_help.h>
 
-#ifdef _ARM_ARCH_7
+#ifndef _ARM_ARCH_7
 #undef EnterThumb
 #undef EnterThumb_NoAlign
 #define EnterThumb_NoAlign EnterARM_NoAlign
