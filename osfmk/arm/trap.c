@@ -124,6 +124,20 @@ static inline uint32_t __arm_get_ifar(void)
 }
 
 /**
+ * update_arm_exception_state
+ *
+ * Update the exception state upon an exception.
+ */
+static inline void update_arm_exception_state(abort_information_context_t *arm_ctx, uint32_t exception_type)
+{
+    thread_t thread = current_thread();
+
+    thread->machine.es.fsr = arm_ctx->fsr;
+    thread->machine.es.far = arm_ctx->far;
+    thread->machine.es.exception = exception_type;
+}
+
+/**
  * ifsr_to_human
  *
  * Return a human readable representation of the IFSR bits.
@@ -439,6 +453,7 @@ void sleh_abort(void *context, int reason)
                 if ((code != KERN_SUCCESS) && (code != KERN_ABORTED)) {
                     exception_type = EXC_BAD_ACCESS;
                     exception_subcode = 0;
+                    update_arm_exception_state(arm_ctx, exception_type);
 
                     /*
                      * Debug only. 
@@ -498,6 +513,7 @@ void sleh_abort(void *context, int reason)
                 if ((code != KERN_SUCCESS) && (code != KERN_ABORTED)) {
                     exception_type = EXC_BAD_ACCESS;
                     exception_subcode = 0;
+                    update_arm_exception_state(arm_ctx, exception_type);
 
                     /*
                      * Only for debug. 
@@ -532,6 +548,7 @@ void sleh_abort(void *context, int reason)
         default:
             exception_type = EXC_BREAKPOINT;
             exception_subcode = 0;
+            update_arm_exception_state(arm_ctx, exception_type);
             break;
         }
         /*
@@ -706,6 +723,7 @@ void sleh_undef(arm_saved_state_t * state)
          */
         exception_type = EXC_BAD_INSTRUCTION;
         exception_subcode = 0;
+        update_arm_exception_state(arm_ctx, exception_type);
     } else if (cpsr == 0x17) {
         panic("sleh_undef: undefined instruction in system mode");
     }
