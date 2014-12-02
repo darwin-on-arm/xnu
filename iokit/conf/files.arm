@@ -26,5 +26,5 @@ iokit/Kernel/arm/IOSharedLock.s                       standard
 iokit/Kernel/IOPMrootDomain.cpp                       optional iokitcpp
 
 # NVRAM Controller
-iokit/Families/IONVRAM/IONVRAMController.cpp									optional iokitcpp
+iokit/Families/IONVRAM/IONVRAMController.cpp          optional iokitcpp
 
