@@ -68,9 +68,6 @@
 #define UC_TRAD			1
 #define UC_FLAVOR		30
 
-#define	UC_SET_ALT_STACK	0x40000000
-#define UC_RESET_ALT_STACK	0x80000000
-
  /* The following are valid mcontext sizes */
 #define UC_FLAVOR_SIZE ((ARM_THREAD_STATE_COUNT + ARM_EXCEPTION_STATE_COUNT + ARM_VFP_STATE_COUNT) * sizeof(int))
 
@@ -85,15 +82,6 @@
  * to the user specified pc, psl.
  */
 
-struct sigframe32 {
-    int             retaddr;
-    user32_addr_t   catcher;    /* sig_t */
-    int             sigstyle;
-    int             sig;
-    user32_addr_t   sinfo;      /* siginfo32_t* */
-    user32_addr_t   uctx;       /* struct ucontext32 */
-};
-
 void sendsig(struct proc *p, user_addr_t ua_catcher, int sig, int mask, __unused uint32_t code)
 {
     user_addr_t ua_sp;
@@ -105,9 +93,8 @@ void sendsig(struct proc *p, user_addr_t ua_catcher, int sig, int mask, __unused
     user_siginfo_t  sinfo32;
 
     struct uthread *ut;
-    struct ucontext uctx32;
     struct mcontext mctx32;
-    struct sigframe32 frame32;
+    struct user_ucontext32 uctx32;
     struct sigacts *ps = p->p_sigacts;
  
     void *state;
@@ -120,87 +107,79 @@ void sendsig(struct proc *p, user_addr_t ua_catcher, int sig, int mask, __unused
     
     proc_unlock(p);
 
-    if (p->p_sigacts->ps_siginfo & sigmask(sig))
-        infostyle = UC_FLAVOR;
-
     thread_t thread = current_thread();
     ut = get_bsdthread_info(thread);
 
-    trampact = ps->ps_trampact[sig];
-    oonstack = ut->uu_sigstk.ss_flags & SA_ONSTACK;
-
+    /*
+     * Set up thread state info.
+     */
     flavor = ARM_THREAD_STATE;
     state = (void *)&mctx32.ss;
     state_count = ARM_THREAD_STATE_COUNT;
     if (thread_getstatus(thread, flavor, (thread_state_t)state, &state_count) != KERN_SUCCESS)
         goto bad;
 
+    flavor = ARM_EXCEPTION_STATE;
+    state = (void *)&mctx32.es;
+    state_count = ARM_EXCEPTION_STATE_COUNT;
+    if (thread_getstatus(thread, flavor, (thread_state_t)state, &state_count) != KERN_SUCCESS)
+        goto bad;
+
+    flavor = ARM_VFP_STATE;
+    state = (void *)&mctx32.fs;
+    state_count = ARM_VFP_STATE_COUNT;
+    if (thread_getstatus(thread, flavor, (thread_state_t)state, &state_count) != KERN_SUCCESS)
+        goto bad;
+
     tstate32 = &mctx32.ss;
 
     /*
-     * figure out where our new stack lives
+     * Set the signal style.
      */
+    if (p->p_sigacts->ps_siginfo & sigmask(sig))
+        infostyle = UC_FLAVOR;
+
+    /*
+     * Get the signal disposition.
+     */
+    trampact = ps->ps_trampact[sig];
+
+    /*
+     * Figure out where our new stack lives.
+     */
+    oonstack = ut->uu_sigstk.ss_flags & SA_ONSTACK;
     if ((ut->uu_flag & UT_ALTSTACK) && !oonstack && (ps->ps_sigonstack & sigmask(sig))) {
         ua_sp = ut->uu_sigstk.ss_sp;
         ua_sp += ut->uu_sigstk.ss_size;
         stack_size = ut->uu_sigstk.ss_size;
         ut->uu_sigstk.ss_flags |= SA_ONSTACK;
     } else {
-        ua_sp = CAST_USER_ADDR_T(tstate32->sp);
+        ua_sp = tstate32->sp;
     }
 
     /*
-     * init siginfo
+     * Set up the stack.
      */
-    bzero((caddr_t)&sinfo32, sizeof(user_siginfo_t));
-    sinfo32.si_signo = sig;
+    ua_sp -= UC_FLAVOR_SIZE;
+    ua_mctxp = ua_sp;
 
-    ua_sp -= sizeof (struct ucontext);
+    ua_sp -= sizeof (struct user_ucontext32);
     ua_uctxp = ua_sp;
 
     ua_sp -= sizeof (siginfo_t);
     ua_sip = ua_sp;
 
-    ua_sp -= sizeof (struct mcontext);
-    ua_mctxp = ua_sp;
-
-    ua_sp -= sizeof (struct sigframe32);
-    ua_fp = ua_sp;
-
     /*
-     * Align the frame and stack pointers to 16 bytes for SSE.
-     * (Note that we use 'fp' as the base of the stack going forward)
+     * Align the stack pointer.
      */
-    ua_fp = TRUNC_DOWN32(ua_fp, C_32_STK_ALIGN);
-
-    /*
-     * But we need to account for the return address so the alignment is
-     * truly "correct" at _sigtramp
-     */
-    ua_fp -= sizeof(frame32.retaddr);
-
-    /* 
-     * Build the argument list for the signal handler.
-     * Handler should call sigreturn to get out of it
-     */
-    frame32.retaddr = -1;   
-    frame32.sigstyle = infostyle;
-    frame32.sig = sig;
-    frame32.catcher = CAST_DOWN_EXPLICIT(user32_addr_t, ua_catcher);
-    frame32.sinfo = CAST_DOWN_EXPLICIT(user32_addr_t, ua_sip);
-    frame32.uctx = CAST_DOWN_EXPLICIT(user32_addr_t, ua_uctxp);
-
-    if (copyout((caddr_t)&frame32, ua_fp, sizeof (frame32))) 
-        goto bad;
+    ua_sp = TRUNC_DOWN32(ua_sp, C_32_STK_ALIGN);
 
     /*
      * Build the signal context to be used by sigreturn.
      */
-    bzero(&uctx32, sizeof(uctx32));
-
     uctx32.uc_onstack = oonstack;
     uctx32.uc_sigmask = mask;
-    uctx32.uc_stack.ss_sp = (void *)ua_fp;
+    uctx32.uc_stack.ss_sp = ua_sp;
     uctx32.uc_stack.ss_size = stack_size;
 
     if (oonstack)
@@ -208,18 +187,18 @@ void sendsig(struct proc *p, user_addr_t ua_catcher, int sig, int mask, __unused
 
     uctx32.uc_link = 0;
 
-    uctx32.uc_mcsize = sizeof(struct mcontext);
+    uctx32.uc_mcsize = UC_FLAVOR_SIZE;
 
-    uctx32.uc_mcontext = CAST_DOWN(struct mcontext *, ua_mctxp);
+    uctx32.uc_mcontext = ua_mctxp;
 
-    if (copyout((caddr_t)&uctx32, ua_uctxp, sizeof (uctx32))) 
-            goto bad;
+    /*
+     * init siginfo
+     */
+    bzero((caddr_t)&sinfo32, sizeof(user_siginfo_t));
 
-    if (copyout((caddr_t)&mctx32, ua_mctxp, sizeof (struct mcontext))) 
-            goto bad;
-
-    sinfo32.pad[0]  = CAST_USER_ADDR_T(tstate32->sp);
-    sinfo32.si_addr = CAST_USER_ADDR_T(tstate32->pc);
+    sinfo32.si_signo = sig;
+    sinfo32.pad[0]  = tstate32->sp;
+    sinfo32.si_addr = tstate32->lr;
 
     switch (sig) {
         case SIGILL:
@@ -281,22 +260,41 @@ void sendsig(struct proc *p, user_addr_t ua_catcher, int sig, int mask, __unused
             }
     }
 
-    if (copyout((caddr_t)&sinfo32, ua_sip, sizeof (sinfo32)))
+    /*
+     * Copy out context info.
+     */
+    if (copyout((caddr_t)&uctx32, ua_uctxp, sizeof(struct user_ucontext32))) 
+        goto bad;
+    if (copyout((caddr_t)&sinfo32, ua_sip, sizeof(user_siginfo_t)))
+        goto bad;
+    if (copyout((caddr_t)&mctx32, ua_mctxp, sizeof(struct mcontext))) 
+        goto bad;
+    if (copyout((caddr_t)&ua_uctxp, ua_sp, sizeof(user_addr_t)))
         goto bad;
 
+    /*
+     * Set up regsiters for the trampoline.
+     */
+    tstate32->r[0] = ua_catcher;
+    tstate32->r[1] = infostyle;
+    tstate32->r[2] = sig;
+    tstate32->r[3] = ua_sip;
+    tstate32->sp = ua_sp;
+
+    if (trampact & 0x01) {
+        tstate32->lr = trampact;
+        tstate32->cpsr = 0x10; /* ARM_FIQ_MODE */
+    } else {
+        tstate32->lr = (trampact & ~0x01);
+        tstate32->cpsr = 0x30; /* ARM_THUMB_MODE | ARM_USER_MODE */
+    }
+
+    /*
+     * Call the trampoline.
+     */
     flavor = ARM_THREAD_STATE;
     state_count = ARM_THREAD_STATE_COUNT;
     state = (void *)tstate32;
-
-#if 0
-    kprintf("\nDEBUG: sendsig():\nsig = 0x%08x (%d)\nsigstyle = 0x%08x (%d)\nprocess: %s (pid %d)\nthread = %p\ntrampact = 0x%08x\ncatcher = 0x%08x\nregisters:\n"
-        "\tr0 = 0x%08x\n\tr1 = 0x%08x\n\tr2 = 0x%08x\n\tr3 = 0x%08x\n\tr4 = 0x%08x\n\tr5 = 0x%08x\n\tr6 = 0x%08x\n\tr7 = 0x%08x\n\tr8 = 0x%08x\n"
-        "\tr9 = 0x%08x\n\tr10 = 0x%08x\n\tr11 = 0x%08x\n\tr12 = 0x%08x\n\tsp = 0x%08x\n\tpc = 0x%08x\n\tlr = 0x%08x\n",
-        sig, sig, infostyle, infostyle, p->p_comm, p->p_pid, thread, trampact, ua_catcher, tstate32->r[0], tstate32->r[1], tstate32->r[2],
-        tstate32->r[3], tstate32->r[4], tstate32->r[5], tstate32->r[6], tstate32->r[7], tstate32->r[8], tstate32->r[9],
-        tstate32->r[10], tstate32->r[11], tstate32->r[12], tstate32->sp, tstate32->pc, tstate32->lr);
-#endif
-
     if (thread_setstatus(thread, flavor, (thread_state_t)state, state_count) != KERN_SUCCESS)
         goto bad;
 
@@ -327,75 +325,68 @@ bad:
  * has been taken.  Reset signal mask and
  * stack state from context left by sendsig (above).
  * Return to previous pc and psl as specified by
- * context left by sendsig.
+ * context left by sendsig. Check carefully to
+ * make sure that the user has not modified the
+ * psl to gain improper priviledges or to cause
+ * a machine fault.
  */
 
 int sigreturn(struct proc *p, struct sigreturn_args *uap, __unused int *retval)
 {
-    user_addr_t action;
-
-    struct uthread *ut;
-    struct mcontext *mctx32 = NULL;
-    struct user_ucontext32 uctx32;
-    struct sigacts *ps = p->p_sigacts;
-
+    void *state;
+    int onstack = 0;
     int error, flavor;
-    void *tsptr, *fptr;
-    int infostyle = uap->infostyle;
-
-    sigset_t mask;
+    thread_t thread;
+    struct uthread *ut;
+    struct mcontext mctx32;
+    struct user_ucontext32 uctx32;
     mach_msg_type_number_t state_count;
 
-    thread_t thread = current_thread();
+    thread = current_thread();
     ut = get_bsdthread_info(thread);
 
     /*
-     * If we are being asked to change the altstack flag on the thread, we
-     * just rest it and return (the uap->uctx is not used).
+     * Retrieve the user context that contains our machine context.
      */
-    if (infostyle == UC_SET_ALT_STACK) {
-        ut->uu_sigstk.ss_flags |= SA_ONSTACK;
-        return (0);
-    } else if ((unsigned int)infostyle == UC_RESET_ALT_STACK) {
-        ut->uu_sigstk.ss_flags &= ~SA_ONSTACK;
-        return (0);
-    }
+    if ((error = copyin(uap->uctx, (void *)&uctx32, sizeof(struct user_ucontext32))))
+        return (error);
 
-    error = copyin(uap->uctx, &uctx32, sizeof(struct ucontext));
-    if (error)
-        return(error);
-
-    /* validate the machine context size */
+    /*
+     * Validate that our machine context is the right size.
+     */
     if (uctx32.uc_mcsize != UC_FLAVOR_SIZE)
-        return(EINVAL);
+        return (EINVAL);
 
-    error = copyin(uctx32.uc_mcontext, mctx32, uctx32.uc_mcsize);
-    if (error)
-        return(error);
+    /*
+     * Populate our machine context info that we need to restore.
+     */
+    if ((error = copyin(uctx32.uc_mcontext, (void *)&mctx32, UC_FLAVOR_SIZE)))
+        return (error);
 
     if ((uctx32.uc_onstack & 0x01))
         ut->uu_sigstk.ss_flags |= SA_ONSTACK;
     else
         ut->uu_sigstk.ss_flags &= ~SA_ONSTACK;
 
-    ut->uu_sigmask = uctx32.uc_sigmask & ~sigcantmask;
     if (ut->uu_siglist & ~ut->uu_sigmask)
-        signal_setast(current_thread());
+        signal_setast(thread);
 
-    switch (infostyle)  {
-        case UC_FLAVOR:
-        case UC_TRAD:
-        default:
-            {
-                tsptr = (void *)&mctx32->ss; /* ARM_THREAD_STATE */
-                flavor = ARM_THREAD_STATE;
-                state_count = ARM_THREAD_STATE_COUNT;
-                break;
-            }
-    }
+    /*
+     * Restore the states from our machine context.
+     * NOTE: we don't really need to check on infostyle since state restoring
+     * for UC_TRAD and UC_FLAVOR is identical on this architecture.
+     */
+    flavor = ARM_THREAD_STATE;
+    state = (void *)&mctx32.ss;
+    state_count = ARM_THREAD_STATE_COUNT;
+    if (thread_setstatus(thread, flavor, (thread_state_t)state, state_count) != KERN_SUCCESS)
+        return (EINVAL);
 
-    if (thread_setstatus(thread, flavor, tsptr, state_count) != KERN_SUCCESS)
-        return(EINVAL);
+    flavor = ARM_VFP_STATE;
+    state = (void *)&mctx32.fs;
+    state_count = ARM_VFP_STATE_COUNT;
+    if (thread_setstatus(thread, flavor, (thread_state_t)state, state_count) != KERN_SUCCESS)
+        return (EINVAL);
 
     return (EJUSTRETURN);
 }

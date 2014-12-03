@@ -180,25 +180,6 @@ nullsys(void)
 int
 nosys(struct proc *p, __unused struct nosys_args *args, __unused int32_t *retval)
 {
-#if CONFIG_KERNEL_0DAY_SYSCALL_HANDLER && __arm__
-#warning !!!
-#warning THIS IS A BIG PROBLEM
-#warning AND YOU SHOULD PROBABLY NOT USE THIS KERNEL CONFIG
-#warning THANKS
-#warning !!!
-	/* Kernel jump trampoline 'test' code. Even more insecure!!! */
-	printf("!!! WARNING !!! - !!! THE KERNEL JUMP TRAMPOLINE IS ACTIVE !!!\n");
-	struct tramp_args_t {
-		uint32_t r0, r1, r2, r3, r4;
-	};
-	struct tramp_args_t *new_args = (struct tramp_args_t*)args;
-	typedef int (*callee)(int r1, int r2, int r3, int r4);
-	callee caller = (callee)new_args->r0;
-	int ret = caller(new_args->r1, new_args->r2, new_args->r3, new_args->r4);
-	*retval = ret;
-	return 0;
-#endif
-
 	psignal(p, SIGSYS);
 	return (ENOSYS);
 }
