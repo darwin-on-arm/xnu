@@ -578,7 +578,9 @@ parse_machfile(
 	/*
 	 *	For PIE and dyld, slide everything by the ASLR offset.
 	 */
+#ifdef DEBUG
 	kprintf("dyld_slide: 0x%08x\n", aslr_offset);
+#endif
 	if ((header->flags & MH_PIE) || (header->filetype == MH_DYLINKER)) {
 		slide = aslr_offset;
 	}

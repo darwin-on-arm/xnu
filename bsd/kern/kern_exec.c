@@ -954,8 +954,10 @@ grade:
 		ap = thread_adjuserstack(thread, -new_ptr_size);
 		error = copyoutptr(load_result.mach_header, ap, new_ptr_size);
 
+#ifdef DEBUG
 		/* Print out information. */
 		kprintf("exec_mach_imgact: mach_header = %x, sp %llx\n", load_result.mach_header, ap);
+#endif
 
 		if (error) {
 		        if (vfexec || spawn)
