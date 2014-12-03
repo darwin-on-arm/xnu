@@ -53,7 +53,7 @@
 #include <sys/kdebug.h>
 #include <sys/sdt.h>
 
-#define C_32_STK_ALIGN          4
+#define C_32_STK_ALIGN          16
 #define C_32_PARAMSAVE_LEN      32
 #define C_32_LINKAGE_LEN        48
 
@@ -362,6 +362,11 @@ int sigreturn(struct proc *p, struct sigreturn_args *uap, __unused int *retval)
      */
     if ((error = copyin(uctx32.uc_mcontext, (void *)&mctx32, UC_FLAVOR_SIZE)))
         return (error);
+
+    /*
+     * Restore the signal mask.
+     */
+    ut->uu_sigmask = uctx32.uc_sigmask & ~sigcantmask;
 
     if ((uctx32.uc_onstack & 0x01))
         ut->uu_sigstk.ss_flags |= SA_ONSTACK;
