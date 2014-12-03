@@ -101,9 +101,9 @@ void sendsig(struct proc *p, user_addr_t ua_catcher, int sig, int mask, __unused
     arm_thread_state_t *tstate32;
     mach_msg_type_number_t state_count;
 
-    int oonstack, flavor;
     int stack_size = 0;
     int infostyle = UC_TRAD;
+    int oonstack, flavor, error;
     
     proc_unlock(p);
 
@@ -295,8 +295,8 @@ void sendsig(struct proc *p, user_addr_t ua_catcher, int sig, int mask, __unused
     flavor = ARM_THREAD_STATE;
     state_count = ARM_THREAD_STATE_COUNT;
     state = (void *)tstate32;
-    if (thread_setstatus(thread, flavor, (thread_state_t)state, state_count) != KERN_SUCCESS)
-        goto bad;
+    if ((error = thread_setstatus(thread, flavor, (thread_state_t)state, state_count)) != KERN_SUCCESS)
+        panic("sendsig: thread_setstatus failed, ret = %08X\n", error);
 
     proc_lock(p);
 
