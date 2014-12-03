@@ -322,7 +322,7 @@ kern_return_t machine_thread_set_state(thread_t thread, thread_flavor_t flavor,
 
         fs = (struct arm_vfp_state *) tstate;
 
-        for (i = 1; i <= 64; i++)
+        for (i = 0; i <= 64; i++)
             thread->machine.vfp_regs.r[i] = fs->r[i];
         thread->machine.vfp_regs.fpscr = fs->fpscr;
 
