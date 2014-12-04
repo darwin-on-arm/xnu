@@ -1,0 +1,31 @@
+# "Hack" to fix symbol resolving issue in Xcode 6.x toolchain
+
+___divsi3     ___divsi3189
+
+___udivsi3    ___udivsi362
+___udivsi3    ___udivsi363
+___udivsi3    ___udivsi364
+
+___udivsi3    ___udivsi392
+___udivsi3    ___udivsi394
+___udivsi3    ___udivsi395
+___udivsi3    ___udivsi3190
+___udivsi3    ___udivsi3281
+___udivsi3    ___udivsi3282
+___udivsi3    ___udivsi3283
+___udivsi3    ___udivsi3284
+
+___umodsi3    ___umodsi39
+___umodsi3    ___umodsi310
+___umodsi3    ___umodsi392
+___umodsi3    ___umodsi394
+
+___umodsi3    ___umodsi395
+
+_memcpy       _memcpy2
+_memcpy       _memcpy91
+_memcpy       _memcpy417
+
+_memset       _memset13
+_memset       _memset93
+_memset       _memset188

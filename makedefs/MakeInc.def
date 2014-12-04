@@ -6,7 +6,6 @@ export RELATIVE_SOURCE_PATH ?= .
 #
 export DEFAULT_ARM_MACHINE_CONFIG = ARMPBA8
 export DEFAULT_L4_ARM_MACHINE_CONFIG = LOLWUT
-
 export DEFAULT_ARM64_MACHINE_CONFIG = FOUNDATION
 
 #
@@ -24,7 +23,6 @@ else
 export INCR_EXPORTHDRS	= FALSE
 endif
 endif
-
 
 #
 # Component List
@@ -564,7 +562,8 @@ export LDFLAGS_KERNEL_RELEASEARM     = \
 	-Wl,-seg_page_size,__TEXT,0x1000 \
 	-Wl,-sectalign,__DATA,__const,0x1000 \
 	-Wl,-sectalign,__DATA,__sysctl_set,0x1000 \
-	-Wl,-exported_symbols_list,$(TARGET)/kernel-kpi.exp
+	-Wl,-exported_symbols_list,$(TARGET)/kernel-kpi.exp \
+	-Wl,-alias_list $(SRCROOT)/osfmk/arm/intrinsic.map
 
 export LDFLAGS_KERNEL_DEVELOPMENTARM     = \
 	-Wl,-pie \
@@ -572,7 +571,8 @@ export LDFLAGS_KERNEL_DEVELOPMENTARM     = \
 	-Wl,-seg_page_size,__TEXT,0x1000 \
 	-Wl,-sectalign,__DATA,__const,0x1000 \
 	-Wl,-sectalign,__DATA,__sysctl_set,0x1000 \
-	-Wl,-image_base,0x80001000
+	-Wl,-image_base,0x80001000 \
+	-Wl,-alias_list $(SRCROOT)/osfmk/arm/intrinsic.map
 
 export LDFLAGS_KERNEL_DEBUGARM = $(LDFLAGS_KERNEL_DEVELOPMENTARM)
 
