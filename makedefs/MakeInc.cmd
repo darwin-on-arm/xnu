@@ -120,6 +120,11 @@ ifeq ($(UNAME_S),Darwin)
 	ifeq ($(UNIFDEF),)
 		export UNIFDEF := $(shell $(XCRUN) -sdk $(SDKROOT) -find unifdef)
 	endif
+
+	# NO_DTRACE_SYMS is a workaround for later versions of OSX (10.10 on) that
+	# apparently break the dtrace tools used in this version of xnu.
+	# We really need to eventually fix this.
+	ifneq ($(NO_DTRACE_SYMS),YES)
 	ifeq ($(DSYMUTIL),)
 		export DSYMUTIL := $(shell $(XCRUN) -sdk $(SDKROOT) -find dsymutil)
 	endif
@@ -132,6 +137,13 @@ ifeq ($(UNAME_S),Darwin)
 	ifeq ($(CTFSCRUB),)
 		export CTFSCRUB := $(shell $(XCRUN) -sdk $(SDKROOT) -find ctfdump) -r
 	endif
+	else
+		export DSYMUTIL := /usr/bin/true
+		export CTFCONVERT := /usr/bin/true
+		export CTFMERGE := /usr/bin/true
+		export CTFSCRUB := /usr/bin/true -r
+	endif
+
 	ifeq ($(NMEDIT),)
 		export NMEDIT := $(shell $(XCRUN) -sdk $(SDKROOT) -find nmedit)
 	endif
@@ -146,7 +158,11 @@ ifeq ($(UNAME_S),Darwin)
 		endif
 	endif
 
-	CTFINSERT = $(XCRUN) -sdk $(SDKROOT) ctf_insert
+	ifneq ($(NO_DTRACE_SYMS),YES)
+		CTFINSERT = $(XCRUN) -sdk $(SDKROOT) ctf_insert
+	else
+		CTFINSERT = /usr/bin/true
+	endif
 
 	# Scripts or tools we build ourselves
 	SEG_HACK := $(OBJROOT)/SETUP/setsegname/setsegname
@@ -159,6 +175,10 @@ ifeq ($(UNAME_S),Darwin)
 	# Commands to generate host binaries. HOST_CC intentionally not
 	# $(CC), which controls the target compiler
 	###
+
+	# We need this due to changes in later Xcode versions
+	HOST_SDKROOT = $(shell $(XCRUN) --show-sdk-path)
+
 	ifeq ($(HOST_CC),)
 		export HOST_CC := $(shell $(XCRUN) -sdk $(HOST_SDKROOT) -find cc)
 	endif
