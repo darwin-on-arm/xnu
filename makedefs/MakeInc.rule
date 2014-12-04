@@ -631,7 +631,7 @@ $(TARGET)/mach_kernel: $(addprefix $(TARGET)/,$(foreach component,$(COMPONENT_LI
             echo "Skipping CTF processing"; 			   \
 		fi	;											   \
     fi;													   \
-	if [ $(UNAME) = Linux -o $(NO_DTRACE_SYMS) = YES ]; then \
+	if [ $(UNAME) = Linux ]; then \
 		echo "Skipping CTF processing."; \
 		skip_ctf=TRUE; \
 	fi; \
