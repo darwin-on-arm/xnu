@@ -195,7 +195,7 @@ OSPrintBacktrace(void)
 unsigned OSBacktrace(void **bt, unsigned maxAddrs)
 {
     unsigned frame;
-
+    return 0;
 #if __i386__
 #define SANE_i386_FRAME_SIZE (kernel_stack_size >> 1)
     vm_offset_t stackptr, stackptr_prev, raddr;
