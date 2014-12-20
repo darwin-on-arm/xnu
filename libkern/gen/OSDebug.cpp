@@ -43,6 +43,12 @@
 #include <sys/kdebug.h>
 #include <kern/thread.h>
 
+#if defined(__arm__) || defined(__aarch64__)
+extern "C" {
+extern int copyinframe(vm_address_t fp, uint32_t *frame);
+}
+#endif
+
 extern int etext;
 __BEGIN_DECLS
 // From osmfk/kern/thread.h but considered to be private
@@ -282,31 +288,56 @@ pad:
     for ( ; frame_index < maxAddrs; frame_index++)
 	    bt[frame_index] = (void *) 0;
 #elif defined(__arm__)
-    // @TODO: Implement validation
-    
-    vm_offset_t stackptr, stackptr_prev, raddr;
-    unsigned int frame_index = 0;
+    uint32_t i = 0;
+    uint32_t fp = 0;
+    uint32_t frameb[2];
 
-#ifndef __LP64__    
-    __asm__ __volatile("mov %0, r7" : "=r"(stackptr));
-#else
-    __asm__ __volatile("mov %0, fp" : "=r"(stackptr));
-#endif
+    /* Copied from xnu-1228. */
 
-    raddr = *((vm_offset_t*) stackptr + 4); // First return address
-    
-    bt[frame_index++] = (void *) raddr;
-    
-    for ( ; frame_index < maxAddrs; frame_index++) {
-	    stackptr_prev = stackptr;
-	    stackptr = *((vm_offset_t *) stackptr_prev);
-	    if (stackptr < stackptr_prev)
-		    break;
-	    raddr = *((vm_offset_t *) (stackptr + 4));
-	    bt[frame_index] = (void *) raddr;
-    }
-    
-    frame = frame_index;
+    /* Get the frame pointer from the current thread. */
+    __asm__ __volatile("mov %0, r7" : "=r"(fp));
+
+    /* Crawl up the stack recording the link value of each frame. */
+    do {
+        /* Check the boundary */
+        if ((fp == 0) || ((fp & 3) != 0) || (fp > VM_MAX_KERNEL_ADDRESS) || (fp < VM_MIN_KERNEL_ADDRESS))
+            break;
+
+        /* Safeley read frame */
+        if (copyinframe(fp, frameb) != 0)
+            break;
+
+        /* No need to use copyin as this is always a kernel address, see check above */
+        bt[i] = (void*)frameb[1]; /* link register */
+        fp = frameb[0];
+    } while (i++ < maxAddrs);
+
+    frame = i;
+#elif defined(__aarch64__)
+    /* FIXME?: this may be wrong! */
+    uint64_t i = 0;
+    uint64_t fp = 0;
+    uint64_t frameb[2];
+
+    /* Get the frame pointer from the current thread. */
+    __asm__ __volatile("mov %0, fp" : "=r"(fp));
+
+    /* Crawl up the stack recording the link value of each frame. */
+    do {
+        /* Check the boundary */
+        if ((fp == 0) || ((fp & 3) != 0) || (fp > VM_MAX_KERNEL_ADDRESS) || (fp < VM_MIN_KERNEL_ADDRESS))
+            break;
+
+        /* Safeley read frame */
+        if (copyinframe(fp, frameb) != 0)
+            break;
+
+        /* No need to use copyin as this is always a kernel address, see check above */
+        bt[i] = (void*)frameb[1]; /* link register */
+        fp = frameb[0];
+    } while (i++ < maxAddrs);
+
+    frame = i;
 #else
 #error arch
 #endif
