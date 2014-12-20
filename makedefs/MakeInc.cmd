@@ -203,18 +203,19 @@ ifeq ($(UNAME_S),Darwin)
 
 else ifeq ($(UNAME_S),Linux)
 
-	# We don't use xcrun (yet)
-	XCRUN = /bin/true
+	# Locate our xcrun tool
+	export XCRUN := /usr/bin/xcrun
 
-	# For now, we assume that everything we need is in the rootfs
+	# If applicable, use the default sdk path given by xcrun. We don't want to use any local tools
+	# when building things that aren't meant to be used or ran on the host.
 	ifeq ($(SDKROOT_RESOLVED),)
-		ifneq ($(SDKROOT),/)
-			export SDKROOT_RESOLVED	:= /
+		ifeq ($(SDKROOT),/)
+			export SDKROOT_RESOLVED := $(shell $(XCRUN) --show-sdk-path)
 		endif
 	endif
 
 	# Override SDKROOT if it was set by the user
-	override SDKROOT = $(SDKROOT_RESOLVED)
+	override SDKROOT := $(SDKROOT_RESOLVED)
 
 	# Just assume a MacOSX target
 	export PLATFORM := MacOSX
@@ -224,39 +225,35 @@ else ifeq ($(UNAME_S),Linux)
 	# against the empty string to see if they haven't been set
 	##
 	ifeq ($(origin CC),default)
-		export CC := /usr/bin/clang
+		export CC := $(shell $(XCRUN) -sdk $(SDKROOT) -find clang)
 	endif
 	ifeq ($(origin CXX),default)
-		export CXX := /usr/bin/clang++
+		export CXX := $(shell $(XCRUN) -sdk $(SDKROOT) -find clang++)
 	endif
-
-	# XXX We need a better way of handling this
-	TARGET_PROFILE ?= arm-apple-darwin11
-	TOOLCHAIN_PREFIX := $(addsuffix -,$(TARGET_PROFILE))
 
 	##
 	# Toolchain tools for cross building
 	##
 	ifeq ($(LD),)
-		export LD := $(addprefix $(TOOLCHAIN_PREFIX),ld)
+		export LD := $(shell $(XCRUN) -sdk $(SDKROOT) -find ld)
 	endif
 	ifeq ($(AS),)
-		export AS := $(addprefix $(TOOLCHAIN_PREFIX),as)
+		export AS := $(shell $(XCRUN) -sdk $(SDKROOT) -find as)
 	endif
 	ifeq ($(STRIP),)
-		export STRIP := $(addprefix $(TOOLCHAIN_PREFIX),strip)
+		export STRIP := $(shell $(XCRUN) -sdk $(SDKROOT) -find strip)
 	endif
 	ifeq ($(LIPO),)
-		export LIPO := $(addprefix $(TOOLCHAIN_PREFIX),lipo)
+		export LIPO := $(shell $(XCRUN) -sdk $(SDKROOT) -find lipo)
 	endif
 	ifeq ($(LIBTOOL),)
-		export LIBTOOL := $(addprefix $(TOOLCHAIN_PREFIX),libtool)
+		export LIBTOOL := $(shell $(XCRUN) -sdk $(SDKROOT) -find libtool)
 	endif
 	ifeq ($(NM),)
-		export NM := $(addprefix $(TOOLCHAIN_PREFIX),nm)
+		export NM := $(shell $(XCRUN) -sdk $(SDKROOT) -find nm)
 	endif
 	ifeq ($(NMEDIT),)
-		export NMEDIT := $(addprefix $(TOOLCHAIN_PREFIX),nmedit)
+		export NMEDIT := $(shell $(XCRUN) -sdk $(SDKROOT) -find nmedit)
 	endif
 
 	# XXX May need this later
@@ -266,13 +263,13 @@ else ifeq ($(UNAME_S),Linux)
 	# Misc. tools for building
 	##
 	ifeq ($(MIG),)
-		export MIG := /usr/bin/mig
+		export MIG := $(shell $(XCRUN) -sdk $(SDKROOT) -find mig)
 	endif
 	ifeq ($(MIGCC),)
 		export MIGCC := $(CC)
 	endif
 	ifeq ($(UNIFDEF),)
-		export UNIFDEF := /usr/bin/unifdef
+		export UNIFDEF := $(shell $(XCRUN) -sdk $(SDKROOT) -find unifdef)
 	endif
 	ifeq ($(DSYMUTIL),)
 		export DSYMUTIL := /bin/true
@@ -290,8 +287,8 @@ else ifeq ($(UNAME_S),Linux)
 	##
 	# Other special tools
 	##
-	SEG_HACK := /usr/bin/setsegname
-	KEXT_CREATE_SYMBOL_SET := /usr/bin/kextsymboltool
+	SEG_HACK := $(shell $(XCRUN) -sdk $(SDKROOT) -find setsegname)
+	KEXT_CREATE_SYMBOL_SET := $(shell $(XCRUN) -sdk $(SDKROOT) -find kextsymboltool)
 	DECOMMENT := $(OBJROOT)/SETUP/decomment/decomment
 	NEWVERS = $(SRCROOT)/config/newvers.pl
 	MD := $(OBJROOT)/SETUP/md/md
@@ -300,13 +297,13 @@ else ifeq ($(UNAME_S),Linux)
 	# Commands to generate host binaries.
 	###
 	ifeq ($(HOST_CC),)
-		export HOST_CC := $(CC)
+		export HOST_CC := $(shell $(XCRUN) -sdk $(HOST_SDKROOT) -find clang)
 	endif
 	ifeq ($(HOST_FLEX),)
-		export HOST_FLEX := /usr/bin/flex
+		export HOST_FLEX := $(shell $(XCRUN) -sdk $(HOST_SDKROOT) -find flex)
 	endif
 	ifeq ($(HOST_BISON),)
-		export HOST_BISON := /usr/bin/bison
+		export HOST_BISON := $(shell $(XCRUN) -sdk $(HOST_SDKROOT) -find bison)
 	endif
 	ifeq ($(HOST_CODESIGN),)
 		export HOST_CODESIGN := /bin/true
