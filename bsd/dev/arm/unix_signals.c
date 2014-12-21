@@ -77,7 +77,7 @@
  * Stack is set up to allow sigcode stored
  * in u. to call routine, followed by chmk
  * to sigreturn routine below.  After sigreturn
- * resets the signal mask, the stack, the frame 
+ * resets the signal mask, the stack, the frame
  * pointer, and the argument pointer, it returns
  * to the user specified pc, psl.
  */
@@ -85,7 +85,6 @@
 void sendsig(struct proc *p, user_addr_t ua_catcher, int sig, int mask, __unused uint32_t code)
 {
     user_addr_t ua_sp;
-    user_addr_t ua_fp;
     user_addr_t ua_sip;
     user_addr_t trampact;
     user_addr_t ua_uctxp;
@@ -96,7 +95,7 @@ void sendsig(struct proc *p, user_addr_t ua_catcher, int sig, int mask, __unused
     struct mcontext mctx32;
     struct user_ucontext32 uctx32;
     struct sigacts *ps = p->p_sigacts;
- 
+
     void *state;
     arm_thread_state_t *tstate32;
     mach_msg_type_number_t state_count;
@@ -104,7 +103,7 @@ void sendsig(struct proc *p, user_addr_t ua_catcher, int sig, int mask, __unused
     int stack_size = 0;
     int infostyle = UC_TRAD;
     int oonstack, flavor, error;
-    
+
     proc_unlock(p);
 
     thread_t thread = current_thread();
@@ -163,10 +162,10 @@ void sendsig(struct proc *p, user_addr_t ua_catcher, int sig, int mask, __unused
     ua_sp -= UC_FLAVOR_SIZE;
     ua_mctxp = ua_sp;
 
-    ua_sp -= sizeof (struct user_ucontext32);
+    ua_sp -= sizeof(struct user_ucontext32);
     ua_uctxp = ua_sp;
 
-    ua_sp -= sizeof (siginfo_t);
+    ua_sp -= sizeof(siginfo_t);
     ua_sip = ua_sp;
 
     /*
@@ -285,7 +284,8 @@ void sendsig(struct proc *p, user_addr_t ua_catcher, int sig, int mask, __unused
         tstate32->lr = trampact;
         tstate32->cpsr = 0x10; /* ARM_FIQ_MODE */
     } else {
-        tstate32->lr = (trampact & ~0x01);
+        trampact &= ~0x01;
+        tstate32->lr = trampact;
         tstate32->cpsr = 0x30; /* ARM_THUMB_MODE | ARM_USER_MODE */
     }
 
@@ -368,6 +368,9 @@ int sigreturn(struct proc *p, struct sigreturn_args *uap, __unused int *retval)
      */
     ut->uu_sigmask = uctx32.uc_sigmask & ~sigcantmask;
 
+    /*
+     * Restore other signal info.
+     */
     if ((uctx32.uc_onstack & 0x01))
         ut->uu_sigstk.ss_flags |= SA_ONSTACK;
     else
