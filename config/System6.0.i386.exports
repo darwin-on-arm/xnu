@@ -32,3 +32,5 @@ _strcat
 _strcpy
 _thread_funnel_set
 _vsprintf
+_flush_dcache64
+_invalidate_icache64

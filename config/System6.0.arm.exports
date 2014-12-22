@@ -38,3 +38,5 @@ _get_preemption_level
 __ZTVN17IONVRAMController9MetaClassE
 __ZNK17IONVRAMController12getMetaClassEv
 __ZNK17IONVRAMController9MetaClass5allocEv
+_flush_dcache
+_invalidate_icache
