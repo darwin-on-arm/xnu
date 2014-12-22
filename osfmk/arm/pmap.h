@@ -253,12 +253,19 @@ extern vm_offset_t pmap_boot_map(vm_size_t size);
 extern void sync_cache64(addr64_t pa, unsigned length);
 extern void sync_ppage(ppnum_t pa);
 extern void sync_cache_virtual(vm_offset_t va, unsigned length);
-extern void flush_dcache(vm_offset_t va, unsigned length, boolean_t phys);
-extern void flush_dcache64(addr64_t va, unsigned length, boolean_t phys);
-extern void invalidate_dcache(vm_offset_t va, unsigned length, boolean_t phys);
-extern void invalidate_dcache64(addr64_t va, unsigned length, boolean_t phys);
-extern void invalidate_icache(vm_offset_t va, unsigned length, boolean_t phys);
-extern void invalidate_icache64(addr64_t va, unsigned length, boolean_t phys);
+
+extern void flush_dcache(void);
+extern void mmu_flush_tlb(void);
+extern void cleanflush_dcache(void);
+extern void invalidate_dcache(void);
+extern void invalidate_icache(void);
+extern void clean_dcache_region(vm_offset_t va, unsigned length);
+extern void cleanflush_dcache_region(vm_offset_t va, unsigned length);
+extern void invalidate_dcache_region(vm_offset_t va, unsigned length);
+extern void invalidate_icache_region(vm_offset_t va, unsigned length);
+
+
+
 extern void pmap_map_block(pmap_t pmap, addr64_t va, ppnum_t pa, uint32_t size,
                            vm_prot_t prot, int attr, unsigned int flags);
 extern int pmap_map_block_rc(pmap_t pmap, addr64_t va, ppnum_t pa,

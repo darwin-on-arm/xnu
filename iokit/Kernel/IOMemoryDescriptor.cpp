@@ -1962,7 +1962,6 @@ IOReturn IOMemoryDescriptor::performOperation( IOOptionBits options,
         case kIOMemoryIncoherentIOStore:
             func = &dcache_incoherent_io_store64;
             break;
-
         case kIOMemorySetEncrypted:
             func = &SetEncryptOp;
             break;
@@ -1993,7 +1992,7 @@ IOReturn IOMemoryDescriptor::performOperation( IOOptionBits options,
         if (dstLen > remaining)
             dstLen = remaining;
 
-	(*func)(dstAddr64, dstLen);
+	    (*func)(dstAddr64, dstLen);
 
         offset    += dstLen;
         remaining -= dstLen;

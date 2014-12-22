@@ -36,17 +36,17 @@
 #define ENTRY_NP ENTRY
 #define _C_LABEL(x) _ ##x
 
-ENTRY(armv7_cpu_sleep)
+ENTRY(arm_cpu_sleep)
 	wfi				@ wait for an interrupt
-END(armv7_cpu_sleep)
+END(arm_cpu_sleep)
 
-ENTRY(armv7_wait)
+ENTRY(arm_wait)
 	mrc	p15, 0, r0, c2, c0, 0	@ arbitrary read of CP15
 	add	r0, r0, #0		@ a stall
 	bx	lr
-END(armv7_wait)
+END(arm_wait)
 
-ENTRY(armv7_context_switch)
+ENTRY(arm_context_switch)
 	dsb				@ data synchronization barrier
 	mrc	p15, 0, r2, c0, c0, 5	@ get MPIDR
 	cmp	r2, #0
@@ -61,9 +61,9 @@ ENTRY(armv7_context_switch)
 	dsb
 	isb
 	bx	lr
-END(armv7_context_switch)
+END(arm_context_switch)
 
-ENTRY(armv7_tlb_flushID_ASID)
+ENTRY(arm_tlb_flushID_ASID)
 #ifdef MULTIPROCESSOR
 	mcr	p15, 0, r0, c8, c3, 2	@ flush I+D tlb per ASID inner
 #else
@@ -72,9 +72,9 @@ ENTRY(armv7_tlb_flushID_ASID)
 	dsb				@ data synchronization barrier
 	isb
 	bx	lr
-END(armv7_tlb_flushID_ASID)
+END(arm_tlb_flushID_ASID)
 
-ENTRY(armv7_tlb_flushID)
+ENTRY(arm_tlb_flushID)
 	mov r0, #0
 #ifdef MULTIPROCESSOR
 	mcr	p15, 0, r0, c8, c3, 0	@ flush I+D tlb all
@@ -84,9 +84,9 @@ ENTRY(armv7_tlb_flushID)
 	dsb				@ data synchronization barrier
 	isb
 	bx	lr
-END(armv7_tlb_flushID)
+END(arm_tlb_flushID)
 
-ENTRY(armv7_tlb_flushID_RANGE)
+ENTRY(arm_tlb_flushID_RANGE)
 	dsb  			@ data synchronization barrier
 	mov r0, r0, lsr#12
 	mov r1, r1, lsr#12
@@ -101,9 +101,9 @@ ENTRY(armv7_tlb_flushID_RANGE)
 	dsb 
 	isb
 	bx lr
-END(armv7_tlb_flushID_RANGE)
+END(arm_tlb_flushID_RANGE)
 
-ENTRY(armv7_tlb_flushID_SE)
+ENTRY(arm_tlb_flushID_SE)
 #ifdef MULTIPROCESSOR
 	mcr	p15, 0, r0, c8, c3, 1	@ flush I+D tlb single entry
 #else
@@ -112,10 +112,10 @@ ENTRY(armv7_tlb_flushID_SE)
 	dsb				@ data synchronization barrier
 	isb
 	bx	lr
-END(armv7_tlb_flushID_SE)
+END(arm_tlb_flushID_SE)
 
 
-ENTRY_NP(armv7_setttb)
+ENTRY_NP(arm_setttb)
 	mrc	p15, 0, r2, c0, c0, 5	@ get MPIDR
 	cmp	r2, #0
 	orrlt	r0, r0, #0x58		@ MP, cachable
@@ -130,19 +130,19 @@ ENTRY_NP(armv7_setttb)
 	dsb				@ data synchronization barrier
 	isb
 	bx	lr
-END(armv7_setttb)
+END(arm_setttb)
 
 /* Other functions. */
 
-ENTRY_NP(armv7_drain_writebuf)
+ENTRY_NP(arm_drain_writebuf)
 	dsb				@ data synchronization barrier
 	RET
-END(armv7_drain_writebuf)
+END(arm_drain_writebuf)
 
 /* Cache operations. */
 
-/* LINTSTUB: void armv7_icache_sync_range(vaddr_t, vsize_t); */
-ENTRY_NP(armv7_icache_sync_range)
+/* LINTSTUB: void arm_icache_sync_range(vaddr_t, vsize_t); */
+ENTRY_NP(arm_icache_sync_range)
 	mrc	p15, 1, r2, c0, c0, 0	@ read CCSIDR
 	and	r2, r2, #7		@ get line size (log2(size)-4, 0=16)
 	mov	ip, #16			@ make a bit mask
@@ -161,30 +161,30 @@ ENTRY_NP(armv7_icache_sync_range)
 	dsb				@ data synchronization barrier
 	isb
 	bx	lr
-END(armv7_icache_sync_range)
+END(arm_icache_sync_range)
 
-ENTRY(armv7_set_context_id)
+ENTRY(arm_set_context_id)
 	mcr p15, 0, r0, c13, c0, 1
 	isb
 	bx lr
-END(armv7_set_context_id)
+END(arm_set_context_id)
 
-/* LINTSTUB: void armv7_icache_sync_all(void); */
-ENTRY_NP(armv7_icache_sync_all)
+/* LINTSTUB: void arm_icache_sync_all(void); */
+ENTRY_NP(arm_icache_sync_all)
 	/*
 	 * We assume that the code here can never be out of sync with the
 	 * dcache, so that we can safely flush the Icache and fall through
 	 * into the Dcache cleaning code.
 	 */
 	stmdb	sp!, {r0, lr}
-	bl	_C_LABEL(armv7_idcache_wbinv_all) @clean the D cache
+	bl	_C_LABEL(arm_idcache_wbinv_all) @clean the D cache
 	ldmia	sp!, {r0, lr}
 	dsb				@ data synchronization barrier
 	isb
 	bx	lr
-END(armv7_icache_sync_all)
+END(arm_icache_sync_all)
 
-ENTRY(armv7_dcache_wb_range)
+ENTRY(arm_dcache_wb_range)
 	mrc	p15, 1, r2, c0, c0, 0	@ read CCSIDR
 	and	r2, r2, #7		@ get line size (log2(size)-4, 0=16)
 	mov	ip, #16			@ make a bit mask
@@ -201,10 +201,10 @@ ENTRY(armv7_dcache_wb_range)
 	bhi	1b
 	dsb				@ data synchronization barrier
 	bx	lr
-END(armv7_dcache_wb_range)
+END(arm_dcache_wb_range)
 
-/* LINTSTUB: void armv7_dcache_wbinv_range(vaddr_t, vsize_t); */
-ENTRY(armv7_dcache_wbinv_range)
+/* LINTSTUB: void arm_dcache_wbinv_range(vaddr_t, vsize_t); */
+ENTRY(arm_dcache_wbinv_range)
 	mrc	p15, 1, r2, c0, c0, 0	@ read CCSIDR
 	and	r2, r2, #7		@ get line size (log2(size)-4, 0=16)
 	mov	ip, #16			@ make a bit mask
@@ -221,10 +221,10 @@ ENTRY(armv7_dcache_wbinv_range)
 	bhi	1b
 	dsb				@ data synchronization barrier
 	bx	lr
-END(armv7_dcache_wbinv_range)
+END(arm_dcache_wbinv_range)
 
-/* * LINTSTUB: void armv7_dcache_inv_range(vaddr_t, vsize_t); */
-ENTRY(armv7_dcache_inv_range)
+/* * LINTSTUB: void arm_dcache_inv_range(vaddr_t, vsize_t); */
+ENTRY(arm_dcache_inv_range)
 	mrc	p15, 1, r2, c0, c0, 0	@ read CCSIDR
 	and	r2, r2, #7		@ get line size (log2(size)-4, 0=16)
 	mov	ip, #16			@ make a bit mask
@@ -241,11 +241,11 @@ ENTRY(armv7_dcache_inv_range)
 
 	dsb				@ data synchronization barrier
 	bx	lr
-END(armv7_dcache_inv_range)
+END(arm_dcache_inv_range)
 
 
-/* * LINTSTUB: void armv7_idcache_wbinv_range(vaddr_t, vsize_t); */
-ENTRY(armv7_idcache_wbinv_range)
+/* * LINTSTUB: void arm_idcache_wbinv_range(vaddr_t, vsize_t); */
+ENTRY(arm_idcache_wbinv_range)
 	mrc	p15, 1, r2, c0, c0, 0	@ read CCSIDR
 	and	r2, r2, #7		@ get line size (log2(size)-4, 0=16)
 	mov	ip, #16			@ make a bit mask
@@ -265,10 +265,10 @@ ENTRY(armv7_idcache_wbinv_range)
 	dsb				@ data synchronization barrier
 	isb
 	bx	lr
-END(armv7_idcache_wbinv_range)
+END(arm_idcache_wbinv_range)
 
-/* * LINTSTUB: void armv7_idcache_wbinv_all(void); */
-ENTRY_NP(armv7_idcache_wbinv_all)
+/* * LINTSTUB: void arm_idcache_wbinv_all(void); */
+ENTRY_NP(arm_idcache_wbinv_all)
 	/*
 	 * We assume that the code here can never be out of sync with the
 	 * dcache, so that we can safely flush the Icache and fall through
@@ -276,15 +276,15 @@ ENTRY_NP(armv7_idcache_wbinv_all)
 	 */
 	dmb
 	mcr	p15, 0, r0, c7, c5, 0
-	b	_C_LABEL(armv7_dcache_wbinv_all)
-END(armv7_idcache_wbinv_all)
+	b	_C_LABEL(arm_dcache_wbinv_all)
+END(arm_idcache_wbinv_all)
 
 /*
  * These work very hard to not push registers onto the stack and to limit themselves
  * to use r0-r3 and ip.
  */
-/* * LINTSTUB: void armv7_icache_inv_all(void); */
-ENTRY_NP(armv7_icache_inv_all)
+/* * LINTSTUB: void arm_icache_inv_all(void); */
+ENTRY_NP(arm_icache_inv_all)
 	mov	r0, #0
 	mcr	p15, 2, r0, c0, c0, 0	@ set cache level to L1
 	mrc	p15, 1, r0, c0, c0, 0	@ read CCSIDR
@@ -319,10 +319,10 @@ ENTRY_NP(armv7_icache_inv_all)
 	mcr	p15, 0, r0, c7, c5, 0	@ invalidate L1 cache
 	isb				@ instruction sync barrier
 	bx	lr			@ return
-END(armv7_icache_inv_all)
+END(arm_icache_inv_all)
 
-/* * LINTSTUB: void armv7_dcache_inv_all(void); */
-ENTRY_NP(armv7_dcache_inv_all)
+/* * LINTSTUB: void arm_dcache_inv_all(void); */
+ENTRY_NP(arm_dcache_inv_all)
 	mrc	p15, 1, r0, c0, c0, 1	@ read CLIDR
 	ands	r3, r0, #0x07000000
 	beq	.Ldone_inv
@@ -382,10 +382,10 @@ ENTRY_NP(armv7_dcache_inv_all)
 	dsb
 	isb
 	bx	lr
-END(armv7_dcache_inv_all)
+END(arm_dcache_inv_all)
 
-/* * LINTSTUB: void armv7_dcache_wbinv_all(void); */
-ENTRY_NP(armv7_dcache_wbinv_all)
+/* * LINTSTUB: void arm_dcache_wbinv_all(void); */
+ENTRY_NP(arm_dcache_wbinv_all)
 	mrc	p15, 1, r0, c0, c0, 1	@ read CLIDR
 	ands	r3, r0, #0x07000000
 	beq	.Ldone_wbinv
@@ -445,6 +445,6 @@ ENTRY_NP(armv7_dcache_wbinv_all)
 	dsb
 	isb
 	bx	lr
-END(armv7_dcache_wbinv_all)
+END(arm_dcache_wbinv_all)
 
 #endif

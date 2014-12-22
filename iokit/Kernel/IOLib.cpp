@@ -93,6 +93,9 @@ extern void cons_putc_locked(char);
 extern void bsd_log_lock(void);
 extern void bsd_log_unlock(void);
 
+#if defined(__arm__)
+extern "C" void cleanflush_dcache_region(vm_offset_t va, unsigned length);
+#endif
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
@@ -728,8 +731,11 @@ IOReturn IOFlushProcessorCache( task_t task, IOVirtualAddress address,
 {
     if( task != kernel_task)
 	return( kIOReturnUnsupported );
-
+#if defined(__arm__)
+    cleanflush_dcache_region( (vm_offset_t) address, (unsigned) length );
+#else
     flush_dcache64( (addr64_t) address, (unsigned) length, false );
+#endif
 
     return( kIOReturnSuccess );
 }
