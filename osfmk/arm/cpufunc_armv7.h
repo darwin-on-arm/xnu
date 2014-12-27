@@ -39,30 +39,32 @@
  * Prototypes for cpu, mmu and tlb related functions.
  */
 
-#ifndef _ARM_CPUFUNC_H_
-#define _ARM_CPUFUNC_H_
+#ifndef _ARM32_CPUFUNC_H_
+#define _ARM32_CPUFUNC_H_
 
 typedef int bool, vsize_t;
 
-extern void	arm_cpu_sleep(int);
-extern void	arm_setttb(u_int, bool);
-extern void	arm_context_switch(u_int);
-extern void	arm_set_context_id(u_int);
-extern void	arm_tlb_flushID_SE(u_int);
-extern void arm_tlb_flushID_ASID(u_int);
-extern void arm_tlb_flushID_RANGE(u_int, u_int);
-extern void arm_tlb_flushID(void);
-extern void	arm_drain_writebuf(void);
+extern void	armv7_setttb(u_int, bool);
 
-extern void arm_icache_sync_range(vaddr_t, vsize_t);
-extern void arm_icache_sync_all(void);
-extern void arm_dcache_wb_range(vaddr_t, vsize_t);
-extern void arm_dcache_wbinv_range(vaddr_t, vsize_t);
-extern void arm_dcache_inv_range(vaddr_t, vsize_t);
-extern void arm_idcache_wbinv_range(vaddr_t, vsize_t);
-extern void arm_idcache_wbinv_all(void);
-extern void arm_dcache_wbinv_all(void);
+extern void	armv7_icache_sync_range(vaddr_t, vsize_t);
+extern void	armv7_dcache_wb_range(vaddr_t, vsize_t);
+extern void	armv7_dcache_wbinv_range(vaddr_t, vsize_t);
+extern void	armv7_dcache_inv_range(vaddr_t, vsize_t);
+extern void	armv7_idcache_wbinv_range(vaddr_t, vsize_t);
 
-extern void	arm_setup(char *string);
+extern void	armv7_icache_sync_all(void);
+extern void	armv7_cpu_sleep(int);
+extern void	armv7_context_switch(u_int);
+extern void	armv7_tlb_flushID_SE(u_int);
+extern void 	armv7_tlb_flushID_RANGE(u_int, u_int);
+extern void 	armv7_tlb_flushID(void);
+extern void 	armv7_tlb_flushID_ASID(u_int);
+extern void	armv7_drain_writebuf(void);
 
-#endif /* !_ARM_CPUFUNC_H_ */
+extern void	armv7_set_context_id(u_int);
+
+extern void	armv7_setup(char *string);
+extern void 	armv7_dcache_wbinv_all (void);
+extern void	armv7_idcache_wbinv_all(void);
+
+#endif

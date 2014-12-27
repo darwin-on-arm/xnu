@@ -2873,6 +2873,7 @@ _fatfile_getarch
 _fatfile_getarch_affinity
 _find_entry
 _flush_dcache
+_flush_dcache64
 _gGearPict
 _gIOAppPowerStateInterest
 _gIOBusyInterest
@@ -2941,6 +2942,7 @@ _get_kernel_symfile
 _get_procrustime
 _get_task_map
 _invalidate_icache
+_invalidate_icache64
 _iokit_add_reference
 _iokit_builder:_osbuilder
 _iokit_client_died

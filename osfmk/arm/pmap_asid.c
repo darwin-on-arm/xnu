@@ -83,8 +83,20 @@
 #include <arm/arch.h>
 #include <mach/branch_predicates.h>
 #include <arm/mp.h>
-#include <arm/cpufunc.h>
+#include "cpufunc_armv7.h"
 #include "proc_reg.h"
+
+/*
+ * ARM11 support.
+ */
+#ifndef _ARM_ARCH_7
+#define armv7_set_context_id(args...)      /* No ASIDs. */
+#define armv7_context_switch       arm11_context_switch
+#define armv7_tlb_flushID_ASID     arm11_tlb_flushID
+#define armv7_tlb_flushID          arm11_tlb_flushID
+#define armv7_tlb_flushID_RANGE    arm11_tlb_flushID_RANGE
+#define armv7_tlb_flushID_SE       arm11_tlb_flushID_SE
+#endif
 
 /*
  * asid (Process context identifier) aka tagged TLB support.
@@ -157,7 +169,7 @@ void pmap_asid_configure(void)
             kprintf("All ASID/asids enabled: real_ncpus: %d, pmap_asid_ncpus: %d\n", real_ncpus, pmap_asid_ncpus);
         }
 
-        arm_tlb_flushID();
+        armv7_tlb_flushID();
 
         cpu_datap(ccpu)->cpu_pmap_asid_coherentp =
             cpu_datap(ccpu)->cpu_pmap_asid_coherentp_kernel =

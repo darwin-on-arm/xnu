@@ -1022,7 +1022,7 @@ decmpfs_fetch_uncompressed_data(vnode_t vp, decmpfs_cnode *cp, decmpfs_header *h
 #if	!defined(__i386__) && !defined(__x86_64__)
                 int i;
                 for (i = 0; i < nvec; i++) {
-                    cleanflush_dcache_region((uintptr_t)vec[i].buf, vec[i].size);
+                    flush_dcache64((addr64_t)(uintptr_t)vec[i].buf, vec[i].size, FALSE);
                 }
 #endif
             }

@@ -72,13 +72,6 @@ extern void OSRuntimeUnloadCPP(kmod_info_t * ki, void * data);
 extern ppnum_t pmap_find_phys(pmap_t pmap, addr64_t va); /* osfmk/machine/pmap.h */
 }
 
-#if defined(__arm__)
-extern "C" {
-extern void cleanflush_dcache_region(vm_offset_t va, unsigned length);
-extern void invalidate_icache_region(vm_offset_t va, unsigned length);
-}
-#endif
-
 static OSReturn _OSKextCreateRequest(
     const char    * predicate,
     OSDictionary ** requestP);
@@ -5036,11 +5029,10 @@ OSKext::loadExecutable()
     * cache and invalidate the instruction cache.
     * I/D caches are coherent on x86
     */
-#if defined(__arm__)
-    cleanflush_dcache_region(kmod_info->address, kmod_info->size);
-    invalidate_icache_region(kmod_info->address, kmod_info->size);
+#if !defined(__i386__) && !defined(__x86_64__)
+    flush_dcache(kmod_info->address, kmod_info->size, false);
+    invalidate_icache(kmod_info->address, kmod_info->size, false);
 #endif
-
 register_kmod:
 
     if (isInterface()) {

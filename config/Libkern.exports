@@ -608,6 +608,7 @@ _deflateReset
 _deflateSetDictionary
 _ffs
 _flush_dcache
+_flush_dcache64
 _gOSKextUnresolved
 _inet_ntop
 _inflate
@@ -619,6 +620,7 @@ _inflateSetDictionary
 _inflateSync
 _inflateSyncPoint
 _invalidate_icache
+_invalidate_icache64
 _itoa
 _kOSBooleanFalse
 _kOSBooleanTrue
