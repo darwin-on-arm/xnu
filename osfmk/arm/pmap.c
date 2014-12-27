@@ -148,20 +148,8 @@
 #include <arm/cpu_capabilities.h>
 #include <arm/arch.h>
 #include <arm/pmap_asid.h>
-#include "cpufunc_armv7.h"
+#include <arm/cpufunc.h>
 #include "proc_reg.h"
-
-/*
- * ARM11 support.
- */
-#ifndef _ARM_ARCH_7
-#define armv7_set_context_id(args...)      /* No ASIDs. */
-#define armv7_context_switch       arm11_context_switch
-#define armv7_tlb_flushID_ASID     arm11_tlb_flushID
-#define armv7_tlb_flushID          arm11_tlb_flushID
-#define armv7_tlb_flushID_RANGE    arm11_tlb_flushID_RANGE
-#define armv7_tlb_flushID_SE       arm11_tlb_flushID_SE
-#endif
 
 /*
  * The pv_head_table contains a 'trunk' of mappings for each physical
@@ -1305,12 +1293,12 @@ pmap_flush_tlbs(pmap_t  pmap, vm_map_offset_t startv, vm_map_offset_t endv)
         if (pmap_asid_ncpus) {
             pmap_asid_validate_cpu(pmap, my_cpu);
             if (pmap_is_shared)
-                armv7_tlb_flushID();
+                arm_tlb_flushID();
             else
-                armv7_tlb_flushID_ASID(pmap->pm_asid & 0xFF);
+                arm_tlb_flushID_ASID(pmap->pm_asid & 0xFF);
         }
         else
-            armv7_tlb_flushID();
+            arm_tlb_flushID();
     }
 
     if (__improbable((pmap == kernel_pmap) && (flush_self != TRUE))) {
@@ -2220,8 +2208,8 @@ void pmap_switch(pmap_t new_pmap)
             pmap_asid_activate(new_pmap, cpu_number());
         }
         current_cpu_datap()->user_pmap = new_pmap;
-        armv7_set_context_id(new_pmap->pm_asid & 0xFF);
-        armv7_context_switch(new_pmap->pm_l1_phys);
+        arm_set_context_id(new_pmap->pm_asid & 0xFF);
+        arm_context_switch(new_pmap->pm_l1_phys);
     }
 
     /*
@@ -2555,7 +2543,7 @@ void pmap_create_sharedpage(void)
  */
 vm_offset_t pmap_extract(pmap_t pmap, vm_offset_t virt)
 {
-#ifndef _ARM_ARCH_7
+#if defined(_ARM_ARCH_6)
     spl_t spl;
     vm_offset_t ppn = 0;
     uint32_t tte, *ttep = pmap_tte(pmap, virt);
@@ -2639,7 +2627,7 @@ vm_offset_t pmap_extract(pmap_t pmap, vm_offset_t virt)
      */
     PMAP_UNLOCK(pmap);
     return ppn;
-#else
+#elif defined(_ARM_ARCH_7)
     uint32_t va = (virt & L2_ADDR_MASK), par;
     boolean_t is_priv = (pmap == kernel_pmap) ? TRUE : FALSE;
 
@@ -2691,6 +2679,8 @@ vm_offset_t pmap_extract(pmap_t pmap, vm_offset_t virt)
     }
 
     return 0;
+#else
+#error Unsupported subarchitecture
 #endif
 }
 
@@ -2758,7 +2748,7 @@ void pmap_expand_ttb(pmap_t map, vm_offset_t expansion_size)
              * Switch into the new TTB if it needs to be used.
              */
             if (map == current_cpu_datap()->user_pmap) {
-                armv7_context_switch(map->pm_l1_phys);
+                arm_context_switch(map->pm_l1_phys);
             }
 
             return;
