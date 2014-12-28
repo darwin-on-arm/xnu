@@ -132,6 +132,17 @@
         bx      lr              ;   \
 
 /*
+ * Helper macro to get physical address mapping in virtual address space.
+ */
+#define GetPhysAddr(rX) \
+    LoadConstantToReg(_gPhysBase, r4); \
+    ldr     r4, [r4]; \
+    sub     rX, rX, r4; \
+    LoadConstantToReg(_gVirtBase, r4); \
+    ldr     r4, [r4]; \
+    add     rX, rX, r4
+
+/*
  * Thread crap.
  */
 

@@ -36,10 +36,10 @@
 /**
  * invalidate_dcache
  *
- * Invalidate entire ARM data-cache.
+ * Invalidate ARM data-cache.
  */
 EnterARM(invalidate_dcache)
-    bl _arm_dcache_inv_all
+    b _arm_dcache_inv_all
 
 /**
  * invalidate_dcache_region
@@ -47,7 +47,7 @@ EnterARM(invalidate_dcache)
  * Invalidate an ARM data-cache region.
  */
 EnterARM(invalidate_dcache_region)
-    bl _arm_dcache_inv_range
+    b _arm_dcache_inv_range
 
 /**
  * dcache_incoherent_io_store64
@@ -56,12 +56,7 @@ EnterARM(invalidate_dcache_region)
  */
 EnterARM(dcache_incoherent_io_store64)
     mov     r1, r2
-    LoadConstantToReg(_gPhysBase, r2)
-    ldr     r2, [r2]
-    sub     r0, r0, r2
-    LoadConstantToReg(_gVirtBase, r2)
-    ldr     r2, [r2]
-    add     r0, r0, r2
+    GetPhysAddr(r0)
 
 /**
  * clean_dcache_region
@@ -69,7 +64,7 @@ EnterARM(dcache_incoherent_io_store64)
  * Clean an ARM data-cache region.
  */
 EnterARM_NoAlign(clean_dcache_region)
-    bl _arm_dcache_wb_range
+    b _arm_dcache_wb_range
 
 /**
  * cleanflush_dcache_region
@@ -77,7 +72,7 @@ EnterARM_NoAlign(clean_dcache_region)
  * Clean and flush entire ARM data-cache.
  */
 EnterARM(cleanflush_dcache)
-    bl _arm_dcache_wbinv_all
+    b _arm_dcache_wbinv_all
 
 /**
  * dcache_incoherent_io_flush64
@@ -86,12 +81,7 @@ EnterARM(cleanflush_dcache)
  */
 EnterARM(dcache_incoherent_io_flush64)
     mov     r1, r2
-    LoadConstantToReg(_gPhysBase, r2)
-    ldr     r2, [r2]
-    sub     r0, r0, r2
-    LoadConstantToReg(_gVirtBase, r2)
-    ldr     r2, [r2]
-    add     r0, r0, r2
+    GetPhysAddr(r0)
 
 /**
  * cleanflush_dcache_region
@@ -99,7 +89,7 @@ EnterARM(dcache_incoherent_io_flush64)
  * Clean and flush an ARM data-cache region.
  */
 EnterARM_NoAlign(cleanflush_dcache_region)
-    bl _arm_dcache_wbinv_range
+    b _arm_dcache_wbinv_range
 
 /**
  * flush_dcache64
@@ -116,7 +106,10 @@ EnterARM(flush_dcache64)
  * Flush entire ARM data-cache.
  */
 EnterARM_NoAlign(flush_dcache)
-    bl _arm_dcache_wbinv_all
+    cmp     r2, #0
+    beq _cleanflush_dcache_region
+    GetPhysAddr(r0)
+    b _cleanflush_dcache_region
 
 /**
  * invalidate_icache64
@@ -133,7 +126,10 @@ EnterARM(invalidate_icache64)
  * Invalidate entire ARM i-cache.
  */
 EnterARM_NoAlign(invalidate_icache)
-    bl _arm_icache_sync_all
+    cmp     r2, #0
+    beq _invalidate_icache_region
+    GetPhysAddr(r0)
+    b _invalidate_icache_region
 
 /**
  * invalidate_icache_region
@@ -141,7 +137,7 @@ EnterARM_NoAlign(invalidate_icache)
  * Invalidate an ARM i-cache region.
  */
 EnterARM(invalidate_icache_region)
-    bl _arm_icache_sync_range
+    b _arm_icache_sync_range
 
 /**
  * invalidate_branch_target_cache
