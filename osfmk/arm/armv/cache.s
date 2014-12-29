@@ -103,7 +103,7 @@ EnterARM(flush_dcache64)
 /**
  * flush_dcache
  *
- * Flush entire ARM data-cache.
+ * Flush ARM data-cache.
  */
 EnterARM_NoAlign(flush_dcache)
     cmp     r2, #0
@@ -123,7 +123,7 @@ EnterARM(invalidate_icache64)
 /**
  * invalidate_icache
  *
- * Invalidate entire ARM i-cache.
+ * Invalidate ARM i-cache.
  */
 EnterARM_NoAlign(invalidate_icache)
     cmp     r2, #0
