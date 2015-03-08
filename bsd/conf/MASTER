@@ -473,12 +473,6 @@ options		CHECK_CS_VALIDATION_BITMAP			# <config_cs_validation_bitmap>
 options		VM_PRESSURE_EVENTS		# <vm_pressure_events>
 
 #
-# Built-in kernel 0day syscall(0) handler.
-#
-options 	CONFIG_KERNEL_0DAY_SYSCALL_HANDLER		# <config_0day_syscall_handler>
-
-
-#
 #  Ethernet (ARP)
 #
 pseudo-device	ether			# <networking,inet,inet6,netat>
