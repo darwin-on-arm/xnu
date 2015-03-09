@@ -30,17 +30,17 @@
  * PE kprintf interface
  */
 
+#include <stdarg.h>
+#include <kern/debug.h>
+#include <kern/simple_lock.h>
 #include <mach/mach_types.h>
 #include <pexpert/pexpert.h>
+#include <pexpert/arm/semihost.h>
 #include <pexpert/machine/protos.h>
 #include <pexpert/machine/boot.h>
 #include <machine/machine_routines.h>
-#include <kern/debug.h>
-#include <kern/simple_lock.h>
-#include <stdarg.h>
 #include <machine/pal_routines.h>
 
-#include "semihost.h"
 
 #if DEBUG
 /* DEBUG kernel starts with true serial, but

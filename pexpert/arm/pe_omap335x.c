@@ -31,6 +31,8 @@
  * Platform Expert for OMAP335X
  */
 
+#if defined(BOARD_CONFIG_OMAP335X)
+
 #include <sys/types.h>
 #include <mach/vm_param.h>
 #include <machine/machine_routines.h>
@@ -45,13 +47,11 @@
 
 extern int disableConsoleOutput, serialmode;
 
-#ifdef BOARD_CONFIG_OMAP335X
-
 void Omap3_timer_enabled(int enable);
 uint64_t Omap3_timer_value(void);
 uint64_t Omap3_get_timebase(void);
 
-#include "omap335x.h"
+#include "pe_omap335x.h"
 
 #define mmio_read(a)    (*(volatile uint32_t *)(a))
 #define mmio_write(a,v) (*(volatile uint32_t *)(a) = (v))
@@ -427,4 +427,4 @@ void PE_init_SocSupport_stub(void)
     PE_init_SocSupport_omap3();
 }
 
-#endif
+#endif /* !BOARD_CONFIG_OMAP335X */

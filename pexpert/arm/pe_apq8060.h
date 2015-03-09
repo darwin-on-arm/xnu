@@ -31,10 +31,8 @@
  * SUCH DAMAGE.
  */
 
-#ifndef _TOUCHPAD_MSM_H_
-#define _TOUCHPAD_MSM_H_
-
-#define barrier()               __asm__ __volatile__("": : :"memory");
+#ifndef _PEXPERT_APQ8060_H_
+#define _PEXPERT_APQ8060_H_
 
 #define MSM_TMR_BASE             0x02000000
 #define MSM_GPT_BASE            (0x04)
@@ -117,4 +115,4 @@
 
 #define SPSS_TIMER_STATUS_DGT_EN    (1 << 0)
 
-#endif
+#endif /* !_PEXPERT_APQ8060_H_ */

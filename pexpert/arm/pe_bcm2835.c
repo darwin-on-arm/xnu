@@ -30,6 +30,8 @@
  * Platform Expert for Raspberry Pi.
  */
 
+#if defined(BOARD_CONFIG_RASPBERRYPI)
+
 #include <mach/mach_types.h>
 
 #include <pexpert/pexpert.h>
@@ -41,12 +43,12 @@
 #include <vm/pmap.h>
 #include <arm/pmap.h>
 
-#include "raspberrypi.h"
+#include "pe_bcm2835.h"
 
 /*
  * This is board specific stuff.
  */
-#ifdef BOARD_CONFIG_RASPBERRYPI
+
 #define KPRINTF_PREFIX  "PE_RaspberryPi: "
 
 extern void rtclock_intr(arm_saved_state_t * regs);
@@ -242,4 +244,4 @@ void PE_init_SocSupport_stub(void)
     PE_init_SocSupport_raspberrypi();
 }
 
-#endif
+#endif /* !BOARD_CONFIG_RASPBERRYPI */

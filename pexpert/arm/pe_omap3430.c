@@ -41,6 +41,8 @@
  * pasta~
  */
 
+#if defined(BOARD_CONFIG_OMAP3430_RX51)
+
 #include <sys/types.h>
 #include <mach/vm_param.h>
 #include <machine/machine_routines.h>
@@ -56,13 +58,11 @@
 
 /* XXX: timer is so god awfully borked */
 
-#ifdef BOARD_CONFIG_OMAP3430_RX51
-
 void Omap3_timer_enabled(int enable);
 uint64_t Omap3_timer_value(void);
 uint64_t Omap3_get_timebase(void);
 
-#include "omap3530.h"
+#include "pe_omap3530.h"
 
 #define mmio_read(a)    (*(volatile uint32_t *)(a))
 #define mmio_write(a,v) (*(volatile uint32_t *)(a) = (v))
@@ -543,7 +543,7 @@ void Omap3_InitCaches(void)
     kprintf(KPRINTF_PREFIX "done\n");
 }
 
-void PE_init_SocSupport_omap3(void)
+static void PE_init_SocSupport_omap3(void)
 {
     gPESocDispatch.uart_getc = Omap3_getc;
     gPESocDispatch.uart_putc = Omap3_putc;
@@ -573,5 +573,4 @@ void PE_init_SocSupport_stub(void)
     PE_init_SocSupport_omap3();
 }
 
-#endif
-
+#endif /* !BOARD_CONFIG_OMAP3430_RX51 */

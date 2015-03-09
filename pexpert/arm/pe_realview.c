@@ -30,6 +30,8 @@
  * RealView init.
  */
 
+#if defined(BOARD_CONFIG_ARMPBA8) || defined(BOARD_CONFIG_ARM_RVEB_V6)
+
 #include <mach/mach_types.h>
 
 #include <pexpert/pexpert.h>
@@ -41,12 +43,11 @@
 #include <vm/pmap.h>
 #include <arm/pmap.h>
 
-#include "realview.h"
+#include "pe_realview.h"
 
 /*
  * This is board specific stuff.
  */
-#if defined(BOARD_CONFIG_ARMPBA8) || defined(BOARD_CONFIG_ARM_RVEB_V6)
 
 #define KPRINTF_PREFIX      "PE_RealView: "
 
@@ -382,7 +383,7 @@ void RealView_framebuffer_init(void)
 	}
 }
 
-void PE_init_SocSupport_realview(void)
+static void PE_init_SocSupport_realview(void)
 {
     gPESocDispatch.uart_getc = RealView_getc;
     gPESocDispatch.uart_putc = RealView_putc;
@@ -411,4 +412,4 @@ void PE_init_SocSupport_stub(void)
     PE_init_SocSupport_realview();
 }
 
-#endif                          // BOARD_CONFIG_ARMPBA8
+#endif /* !BOARD_CONFIG_ARMPBA8 | !BOARD_CONFIG_ARM_RVEB_V6 */

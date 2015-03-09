@@ -53,8 +53,6 @@
 #define LCDCONTROL_LCDBPP(x)        (((x) & 7) << 1)
 #define LCDCONTROL_LCDTFT           (1 << 5)
 
-#define barrier()               __asm__ __volatile__("": : :"memory");
-
 #define PL111_TIMINGS_0         0x0
 #define PL111_TIMINGS_1         0x4
 #define PL111_TIMINGS_2         0x8
@@ -95,5 +93,5 @@ uint64_t RealView_timer_value(void);
 void RealView_timer_enabled(int enable);
 void RealView_framebuffer_init(void);
 
-#endif
+#endif /* !_PEXPERT_ARM_REALVIEW_H_ */
  

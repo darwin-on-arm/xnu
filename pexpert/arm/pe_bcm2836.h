@@ -1,5 +1,5 @@
 /*
- * Copyright 2013, winocm. <winocm@icloud.com>
+ * Copyright 2015, Brian McKenzie <mckenzba@gmail.com>
  * All rights reserved.
  * 
  * Redistribution and use in source and binary forms, with or without modification,
@@ -26,30 +26,9 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-/*
- * PE bringup (semihosting)
- */
 
-#include <mach/mach_types.h>
-#include <pexpert/pexpert.h>
-#include <pexpert/machine/protos.h>
-#include <pexpert/machine/boot.h>
-#include <machine/machine_routines.h>
-#include <kern/debug.h>
-#include <stdarg.h>
+#ifndef _PEXPERT_BCM2836_H_
+#define _PEXPERT_BCM2836_H_
 
-#include "semihost.h"
 
-/**
- * PE_early_puts
- *
- * Bringup function, use for semihosting. Prints to SYS_OUTPUT0.
- */
-void PE_early_puts(char *s)
-{
-    while (*s != '\0') {
-        PE_semihost_write_char(*s);
-        s++;
-    }
-    return;
-}
+#endif /* !_PEXPERT_BCM2836_H */

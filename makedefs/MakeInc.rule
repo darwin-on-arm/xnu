@@ -626,7 +626,7 @@ $(TARGET)/mach_kernel: $(addprefix $(TARGET)/,$(foreach component,$(COMPONENT_LI
 	onearch=$(ARCH_CONFIG);								   \
 	skip_ctf=FALSE;										   \
 	if [ $${kernel_config} = RELEASE ]; then          	   \
-	    if [[ $${onearch} = ARM ]]; then	\
+	    if [ $${onearch} = ARM ]; then	\
             skip_ctf=TRUE;                                 \
             echo "Skipping CTF processing"; 			   \
 		fi	;											   \

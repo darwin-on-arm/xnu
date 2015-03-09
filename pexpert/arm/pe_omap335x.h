@@ -2,8 +2,8 @@
  * OMAP 35xx support
  */
 
-#ifndef xnu_omap335x_h
-#define xnu_omap335x_h
+#ifndef _PEXPERT_OMAP335X_H_
+#define _PEXPERT_OMAP335X_H_
 
 /*
  * Note, on older OMAP platforms, the size of the NS16550 UARTS
@@ -19,8 +19,6 @@
 #define MSR     0x18
 #define SCR     0x1C
 #define SSR     0x44            // 335x
-
-#define barrier()               __asm__ __volatile__("": : :"memory");
 
 #define OMAP3_GIC_BASE           0x48200000
 
@@ -133,7 +131,7 @@
 #define TOCR            0x54
 #define TOWR            0x58
 
-#else
+#else /* OMAP335X_SCH_TIMER != 1 */
 
 #define TIDR            0x0
 #define TIOCP_CFG       0x10
@@ -153,4 +151,4 @@
 
 #endif
 
-#endif
+#endif /* !_PEXPERT_OMAP335X_H_ */

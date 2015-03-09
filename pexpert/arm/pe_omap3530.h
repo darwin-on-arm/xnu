@@ -2,8 +2,8 @@
  * OMAP 35xx support
  */
 
-#ifndef xnu_omap3530_h
-#define xnu_omap3530_h
+#ifndef _PEXPERT_OMAP3530_H_
+#define _PEXPERT_OMAP3530_H_
 
 /*
  * Note, on older OMAP platforms, the size of the NS16550 UARTS
@@ -18,8 +18,6 @@
 #define LSR     0x14
 #define MSR     0x18
 #define SCR     0x1C
-
-#define barrier()               __asm__ __volatile__("": : :"memory");
 
 #define OMAP3_TIMER0_BASE        0x48318000
 #define OMAP3_GIC_BASE           0x48200000
@@ -199,4 +197,4 @@ struct panel_config {
 
 
 
-#endif
+#endif /* !_PEXPERT_OMAP3530_H_ */

@@ -27,16 +27,28 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 /*
- * C exports for the semihosting interface.
+ * PE bringup (semihosting)
  */
 
-#ifndef _PEXPERT_ARM_SEMIHOST_H_
-#define _PEXPERT_ARM_SEMIHOST_H_
-
-#include <sys/cdefs.h>
+#include <stdarg.h>
+#include <kern/debug.h>
 #include <mach/mach_types.h>
-#include <pexpert/arm/boot.h>
+#include <pexpert/pexpert.h>
+#include <pexpert/arm/semihost.h>
+#include <pexpert/machine/protos.h>
+#include <pexpert/machine/boot.h>
+#include <machine/machine_routines.h>
 
-extern void PE_semihost_write_char(char c);
-
-#endif
+/**
+ * PE_early_puts
+ *
+ * Bringup function, use for semihosting. Prints to SYS_OUTPUT0.
+ */
+void PE_early_puts(char *s)
+{
+    while (*s != '\0') {
+        PE_semihost_write_char(*s);
+        s++;
+    }
+    return;
+}

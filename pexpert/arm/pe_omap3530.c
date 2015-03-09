@@ -30,6 +30,8 @@
  * Platform Expert for OMAP35xx/36xx and AM/DM37x.
  */
 
+#if defined(BOARD_CONFIG_OMAP3530)
+
 #include <sys/types.h>
 #include <mach/vm_param.h>
 #include <machine/machine_routines.h>
@@ -44,14 +46,11 @@
 #include <kern/cpu_data.h>
 
 /* XXX: timer is so god awfully borked */
-
-#ifdef BOARD_CONFIG_OMAP3530
-
 void Omap3_timer_enabled(int enable);
 uint64_t Omap3_timer_value(void);
 uint64_t Omap3_get_timebase(void);
 
-#include "omap3530.h"
+#include "pe_omap3530.h"
 
 #define mmio_read(a)    (*(volatile uint32_t *)(a))
 #define mmio_write(a,v) (*(volatile uint32_t *)(a) = (v))
@@ -593,4 +592,4 @@ void PE_init_SocSupport_stub(void)
     PE_init_SocSupport_omap3();
 }
 
-#endif
+#endif /* !BOARD_CONFIG_OMAP3530 */

@@ -30,6 +30,8 @@
  * Platform Expert for Samsung S5L8900X devices.
  */
 
+#if defined(BOARD_CONFIG_S5L8900XRB)
+
 #include <mach/mach_types.h>
 
 #include <IOKit/IOPlatformExpert.h>
@@ -46,7 +48,6 @@
 /*
  * This is board specific stuff.
  */
-#if defined(BOARD_CONFIG_S5L8900XRB)
 #define KPRINTF_PREFIX  "PE_SamsungS5L: "
 
 #define HwReg(x) *((volatile unsigned long*)(x))
@@ -73,8 +74,6 @@ static uint64_t clock_decrementer = 0;
 static boolean_t clock_initialized = FALSE;
 static boolean_t clock_had_irq = FALSE;
 static uint64_t clock_absolute_time = 0;
-
-#define barrier()               __asm__ __volatile__("": : :"memory");
 
 #define EDGEIC 0x38E02000
 #define EDGEICCONFIG0 0x0
@@ -411,4 +410,4 @@ void PE_init_SocSupport_stub(void)
     PE_init_SocSupport_S5L8900X();
 }
 
-#endif
+#endif /* !BOARD_CONFIG_S5L8900XRB */

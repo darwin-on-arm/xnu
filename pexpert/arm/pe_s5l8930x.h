@@ -2,8 +2,8 @@
  * Samsung S5L8930X support
  */
 
-#ifndef _S5L8930X_H_
-#define _S5L8930X_H_
+#ifndef _PEXPERT_S5L8930X_H_
+#define _PEXPERT_S5L8930X_H_
 
 #if defined(BOARD_CONFIG_S5L8930X)
 #define UART0_BASE          0x82500000
@@ -91,6 +91,4 @@
 #define UART_UTRSTAT_TRANSMITTEREMPTY 	0x4
 #define UART_UMSTAT_CTS 				0x1
 
-#define barrier()               __asm__ __volatile__("": : :"memory");
-
-#endif
+#endif /* !_PEXPERT_S5L8930X_H_ */

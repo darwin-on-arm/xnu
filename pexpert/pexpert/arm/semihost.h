@@ -26,55 +26,17 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-
-#ifndef _PEXPERT_ARM_BOOT_H_
-#define _PEXPERT_ARM_BOOT_H_
-
-#define BOOT_LINE_LENGTH        256
-
 /*
- * Video information.
+ * C exports for the semihosting interface.
  */
 
-struct Boot_Video {
-	unsigned long	v_baseAddr;
-    unsigned long	v_display;
-	unsigned long	v_rowBytes;
-    unsigned long	v_width;	
-	unsigned long	v_height;	
-	unsigned long	v_depth;	
-};
+#ifndef _PEXPERT_ARM_SEMIHOST_H_
+#define _PEXPERT_ARM_SEMIHOST_H_
 
-#define GRAPHICS_MODE         1
-#define FB_TEXT_MODE          2
+#include <sys/cdefs.h>
+#include <mach/mach_types.h>
+#include <pexpert/arm/boot.h>
 
-#define kBootVideoDepthMask         (0xFF)
-#define kBootVideoDepthDepthShift	(0)
-#define kBootVideoDepthRotateShift	(8)
-#define kBootVideoDepthScaleShift	(16)
+extern void PE_semihost_write_char(char c);
 
-typedef struct Boot_Video	Boot_Video;
-
-#define kBootArgsRevision		1
-#define kBootArgsVersion1		1
-#define kBootArgsVersion2		2
-
-/*
- * Boot arguments passed by the bootloader.
- */
-
-typedef struct boot_args {
-	uint16_t		Revision;
-	uint16_t		Version;
-	uint32_t		virtBase;
-	uint32_t		physBase;
-	uint32_t		memSize;
-	uint32_t		topOfKernelData;
-	Boot_Video		Video;
-	uint32_t		machineType;
-	void			*deviceTreeP;
-	uint32_t		deviceTreeLength;
-	char			CommandLine[BOOT_LINE_LENGTH];
-} boot_args;
-
-#endif /* _PEXPERT_ARM_BOOT_H_ */
+#endif /* !_PEXPERT_ARM_SEMIHOST_H_ */

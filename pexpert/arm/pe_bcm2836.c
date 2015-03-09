@@ -1,5 +1,5 @@
 /*
- * Copyright 2013, winocm. <winocm@icloud.com>
+ * Copyright 2015, Brian McKenzie <mckenzba@gmail.com>
  * All rights reserved.
  * 
  * Redistribution and use in source and binary forms, with or without modification,
@@ -27,10 +27,13 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 /*
- * Platform Expert for Allwinner A10 devices (Mele A2000/A1000)
+ * Platform expert for BCM2836.
  */
 
-#if defined(BOARD_CONFIG_SUN4I)
+#if defined(BOARD_CONFIG_RASPBERRYPI2)
+
+#include <vm/pmap.h>
+#include <arm/pmap.h>
 
 #include <mach/mach_types.h>
 
@@ -40,78 +43,64 @@
 
 #include <machine/machine_routines.h>
 
-#include <vm/pmap.h>
-#include <arm/pmap.h>
+#include "pe_bcm2836.h"
 
-#include "pe_sun4i.h"
-
-/*
- * This is board specific stuff.
- */
-#define KPRINTF_PREFIX  "PE_sun4i: "
+#define KPRINTF_PREFIX  "PE_BCM2836: "
 
 extern void rtclock_intr(arm_saved_state_t * regs);
 extern void rtc_configure(uint64_t hz);
 
-#define uart_base   gSun4iUartBase
-vm_offset_t gSun4iUartBase;
-
-static uint64_t clock_decrementer = 0;
 static boolean_t clock_initialized = FALSE;
 static boolean_t clock_had_irq = FALSE;
+static uint64_t clock_decrementer = 0;
 static uint64_t clock_absolute_time = 0;
 
 static void timer_configure(void)
 {
-    return;
 }
 
-void Sun4i_putc(int c)
-{
-    if (!gSun4iUartBase)
-        return;
-
-    while (!TX_READY)
-        barrier();
-    writel(c, UART_THR(UART));
-}
-
-int Sun4i_getc(void)
-{
-    return 'A';
-}
-
-void Sun4i_uart_init(void)
-{
-    gSun4iUartBase = ml_io_map(UART_BASE, PAGE_SIZE);
-}
-
-void Sun4i_interrupt_init(void)
+void bcm2836_putc(int c)
 {
     return;
 }
 
-void Sun4i_timebase_init(void)
+int bcm2836_getc(void)
+{
+    int c;
+    return c;
+}
+
+void bcm2836_uart_init(void)
 {
     return;
 }
 
-void Sun4i_handle_interrupt(void *context)
+void bcm2836_interrupt_init(void)
 {
     return;
 }
 
-uint64_t Sun4i_get_timebase(void)
+void bcm2836_timebase_init(void)
 {
-    return 0;
+    return;
 }
 
-uint64_t Sun4i_timer_value(void)
+void bcm2836_handle_interrupt(void *context)
 {
-    return 0;
+    return;
 }
 
-void Sun4i_timer_enabled(int enable)
+uint64_t bcm2836_get_timebase(void)
+{
+    return;
+}
+
+uint64_t bcm2836_timer_value(void)
+{
+    return;
+}
+
+void bcm2836_timer_enabled(int enable)
 {
     return;
 }
@@ -123,43 +112,52 @@ void vcputc(__unused int l, __unused int u, int c);
 
 static void _fb_putc(int c)
 {
-    Sun4i_putc(c);
+    if (c == '\n') {
+        _fb_putc('\r');
+    }
+    vcputc(0, 0, c);
+    bcm2836_putc(c);
 }
 
-void Sun4i_framebuffer_init(void)
+void bcm2836_framebuffer_init(void)
 {
     return;
 }
 
-static void PE_init_SocSupport_sun4i(void)
+
+/*
+ * Setup the BCM2836 SoC dispatch table
+ */
+void PE_init_SocSupport_bcm2836(void)
 {
-    gPESocDispatch.uart_getc = Sun4i_getc;
-    gPESocDispatch.uart_putc = Sun4i_putc;
-    gPESocDispatch.uart_init = Sun4i_uart_init;
+    gPESocDispatch.uart_getc = bcm2836_getc;
+    gPESocDispatch.uart_putc = bcm2836_putc;
+    gPESocDispatch.uart_init = bcm2836_uart_init;
 
-    gPESocDispatch.interrupt_init = Sun4i_interrupt_init;
-    gPESocDispatch.timebase_init = Sun4i_timebase_init;
+    gPESocDispatch.interrupt_init = bcm2836_interrupt_init;
+    gPESocDispatch.timebase_init = bcm2836_timebase_init;
 
-    gPESocDispatch.get_timebase = Sun4i_get_timebase;
+    gPESocDispatch.get_timebase = bcm2836_get_timebase;
 
-    gPESocDispatch.handle_interrupt = Sun4i_handle_interrupt;
+    gPESocDispatch.handle_interrupt = bcm2836_handle_interrupt;
 
-    gPESocDispatch.timer_value = Sun4i_timer_value;
-    gPESocDispatch.timer_enabled = Sun4i_timer_enabled;
+    gPESocDispatch.timer_value = bcm2836_timer_value;
+    gPESocDispatch.timer_enabled = bcm2836_timer_enabled;
 
-    gPESocDispatch.framebuffer_init = Sun4i_framebuffer_init;
+    gPESocDispatch.framebuffer_init = bcm2836_framebuffer_init;
 
-    Sun4i_framebuffer_init();
-    Sun4i_uart_init();
-
-    PE_kputc = _fb_putc;        //gPESocDispatch.uart_putc;
+    bcm2836_uart_init();
+    bcm2836_framebuffer_init();
 
 }
 
+/*
+ * Initialize SoC support for BCM2836.
+ */
 void PE_init_SocSupport_stub(void)
 {
-    PE_early_puts("PE_init_SocSupport: Initializing for SUN4I\n");
-    PE_init_SocSupport_sun4i();
+    PE_early_puts("PE_init_SocSupport: Initializing for Broadcom BCM2836\n");
+    PE_init_SocSupport_bcm2836();
 }
 
-#endif /* !BOARD_CONFIG_SUN4I */
+#endif /* !BOARD_CONFIG_RASPBERRYPI2 */

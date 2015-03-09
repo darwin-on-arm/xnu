@@ -34,9 +34,6 @@
 #define readw(a)		(*(volatile unsigned short *)(a))
 #define writew(v, a)	(*(volatile unsigned short *)(a) = (v))
 
-
-#define barrier()               __asm__ __volatile__("": : :"memory");
-
 #define UART 0
 #define TX_READY (readl(UART_LSR(UART)) & UART_LSR_TEMT)
 #define UART_BASE 0x01C28000
@@ -72,4 +69,4 @@
 #define DAT_LEN_8_BITS (3)
 #define LC_8_N_1          (NO_PARITY << 3 | ONE_STOP_BIT << 2 | DAT_LEN_8_BITS)
 
-#endif
+#endif /* !_PEXPERT_ARM_SUN4I_H_ */

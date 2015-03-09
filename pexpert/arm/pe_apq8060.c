@@ -57,6 +57,8 @@
  * SUCH DAMAGE.
  */
 
+#if defined(BOARD_CONFIG_MSM8960_TOUCHPAD)
+
 #include <mach/mach_types.h>
 
 #include <IOKit/IOPlatformExpert.h>
@@ -73,11 +75,10 @@
 /*
  * This is board specific stuff.
  */
-#if defined(BOARD_CONFIG_MSM8960_TOUCHPAD)
 
-#include "touchpad_msm.h"
+#include "pe_touchpad.h"
 
-#define KPRINTF_PREFIX  "PE_TouchPad: "
+#define KPRINTF_PREFIX  "PE_APQ8060: "
 
 #define HwReg(x) *((volatile unsigned long*)(x))
 
@@ -368,8 +369,8 @@ void PE_init_SocSupport_TouchPad(void)
 
 void PE_init_SocSupport_stub(void)
 {
-    PE_early_puts("PE_init_SocSupport: Initializing for TouchPad\n");
+    PE_early_puts("PE_init_SocSupport: Initializing for Qualcomm APQ8060\n");
     PE_init_SocSupport_TouchPad();
 }
 
-#endif
+#endif /* !BOARD_CONFIG_MSM8960_TOUCHPAD */

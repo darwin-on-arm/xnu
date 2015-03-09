@@ -32,6 +32,8 @@
  * Now includes S5L8920X and S5L8922X!
  */
 
+#if defined(BOARD_CONFIG_S5L8720X)
+
 #include <mach/mach_types.h>
 
 #include <IOKit/IOPlatformExpert.h>
@@ -48,7 +50,6 @@
 /*
  * This is board specific stuff.
  */
-#if defined(BOARD_CONFIG_S5L8720X)
 #define KPRINTF_PREFIX  "PE_SamsungS5L: "
 
 #define HwReg(x) *((volatile unsigned long*)(x))
@@ -239,4 +240,4 @@ void PE_init_SocSupport_stub(void)
     PE_init_SocSupport_S5L8720X();
 }
 
-#endif
+#endif /* !BOARD_CONFIG_S5L8720X */

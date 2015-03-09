@@ -2,15 +2,14 @@
  * Raspberry Pi support
  */
 
-#ifndef xnu_raspberrypi_h
-#define xnu_raspberrypi_h
+#ifndef _PEXPERT_BCM2835_H_
+#define _PEXPERT_BCM2835_H_
 
 #include <mach/mach_types.h>
 
 #define PUT32(addr, val)       *((volatile uint32_t*) (addr)) = (val);
 #define GET32(addr)            (*((volatile uint32_t*) (addr)))
 #define GET64(addr)            (*((volatile uint64_t*) (addr)))
-#define barrier()               __asm__ __volatile__("": : :"memory");
 
 /* UART */
 #define GP_BASE   0x20200000
@@ -61,4 +60,4 @@ struct fb_info {
     uint32_t gpu_size;
 };
 
-#endif
+#endif /* !_PEXPERT_BCM2835_H_ */
