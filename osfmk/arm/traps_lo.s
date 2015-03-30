@@ -1,17 +1,17 @@
 /*
  * Copyright 2013, winocm. <winocm@icloud.com>
  * All rights reserved.
- * 
+ *
  * Redistribution and use in source and binary forms, with or without modification,
  * are permitted provided that the following conditions are met:
- * 
+ *
  *   Redistributions of source code must retain the above copyright notice, this
  *   list of conditions and the following disclaimer.
- * 
+ *
  *   Redistributions in binary form must reproduce the above copyright notice, this
  *   list of conditions and the following disclaimer in the documentation and/or
  *   other materials provided with the distribution.
- * 
+ *
  *   If you are going to use this software in any form that does not involve
  *   releasing the source to this project or improving it, let me know beforehand.
  *
@@ -244,25 +244,39 @@ prefetch_abort_in_user:
     LoadThreadRegister(sp)
     ldr     sp, [sp, TH_PCB_USS]
     stmea   sp, {r0-lr}^
+
+    /* Save lr */
     str     lr, [sp, #0x3C]
-    str     lr, [sp, #0x48]
+
+    /* Save SPSR */
     mrs     r0, spsr
     str     r0, [sp, #0x40]
-    mrc     p15, 0, r0, c5, c0, 0
-    str     r0, [sp, #0x44]    
-    mov     r0, sp
+
+    /* Save IFSR */
+    mrc     p15, 0, r0, c5, c0, 1
+    str     r0, [sp, #0x44]
+
+    /* Save IFAR */
+    mrc     p15, 0, r0, c6, c0, 2
+    str     r0, [sp, #0x48]
+
+    /* Supervisor mode */
     cpsid   i, #0x13
+
+    mov     r0, sp
+
     LoadThreadRegister(r1)
     ldr     sp, [r1, TH_PCB_ISS]
-    mov     r1, #3
+
+    mov     r1, #3      /* Prefetch Abort */
     blx     _sleh_abort
     b       _thread_exception_return
 
 prefetch_abort_in_kernel:
-    /* supervisor state */
+    /* Supervisor mode */
     msr     cpsr_c, #0x93
-    
-    /* make space on the stack for the registers. */
+
+    /* Make space on the stack for the registers. */
     sub     sp, sp, #0x50
     stmea   sp, {r0-r12}
 
@@ -270,29 +284,33 @@ prefetch_abort_in_kernel:
     str     lr, [sp, #0x38]
     mov     r12, sp
 
-    /* abort mode */
+    /* Abort mode */
     msr     cpsr_c, #0x97
 
-    /* Save more. */
+    /* Save lr */
     str     lr, [r12, #0x3C]
-    str     lr, [r12, #0x48]
 
-    /* Save DFSR. */
-    mrc     p15, 0, r5, c5, c0, 0
-    str     r5, [r12, #0x44]
-
-    /* Save SPSR. */
+    /* Save SPSR */
     mrs     r4, spsr
     str     r4, [r12, #0x40]
 
-    /* supervisor */
+    /* Save IFSR */
+    mrc     p15, 0, r5, c5, c0, 1
+    str     r5, [r12, #0x44]
+
+    /* Save IFAR */
+    mrc     p15, 0, r6, c6, c0, 2
+    str     r6, [r12, #0x48]
+
+    /* Supervisor mode */
     msr     cpsr_c, #0x93
 
     add     r12, r12, #0x50
     str     r12, [sp, #0x34]
     sub     r12, r12, #0x50
+
     mov     r0, sp
-    mov     r1, #3      // Prefetch Abort
+    mov     r1, #3      /* Prefetch Abort */
     bl      _sleh_abort
     b       restore_kernel_context
 
@@ -313,26 +331,39 @@ data_abort_crash_in_usermode:
     LoadThreadRegister(sp)
     ldr     sp, [sp, TH_PCB_USS]
     stmea   sp, {r0-lr}^
+
+    /* Save lr */
     str     lr, [sp, #0x3C]
+
+    /* Save SPSR */
     mrs     r0, spsr
     str     r0, [sp, #0x40]
+
+    /* Save DFSR */
+    mrc     p15, 0, r0, c5, c0, 0
+    str     r0, [sp, #0x44]
+
+    /* Save DFAR */
+    mrc     p15, 0, r0, c6, c0, 0
+    str     r0, [sp, #0x48]
+
     mov     r0, sp
+
+    /* Supervisor mode */
     cpsid   i, #0x13
-    mrc     p15, 0, r5, c5, c0, 0
-    mrc     p15, 0, r6, c6, c0, 0
-    str     r5, [sp, #0x44]
-    str     r6, [sp, #0x48]
+
     LoadThreadRegister(r1)
     ldr     sp, [r1, TH_PCB_ISS]
-    mov     r1, #4
+
+    mov     r1, #4      /* Data Abort */
     blx     _sleh_abort
     b       _thread_exception_return
 
 data_abort_crash_in_kernel:
-    /* supervisor */
+    /* Supervisor mode */
     cpsid   i, #0x13
-    
-    /* make space on the stack for the registers. */
+
+    /* Make space on the stack for the registers. */
     sub     sp, sp, #0x50
     stmea   sp, {r0-r12}
 
@@ -340,33 +371,34 @@ data_abort_crash_in_kernel:
     str     lr, [sp, #0x38]
     mov     r12, sp
 
-    /* abort mode */
+    /* Abort mode */
     cpsid   i, #0x17
 
-    /* Save more registers */
+    /* Save lr */
     str     lr, [r12, #0x3C]
+
+    /* Save SPSR */
     mrs     r4, spsr
     str     r4, [r12, #0x40]
 
-    /* supervisor */
+    /* Supervisor mode */
     cpsid   i, #0x13
 
-    /* Get DFSR */
+    /* Save DFSR */
     mrc     p15, 0, r5, c5, c0, 0
-
-    /* Get FAR */
-    mrc     p15, 0, r6, c6, c0, 0
-
-    /* Save them on the stack */
     str     r5, [sp, #0x44]
+
+    /* Save DFAR */
+    mrc     p15, 0, r6, c6, c0, 0
     str     r6, [sp, #0x48]
 
-    /* Go to abort handler */
+    /* Go to abort handler. */
     add     r12, r12, #0x50
     str     r12, [sp, #0x34]
     sub     r12, r12, #0x50
+
     mov     r0, sp
-    mov     r1, #4      // Data Abort
+    mov     r1, #4      /* Data Abort */
     bl      _sleh_abort
     b       return_to_kernel
 
@@ -412,7 +444,7 @@ irqhandler_from_kernel:
     /* Set t-bit */
     orr     lr, lr, #1
 
-    /* save lr */
+    /* Save lr */
     str     lr, [sp, #0x3C]
 
     /* Save SPSR */
@@ -425,11 +457,11 @@ irqhandler_from_kernel:
     orr     r4, r4, #0xC0
     msr     cpsr_c, r4
 
-    /* save sp */
+    /* Save sp */
     str     sp, [r5, #0x34]
     str     lr, [r5, #0x38]
 
-    /* disable interrupts */
+    /* Disable interrupts */
     cpsid   i, #0x12
 
 irq_join:
