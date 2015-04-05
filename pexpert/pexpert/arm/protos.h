@@ -50,7 +50,7 @@ void uart_putc(char);
 int uart_getc(void);
 
 /*
- * Generic 32/26/8-bit memory I/O functions. 
+ * Generic 32/16/8-bit memory I/O functions. 
  */
 static inline void regwrite32(uint32_t addr, uint32_t data)
 {
