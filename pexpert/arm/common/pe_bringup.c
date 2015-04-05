@@ -34,10 +34,10 @@
 #include <kern/debug.h>
 #include <mach/mach_types.h>
 #include <pexpert/pexpert.h>
-#include <pexpert/arm/semihost.h>
 #include <pexpert/machine/protos.h>
 #include <pexpert/machine/boot.h>
 #include <machine/machine_routines.h>
+#include "semihost.h"
 
 /**
  * PE_early_puts
