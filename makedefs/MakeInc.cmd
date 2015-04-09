@@ -211,6 +211,8 @@ else ifeq ($(UNAME_S),Linux)
 	ifeq ($(SDKROOT_RESOLVED),)
 		ifeq ($(SDKROOT),/)
 			export SDKROOT_RESOLVED := $(shell $(XCRUN) --show-sdk-path)
+		else
+			export SDKROOT_RESOLVED := $(SDKROOT)
 		endif
 	endif
 

@@ -1,0 +1,23 @@
+These instructions will cover how to build and install libkxld for the arm architecture.
+
+Until we get can get Darwin built as a source distribution, you will need to rely on a copy of the iOS4.2 SDK to build libkxld.
+
+If you are on Linux, you will need to grab a copy of the iOS4.2 SDK and place it under the /opt/Developer/SDKs folder with the name 'iPhoneOS.sdk'.  
+You will then need to add an info.ini file to the root of the iPhoneOS.sdk folder with the following configuration:
+
+[SDK]
+name = iPhoneOS
+version = 4.2.0
+toolchain = DarwinARM
+default_arch = armv7
+iphoneos_deployment_target = 4.2
+
+You may then run the following command to build and install libkxld:
+
+sudo make TARGET_CONFIGS="debug arm armpba8" \
+        RC_ProjectName=libkxld \
+        RC_CFLAGS="-arch armv7" \
+        SDKROOT=`xcrun -sdk iPhoneOS.sdk --show-sdk-path` \
+	DSTROOT=/path/to/ramdiskfs
+
+NOTE: be sure to replace the DSTROOT path with one pointing to the target filesystem's root!
