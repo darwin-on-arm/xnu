@@ -11,7 +11,6 @@ bsd/dev/arm/kern_machdep.c	standard
 bsd/dev/arm/memmove.c		standard
 bsd/dev/arm/stubs.c		standard
 bsd/dev/arm/unix_syscalls.c	standard
-#bsd/dev/arm/systemcalls.c	standard
 bsd/dev/arm/unix_signals.c	standard
 bsd/dev/arm/sysctl.c           standard
 
@@ -20,6 +19,4 @@ bsd/kern/policy_check.c			optional config_macf
 
 bsd/kern/bsd_stubs.c		standard
 bsd/netinet/in_cksum.c		optional inet
-
-
-
+bsd/netinet/cpu_in_cksum.c	optional inet
