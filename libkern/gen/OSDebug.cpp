@@ -287,19 +287,17 @@ pad:
 
     for ( ; frame_index < maxAddrs; frame_index++)
 	    bt[frame_index] = (void *) 0;
-#elif defined(__arm__)
+#elif __arm__
     uint32_t i = 0;
     uint32_t fp = 0;
     uint32_t frameb[2];
 
-    /* Copied from xnu-1228. */
+    /* Get the frame pointer from the current thread */
+    __asm__ __volatile("mov %0, r7" : "=r" (fp));
 
-    /* Get the frame pointer from the current thread. */
-    __asm__ __volatile("mov %0, r7" : "=r"(fp));
-
-    /* Crawl up the stack recording the link value of each frame. */
+    /* Crawl up the stack recording the link value of each frame */
     do {
-        /* Check the boundary */
+        /* Check boundaries */
         if ((fp == 0) || ((fp & 3) != 0) || (fp > VM_MAX_KERNEL_ADDRESS) || (fp < VM_MIN_KERNEL_ADDRESS))
             break;
 
@@ -313,33 +311,11 @@ pad:
     } while (i++ < maxAddrs);
 
     frame = i;
-#elif defined(__aarch64__)
-    /* FIXME?: this may be wrong! */
-    uint64_t i = 0;
-    uint64_t fp = 0;
-    uint64_t frameb[2];
-
-    /* Get the frame pointer from the current thread. */
-    __asm__ __volatile("mov %0, fp" : "=r"(fp));
-
-    /* Crawl up the stack recording the link value of each frame. */
-    do {
-        /* Check the boundary */
-        if ((fp == 0) || ((fp & 3) != 0) || (fp > VM_MAX_KERNEL_ADDRESS) || (fp < VM_MIN_KERNEL_ADDRESS))
-            break;
-
-        /* Safeley read frame */
-        if (copyinframe(fp, frameb) != 0)
-            break;
-
-        /* No need to use copyin as this is always a kernel address, see check above */
-        bt[i] = (void*)frameb[1]; /* link register */
-        fp = frameb[0];
-    } while (i++ < maxAddrs);
-
-    frame = i;
+#elif __aarch64__
+#warning "TODO: arm64 OSBacktrace"
+    panic("OSBacktrace is not implemented!\n");
 #else
-#error arch
+#error "Unsupported architecture"
 #endif
     return frame;
 }
