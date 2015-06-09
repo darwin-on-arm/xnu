@@ -130,6 +130,8 @@ process_cpu_type(proc_t core_proc)
 	} else {
 		what_we_think = CPU_TYPE_I386;
 	}
+#elif defined (__arm__)
+	what_we_think = CPU_TYPE_ARM;
 #endif
 	return what_we_think;
 }
@@ -144,6 +146,8 @@ process_cpu_subtype(proc_t core_proc)
 	} else {
 		what_we_think = CPU_SUBTYPE_I386_ALL;
 	}
+#elif defined (__arm__)
+	what_we_think = CPU_SUBTYPE_ARM_ALL;
 #endif
 	return what_we_think;
 }
