@@ -92,7 +92,7 @@ void commpage_set_timestamp(uint64_t tbr, uint64_t secs, uint32_t ticks_per_sec)
     assert(common_page_ptr);
 
     /* Update the timestamp value. */
-    commpage_timeofday_data_t* tofd = (commpage_timeofday_data_t*)_COMM_PAGE_TIMEBASE_INFO;
+    commpage_timeofday_data_t* tofd = (commpage_timeofday_data_t*)_COMM_PAGE_TIMEOFDAY_DATA;
 
     tofd->TimeBase = tbr;
     tofd->TimeStamp_sec = secs;
