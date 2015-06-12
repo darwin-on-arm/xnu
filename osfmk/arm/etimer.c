@@ -204,9 +204,12 @@ mpqueue_head_t *timer_queue_assign(uint64_t deadline)
 uint64_t timer_call_slop(uint64_t deadline)
 {
     uint64_t now = mach_absolute_time();
+
     if (deadline > now) {
         return MIN((deadline - now) >> 3, NSEC_PER_MSEC);   /* Min of 12.5% and 1ms */
     }
+
+    return 0;
 }
 
 /**
