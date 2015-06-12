@@ -106,6 +106,7 @@ void etimer_resync_deadlines(void)
     spl_t s = splclock();
     cpu_data_t *pp;
     uint32_t decr;
+    uint64_t now;
 
     pp = current_cpu_datap();
     deadline = EndOfAllTime;
@@ -123,9 +124,6 @@ void etimer_resync_deadlines(void)
      */
 
     if (deadline > 0 && deadline <= pp->rtcPop) {
-        int decr;
-        uint64_t now;
-
         now = mach_absolute_time();
         decr = setPop(deadline);
 

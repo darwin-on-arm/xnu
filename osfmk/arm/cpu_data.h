@@ -96,6 +96,7 @@ typedef struct cpu_data {
     int cpu_subtype;
     int cpu_threadtype;
     int cpu_running;
+    void *cpu_console_buf;
     struct processor *cpu_processor;
     uint64_t debugger_entry_time;
     arm_saved_state_t *cpu_fatal_trap_state;
@@ -104,7 +105,7 @@ typedef struct cpu_data {
     int cpu_pending_ast;
     uint64_t interrupt_entry_time;
     uint32_t interrupt_count[8];
-    uint32_t rtcPop;
+    uint64_t rtcPop;
     struct pmap *user_pmap;
     uint64_t absolute_time;
     rtclock_timer_t rt_timer;
@@ -132,7 +133,6 @@ typedef struct cpu_data {
     void* nub;
     void* target;
     void* refCon;
-
 } cpu_data_t;
 
 extern cpu_data_t *cpu_data_ptr[];
