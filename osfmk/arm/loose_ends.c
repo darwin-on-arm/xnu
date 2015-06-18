@@ -449,3 +449,8 @@ void bzero_phys_nc(addr64_t src64, uint32_t bytes)
 {
     bzero_phys(src64, bytes);
 }
+
+void mapping_set_mod(ppnum_t pn)
+{
+    pmap_set_modify(pn);
+}
