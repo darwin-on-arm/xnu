@@ -446,7 +446,6 @@ cs_entitlements_blob_get(proc_t p, void **out_start, size_t *out_length)
 		error = ENOMEM;
 		goto out;
 	}
-#ifndef __arm__
 	SHA1Init(&context);
 	SHA1Update(&context, start, length);
 	SHA1Final(computed_hash, &context);
@@ -454,7 +453,6 @@ cs_entitlements_blob_get(proc_t p, void **out_start, size_t *out_length)
 		error = EBADEXEC;
 		goto out;
 	}
-#endif
 	error = 0;
 out:
 	if (NULL != computed_hash)

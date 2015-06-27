@@ -712,11 +712,8 @@ mcache_free_ext(mcache_t *cp, mcache_obj_t *list)
 			nlist = list->obj_next;
 			list->obj_next = (ccp->cc_objs == 0) ? NULL :
 			    ccp->cc_filled->bkt_obj[ccp->cc_objs - 1];
-            
-#if 0
 			ccp->cc_filled->bkt_obj[ccp->cc_objs++] = list;
 			ccp->cc_free++;
-#endif
 
 			if ((list = nlist) != NULL)
 				continue;
