@@ -757,6 +757,11 @@ OSKext::removeKextBootstrap(void)
 
     kernel_segment_command_t * seg_to_remove         = NULL;
 
+#if defined(__arm__)
+    const char               * dt_segment_name       = NULL;
+    void                     * segment_paddress      = NULL;
+    int                        segment_size          = 0;
+#endif
 
    /* This must be the very first thing done by this function.
     */
@@ -813,12 +818,10 @@ OSKext::removeKextBootstrap(void)
         ml_static_mfree(seg_to_remove->vmaddr, seg_to_remove->vmsize);
     }
 #elif defined(__arm__)
-    if (seg_to_remove && seg_to_remove->vmaddr && seg_to_remove->vmsize) {
-        // 04/18/11 - gab: <rdar://problem/9236163>
-        // overwrite memory occupied by KLD segment with random data before
-        // releasing it.
-        read_random((void *) seg_to_remove->vmaddr, seg_to_remove->vmsize);
-        ml_static_mfree(seg_to_remove->vmaddr, seg_to_remove->vmsize);
+    dt_segment_name = "Kernel-__KLD";
+    if (0 == IODTGetLoaderInfo(dt_segment_name, &segment_paddress, &segment_size)) {
+        IODTFreeLoaderInfo(dt_segment_name, (void *)segment_paddress,
+            (int)segment_size);
     }
 #else
 #error arch
