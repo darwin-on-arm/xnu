@@ -1,17 +1,17 @@
 /*
  * Copyright 2013, winocm. <winocm@icloud.com>
  * All rights reserved.
- * 
+ *
  * Redistribution and use in source and binary forms, with or without modification,
  * are permitted provided that the following conditions are met:
- * 
+ *
  *   Redistributions of source code must retain the above copyright notice, this
  *   list of conditions and the following disclaimer.
- * 
+ *
  *   Redistributions in binary form must reproduce the above copyright notice, this
  *   list of conditions and the following disclaimer in the documentation and/or
  *   other materials provided with the distribution.
- * 
+ *
  *   If you are going to use this software in any form that does not involve
  *   releasing the source to this project or improving it, let me know beforehand.
  *
@@ -42,8 +42,8 @@
  */
 EnterARM(Call_continuation)
     /* Set the new stack pointer. */
-    LoadThreadRegister(r9)
-    ldr     sp, [r9, TH_PCB_ISS]
+    LoadThreadRegister(r12)
+    ldr     sp, [r12, TH_PCB_ISS]
 
     /* Zero out frame pointer */
     mov     r7, #0
@@ -54,10 +54,10 @@ EnterARM(Call_continuation)
     mov     r1, r2
 
     /* Branch to continuation. */
-    blx      r6
+    blx     r6
 
     /* Terminate thread. */
-    mrc     p15, 0, r0, c13, c0, 4
+    LoadThreadRegister(r0)
     blx     _thread_terminate
     b       .
 
@@ -75,7 +75,7 @@ EnterARM(Switch_context)
     /* Only store registers if there is a continuation */
     ldreq   r3, [r0, TH_PCB_ISS]
     addeq   r3, r3, #16
-    stmiaeq r3, {r4-lr}
+    stmiaeq r3!, {r4-lr}
 
     /* Save current thread */
     LOAD_ADDR(r4, CurrentThread)
@@ -91,6 +91,11 @@ EnterARM(Switch_context)
     ldr     r3, [r2, TH_PCB_ISS]
     add     r3, r3, #16
     ldmia   r3!, {r4-lr}
+
+#ifdef _ARM_ARCH_7
+    clrex
+#endif
+
     bx      lr
 
 /**
@@ -102,6 +107,9 @@ EnterARM(machine_load_context)
     /* Save current thread */
     LOAD_ADDR(r4, CurrentThread)
     str     r0, [r4]
+
+    /* Zero out frame pointer */
+    mov     r7, #0
 
     /* Set thread */
     mcr     p15, 0, r0, c13, c0, 4
@@ -120,11 +128,11 @@ EnterARM(machine_load_context)
 
 /**
  * thread_syscall_return
- */ 
+ */
 EnterARM(thread_syscall_return)
     cpsid   i
-    LoadThreadRegister(r9)
-    ldr     r4, [r9, TH_PCB_USS]
+    LoadThreadRegister(r12)
+    ldr     r4, [r12, TH_PCB_USS]
     str     r0, [r4]
     b       thread_return_join
 
@@ -137,38 +145,38 @@ EnterARM(thread_exception_return)
 EnterARM(thread_bootstrap_return)
     /* Disable interrupts */
     cpsid   i
-    
+
 thread_return_join:
     /* Check for pending ast */
-    mrc     p15, 0, r9, c13, c0, 4
-    
-    ldr     r8, [r9, MACHINE_THREAD_CPU_DATA]
+    LoadThreadRegister(r12)
+
+    ldr     r8, [r12, MACHINE_THREAD_CPU_DATA]
     ldr     r5, [r8, CPU_PENDING_AST]
-    
+
     cmp     r5, #0
     beq     return_to_user
 
     /* There's an ast. */
-    
+
     mov     r0, r5
     mov     r1, #1
     blx     _ast_taken
-    
+
     b       _thread_exception_return
 
 return_to_user:
     /* Restore registers */
-    LoadThreadRegister(r5)
-    ldr     sp, [r5, TH_PCB_USS]
+    LoadThreadRegister(r12)
+    ldr     sp, [r12, TH_PCB_USS]
     ldr     r0, [sp, #0x40]
-    
+
     msr     spsr_cxsf, r0
 #ifdef _ARM_ARCH_7
     clrex
 #endif
     ldr     lr, [sp, #0x3C]
-    
+
     ldmfd   sp, {r0-lr}^
     movs    pc, lr
-    
+
 LOAD_ADDR_GEN_DEF(CurrentThread)

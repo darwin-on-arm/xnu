@@ -52,7 +52,7 @@ EnterARM(lck_mtx_ilk_unlock)
     bic     r3, r2, #1
     str     r3, [r0]
     b       __enable_preemption
-    
+
 /**
  * machine_idle
  *
@@ -115,10 +115,10 @@ EnterARM(ml_set_interrupts_enabled)
     beq     disable_interrupts
 
 astloop:
-    mrc     p15, 0, r0, c13, c0, 4
-    ldr     r1, [r0, MACHINE_THREAD_CPU_DATA]
+    LoadThreadRegister(r12)
+    ldr     r1, [r12, MACHINE_THREAD_CPU_DATA]
     ldr     r0, [r1, CPU_PENDING_AST]
-    
+
     stmfd   sp!,{r0,r2,r7,lr}
     bl      _get_preemption_level
     cmp     r0, #0
@@ -238,7 +238,8 @@ __preempt:
  * saved from machine_set_current_thread.
  */
 EnterARM(current_thread)
-    mrc     p15, 0, r0, c13, c0, 4
+    LOAD_ADDR(r0, CurrentThread)
+    ldr     r0, [r0]
     bx      lr
 
 /**
@@ -305,7 +306,7 @@ EnterThumb(ml_cause_interrupt)
  *
  * Halt the system entirely.
  */
-EnterARM(Halt_system) 
+EnterARM(Halt_system)
     /* Disable interruptions. */
     cpsid    if
 
@@ -330,3 +331,4 @@ EnterARM(Halt_system)
     b        .L_deadloop
 
 LOAD_ADDR_GEN_DEF(do_power_save)
+LOAD_ADDR_GEN_DEF(CurrentThread)

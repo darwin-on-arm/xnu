@@ -1,17 +1,17 @@
 /*
  * Copyright 2013, winocm. <winocm@icloud.com>
  * All rights reserved.
- * 
+ *
  * Redistribution and use in source and binary forms, with or without modification,
  * are permitted provided that the following conditions are met:
- * 
+ *
  *   Redistributions of source code must retain the above copyright notice, this
  *   list of conditions and the following disclaimer.
- * 
+ *
  *   Redistributions in binary form must reproduce the above copyright notice, this
  *   list of conditions and the following disclaimer in the documentation and/or
  *   other materials provided with the distribution.
- * 
+ *
  *   If you are going to use this software in any form that does not involve
  *   releasing the source to this project or improving it, let me know beforehand.
  *
@@ -28,7 +28,7 @@
  */
 
 /*
- * BSD stuff for ARM.
+ * Thread status routines for ARM.
  */
 
 #include <mach_rt.h>
@@ -50,12 +50,15 @@
 #include <kern/assert.h>
 #include <kern/debug.h>
 #include <kern/spl.h>
+#include <kern/kalloc.h>
 #include <kern/syscall_sw.h>
 #include <ipc/ipc_port.h>
 #include <vm/vm_kern.h>
 #include <vm/pmap.h>
 
 #define USRSTACK    0x2FE00000
+
+#define kprintf(args...)
 
 /*
  * thread_userstack:
@@ -75,34 +78,34 @@ kern_return_t thread_userstack(thread_t thread, int flavor,
     switch (flavor) {
     case ARM_THREAD_STATE:
         if (count < ARM_THREAD_STATE_COUNT)
-            return KERN_INVALID_ARGUMENT;
+            return (KERN_INVALID_ARGUMENT);
 
         state = (struct arm_thread_state *) tstate;
         *user_stack = state->sp ? state->sp : USRSTACK;
         break;
     default:
-        return KERN_INVALID_ARGUMENT;
+        return (KERN_INVALID_ARGUMENT);
     }
 
-    return KERN_SUCCESS;
+    return (KERN_SUCCESS);
 }
 
 /**
  * sanitise_cpsr
  *
- * Clear the bad bits off the CPSR and set ModeBits to 0x10 (user)
+ * Clear the bad bits off the CPSR and set ModeBits to 0x10 (user mode)
  */
 uint32_t sanitise_cpsr(uint32_t cpsr)
 {
     uint32_t final_cpsr;
 
-    final_cpsr = (cpsr) & ~(1 << 9);    /* Data endianness */
-    final_cpsr &= ~(1 << 7);    /* IRQ */
-    final_cpsr &= ~(1 << 6);    /* FIQ */
-    final_cpsr &= 0xFFFFFFE0;   /* Mode bits */
-    final_cpsr |= 0x10;         /* Set user mode */
+    final_cpsr = (cpsr) & ~(1 << 9);  /* Data endianness */
+    final_cpsr &= ~(1 << 7);          /* IRQ */
+    final_cpsr &= ~(1 << 6);          /* FIQ */
+    final_cpsr &= 0xFFFFFFE0;         /* Mode bits */
+    final_cpsr |= 0x10;               /* Set user mode */
 
-    return final_cpsr;
+    return (final_cpsr);
 }
 
 /**
@@ -145,6 +148,7 @@ kern_return_t thread_userstackdefault(thread_t thread,
                                       mach_vm_offset_t * default_user_stack)
 {
     *default_user_stack = USRSTACK;
+
     return (KERN_SUCCESS);
 }
 
@@ -167,6 +171,7 @@ kern_return_t machine_thread_get_state(thread_t thr_act, thread_flavor_t flavor,
             tstate[1] = ARM_VFP_STATE;
             tstate[2] = ARM_EXCEPTION_STATE;
             *count = 3;
+
             break;
         }
 
@@ -181,6 +186,7 @@ kern_return_t machine_thread_get_state(thread_t thr_act, thread_flavor_t flavor,
             tstate[3] = ARM_DEBUG_STATE;
 
             *count = 4;
+
             break;
         }
 
@@ -195,16 +201,32 @@ kern_return_t machine_thread_get_state(thread_t thr_act, thread_flavor_t flavor,
             state = (struct arm_thread_state *) tstate;
             saved_state = (struct arm_thread_state *) thr_act->machine.uss;
 
-            /*
-             * First, copy everything:
-             */
-            ovbcopy((void*)saved_state, (void*)state, sizeof(struct arm_thread_state));
+            state->r[0] = saved_state->r[0];
+            state->r[1] = saved_state->r[1];
+            state->r[2] = saved_state->r[2];
+            state->r[3] = saved_state->r[3];
+            state->r[4] = saved_state->r[4];
+            state->r[5] = saved_state->r[5];
+            state->r[6] = saved_state->r[6];
+            state->r[7] = saved_state->r[7];
+            state->r[8] = saved_state->r[8];
+            state->r[9] = saved_state->r[9];
+            state->r[10] = saved_state->r[10];
+            state->r[11] = saved_state->r[11];
+            state->r[12] = saved_state->r[12];
+
+            state->sp = saved_state->sp;
+            state->lr = saved_state->lr;
+            state->pc = saved_state->pc;
+            state->cpsr = saved_state->cpsr;
 
             *count = ARM_THREAD_STATE_COUNT;
+
             break;
         }
     case ARM_VFP_STATE:
         {
+            int i;
             struct arm_vfp_state *state;
             struct arm_vfp_state *saved_state;
 
@@ -214,12 +236,12 @@ kern_return_t machine_thread_get_state(thread_t thr_act, thread_flavor_t flavor,
             state = (struct arm_vfp_state *) tstate;
             saved_state = (struct arm_vfp_state *) &thr_act->machine.vfp_regs;
 
-            /*
-             * First, copy everything:
-             */
-            ovbcopy((void*)saved_state, (void*)state, sizeof(struct arm_vfp_state)); /* *state = *saved_state; */
+            for (i = 0; i < 64; i++)
+                state->r[i] = saved_state->r[i];
+            state->fpscr = saved_state->fpscr;
 
             *count = ARM_VFP_STATE_COUNT;
+
             break;
         }
     case ARM_EXCEPTION_STATE:
@@ -233,12 +255,16 @@ kern_return_t machine_thread_get_state(thread_t thr_act, thread_flavor_t flavor,
             state = (struct arm_exception_state *)tstate;
             saved_state = (struct arm_exception_state *) &thr_act->machine.es;
 
-            /*
-             * First, copy everything:
-             */
-            ovbcopy((void*)saved_state, (void*)state, sizeof(struct arm_exception_state));
+            state->fsr = saved_state->fsr;
+            state->far = saved_state->far;
+            state->exception = saved_state->exception;
 
             *count = ARM_EXCEPTION_STATE_COUNT;
+
+            break;
+        }
+    case ARM_DEBUG_STATE:
+        {
             break;
         }
     default:
@@ -257,33 +283,40 @@ kern_return_t machine_thread_set_state(thread_t thread, thread_flavor_t flavor,
                                        thread_state_t tstate,
                                        mach_msg_type_number_t count)
 {
-
-    switch (flavor) {           /* Validate the count before we do anything else */
+    /*
+     * Validate the count before we do anything else.
+     */
+    switch (flavor) {
     case ARM_THREAD_STATE:
         if (count < ARM_THREAD_STATE_COUNT) {   /* Is it too short? */
-            return KERN_INVALID_ARGUMENT;   /* Yeah, just leave... */
+            return (KERN_INVALID_ARGUMENT);     /* Yeah, just leave... */
         }
+
         break;
     case ARM_DEBUG_STATE:
         if (count < ARM_DEBUG_STATE_COUNT) {    /* Is it too short? */
-            return KERN_INVALID_ARGUMENT;   /* Yeah, just leave... */
+            return (KERN_INVALID_ARGUMENT);     /* Yeah, just leave... */
         }
+
+        break;
     case ARM_VFP_STATE:
-        if (count < ARM_VFP_STATE_COUNT) {  /* Is it too short? */
-            return KERN_INVALID_ARGUMENT;   /* Yeah, just leave... */
+        if (count < ARM_VFP_STATE_COUNT) {      /* Is it too short? */
+            return (KERN_INVALID_ARGUMENT);     /* Yeah, just leave... */
         }
+
         break;
     case ARM_EXCEPTION_STATE:
         if (count < ARM_EXCEPTION_STATE_COUNT) {    /* Is it too short? */
-            return KERN_INVALID_ARGUMENT;   /* Yeah, just leave... */
+            return (KERN_INVALID_ARGUMENT);         /* Yeah, just leave... */
         }
+
         break;
     default:
-        return KERN_INVALID_ARGUMENT;
+        return (KERN_INVALID_ARGUMENT);
     }
 
     /*
-     * Now set user registers. 
+     * Now set user registers.
      */
     assert(thread != NULL);
     assert(tstate);
@@ -291,60 +324,71 @@ kern_return_t machine_thread_set_state(thread_t thread, thread_flavor_t flavor,
     switch (flavor) {
     case ARM_THREAD_STATE:
         {
-        struct arm_thread_state *ts;
+            struct arm_thread_state *state;
+            struct arm_thread_state *new_state;
 
-        ts = (struct arm_thread_state *) tstate;
+            new_state = (struct arm_thread_state *) tstate;
+            state = (struct arm_thread_state *) &thread->machine.user_regs;
 
-        thread->machine.user_regs.r[0] = ts->r[0];
-        thread->machine.user_regs.r[1] = ts->r[1];
-        thread->machine.user_regs.r[2] = ts->r[2];
-        thread->machine.user_regs.r[3] = ts->r[3];
-        thread->machine.user_regs.r[4] = ts->r[4];
-        thread->machine.user_regs.r[5] = ts->r[5];
-        thread->machine.user_regs.r[6] = ts->r[6];
-        thread->machine.user_regs.r[7] = ts->r[7];
-        thread->machine.user_regs.r[8] = ts->r[8];
-        thread->machine.user_regs.r[9] = ts->r[9];
-        thread->machine.user_regs.r[10] = ts->r[10];
-        thread->machine.user_regs.r[11] = ts->r[11];
-        thread->machine.user_regs.r[12] = ts->r[12];
-        thread->machine.user_regs.sp = ts->sp;
-        thread->machine.user_regs.lr = ts->lr;
-        thread->machine.user_regs.pc = ts->pc;
-        thread->machine.user_regs.cpsr = sanitise_cpsr(ts->cpsr);
+            state->r[0] = new_state->r[0];
+            state->r[1] = new_state->r[1];
+            state->r[2] = new_state->r[2];
+            state->r[3] = new_state->r[3];
+            state->r[4] = new_state->r[4];
+            state->r[5] = new_state->r[5];
+            state->r[6] = new_state->r[6];
+            state->r[7] = new_state->r[7];
+            state->r[8] = new_state->r[8];
+            state->r[9] = new_state->r[9];
+            state->r[10] = new_state->r[10];
+            state->r[11] = new_state->r[11];
+            state->r[12] = new_state->r[12];
 
-        return KERN_SUCCESS;
+            state->sp = new_state->sp;
+            state->lr = new_state->lr;
+            state->pc = new_state->pc;
+            state->cpsr = sanitise_cpsr(new_state->cpsr);
+
+            break;
         }
     case ARM_VFP_STATE:
         {
-        int i;
-        struct arm_vfp_state *fs;
+            int i;
+            struct arm_vfp_state *state;
+            struct arm_vfp_state *new_state;
 
-        fs = (struct arm_vfp_state *) tstate;
+            new_state = (struct arm_vfp_state *) tstate;
+            state = (struct arm_vfp_state *) &thread->machine.vfp_regs;
 
-        for (i = 0; i <= 64; i++)
-            thread->machine.vfp_regs.r[i] = fs->r[i];
-        thread->machine.vfp_regs.fpscr = fs->fpscr;
+            for (i = 0; i < 64; i++)
+                state->r[i] = new_state->r[i];
+            state->fpscr = new_state->fpscr;
 
-        return KERN_SUCCESS;
+            break;
         }
     case ARM_EXCEPTION_STATE:
         {
-        struct arm_exception_state *es;
+            struct arm_exception_state *state;
+            struct arm_exception_state *new_state;
 
-        es = (struct arm_exception_state *) tstate;
+            new_state = (struct arm_exception_state *) tstate;
+            state = (struct arm_exception_state *) &thread->machine.es;
 
-        thread->machine.es.fsr = es->fsr;
-        thread->machine.es.far = es->far;
-        thread->machine.es.exception = es->exception;
+            state->fsr = new_state->fsr;
+            state->far = new_state->far;
+            state->exception = new_state->exception;
 
-        return KERN_SUCCESS;
+            break;
+        }
+    case ARM_DEBUG_STATE:
+        {
+            break;
         }
     default:
-        return KERN_INVALID_ARGUMENT;
+        return (KERN_INVALID_ARGUMENT);
     }
 
-    return KERN_INVALID_ARGUMENT;
+    return (KERN_SUCCESS);
 }
 
 /**
@@ -356,6 +400,8 @@ void thread_setuserstack(thread_t thread, mach_vm_address_t user_stack)
 {
     assert(thread);
     thread->machine.user_regs.sp = CAST_DOWN(unsigned int, user_stack);
+
+    return;
 }
 
 /**
@@ -367,7 +413,8 @@ uint64_t thread_adjuserstack(thread_t thread, int adj)
 {
     assert(thread);
     thread->machine.user_regs.sp += adj;
-    return thread->machine.user_regs.sp;
+
+    return (thread->machine.user_regs.sp);
 }
 
 /**
@@ -379,6 +426,8 @@ void thread_setentrypoint(thread_t thread, uint32_t entry)
 {
     assert(thread);
     thread->machine.user_regs.pc = entry;
+
+    return;
 }
 
 /**
@@ -394,6 +443,7 @@ void thread_set_parent(thread_t parent, int pid)
 
     iss->r[0] = pid;
     iss->r[1] = 0;
+
     return;
 }
 
@@ -402,7 +452,7 @@ struct arm_act_context {
     arm_vfp_state_t fs;
 };
 
-/** 
+/**
  * act_thread_csave
  *
  * Save the current thread context, used for the internal uthread structure.
@@ -417,25 +467,25 @@ void *act_thread_csave(void)
 
     ic = (struct arm_act_context *)kalloc(sizeof(struct arm_act_context));
 
-    if (ic == (struct arm_act_context *)NULL)
-        return((void *)0);
+    if (ic == NULL)
+        return(NULL);
 
-    val = ARM_THREAD_STATE_COUNT; 
+    val = ARM_THREAD_STATE_COUNT;
     if (machine_thread_get_state(thr_act, ARM_THREAD_STATE, (thread_state_t) &ic->ss, &val) != KERN_SUCCESS) {
         kfree(ic, sizeof(struct arm_act_context));
-        return((void *)0);
+        return(NULL);
     }
 
-    val = ARM_VFP_STATE_COUNT; 
+    val = ARM_VFP_STATE_COUNT;
     if (machine_thread_get_state(thr_act, ARM_THREAD_STATE, (thread_state_t) &ic->fs, &val) != KERN_SUCCESS) {
         kfree(ic, sizeof(struct arm_act_context));
-        return((void *)0);
+        return(NULL);
     }
 
     return (ic);
 }
 
-/** 
+/**
  * act_thread_catt
  *
  * Restore the current thread context, used for the internal uthread structure.
@@ -447,7 +497,7 @@ void act_thread_catt(void *ctx)
 
     struct arm_act_context *ic;
 
-    if (ctx == (void *)NULL)
+    if (ctx == NULL)
         return;
 
     ic = (struct arm_act_context *)ctx;
@@ -456,6 +506,8 @@ void act_thread_catt(void *ctx)
         (void)machine_thread_set_state(thr_act, ARM_VFP_STATE, (thread_state_t) &ic->fs, ARM_VFP_STATE_COUNT);
 
     kfree(ic, sizeof(struct arm_act_context));
+
+    return;
 }
 
 
@@ -469,6 +521,7 @@ void thread_set_child(thread_t child, int pid)
     assert(child->machine.uss == &child->machine.user_regs);
     child->machine.uss->r[0] = pid;
     child->machine.uss->r[1] = 1;
+
     return;
 }
 
@@ -511,4 +564,6 @@ void thread_set_wq_state32(thread_t thread, thread_state_t tstate)
         thread_unlock(thread);
         splx(s);
     }
+
+    return;
 }

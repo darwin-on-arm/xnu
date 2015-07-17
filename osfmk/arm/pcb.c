@@ -1,17 +1,17 @@
 /*
  * Copyright 2013, winocm. <winocm@icloud.com>
  * All rights reserved.
- * 
+ *
  * Redistribution and use in source and binary forms, with or without modification,
  * are permitted provided that the following conditions are met:
- * 
+ *
  *   Redistributions of source code must retain the above copyright notice, this
  *   list of conditions and the following disclaimer.
- * 
+ *
  *   Redistributions in binary form must reproduce the above copyright notice, this
  *   list of conditions and the following disclaimer in the documentation and/or
  *   other materials provided with the distribution.
- * 
+ *
  *   If you are going to use this software in any form that does not involve
  *   releasing the source to this project or improving it, let me know beforehand.
  *
@@ -38,12 +38,14 @@
 #include <mach/mach_types.h>
 #include <mach/vm_param.h>
 #include <kern/debug.h>
-#include <arm/cpu_data.h>
 #include <kern/thread.h>
-#include <arm/misc_protos.h>
 #include <kern/kalloc.h>
 #include <vm/vm_kern.h>
 #include <vm/vm_map.h>
+
+#include <arm/armops.h>
+#include <arm/cpu_data.h>
+#include <arm/misc_protos.h>
 
 thread_t CurrentThread;
 
@@ -80,6 +82,8 @@ static void save_vfp_context(thread_t thread);
 void arm_set_threadpid_user_readonly(uint32_t * address)
 {
     __asm__ __volatile__("mcr p15, 0, %0, c13, c0, 3"::"r"(address));
+
+    return;
 }
 
 /**
@@ -90,6 +94,8 @@ void arm_set_threadpid_user_readonly(uint32_t * address)
 void arm_set_threadpid_priv_readwrite(uint32_t * address)
 {
     __asm__ __volatile__("mcr p15, 0, %0, c13, c0, 4"::"r"(address));
+
+    return;
 }
 
 /**
@@ -100,12 +106,14 @@ void arm_set_threadpid_priv_readwrite(uint32_t * address)
 void machine_set_current_thread(thread_t thread)
 {
     /*
-     * Set the current thread. 
+     * Set the current thread.
      */
     CurrentThread = thread;
 
     arm_set_threadpid_user_readonly((uint32_t *) thread->machine.cthread_self);
     arm_set_threadpid_priv_readwrite((uint32_t *) thread);
+
+    return;
 }
 
 void thread_set_cthread_self(uint32_t cthr)
@@ -114,13 +122,16 @@ void thread_set_cthread_self(uint32_t cthr)
     assert(curthr);
     curthr->machine.cthread_self = cthr;
     arm_set_threadpid_user_readonly((uint32_t *) curthr->machine.cthread_self);
+
+    return;
 }
 
 uint64_t thread_get_cthread_self(void)
 {
     thread_t curthr = current_thread();
     assert(curthr);
-    return curthr->machine.cthread_self;
+
+    return (curthr->machine.cthread_self);
 }
 
 /**
@@ -128,7 +139,7 @@ uint64_t thread_get_cthread_self(void)
  */
 kern_return_t machine_thread_inherit_taskwide(thread_t thread, task_t parent_task)
 {
-    return KERN_FAILURE;
+    return (KERN_FAILURE);
 }
 
 /**
@@ -141,7 +152,7 @@ kern_return_t machine_thread_create(thread_t thread, task_t task)
     arm_saved_state_t *sv = NULL;
 
     /*
-     * Create a thread and set the members in the pcb. 
+     * Create a thread and set the members in the pcb.
      */
     assert(thread != NULL);
     assert(thread->machine.iss == NULL);
@@ -153,7 +164,7 @@ kern_return_t machine_thread_create(thread_t thread, task_t task)
     bzero(&thread->machine.user_regs, sizeof(arm_saved_state_t));
 
     /*
-     * Set the members now. 
+     * Set the members now.
      */
     thread->machine.preempt_count = 0;
     thread->machine.cpu_data = cpu_datap(cpu_number());
@@ -161,11 +172,12 @@ kern_return_t machine_thread_create(thread_t thread, task_t task)
     thread->machine.vfp_dirty = 0;
 
     /*
-     * Also kernel threads 
+     * Also kernel threads
      */
     thread->machine.uss = &thread->machine.user_regs;
+    thread->machine.uvfp = &thread->machine.vfp_regs;
 
-    return KERN_SUCCESS;
+    return (KERN_SUCCESS);
 }
 
 /**
@@ -189,24 +201,21 @@ thread_t machine_switch_context(thread_t old, thread_continue_t continuation,
     assert(datap != NULL);
 
     datap->old_thread = old;
+    datap->new_thread = new;
 
     save_vfp_context(old);
 
-    new_pmap = new->map->pmap;
-    if ((old->map->pmap != new_pmap)) {
+    new_pmap = vm_map_pmap(new->map);
+    if (vm_map_pmap(old->map) != new_pmap) {
         if (new_pmap != NULL) {
             pmap_switch(new_pmap);
         }
     }
 
-    /*
-     * VFP save needed 
-     */
-
     retval = Switch_context(old, continuation, new);
     assert(retval != NULL);
 
-    return retval;
+    return (retval);
 }
 
 void machine_stack_handoff(thread_t old, thread_t new)
@@ -231,7 +240,7 @@ void machine_stack_handoff(thread_t old, thread_t new)
     new->machine.iss = (arm_saved_state_t *) kstack;
     new->machine.iss->sp = (uint32_t) kstack - sizeof(arm_saved_state_t);
 
-    old->machine.iss = 0;
+    old->machine.iss = NULL;
 
     if (stack == old->reserved_stack) {
         assert(new->reserved_stack);
@@ -244,8 +253,8 @@ void machine_stack_handoff(thread_t old, thread_t new)
      * because old stack is already initialized.
      */
 
-    new_pmap = new->map->pmap;
-    if ((old->map->pmap != new_pmap)) {
+    new_pmap = vm_map_pmap(new->map);
+    if (vm_map_pmap(old->map) != new_pmap) {
         if (new_pmap != NULL) {
             pmap_switch(new_pmap);
         }
@@ -264,7 +273,7 @@ void machine_thread_init(void)
     return;
 }
 
-/** 
+/**
  * save_vfp_context
  *
  * Saves current vfp context into thread state.
@@ -272,10 +281,12 @@ void machine_thread_init(void)
 static void save_vfp_context(thread_t thread)
 {
     if (thread->machine.vfp_enable && !thread->machine.vfp_dirty) {
-        vfp_context_save(&thread->machine.vfp_regs);
+        vfp_context_save(thread->machine.uvfp);
         vfp_enable_exception(FALSE);
         thread->machine.vfp_enable = FALSE;
     }
+
+    return;
 }
 
 /**
@@ -294,7 +305,14 @@ void machine_stack_attach(thread_t thread, vm_offset_t stack)
 
     thread->kernel_stack = stack;
     thread->machine.iss = (arm_saved_state_t *) kstack;
-    thread->machine.iss->r[0] = (uint32_t) thread;
+
+    /* Zero out the frame pointer. */
+    thread->machine.iss->r[7] = 0;
+
+    /* Set appropriate mode bits (SVC mode, interrupts disabled). */
+    thread->machine.iss->cpsr = 0x13;
+    thread->machine.iss->cpsr |= (1 << 7); /* I-flag */
+
     thread->machine.iss->lr = (uint32_t) thread_continue;
     thread->machine.iss->sp = (uint32_t) kstack - sizeof(arm_saved_state_t);
 
@@ -317,7 +335,7 @@ vm_offset_t machine_stack_detach(thread_t thread)
     stack = thread->kernel_stack;
     thread->kernel_stack = 0;
 
-    return stack;
+    return (stack);
 }
 
 /*
@@ -325,7 +343,7 @@ vm_offset_t machine_stack_detach(thread_t thread)
  */
 processor_t machine_choose_processor(processor_set_t pset, processor_t preferred)
 {
-    return preferred;
+    return (preferred);
 }
 
 /**
@@ -337,6 +355,8 @@ processor_t machine_choose_processor(processor_set_t pset, processor_t preferred
 void call_continuation(thread_continue_t continuation, void *parameter,
                        wait_result_t wresult)
 {
+    uint32_t kss;
+
     thread_t self = current_thread();
 
     assert(self->machine.iss != NULL);
@@ -345,7 +365,6 @@ void call_continuation(thread_continue_t continuation, void *parameter,
 
     kprintf("call_continuation: calling continuation on thread %p\n", self);
 
-    uint32_t kss;
     kss = (uint32_t) STACK_IKS(self->kernel_stack);
 
     Call_continuation(continuation, parameter, wresult, kss);
@@ -369,7 +388,7 @@ void machine_thread_destroy(thread_t thread)
  */
 kern_return_t machine_thread_state_initialize(thread_t thread)
 {
-    return KERN_SUCCESS;
+    return (KERN_SUCCESS);
 }
 
 /*
@@ -384,7 +403,15 @@ void machine_task_terminate(task_t task)
 void *find_user_regs(thread_t thread)
 {
     assert(thread->machine.uss == &thread->machine.user_regs);
-    return (void *) thread->machine.uss;
+
+    return ((void *) thread->machine.uss);
+}
+
+void *find_vfp_regs(thread_t thread)
+{
+    assert(thread->machine.uvfp == &thread->machine.vfp_regs);
+
+    return ((void *) thread->machine.uvfp);
 }
 
 kern_return_t machine_thread_dup(thread_t self, thread_t target)
@@ -392,15 +419,20 @@ kern_return_t machine_thread_dup(thread_t self, thread_t target)
     /*
      * Copy user registers.
      */
-    bcopy(self->machine.uss, target->machine.uss, sizeof(arm_saved_state_t));
+    ovbcopy(self->machine.uss, target->machine.uss, sizeof(arm_saved_state_t));
 
     /*
-     * Save FP registers and copy.
+     * Copy vfp registers.
      */
     save_vfp_context(self);
-    bcopy(&self->machine.vfp_regs, &target->machine.vfp_regs, sizeof(arm_vfp_state_t));
+    ovbcopy(self->machine.uvfp, target->machine.uvfp, sizeof(arm_vfp_state_t));
+
+    /*
+     * Duplicate self.
+     */
     target->machine.cthread_self = self->machine.cthread_self;
-    return KERN_SUCCESS;
+
+    return (KERN_SUCCESS);
 }
 
 /*
@@ -410,10 +442,12 @@ kern_return_t machine_thread_dup(thread_t self, thread_t target)
  */
 void consider_machine_collect(void)
 {
+    return;
 }
 
 void consider_machine_adjust(void)
 {
+    return;
 }
 
 unsigned int get_useraddr(void)
