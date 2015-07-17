@@ -3,16 +3,16 @@
 #  Standard Apple Mac OS Configurations:
 #  -------- ----- ------ ---------------
 #
-#  RELEASE	= [ intel mach iokitcpp hibernation medium crypto config_dtrace config_sleep iokitstats vm_pressure_events ]
+#  RELEASE	= [ arm mach iokitcpp hibernation medium crypto config_sleep iokitstats vm_pressure_events ]
 #  PROFILE	= [ RELEASE profile ]
 #  DEBUG	= [ RELEASE debug ]
 #
-#  EMBEDDED	= [ intel mach iokitcpp hibernation no_kextd bsmall crypto ]
-#  DEVELOPMENT	= [ EMBEDDED config_dtrace development]
+#  EMBEDDED	= [ arm mach iokitcpp hibernation no_kextd bsmall crypto ]
+#  DEVELOPMENT	= [ EMBEDDED development]
 #
 ######################################################################
 
-machine		"arm"					# <intel>
-cpu		"arm"					# <intel>
+machine		"arm"					# <arm>
+cpu		"arm"					# <arm>
 
 options		NO_KEXTD				# <no_kextd>

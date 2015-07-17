@@ -44,7 +44,7 @@
 #  
 #  Standard Apple Research Configurations:
 #  -------- ----- -------- ---------------
-#  BASE =        [ intel mach bsmall config_dtrace vol pst gdb kernobjc fixpri simple_clock mdebug kernserv driverkit uxpr kernstack ipc_compat ipc_debug sysv_sem sysv_msg sysv_shm audit panic_info config_imageboot config_workqueue psynch zleaks memorystatus vm_pressure_events config_embedded secure_kernel jetsam freeze ]
+#  BASE =        [ arm mach bsmall vol pst gdb kernobjc simple_clock mdebug kernserv driverkit uxpr kernstack ipc_compat sysv_sem sysv_msg sysv_shm audit panic_info config_imageboot config_workqueue psynch zleaks memorystatus vm_pressure_events config_embedded secure_kernel jetsam freeze ]
 #  FILESYS =	 [ devfs revfs hfs journaling fdesc config_fse quota namedstreams fifo config_volfs hfs_compression config_hfs_std config_hfs_alloc_rbtree config_hfs_trim config_imgsrc_access config_triggers config_vfs_funnel config_ext_resolver config_searchfs ]
 #  NETWORKING =  [ inet inet6 compat_oldsock tcpdrop_synfin bpfilter ipdivert ipfirewall ipv6firewall ipfw2 dummynet traffic_mgt sendfile bond vlan gif stf zlib randomipid ifnet_input_chk config_mbuf_jumbo if_bridge PF ]
 #  NFS =         [ nfsclient nfsserver ]
@@ -56,27 +56,26 @@
 #  PROFILE =     [ RELEASE profile ]
 #  DEBUG =       [ BASE NETWORKING NFS VPN FILESYS libdriver_g debug xpr_debug mach_assert ]
 #
-#  EMBEDDED_BASE =	[ intel mach bsmall vol pst gdb kernobjc fixpri simple_clock mdebug kernserv driverkit uxpr kernstack ipc_compat ipc_debug sysv_sem sysv_msg sysv_shm audit panic_info config_imageboot config_workqueue psynch ]
+#  EMBEDDED_BASE =	[ arm mach bsmall vol pst gdb kernobjc fixpri simple_clock mdebug kernserv driverkit uxpr kernstack ipc_compat ipc_debug sysv_sem sysv_msg sysv_shm audit panic_info config_imageboot config_workqueue psynch ]
 #  EMBEDDED_FILESYS =	[ devfs hfs journaling fdesc fifo hfs_compression config_fse ]
 #  EMBEDDED_NET =	[ inet compat_oldsock tcpdrop_synfin bpfilter inet6 zlib ]
 #  EMBEDDED =		[ EMBEDDED_BASE EMBEDDED_NET VPN EMBEDDED_FILESYS libdriver no_printf_str no_kprintf_str no_kdebug ]
-#  DEVELOPMENT =	[ EMBEDDED_BASE NETWORKING PF NFS VPN EMBEDDED_FILESYS libdriver development mach_assert config_dtrace zleaks ]
+#  DEVELOPMENT =	[ EMBEDDED_BASE NETWORKING PF NFS VPN EMBEDDED_FILESYS libdriver development mach_assert zleaks ]
 #
 ######################################################################
 #
-machine		"arm"						# <intel>
-cpu		"arm"						# <intel>
+machine		"arm"						# <arm>
+cpu		"arm"						# <arm>
 
 makeoptions	CCONFIGFLAGS = "-g -O3 -fno-omit-frame-pointer"	# <gdb>
 makeoptions	CCONFIGFLAGS = "-O3"				# <!gdb>
-makeoptions	RELOC = "00100000"				# <intel>
-makeoptions	SYMADDR = "00780000"				# <intel>
+makeoptions	RELOC = "00100000"				# <arm>
+makeoptions	SYMADDR = "00780000"				# <arm>
 
 options		GDB		# GNU kernel debugger		# <gdb>
 options		DEBUG		# general debugging code	# <debug>
 options		SHOW_SPACE	# print size of structures	# <debug>
 options		EVENTMETER	# event meter support		# <debug>
-options		FP_EMUL		# floating point emulation	# <fp>
 options		UXPR		# user-level XPR package	# <uxpr>
 config		mach_kernel	swap generic			# <mach>
 options		EVENT						# <event>

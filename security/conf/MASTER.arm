@@ -1,16 +1,16 @@
 ######################################################################
 #
-#  RELEASE	= [ intel mach libkerncpp config_dtrace audit vm_pressure_events ]
+#  RELEASE	= [ arm mach libkerncpp config_dtrace audit vm_pressure_events ]
 #  PROFILE	= [ RELEASE profile ]
 #  DEBUG	= [ RELEASE debug ]
 #
-#  EMBEDDED	= [ intel mach libkerncpp audit ]
+#  EMBEDDED	= [ arm mach libkerncpp audit ]
 #  DEVELOPMENT	= [ EMBEDDED config_dtrace ]
 #
 ######################################################################
 
-machine		"arm"					# <intel>
-cpu		"arm"					# <intel>
+machine		"arm"					# <arm>
+cpu		"arm"					# <arm>
 
 #
 # Note: MAC/AUDIT options must be set in all the bsd/conf, osfmk/conf, and 
