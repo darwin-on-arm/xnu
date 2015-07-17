@@ -446,7 +446,6 @@ bsdthread_terminate(__unused struct proc *p, struct bsdthread_terminate_args  *u
 			return(EINVAL);
 		}
 	}
-	kprintf("bsdthread_terminate(): terminating thread %p\n", current_thread());
 	(void) thread_terminate(current_thread());
 	if (sem != MACH_PORT_NULL) {
 		 kret = semaphore_signal_internal_trap(sem);

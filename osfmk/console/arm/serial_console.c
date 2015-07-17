@@ -251,13 +251,9 @@ console_ring_try_empty(void)
 void
 cnputc(char c)
 {
-//	disable_preemption();
-//	hw_lock_lock(&cnputc_lock);
 	console_buf_t	*cbp;
 	/* Put directly if console ring is not initialized */
 	_cnputc(c);
-//	hw_lock_unlock(&cnputc_lock);
-//	enable_preemption();
 	return;
 }
 
