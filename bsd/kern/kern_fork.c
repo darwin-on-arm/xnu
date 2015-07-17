@@ -1507,7 +1507,6 @@ uthread_cleanup(task_t task, void *uthread, void * bsd_info)
 	uthread_t uth = (uthread_t)uthread;
 	proc_t p = (proc_t)bsd_info;
 
-
 	if (uth->uu_lowpri_window || uth->uu_throttle_info) {
 	        /*
 		 * task is marked as a low priority I/O type

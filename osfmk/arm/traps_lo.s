@@ -193,8 +193,8 @@ swi_trap:
     addls   pc, pc, r3, lsl#2
 swi_trap_table:
     b       swi_trap_ret
-    b       xxx_trap    /* icache clean */
-    b       xxx_trap    /* dcache clean */
+    b       icache_inv_trap
+    b       dcache_inv_trap
     b       thread_set_cthread_trap
     b       thread_get_cthread_trap
 
@@ -202,8 +202,12 @@ swi_trap_tb:
     /* Fast return */
     movs    pc, lr
 
-xxx_trap:
-    /* Just return. */
+icache_inv_trap:
+    bl      _arm_icache_inv_all
+    bl      _thread_exception_return
+
+dcache_inv_trap:
+    bl      _arm_dcache_inv_all
     bl      _thread_exception_return
 
 thread_set_cthread_trap:

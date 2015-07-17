@@ -2,7 +2,7 @@
  * Copyright (c) 2000 Apple Computer, Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
- * 
+ *
  * This file contains Original Code and/or Modifications of Original Code
  * as defined in and that are subject to the Apple Public Source License
  * Version 2.0 (the 'License'). You may not use this file except in
@@ -11,10 +11,10 @@
  * unlawful or unlicensed copies of an Apple operating system, or to
  * circumvent, violate, or enable the circumvention or violation of, any
  * terms of an Apple operating system software license agreement.
- * 
+ *
  * Please obtain a copy of the License at
  * http://www.opensource.apple.com/apsl/ and read it before using this file.
- * 
+ *
  * The Original Code and all software distributed under the License are
  * distributed on an 'AS IS' basis, WITHOUT WARRANTY OF ANY KIND, EITHER
  * EXPRESS OR IMPLIED, AND APPLE HEREBY DISCLAIMS ALL SUCH WARRANTIES,
@@ -22,23 +22,23 @@
  * FITNESS FOR A PARTICULAR PURPOSE, QUIET ENJOYMENT OR NON-INFRINGEMENT.
  * Please see the License for the specific language governing rights and
  * limitations under the License.
- * 
+ *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
 /*
  * Copyright 2013, winocm. <winocm@icloud.com>
  * All rights reserved.
- * 
+ *
  * Redistribution and use in source and binary forms, with or without modification,
  * are permitted provided that the following conditions are met:
- * 
+ *
  *   Redistributions of source code must retain the above copyright notice, this
  *   list of conditions and the following disclaimer.
- * 
+ *
  *   Redistributions in binary form must reproduce the above copyright notice, this
  *   list of conditions and the following disclaimer in the documentation and/or
  *   other materials provided with the distribution.
- * 
+ *
  *   If you are going to use this software in any form that does not involve
  *   releasing the source to this project or improving it, let me know beforehand.
  *
@@ -116,7 +116,7 @@ void unix_syscall(arm_saved_state_t * state)
     uthread = get_bsdthread_info(thread);
 
     /*
-     * Get the approriate proc; may be different from task's for vfork() 
+     * Get the approriate proc; may be different from task's for vfork()
      */
     is_vfork = uthread->uu_flag & UT_VFORK;
     if (__improbable(is_vfork != 0))
@@ -125,19 +125,19 @@ void unix_syscall(arm_saved_state_t * state)
         p = (struct proc *) get_bsdtask_info(current_task());
 
     /*
-     * Verify that we are not being called from a task without a proc 
+     * Verify that we are not being called from a task without a proc
      */
     if (__improbable(p == NULL)) {
         state->r[0] = EPERM;
         task_terminate_internal(current_task());
         thread_exception_return();
         /*
-         * NOTREACHED 
+         * NOTREACHED
          */
     }
 
     /*
-     * Current syscall number is in r12 on ARM 
+     * Current syscall number is in r12 on ARM
      */
     boolean_t shift_args = FALSE;
 
@@ -176,12 +176,12 @@ void unix_syscall(arm_saved_state_t * state)
                 uthread->uu_arg[i] = state->r[i + 1];
                 if (i == (arg_count))
                     break;
-            }            
+            }
         }
     }
 
     /*
-     * Set return values 
+     * Set return values
      */
     uthread->uu_flag |= UT_NOTCANCELPT;
     uthread->uu_rval[0] = 0;
@@ -210,16 +210,16 @@ void unix_syscall(arm_saved_state_t * state)
         } else { /* Not error. */
             switch(callp->sy_return_type) {
                 case _SYSCALL_RET_INT_T:
-                    state->r[0] = (int)uthread->uu_rval[0];                    
+                    state->r[0] = (int)uthread->uu_rval[0];
                     state->r[1] = (int)uthread->uu_rval[1];
                     break;
                 case _SYSCALL_RET_UINT_T:
-                    state->r[0] = (u_int)uthread->uu_rval[0];                    
+                    state->r[0] = (u_int)uthread->uu_rval[0];
                     state->r[1] = (u_int)uthread->uu_rval[1];
                     break;
                 case _SYSCALL_RET_OFF_T:
                 case _SYSCALL_RET_UINT64_T:
-                    state->r[0] = uthread->uu_rval[0];                    
+                    state->r[0] = uthread->uu_rval[0];
                     state->r[1] = uthread->uu_rval[1];
                     break;
                 case _SYSCALL_RET_ADDR_T:
@@ -242,7 +242,7 @@ void unix_syscall(arm_saved_state_t * state)
     uthread->uu_flag &= ~UT_NOTCANCELPT;
 
     /*
-     * panic if funnel is held 
+     * panic if funnel is held
      */
     syscall_exit_funnelcheck();
 
@@ -290,16 +290,16 @@ void unix_syscall_return(int error)
         } else { /* Not error. */
             switch(callp->sy_return_type) {
                 case _SYSCALL_RET_INT_T:
-                    state->r[0] = uthread->uu_rval[0];                    
+                    state->r[0] = uthread->uu_rval[0];
                     state->r[1] = uthread->uu_rval[1];
                     break;
                 case _SYSCALL_RET_UINT_T:
-                    state->r[0] = (u_int)uthread->uu_rval[0];                    
+                    state->r[0] = (u_int)uthread->uu_rval[0];
                     state->r[1] = (u_int)uthread->uu_rval[1];
                     break;
                 case _SYSCALL_RET_OFF_T:
                 case _SYSCALL_RET_UINT64_T:
-                    state->r[0] = uthread->uu_rval[0];                    
+                    state->r[0] = uthread->uu_rval[0];
                     state->r[1] = uthread->uu_rval[1];
                     break;
                 case _SYSCALL_RET_ADDR_T:
@@ -319,10 +319,10 @@ void unix_syscall_return(int error)
             state->cpsr &= ~(1 << 29);  /* C-bit IIRC, turn this into a Define */
         }
     }
-    
+
     uthread->uu_flag &= ~UT_NOTCANCELPT;
 
-#if FUNNEL_DEBUG    
+#if FUNNEL_DEBUG
     /*
      * if we're holding the funnel panic
      */
@@ -348,6 +348,6 @@ void unix_syscall_return(int error)
 
     thread_exception_return();
     /*
-     * NOTREACHED 
+     * NOTREACHED
      */
 }

@@ -37,8 +37,8 @@
 #include <mach/arm/thread_state.h>
 #include <mach/arm/thread_status.h>
 
-/* 
- * VFP crap.
+/*
+ * VFP routines.
  */
 extern void init_vfp(void);
 extern void vfp_context_save(struct arm_vfp_state *state);

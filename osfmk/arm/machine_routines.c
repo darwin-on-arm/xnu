@@ -372,7 +372,7 @@ void ml_static_mfree(vm_offset_t vaddr, vm_size_t size)
         }
     }
 
-#if DEBUG   
+#if DEBUG
     kprintf("ml_static_mfree: Released 0x%x pages at VA %p, size:0x%llx, last ppn: 0x%x\n", freed_pages, (void *)vaddr, (uint64_t)size, ppn);
 #endif
 }

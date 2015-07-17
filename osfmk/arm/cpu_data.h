@@ -96,7 +96,6 @@ typedef struct cpu_data {
     int cpu_subtype;
     int cpu_threadtype;
     int cpu_running;
-    void *cpu_console_buf;
     struct processor *cpu_processor;
     uint64_t debugger_entry_time;
     arm_saved_state_t *cpu_fatal_trap_state;

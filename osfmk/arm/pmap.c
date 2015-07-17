@@ -2188,18 +2188,18 @@ void pmap_switch(pmap_t new_pmap)
     spl_t spl;
 
     /*
-     * Raise priority level. 
+     * Raise priority level.
      */
     SPLVM(spl);
 
     /*
-     * Make sure it's not the kernel pmap. 
+     * Make sure it's not the kernel pmap.
      */
     if (new_pmap == kernel_pmap)
         goto switch_return;
 
     /*
-     * Switch it if needed. 
+     * Switch it if needed.
      */
     if (current_cpu_datap()->user_pmap == new_pmap) {
         goto switch_return;
@@ -2213,7 +2213,7 @@ void pmap_switch(pmap_t new_pmap)
     }
 
     /*
-     * Done. 
+     * Done.
      */
  switch_return:
     SPLX(spl);

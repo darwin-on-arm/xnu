@@ -842,7 +842,6 @@ special_handler(
 	}
 	else {
 		thread_mtx_unlock(thread);
-
 		thread_terminate_self();
 		/*NOTREACHED*/
 	}
