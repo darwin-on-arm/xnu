@@ -53,9 +53,7 @@
 #include <sys/kdebug.h>
 #include <sys/sdt.h>
 
-#define C_32_STK_ALIGN          16
-#define C_32_PARAMSAVE_LEN      32
-#define C_32_LINKAGE_LEN        48
+#define C_32_STK_ALIGN          8
 
 #define TRUNC_DOWN32(a,c)   ((((uint32_t)a)-(c)) & ((uint32_t)(-(c))))
 
@@ -262,13 +260,13 @@ void sendsig(struct proc *p, user_addr_t ua_catcher, int sig, int mask, __unused
     /*
      * Copy out context info.
      */
-    if (copyout((caddr_t)&uctx32, ua_uctxp, sizeof(struct user_ucontext32))) 
+    if (copyout((caddr_t)&uctx32, ua_uctxp, sizeof(struct user_ucontext32)) != KERN_SUCCESS)
         goto bad;
-    if (copyout((caddr_t)&sinfo32, ua_sip, sizeof(user_siginfo_t)))
+    if (copyout((caddr_t)&sinfo32, ua_sip, sizeof(user_siginfo_t)) != KERN_SUCCESS)
         goto bad;
-    if (copyout((caddr_t)&mctx32, ua_mctxp, sizeof(struct mcontext))) 
+    if (copyout((caddr_t)&mctx32, ua_mctxp, sizeof(struct mcontext)) != KERN_SUCCESS)
         goto bad;
-    if (copyout((caddr_t)&ua_uctxp, ua_sp, sizeof(user_addr_t)))
+    if (copyout((caddr_t)&ua_uctxp, ua_sp, sizeof(user_addr_t)) != KERN_SUCCESS)
         goto bad;
 
     /*
@@ -282,11 +280,12 @@ void sendsig(struct proc *p, user_addr_t ua_catcher, int sig, int mask, __unused
 
     if (trampact & 0x01) {
         tstate32->lr = trampact;
-        tstate32->cpsr = 0x10; /* ARM_FIQ_MODE */
+        tstate32->cpsr = 0x10;      /* User mode */
     } else {
         trampact &= ~0x01;
         tstate32->lr = trampact;
-        tstate32->cpsr = 0x30; /* ARM_THUMB_MODE | ARM_USER_MODE */
+        tstate32->cpsr = 0x10;      /* User mode */
+        tstate32->cpsr |= (1 << 5); /* T-bit */
     }
 
     /*
@@ -348,7 +347,7 @@ int sigreturn(struct proc *p, struct sigreturn_args *uap, __unused int *retval)
     /*
      * Retrieve the user context that contains our machine context.
      */
-    if ((error = copyin(uap->uctx, (void *)&uctx32, sizeof(struct user_ucontext32))))
+    if ((error = copyin(uap->uctx, (void *)&uctx32, sizeof(struct user_ucontext32))) != KERN_SUCCESS)
         return (error);
 
     /*
@@ -360,7 +359,7 @@ int sigreturn(struct proc *p, struct sigreturn_args *uap, __unused int *retval)
     /*
      * Populate our machine context info that we need to restore.
      */
-    if ((error = copyin(uctx32.uc_mcontext, (void *)&mctx32, UC_FLAVOR_SIZE)))
+    if ((error = copyin(uctx32.uc_mcontext, (void *)&mctx32, UC_FLAVOR_SIZE)) != KERN_SUCCESS)
         return (error);
 
     /*
