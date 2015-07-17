@@ -1,17 +1,17 @@
 /*
  * Copyright 2013, winocm. <winocm@icloud.com>
  * All rights reserved.
- * 
+ *
  * Redistribution and use in source and binary forms, with or without modification,
  * are permitted provided that the following conditions are met:
- * 
+ *
  *   Redistributions of source code must retain the above copyright notice, this
  *   list of conditions and the following disclaimer.
- * 
+ *
  *   Redistributions in binary form must reproduce the above copyright notice, this
  *   list of conditions and the following disclaimer in the documentation and/or
  *   other materials provided with the distribution.
- * 
+ *
  *   If you are going to use this software in any form that does not involve
  *   releasing the source to this project or improving it, let me know beforehand.
  *
@@ -73,68 +73,6 @@ void doexception(int exc, mach_exception_code_t code,
     codes[0] = code;
     codes[1] = sub;
     exception_triage(exc, codes, 2);
-}
-
-/**
- * __arm_get_dfsr
- *
- * Get the current data fault status register.
- */
-static inline uint32_t __arm_get_dfsr(void)
-{
-    uint32_t arm_register;
-    __asm__ __volatile__("mrc    p15, 0, %0, c5, c0, 0":"=r"(arm_register));
-    return arm_register;
-}
-
-/**
- * __arm_get_dfar
- *
- * Get the current data fault address register.
- */
-static inline uint32_t __arm_get_dfar(void)
-{
-    uint32_t arm_register;
-    __asm__ __volatile__("mrc    p15, 0, %0, c6, c0, 0":"=r"(arm_register));
-    return arm_register;
-}
-
-/**
- * __arm_get_ifsr
- *
- * Get the current instruction fault status register.
- */
-static inline uint32_t __arm_get_ifsr(void)
-{
-    uint32_t arm_register;
-    __asm__ __volatile__("mrc    p15, 0, %0, c5, c0, 1":"=r"(arm_register));
-    return arm_register;
-}
-
-/**
- * __arm_get_dfsr
- *
- * Get the current data fault status register.
- */
-static inline uint32_t __arm_get_ifar(void)
-{
-    uint32_t arm_register;
-    __asm__ __volatile__("mrc    p15, 0, %0, c6, c0, 1":"=r"(arm_register));
-    return arm_register;
-}
-
-/**
- * update_arm_exception_state
- *
- * Update the exception state upon an exception.
- */
-static inline void update_arm_exception_state(abort_information_context_t *arm_ctx, uint32_t exception_type)
-{
-    thread_t thread = current_thread();
-
-    thread->machine.es.fsr = arm_ctx->fsr;
-    thread->machine.es.far = arm_ctx->far;
-    thread->machine.es.exception = exception_type;
 }
 
 /**
@@ -232,7 +170,7 @@ void sleh_abort(void *context, int reason)
     thread_t thread = current_thread();
 
     /*
-     * Make sure we get the correct registers only if required. 
+     * Make sure we get the correct registers only if required.
      */
 #if 0
     kprintf("sleh_abort: pc %x lr %x far %x fsr %x psr %x\n", arm_ctx->pc, arm_ctx->lr, arm_ctx->far, arm_ctx->fsr, arm_ctx->cpsr);
@@ -248,7 +186,7 @@ void sleh_abort(void *context, int reason)
     }
 
     /*
-     * We do not want anything entering sleh_abort recursively. 
+     * We do not want anything entering sleh_abort recursively.
      */
     if (__abort_count != 0) {
         sleh_fatal_exception(arm_ctx, "sleh_abort: recursive abort");
@@ -276,32 +214,32 @@ void sleh_abort(void *context, int reason)
     }
 
     /*
-     * See if the abort was in Kernel or User mode. 
+     * See if the abort was in Kernel or User mode.
      */
     cpsr = arm_ctx->cpsr & 0x1F;
 
     /*
-     * Kernel mode. (ARM Supervisor) 
+     * Kernel mode. (ARM Supervisor)
      */
     if (cpsr == 0x13) {
         switch (reason) {
             /*
-             * Prefetch aborts always include the IFSR and IFAR. 
+             * Prefetch aborts always include the IFSR and IFAR.
              */
         case SLEH_ABORT_TYPE_PREFETCH_ABORT:{
                 /*
-                 * Die in a fire. 
+                 * Die in a fire.
                  */
                 vm_map_t map;
                 kern_return_t code;
 
                 /*
-                 * Get the kernel thread map. 
+                 * Get the kernel thread map.
                  */
                 map = kernel_map;
 
                 /*
-                 * Attempt to fault the page. 
+                 * Attempt to fault the page.
                  */
                 __abort_count--;
                 code =
@@ -315,9 +253,9 @@ void sleh_abort(void *context, int reason)
                         if (kdp_raise_exception(EXC_BREAKPOINT, 0, 0, &arm_ctx))
                             return;
                     }
-                    
+
                     /*
-                     * Still, die in a fire. 
+                     * Still, die in a fire.
                      */
                     panic_context(0, (void *) arm_ctx,
                                   "Kernel prefetch abort. (faulting address: 0x%08x, saved state 0x%08x)\n"
@@ -341,12 +279,12 @@ void sleh_abort(void *context, int reason)
                 kern_return_t code;
 
                 /*
-                 * Get the current thread map. 
+                 * Get the current thread map.
                  */
                 map = thread->map;
 
                 /*
-                 * Attempt to fault the page. 
+                 * Attempt to fault the page.
                  */
                 __abort_count--;
                 code =
@@ -357,7 +295,7 @@ void sleh_abort(void *context, int reason)
 
                 if (code != KERN_SUCCESS) {
                     /*
-                     * Still, die in a fire. 
+                     * Still, die in a fire.
                      */
                     code =
                         vm_fault(kernel_map, vm_map_trunc_page(dfar),
@@ -366,7 +304,7 @@ void sleh_abort(void *context, int reason)
                                  vm_map_trunc_page(0));
                     if (code != KERN_SUCCESS) {
                         /*
-                         * Attempt to fault the page against the kernel map. 
+                         * Attempt to fault the page against the kernel map.
                          */
                         if (!thread->recover) {
                             panic_context(0, (void *) arm_ctx,
@@ -387,7 +325,7 @@ void sleh_abort(void *context, int reason)
                                           arm_ctx->cpsr, dfsr, dfar);
                         } else {
                             /*
-                             * If there's a recovery routine, use it. 
+                             * If there's a recovery routine, use it.
                              */
                             if (thread->map == kernel_map)
                                 panic
@@ -410,26 +348,26 @@ void sleh_abort(void *context, int reason)
             panic("sleh_abort: unknown kernel mode abort, type %d\n", reason);
         }
         /*
-         * User mode (ARM User) 
+         * User mode (ARM User)
          */
     } else if (cpsr == 0x10) {
         switch (reason) {
             /*
-             * User prefetch abort 
+             * User prefetch abort
              */
         case SLEH_ABORT_TYPE_PREFETCH_ABORT:{
                 /*
-                 * Attempt to fault it. Same as data except address comes from IFAR. 
+                 * Attempt to fault it. Same as data except address comes from IFAR.
                  */
                 vm_map_t map;
                 kern_return_t code;
 
                 /*
-                 * Get the current thread map. 
+                 * Get the current thread map.
                  */
                 map = thread->map;
                 /*
-                 * Attempt to fault the page. 
+                 * Attempt to fault the page.
                  */
                 assert(get_preemption_level() == 0);
                 __abort_count--;
@@ -453,10 +391,9 @@ void sleh_abort(void *context, int reason)
                 if ((code != KERN_SUCCESS) && (code != KERN_ABORTED)) {
                     exception_type = EXC_BAD_ACCESS;
                     exception_subcode = 0;
-                    update_arm_exception_state(arm_ctx, exception_type);
 
                     /*
-                     * Debug only. 
+                     * Debug only.
                      */
                     printf
                         (ANSI_COLOR_RED "%s[%d]: " ANSI_COLOR_YELLOW "usermode prefetch abort, EXC_BAD_ACCESS at 0x%08x in map %p (pmap %p) (%s)" ANSI_COLOR_RESET" \n",
@@ -478,7 +415,7 @@ void sleh_abort(void *context, int reason)
                             thread->task->all_image_info_addr, thread->task->all_image_info_size);
                 } else {
                     /*
-                     * Retry execution of instruction. 
+                     * Retry execution of instruction.
                      */
                     ml_set_interrupts_enabled(TRUE);
                     return;
@@ -486,22 +423,22 @@ void sleh_abort(void *context, int reason)
                 break;
             }
             /*
-             * User Data Abort 
+             * User Data Abort
              */
         case SLEH_ABORT_TYPE_DATA_ABORT:{
                 /*
-                 * Attempt to fault it. Same as instruction except address comes from DFAR. 
+                 * Attempt to fault it. Same as instruction except address comes from DFAR.
                  */
                 vm_map_t map;
                 kern_return_t code;
 
                 /*
-                 * Get the current thread map. 
+                 * Get the current thread map.
                  */
                 map = thread->map;
 
                 /*
-                 * Attempt to fault the page. 
+                 * Attempt to fault the page.
                  */
                 assert(get_preemption_level() == 0);
                 __abort_count--;
@@ -513,10 +450,9 @@ void sleh_abort(void *context, int reason)
                 if ((code != KERN_SUCCESS) && (code != KERN_ABORTED)) {
                     exception_type = EXC_BAD_ACCESS;
                     exception_subcode = 0;
-                    update_arm_exception_state(arm_ctx, exception_type);
 
                     /*
-                     * Only for debug. 
+                     * Only for debug.
                      */
                     printf
                         (ANSI_COLOR_RED "%s[%d]: " ANSI_COLOR_BLUE "usermode data abort, EXC_BAD_ACCESS at 0x%08x in map %p (pmap %p) (%s)" ANSI_COLOR_RESET "\n",
@@ -538,7 +474,7 @@ void sleh_abort(void *context, int reason)
                             thread->task->all_image_info_addr, thread->task->all_image_info_size);
                 } else {
                     /*
-                     * Retry execution of instruction. 
+                     * Retry execution of instruction.
                      */
                     ml_set_interrupts_enabled(TRUE);
                     return;
@@ -548,18 +484,17 @@ void sleh_abort(void *context, int reason)
         default:
             exception_type = EXC_BREAKPOINT;
             exception_subcode = 0;
-            update_arm_exception_state(arm_ctx, exception_type);
             break;
         }
         /*
-         * Unknown mode. 
+         * Unknown mode.
          */
     } else {
         panic("sleh_abort: Abort in unknown mode, cpsr: 0x%08x\n", cpsr);
     }
 
     /*
-     * If there was a user exception, handle it. 
+     * If there was a user exception, handle it.
      */
     if (exception_type) {
         ml_set_interrupts_enabled(TRUE);
@@ -567,7 +502,7 @@ void sleh_abort(void *context, int reason)
     }
 
     /*
-     * Done. 
+     * Done.
      */
     return;
 }
@@ -587,17 +522,17 @@ boolean_t irq_handler(void *context)
     datap->cpu_interrupt_level++;
 
     /*
-     * Disable system preemption, dispatch the interrupt and go. 
+     * Disable system preemption, dispatch the interrupt and go.
      */
     __disable_preemption();
 
     /*
-     * Dispatch the interrupt. 
+     * Dispatch the interrupt.
      */
     boolean_t ret = pe_arm_dispatch_interrupt(context);
 
     /*
-     * Go. 
+     * Go.
      */
     datap->cpu_interrupt_level--;
 
@@ -673,28 +608,28 @@ void sleh_undef(arm_saved_state_t * state)
         /* i should really fix this crap properly........ */
 
         /*
-         * Check the instruction encoding to see if it's a coprocessor instruction. 
+         * Check the instruction encoding to see if it's a coprocessor instruction.
          */
         instruction = OSSwapInt32(instruction);
 
-        /* 
+        /*
          * dyld's faulting one. I really just need to redo all of the VFP detection
          * code, which will happen one day... I just hate myself for this.
          */
         if(instruction != 0xfedeffe7)
         {
             /*
-             * NEON instruction. 
+             * NEON instruction.
              */
             thread->machine.vfp_dirty = 0;
             if (!thread->machine.vfp_enable) {
                 /*
-                 * Enable VFP. 
+                 * Enable VFP.
                  */
                 vfp_enable_exception(TRUE);
                 vfp_context_load(&thread->machine.vfp_regs);
                 /*
-                 * Continue user execution. 
+                 * Continue user execution.
                  */
                 thread->machine.vfp_enable = TRUE;
             }
@@ -719,17 +654,16 @@ void sleh_undef(arm_saved_state_t * state)
             thread->task->all_image_info_addr, thread->task->all_image_info_size);
 
         /*
-         * xxx gate 
+         * xxx gate
          */
         exception_type = EXC_BAD_INSTRUCTION;
         exception_subcode = 0;
-        update_arm_exception_state(arm_ctx, exception_type);
     } else if (cpsr == 0x17) {
         panic("sleh_undef: undefined instruction in system mode");
     }
 
     /*
-     * If there was a user exception, handle it. 
+     * If there was a user exception, handle it.
      */
     if (exception_type) {
         ml_set_interrupts_enabled(TRUE);
@@ -737,7 +671,7 @@ void sleh_undef(arm_saved_state_t * state)
     }
 
     /*
-     * Done. 
+     * Done.
      */
     return;
 }
