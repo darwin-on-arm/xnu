@@ -57,14 +57,14 @@ uint32_t pe_arm_init_interrupts(__unused void *args)
 }
 
 /**
- * pe_arm_init_interrupts
+ * pe_arm_init_timebase
  *
- * Initialize the SoC dependent interrrupt controller.
+ * Initialize the SoC dependent timebase.
  */
 uint32_t pe_arm_init_timebase(__unused void *args)
 {
     if (gPESocDispatch.timebase_init == NULL)
-        panic("gPESocDispatch.interrupt_init was null, did you forget to set up the table?");
+        panic("gPESocDispatch.timebase_init was null, did you forget to set up the table?");
 
     gPESocDispatch.timebase_init();
 
@@ -94,20 +94,20 @@ boolean_t pe_arm_dispatch_interrupt(void *context)
 uint64_t pe_arm_get_timebase(__unused void *args)
 {
     if (gPESocDispatch.get_timebase == NULL)
-        panic("gPESocDispatch.interrupt_init was null, did you forget to set up the table?");
+        panic("gPESocDispatch.get_timebase was null, did you forget to set up the table?");
 
     return gPESocDispatch.get_timebase();
 }
 
 /**
- * pe_arm_get_timebase
+ * pe_arm_set_timer_enabled
  *
- * Get current system timebase from the SoC handler.
+ * Set platform timer enabled status.
  */
 void pe_arm_set_timer_enabled(boolean_t enable)
 {
     if (gPESocDispatch.timer_enabled == NULL)
-        panic("gPESocDispatch.interrupt_init was null, did you forget to set up the table?");
+        panic("gPESocDispatch.timer_enabled was null, did you forget to set up the table?");
 
     gPESocDispatch.timer_enabled(enable);
 }
