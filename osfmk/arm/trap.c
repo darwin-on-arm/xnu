@@ -250,7 +250,7 @@ void sleh_abort(void *context, int reason)
                 if (code != KERN_SUCCESS) {
 
                     if (current_debugger) {
-                        if (kdp_raise_exception(EXC_BREAKPOINT, 0, 0, &arm_ctx))
+                        if (kdp_raise_exception(EXC_BREAKPOINT, 0, 0, arm_ctx))
                             return;
                     }
 
