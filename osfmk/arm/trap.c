@@ -132,7 +132,7 @@ void sleh_fatal_exception(abort_information_context_t * arm_ctx, char *message)
            "  r0: 0x%08x  r1: 0x%08x  r2: 0x%08x  r3: 0x%08x\n"
            "  r4: 0x%08x  r5: 0x%08x  r6: 0x%08x  r7: 0x%08x\n"
            "  r8: 0x%08x  r9: 0x%08x r10: 0x%08x r11: 0x%08x\n"
-           "  12: 0x%08x  sp: 0x%08x  lr: 0x%08x  pc: 0x%08x\n"
+           " r12: 0x%08x  sp: 0x%08x  lr: 0x%08x  pc: 0x%08x\n"
            "cpsr: 0x%08x fsr: 0x%08x far: 0x%08x\n", arm_ctx,
            arm_ctx->r[0], arm_ctx->r[1], arm_ctx->r[2], arm_ctx->r[3],
            arm_ctx->r[4], arm_ctx->r[5], arm_ctx->r[6], arm_ctx->r[7],
@@ -259,10 +259,10 @@ void sleh_abort(void *context, int reason)
                      */
                     panic_context(0, (void *) arm_ctx,
                                   "Kernel prefetch abort. (faulting address: 0x%08x, saved state 0x%08x)\n"
-                                  "r0: 0x%08x  r1: 0x%08x  r2: 0x%08x  r3: 0x%08x\n"
-                                  "r4: 0x%08x  r5: 0x%08x  r6: 0x%08x  r7: 0x%08x\n"
-                                  "r8: 0x%08x  r9: 0x%08x r10: 0x%08x r11: 0x%08x\n"
-                                  "12: 0x%08x  sp: 0x%08x  lr: 0x%08x  pc: 0x%08x\n"
+                                  "  r0: 0x%08x  r1: 0x%08x  r2: 0x%08x  r3: 0x%08x\n"
+                                  "  r4: 0x%08x  r5: 0x%08x  r6: 0x%08x  r7: 0x%08x\n"
+                                  "  r8: 0x%08x  r9: 0x%08x r10: 0x%08x r11: 0x%08x\n"
+                                  " r12: 0x%08x  sp: 0x%08x  lr: 0x%08x  pc: 0x%08x\n"
                                   "cpsr: 0x%08x fsr: 0x%08x far: 0x%08x\n",
                                   ifar, arm_ctx, arm_ctx->r[0], arm_ctx->r[1],
                                   arm_ctx->r[2], arm_ctx->r[3], arm_ctx->r[4],
@@ -309,10 +309,10 @@ void sleh_abort(void *context, int reason)
                         if (!thread->recover) {
                             panic_context(0, (void *) arm_ctx,
                                           "Kernel data abort. (faulting address: 0x%08x, saved state 0x%08x)\n"
-                                          "r0: 0x%08x  r1: 0x%08x  r2: 0x%08x  r3: 0x%08x\n"
-                                          "r4: 0x%08x  r5: 0x%08x  r6: 0x%08x  r7: 0x%08x\n"
-                                          "r8: 0x%08x  r9: 0x%08x r10: 0x%08x r11: 0x%08x\n"
-                                          "12: 0x%08x  sp: 0x%08x  lr: 0x%08x  pc: 0x%08x\n"
+                                          "  r0: 0x%08x  r1: 0x%08x  r2: 0x%08x  r3: 0x%08x\n"
+                                          "  r4: 0x%08x  r5: 0x%08x  r6: 0x%08x  r7: 0x%08x\n"
+                                          "  r8: 0x%08x  r9: 0x%08x r10: 0x%08x r11: 0x%08x\n"
+                                          " r12: 0x%08x  sp: 0x%08x  lr: 0x%08x  pc: 0x%08x\n"
                                           "cpsr: 0x%08x fsr: 0x%08x far: 0x%08x\n",
                                           dfar, arm_ctx, arm_ctx->r[0], arm_ctx->r[1],
                                           arm_ctx->r[2], arm_ctx->r[3],
@@ -578,10 +578,10 @@ void sleh_undef(arm_saved_state_t * state)
          */
         panic_context(0, (void *) arm_ctx,
                       "Kernel undefined instruction. (saved state 0x%08x)\n"
-                      "r0: 0x%08x  r1: 0x%08x  r2: 0x%08x  r3: 0x%08x\n"
-                      "r4: 0x%08x  r5: 0x%08x  r6: 0x%08x  r7: 0x%08x\n"
-                      "r8: 0x%08x  r9: 0x%08x r10: 0x%08x r11: 0x%08x\n"
-                      "12: 0x%08x  sp: 0x%08x  lr: 0x%08x  pc: 0x%08x\n"
+                      "  r0: 0x%08x  r1: 0x%08x  r2: 0x%08x  r3: 0x%08x\n"
+                      "  r4: 0x%08x  r5: 0x%08x  r6: 0x%08x  r7: 0x%08x\n"
+                      "  r8: 0x%08x  r9: 0x%08x r10: 0x%08x r11: 0x%08x\n"
+                      " r12: 0x%08x  sp: 0x%08x  lr: 0x%08x  pc: 0x%08x\n"
                       "cpsr: 0x%08x\n", arm_ctx, arm_ctx->r[0], arm_ctx->r[1],
                       arm_ctx->r[2], arm_ctx->r[3], arm_ctx->r[4],
                       arm_ctx->r[5], arm_ctx->r[6], arm_ctx->r[7],
