@@ -152,7 +152,6 @@ options		NO_KDEBUG       # no kernel tracing # <no_kdebug>
 # CONFIG_DTRACE enables code needed to support DTrace. Currently this is
 # only used for delivery of traps/interrupts to DTrace.
 #
-options		CONFIG_DTRACE	#		# <config_dtrace>
 
 # MACH_COUNTERS enables code that handles various counters in the system.
 # 

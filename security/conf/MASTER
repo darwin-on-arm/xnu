@@ -58,8 +58,6 @@ options		KDEBUG		# kernel tracing		# <kdebug>
 options		AUDIT		# Security event auditing	# <audit>
 options		CONFIG_LCTX	# Login Context
 
-options		CONFIG_DTRACE 	# dtrace support	# <config_dtrace>
-
 options		VM_PRESSURE_EVENTS		# <vm_pressure_events>
 
 options		CONFIG_NO_PANIC_STRINGS			# <no_panic_str>
