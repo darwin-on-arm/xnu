@@ -60,7 +60,6 @@ options		GPROF		# kernel profiling		# <profile>
 options		CONFIG_NOLIBKLD	# kernel linker			# <no_kld>
 
 options		MALLOC_RESET_GC					# <smaller_kld>
-options		CONFIG_DTRACE					# <config_dtrace>
 options		VM_PRESSURE_EVENTS				# <vm_pressure_events>
 
 options		CONFIG_NO_PANIC_STRINGS				# <no_panic_str>
