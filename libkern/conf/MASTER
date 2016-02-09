@@ -58,6 +58,7 @@ options		NO_KDEBUG       # no kernel tracing 	# <no_kdebug>
 options		GPROF			# kernel profiling		# <profile>
 options		LIBKERNCPP		# C++ implementation	# <libkerncpp>
 options		NETWORKING		# kernel networking		# <networking>
+options     	CONFIG_DTRACE 	# dtrace support			# <config_dtrace>
 options		VM_PRESSURE_EVENTS					# <vm_pressure_events>
 options		CRYPTO			# cryptographic routines	# <ipsec,crypto>
 options		ALLCRYPTO		# <allcrypto>

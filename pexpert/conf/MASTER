@@ -86,6 +86,7 @@ options		MACH_PE		# Objective-C support		# <mach_pe>
 options		MACH_KERNEL
 options		DEBUG		# general debugging code	# <debug>
 options		MACH_ASSERT	# 	  	    		# <mach_assert>
+options		CONFIG_DTRACE 	# dtrace support		# <config_dtrace>
 
 options		CONFIG_NO_PANIC_STRINGS		# <no_panic_str>
 options		CONFIG_NO_PRINTF_STRINGS	# <no_printf_str>
