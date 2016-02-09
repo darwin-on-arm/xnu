@@ -72,13 +72,9 @@ mac_labelzone_alloc(int flags)
 void
 mac_labelzone_free(struct label *l)
 {
+
 	if (l == NULL)
-#if defined(__arm__)
-		kprintf("mac_labelzone_free(): attempting to free NULL mac label for thread %p!\n", current_thread());
-		return;
-#else
 		panic("Free of NULL MAC label\n");
-#endif
 
 	if ((l->l_flags & MAC_FLAG_INITIALIZED) == 0)
 		panic("Free of uninitialized label\n");
