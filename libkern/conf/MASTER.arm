@@ -1,13 +1,13 @@
 ######################################################################
 #
-#  RELEASE	= [ intel mach libkerncpp hibernation networking config_dtrace crypto allcrypto zlib config_kxld config_static_cppinit iokitstats vm_pressure_events secure_kernel ]
+#  RELEASE	= [ arm mach libkerncpp hibernation networking crypto allcrypto zlib config_kxld config_static_cppinit iokitstats vm_pressure_events secure_kernel ]
 #  PROFILE	= [ RELEASE profile ]
 #  DEBUG	= [ RELEASE debug ]
 #
-#  EMBEDDED	= [ intel mach libkerncpp networking crypto zlib config_kxld ]
-#  DEVELOPMENT	= [ EMBEDDED config_dtrace ]
+#  EMBEDDED	= [ arm mach libkerncpp networking crypto zlib config_kxld ]
+#  DEVELOPMENT	= [ EMBEDDED ]
 #
 ######################################################################
 
-machine		"arm"					# <intel>
-cpu		"arm"					# <intel>
+machine		"arm"					# <arm>
+cpu		"arm"					# <arm>

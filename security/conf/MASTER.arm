@@ -1,11 +1,11 @@
 ######################################################################
 #
-#  RELEASE	= [ arm mach libkerncpp config_dtrace audit vm_pressure_events ]
+#  RELEASE	= [ arm mach libkerncpp audit vm_pressure_events ]
 #  PROFILE	= [ RELEASE profile ]
 #  DEBUG	= [ RELEASE debug ]
 #
 #  EMBEDDED	= [ arm mach libkerncpp audit ]
-#  DEVELOPMENT	= [ EMBEDDED config_dtrace ]
+#  DEVELOPMENT	= [ EMBEDDED ]
 #
 ######################################################################
 
