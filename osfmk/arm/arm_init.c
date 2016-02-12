@@ -191,12 +191,12 @@ void arm_init(boot_args * args)
     }
 
     /*
-     * Start system timers. 
+     * Start system timers.
      */
     thread = current_thread();
     thread->machine.preempt_count = 1;
     thread->machine.cpu_data = cpu_datap(cpu_number());
-    thread->kernel_stack = irqstack;
+    thread->kernel_stack = (vm_offset_t)irqstack;
     timer_start(&thread->system_timer, mach_absolute_time());
 
     /*

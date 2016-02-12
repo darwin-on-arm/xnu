@@ -1015,7 +1015,7 @@ cpu_threadtype_t cpu_threadtype(void)
  */
 ast_t *ast_pending(void)
 {
-    return (&current_cpu_datap()->cpu_pending_ast);
+    return ((ast_t *)&current_cpu_datap()->cpu_pending_ast);
 }
 
  /*ARGSUSED*/
