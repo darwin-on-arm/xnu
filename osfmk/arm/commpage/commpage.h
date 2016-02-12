@@ -41,6 +41,7 @@
 #ifndef __ASSEMBLER__
 
 extern	void	commpage_set_timestamp(uint64_t tbr, uint64_t secs, uint32_t ticks_per_sec);
+extern	void	commpage_update_active_cpus(void);
 
 #define	commpage_disable_timestamp() commpage_set_timestamp( 0, 0, 0 )
 #define commpage_set_memory_pressure( pressure )
