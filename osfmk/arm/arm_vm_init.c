@@ -372,15 +372,15 @@ void arm_vm_init(uint32_t mem_limit, boot_args * args)
      * Set high exception vectors.. Steal one page from first_avail. 
      */
     kdb_printf("arm_vm_init: exception vectors are at 0x%08x.\n",
-               &ExceptionVectorsBase);
+               (uint32_t)&ExceptionVectorsBase);
 
     /*
      * Map them... 
      */
-    uint32_t *vecpt_start = (uint32_t*)(first_avail), *vectp, *va_vecpt;
-    vectp = (uint32_t *) addr_to_tte(phys_to_virt(cpu_ttb), VECTORS_BASE);
+    vm_offset_t *vecpt_start = (vm_offset_t *)(first_avail), *vectp, *va_vecpt;
+    vectp = (vm_offset_t *)addr_to_tte(phys_to_virt(cpu_ttb), VECTORS_BASE);
     *vectp = (((uint32_t) vecpt_start) | L1_TYPE_PTE);
-    va_vecpt = (vm_offset_t)phys_to_virt(vecpt_start) + pte_offset(VECTORS_BASE);
+    va_vecpt = (vm_offset_t *)(phys_to_virt(vecpt_start) + pte_offset(VECTORS_BASE));
 
     /* NS-VBAR support */
 #ifndef _ARM_ARCH_7
