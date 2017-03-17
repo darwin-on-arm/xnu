@@ -406,7 +406,9 @@ kernel_bootstrap_thread(void)
          * Get rid of segments used to bootstrap kext loading. This removes
          * the KLD, PRELINK symtab, LINKEDIT, and symtab segments/load commands.
          */
+#if 0
 	OSKextRemoveKextBootstrap();
+#endif
 
 	serial_keyboard_init();		/* Start serial keyboard if wanted */
 
