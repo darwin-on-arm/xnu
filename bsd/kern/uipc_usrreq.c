@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2012 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2015 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -73,6 +73,7 @@
 #include <sys/fcntl.h>
 #include <sys/malloc.h>		/* XXX must be before <sys/file.h> */
 #include <sys/file_internal.h>
+#include <sys/guarded.h>
 #include <sys/filedesc.h>
 #include <sys/lock.h>
 #include <sys/mbuf.h>
@@ -88,6 +89,7 @@
 #include <sys/unpcb.h>
 #include <sys/vnode_internal.h>
 #include <sys/kdebug.h>
+#include <sys/mcache.h>
 
 #include <kern/zalloc.h>
 #include <kern/locks.h>
@@ -97,6 +99,11 @@
 #endif /* CONFIG_MACF */
 
 #include <mach/vm_param.h>
+
+/*
+ * Maximum number of FDs that can be passed in an mbuf
+ */
+#define UIPC_MAX_CMSG_FD	512
 
 #define	f_msgcount f_fglob->fg_msgcount
 #define	f_cred f_fglob->fg_cred
@@ -165,10 +172,9 @@ static void	unp_disconnect(struct unpcb *);
 static void	unp_shutdown(struct unpcb *);
 static void	unp_drop(struct unpcb *, int);
 __private_extern__ void	unp_gc(void);
-static void	unp_scan(struct mbuf *, void (*)(struct fileglob *));
-static void	unp_mark(struct fileglob *);
-static void	unp_discard(struct fileglob *);
-static void	unp_discard_fdlocked(struct fileglob *, proc_t);
+static void	unp_scan(struct mbuf *, void (*)(struct fileglob *, void *arg), void *arg);
+static void	unp_mark(struct fileglob *, __unused void *);
+static void	unp_discard(struct fileglob *, void *);
 static int	unp_internalize(struct mbuf *, proc_t);
 static int	unp_listen(struct unpcb *, proc_t);
 static void	unpcb_to_compat(struct unpcb *, struct unpcb_compat *);
@@ -299,7 +305,7 @@ uipc_detach(struct socket *so)
 	if (unp == 0)
 		return (EINVAL);
 
-	lck_mtx_assert(&unp->unp_mtx, LCK_MTX_ASSERT_OWNED);
+	LCK_MTX_ASSERT(&unp->unp_mtx, LCK_MTX_ASSERT_OWNED);
 	unp_detach(unp);
 	return (0);
 }
@@ -552,7 +558,12 @@ uipc_send(struct socket *so, int flags, struct mbuf *m, struct sockaddr *nam,
 
 		snd->sb_mbmax -= rcv->sb_mbcnt - unp->unp_conn->unp_mbcnt;
 		unp->unp_conn->unp_mbcnt = rcv->sb_mbcnt;
-		snd->sb_hiwat -= rcv->sb_cc - unp->unp_conn->unp_cc;
+		if ((int32_t)snd->sb_hiwat >= 
+		    (int32_t)(rcv->sb_cc - unp->unp_conn->unp_cc)) {
+			snd->sb_hiwat -= rcv->sb_cc - unp->unp_conn->unp_cc;
+		} else {
+			snd->sb_hiwat = 0;
+		}
 		unp->unp_conn->unp_cc = rcv->sb_cc;
 		if (didreceive) {
 			control = NULL;
@@ -674,18 +685,32 @@ uipc_sockaddr(struct socket *so, struct sockaddr **nam)
 }
 
 struct pr_usrreqs uipc_usrreqs = {
-	uipc_abort, uipc_accept, uipc_attach, uipc_bind, uipc_connect,
-	uipc_connect2, pru_control_notsupp, uipc_detach, uipc_disconnect,
-	uipc_listen, uipc_peeraddr, uipc_rcvd, pru_rcvoob_notsupp,
-	uipc_send, uipc_sense, uipc_shutdown, uipc_sockaddr,
-	sosend, soreceive, pru_sopoll_notsupp
+	.pru_abort =		uipc_abort,
+	.pru_accept =		uipc_accept,
+	.pru_attach =		uipc_attach,
+	.pru_bind =		uipc_bind,
+	.pru_connect =		uipc_connect,
+	.pru_connect2 =		uipc_connect2,
+	.pru_detach =		uipc_detach,
+	.pru_disconnect =	uipc_disconnect,
+	.pru_listen =		uipc_listen,
+	.pru_peeraddr =		uipc_peeraddr,
+	.pru_rcvd =		uipc_rcvd,
+	.pru_send =		uipc_send,
+	.pru_sense =		uipc_sense,
+	.pru_shutdown =		uipc_shutdown,
+	.pru_sockaddr =		uipc_sockaddr,
+	.pru_sosend =		sosend,
+	.pru_soreceive =	soreceive,
 };
 
 int
 uipc_ctloutput(struct socket *so, struct sockopt *sopt)
 {
 	struct unpcb *unp = sotounpcb(so);
-	int error;
+	int error = 0;
+	pid_t peerpid;
+	struct socket *peerso;
 
 	switch (sopt->sopt_dir) {
 	case SOPT_GET:
@@ -702,16 +727,41 @@ uipc_ctloutput(struct socket *so, struct sockopt *sopt)
 			}
 			break;
 		case LOCAL_PEERPID:
-			if (unp->unp_conn != NULL) {
-				if (unp->unp_conn->unp_socket != NULL) {
-					pid_t peerpid = unp->unp_conn->unp_socket->last_pid;
-					error = sooptcopyout(sopt, &peerpid, sizeof (peerpid));
-				} else {
-					panic("peer is connected but has no socket?");
-				}
-			} else {
+		case LOCAL_PEEREPID:
+			if (unp->unp_conn == NULL) {
 				error = ENOTCONN;
+				break;
 			}
+			peerso = unp->unp_conn->unp_socket;
+			if (peerso == NULL)
+				panic("peer is connected but has no socket?");
+			unp_get_locks_in_order(so, peerso);
+			if (sopt->sopt_name == LOCAL_PEEREPID &&
+			    peerso->so_flags & SOF_DELEGATED)
+				peerpid = peerso->e_pid;
+			else
+				peerpid = peerso->last_pid;
+			socket_unlock(peerso, 1);
+			error = sooptcopyout(sopt, &peerpid, sizeof (peerpid));
+			break;
+		case LOCAL_PEERUUID:
+		case LOCAL_PEEREUUID:
+			if (unp->unp_conn == NULL) {
+				error = ENOTCONN;
+				break;
+			}
+			peerso = unp->unp_conn->unp_socket;
+			if (peerso == NULL)
+				panic("peer is connected but has no socket?");
+			unp_get_locks_in_order(so, peerso);
+			if (sopt->sopt_name == LOCAL_PEEREUUID &&
+			    peerso->so_flags & SOF_DELEGATED)
+				error = sooptcopyout(sopt, &peerso->e_uuid,
+				    sizeof (peerso->e_uuid));
+			else
+				error = sooptcopyout(sopt, &peerso->last_uuid,
+				    sizeof (peerso->last_uuid));
+			socket_unlock(peerso, 1);
 			break;
 		default:
 			error = EOPNOTSUPP;
@@ -723,6 +773,7 @@ uipc_ctloutput(struct socket *so, struct sockopt *sopt)
 		error = EOPNOTSUPP;
 		break;
 	}
+
 	return (error);
 }
 
@@ -936,15 +987,30 @@ unp_bind(
 		return (EAFNOSUPPORT);
 	}
 
+	/*
+	 * Check if the socket is already bound to an address
+	 */
 	if (unp->unp_vnode != NULL)
 		return (EINVAL);
+	/*
+	 * Check if the socket may have been shut down
+	 */
+	if ((so->so_state & (SS_CANTRCVMORE | SS_CANTSENDMORE)) ==
+	    (SS_CANTRCVMORE | SS_CANTSENDMORE))
+		return (EINVAL);
+
 	namelen = soun->sun_len - offsetof(struct sockaddr_un, sun_path);
 	if (namelen <= 0)
 		return (EINVAL);
-
+	/*
+	 * Note: sun_path is not a zero terminated "C" string
+	 */
+	ASSERT(namelen < SOCK_MAXADDRLEN);
+	bcopy(soun->sun_path, buf, namelen);
+	buf[namelen] = 0;
+	
 	socket_unlock(so, 0);
 
-	strlcpy(buf, soun->sun_path, namelen+1);
 	NDINIT(&nd, CREATE, OP_MKFIFO, FOLLOW | LOCKPARENT, UIO_SYSSPACE,
 	    CAST_USER_ADDR_T(buf), ctx);
 	/* SHOULD BE ABLE TO ADOPT EXISTING AND wakeup() ALA FIFO's */
@@ -1050,8 +1116,13 @@ unp_connect(struct socket *so, struct sockaddr *nam, __unused proc_t p)
 	len = nam->sa_len - offsetof(struct sockaddr_un, sun_path);
 	if (len <= 0)
 		return (EINVAL);
+	/*
+	 * Note: sun_path is not a zero terminated "C" string
+	 */
+	ASSERT(len < SOCK_MAXADDRLEN);
+	bcopy(soun->sun_path, buf, len);
+	buf[len] = 0;
 
-	strlcpy(buf, soun->sun_path, len+1);
 	socket_unlock(so, 0);
 
 	NDINIT(&nd, LOOKUP, OP_LOOKUP, FOLLOW | LOCKLEAF, UIO_SYSSPACE,
@@ -1070,7 +1141,7 @@ unp_connect(struct socket *so, struct sockaddr *nam, __unused proc_t p)
 	}
 
 #if CONFIG_MACF_SOCKET_SUBSET
-	error = mac_vnode_check_uipc_connect(ctx, vp);
+	error = mac_vnode_check_uipc_connect(ctx, vp, so);
 	if (error) {
 		socket_lock(so, 0);
 		goto out;
@@ -1104,6 +1175,7 @@ unp_connect(struct socket *so, struct sockaddr *nam, __unused proc_t p)
 			socket_lock(so, 0);
 		} else {
 			/* Release the reference held for the listen socket */
+			VERIFY(so2->so_usecount > 0);
 			so2->so_usecount--;
 		}
 		goto out;
@@ -1146,6 +1218,7 @@ unp_connect(struct socket *so, struct sockaddr *nam, __unused proc_t p)
 				/* Release the reference held for
 				 * listen socket.
 				 */
+				VERIFY(so2->so_usecount > 0);
 				so2->so_usecount--;
 			}
 			goto out;
@@ -1237,6 +1310,7 @@ decref_out:
 			 * This is possible only for SOCK_DGRAM sockets. We refuse
 			 * connecting to the same socket for SOCK_STREAM sockets.
 			 */
+			VERIFY(so2->so_usecount > 0);
 			so2->so_usecount--;
 		}
 	}
@@ -1247,7 +1321,7 @@ decref_out:
 	}
 
 out:
-	lck_mtx_assert(&unp->unp_mtx, LCK_MTX_ASSERT_OWNED);
+	LCK_MTX_ASSERT(&unp->unp_mtx, LCK_MTX_ASSERT_OWNED);
 	vnode_put(vp);
 	return (error);
 }
@@ -1268,8 +1342,8 @@ unp_connect2(struct socket *so, struct socket *so2)
 
 	unp2 = sotounpcb(so2);
 
-	lck_mtx_assert(&unp->unp_mtx, LCK_MTX_ASSERT_OWNED);
-	lck_mtx_assert(&unp2->unp_mtx, LCK_MTX_ASSERT_OWNED);
+	LCK_MTX_ASSERT(&unp->unp_mtx, LCK_MTX_ASSERT_OWNED);
+	LCK_MTX_ASSERT(&unp2->unp_mtx, LCK_MTX_ASSERT_OWNED);
 
 	/* Verify both sockets are still opened */
 	if (unp == 0 || unp2 == 0)
@@ -1291,6 +1365,7 @@ unp_connect2(struct socket *so, struct socket *so2)
 			socket_unlock(so2, 0);
 			soisconnected(so);
 			unp_get_locks_in_order(so, so2);
+			VERIFY(so2->so_usecount > 0);
 			so2->so_usecount--;
 		} else {
 			soisconnected(so);
@@ -1325,14 +1400,15 @@ unp_connect2(struct socket *so, struct socket *so2)
 
 		unp_get_locks_in_order(so, so2);
 		/* Decrement the extra reference left before */
+		VERIFY(so2->so_usecount > 0);
 		so2->so_usecount--;
 		break;
 
 	default:
 		panic("unknown socket type %d in unp_connect2", so->so_type);
 	}
-	lck_mtx_assert(&unp->unp_mtx, LCK_MTX_ASSERT_OWNED);
-	lck_mtx_assert(&unp2->unp_mtx, LCK_MTX_ASSERT_OWNED);
+	LCK_MTX_ASSERT(&unp->unp_mtx, LCK_MTX_ASSERT_OWNED);
+	LCK_MTX_ASSERT(&unp2->unp_mtx, LCK_MTX_ASSERT_OWNED);
 	return (0);
 }
 
@@ -1394,8 +1470,8 @@ try_again:
 	}
 	so_locked = 1;
 
-	lck_mtx_assert(&unp->unp_mtx, LCK_MTX_ASSERT_OWNED);
-	lck_mtx_assert(&unp2->unp_mtx, LCK_MTX_ASSERT_OWNED);
+	LCK_MTX_ASSERT(&unp->unp_mtx, LCK_MTX_ASSERT_OWNED);
+	LCK_MTX_ASSERT(&unp2->unp_mtx, LCK_MTX_ASSERT_OWNED);
 
 	/* Check for the UNP_DONTDISCONNECT flag, if it
 	 * is set, release both sockets and go to sleep
@@ -1417,6 +1493,7 @@ try_again:
 	}
 
 	unp->unp_conn = NULL;
+	VERIFY(so2->so_usecount > 0);
 	so2->so_usecount--;
 
 	if (unp->unp_flags & UNP_TRACE_MDNS)
@@ -1433,6 +1510,7 @@ try_again:
 
 	case SOCK_STREAM:
 		unp2->unp_conn = NULL;
+		VERIFY(so->so_usecount > 0);
 		so->so_usecount--;
 
 		/* Set the socket state correctly but do a wakeup later when
@@ -1467,7 +1545,7 @@ out:
 		socket_lock(so,0);
 		soisdisconnected(so);
 	}
-	lck_mtx_assert(&unp->unp_mtx, LCK_MTX_ASSERT_OWNED);
+	LCK_MTX_ASSERT(&unp->unp_mtx, LCK_MTX_ASSERT_OWNED);
 	return;
 }
 
@@ -1614,7 +1692,7 @@ unp_pcblist SYSCTL_HANDLER_ARGS
 		/*
 		 * Give the user an updated idea of our state.
 		 * If the generation differs from what we told
-		 * them before, they know that something happened
+		 * her before, she knows that something happened
 		 * while we were processing this request, and it
 		 * might be necessary to retry.
 		 */
@@ -1630,10 +1708,12 @@ unp_pcblist SYSCTL_HANDLER_ARGS
 	return (error);
 }
 
-SYSCTL_PROC(_net_local_dgram, OID_AUTO, pcblist, CTLFLAG_RD | CTLFLAG_LOCKED,
+SYSCTL_PROC(_net_local_dgram, OID_AUTO, pcblist,
+            CTLTYPE_STRUCT | CTLFLAG_RD | CTLFLAG_LOCKED,
             (caddr_t)(long)SOCK_DGRAM, 0, unp_pcblist, "S,xunpcb",
             "List of active local datagram sockets");
-SYSCTL_PROC(_net_local_stream, OID_AUTO, pcblist, CTLFLAG_RD | CTLFLAG_LOCKED,
+SYSCTL_PROC(_net_local_stream, OID_AUTO, pcblist,
+            CTLTYPE_STRUCT | CTLFLAG_RD | CTLFLAG_LOCKED,
             (caddr_t)(long)SOCK_STREAM, 0, unp_pcblist, "S,xunpcb",
             "List of active local stream sockets");
 
@@ -1777,10 +1857,12 @@ unp_pcblist64 SYSCTL_HANDLER_ARGS
 	return (error);
 }
 
-SYSCTL_PROC(_net_local_dgram, OID_AUTO, pcblist64, CTLFLAG_RD | CTLFLAG_LOCKED,
+SYSCTL_PROC(_net_local_dgram, OID_AUTO, pcblist64,
+	    CTLTYPE_STRUCT | CTLFLAG_RD | CTLFLAG_LOCKED,
 	    (caddr_t)(long)SOCK_DGRAM, 0, unp_pcblist64, "S,xunpcb64",
 	    "List of active local datagram sockets 64 bit");
-SYSCTL_PROC(_net_local_stream, OID_AUTO, pcblist64, CTLFLAG_RD | CTLFLAG_LOCKED,
+SYSCTL_PROC(_net_local_stream, OID_AUTO, pcblist64,
+	    CTLTYPE_STRUCT | CTLFLAG_RD | CTLFLAG_LOCKED,
 	    (caddr_t)(long)SOCK_STREAM, 0, unp_pcblist64, "S,xunpcb64",
 	    "List of active local stream sockets 64 bit");
 
@@ -1822,9 +1904,16 @@ unp_externalize(struct mbuf *rights)
 	struct fileglob **rp = (struct fileglob **)(cm + 1);
 	int *fds = (int *)(cm + 1);
 	struct fileproc *fp;
-	struct fileglob *fg;
+	struct fileproc **fileproc_l;
 	int newfds = (cm->cmsg_len - sizeof (*cm)) / sizeof (int);
-	int f;
+	int f, error = 0;
+
+	MALLOC(fileproc_l, struct fileproc **,
+	    newfds * sizeof (struct fileproc *), M_TEMP, M_WAITOK);
+	if (fileproc_l == NULL) {
+		error = ENOMEM;
+		goto discard;
+	}
 
 	proc_fdlock(p);
 
@@ -1832,14 +1921,9 @@ unp_externalize(struct mbuf *rights)
 	 * if the new FD's will not fit, then we free them all
 	 */
 	if (!fdavail(p, newfds)) {
-		for (i = 0; i < newfds; i++) {
-			fg = *rp;
-			unp_discard_fdlocked(fg, p);
-			*rp++ = NULL;
-		}
 		proc_fdunlock(p);
-
-		return (EMSGSIZE);
+		error = EMSGSIZE;
+		goto discard;
 	}
 	/*
 	 * now change each pointer to an fd in the global table to
@@ -1855,36 +1939,68 @@ unp_externalize(struct mbuf *rights)
 		 * If receive access is denied, don't pass along
 		 * and error message, just discard the descriptor.
 		 */
-		if (mac_file_check_receive(kauth_cred_get(), *rp)) {
-			fg = *rp;
-			*rp++ = 0;
-			unp_discard_fdlocked(fg, p);
+		if (mac_file_check_receive(kauth_cred_get(), rp[i])) {
+			proc_fdunlock(p);
+			unp_discard(rp[i], p);
+			fds[i] = 0;
+			proc_fdlock(p);
 			continue;
 		}
 #endif
 		if (fdalloc(p, 0, &f))
 			panic("unp_externalize:fdalloc");
-		fg = rp[i];
-		MALLOC_ZONE(fp, struct fileproc *, sizeof (struct fileproc),
-		    M_FILEPROC, M_WAITOK);
+		fp = fileproc_alloc_init(NULL);
 		if (fp == NULL)
 			panic("unp_externalize: MALLOC_ZONE");
-		bzero(fp, sizeof (struct fileproc));
 		fp->f_iocount = 0;
-		fp->f_fglob = fg;
-		fg_removeuipc(fg);
+		fp->f_fglob = rp[i];
+		if (fg_removeuipc_mark(rp[i])) {
+
+			/*
+			 * Take an iocount on the fp for completing the
+			 * removal from the global msg queue
+			 */
+			fp->f_iocount++;
+			fileproc_l[i] = fp;
+		} else {
+			fileproc_l[i] = NULL;
+		}
 		procfdtbl_releasefd(p, f, fp);
-		(void) OSAddAtomic(-1, &unp_rights);
 		fds[i] = f;
 	}
 	proc_fdunlock(p);
 
-	return (0);
+	for (i = 0; i < newfds; i++) {
+		if (fileproc_l[i] != NULL) {
+			VERIFY(fileproc_l[i]->f_fglob != NULL &&
+			    (fileproc_l[i]->f_fglob->fg_lflags & FG_RMMSGQ));
+			VERIFY(fds[i] > 0);
+			fg_removeuipc(fileproc_l[i]->f_fglob);
+
+			/* Drop the iocount */
+			fp_drop(p, fds[i], fileproc_l[i], 0);
+			fileproc_l[i] = NULL;
+		}
+		if (fds[i] != 0)
+			(void) OSAddAtomic(-1, &unp_rights);
+	}
+
+discard:
+	if (fileproc_l != NULL)
+		FREE(fileproc_l, M_TEMP);
+	if (error) {
+		for (i = 0; i < newfds; i++) {
+			unp_discard(*rp, p);
+			*rp++ = NULL;
+		}
+	}
+	return (error);
 }
 
 void
 unp_init(void)
 {
+	_CASSERT(UIPC_MAX_CMSG_FD >= (MCLBYTES / sizeof(int)));
 	unp_zone = zinit(sizeof (struct unpcb),
 	    (nmbclusters * sizeof (struct unpcb)), 4096, "unpzone");
 
@@ -1933,6 +2049,7 @@ unp_internalize(struct mbuf *control, proc_t p)
 	struct fileproc *fp;
 	int i, error;
 	int oldfds;
+	uint8_t fg_ins[UIPC_MAX_CMSG_FD / 8];
 
 	/* 64bit: cmsg_len is 'uint32_t', m_len is 'long' */
 	if (cm->cmsg_type != SCM_RIGHTS || cm->cmsg_level != SOL_SOCKET ||
@@ -1940,6 +2057,7 @@ unp_internalize(struct mbuf *control, proc_t p)
 		return (EINVAL);
 	}
 	oldfds = (cm->cmsg_len - sizeof (*cm)) / sizeof (int);
+	bzero(fg_ins, sizeof(fg_ins));
 
 	proc_fdlock(p);
 	fds = (int *)(cm + 1);
@@ -1949,9 +2067,14 @@ unp_internalize(struct mbuf *control, proc_t p)
 		if (((error = fdgetf_noref(p, fds[i], &tmpfp)) != 0)) {
 			proc_fdunlock(p);
 			return (error);
-		} else if (!filetype_issendable(tmpfp->f_fglob->fg_type)) {
+		} else if (!file_issendable(p, tmpfp)) {
 			proc_fdunlock(p);
 			return (EINVAL);
+		} else if (FP_ISGUARDED(tmpfp, GUARD_SOCKET_IPC)) {
+			error = fp_guard_exception(p,
+				fds[i], tmpfp, kGUARD_EXC_SOCKET_IPC);
+			proc_fdunlock(p);
+			return (error);
 		}
 	}
 	rp = (struct fileglob **)(cm + 1);
@@ -1961,11 +2084,19 @@ unp_internalize(struct mbuf *control, proc_t p)
 	 */
 	for (i = (oldfds - 1); i >= 0; i--) {
 		(void) fdgetf_noref(p, fds[i], &fp);
-		fg_insertuipc(fp->f_fglob);
+		if (fg_insertuipc_mark(fp->f_fglob))
+			fg_ins[i / 8] |= 0x80 >> (i % 8);
 		rp[i] = fp->f_fglob;
-		(void) OSAddAtomic(1, &unp_rights);
 	}
 	proc_fdunlock(p);
+
+	for (i = 0; i < oldfds; i++) {
+		if (fg_ins[i / 8] & (0x80 >> (i % 8))) {
+			VERIFY(rp[i]->fg_lflags & FG_INSMSGQ);
+			fg_insertuipc(rp[i]);
+		}
+		(void) OSAddAtomic(1, &unp_rights);
+	}
 
 	return (0);
 }
@@ -2063,21 +2194,17 @@ unp_gc(void)
 			 * accessible and not already marked so.
 			 * Now check if it is possibly one of OUR sockets.
 			 */
-			if (fg->fg_type != DTYPE_SOCKET ||
+			if (FILEGLOB_DTYPE(fg) != DTYPE_SOCKET ||
 			    (so = (struct socket *)fg->fg_data) == 0) {
 				lck_mtx_unlock(&fg->fg_lock);
 				continue;
 			}
-			if (so->so_proto->pr_domain != &localdomain ||
+			if (so->so_proto->pr_domain != localdomain ||
 			    (so->so_proto->pr_flags&PR_RIGHTS) == 0) {
 				lck_mtx_unlock(&fg->fg_lock);
 				continue;
 			}
 #ifdef notdef
-			/*
-			 * if this code is enabled need to run
-			 * under network funnel
-			 */
 			if (so->so_rcv.sb_flags & SB_LOCK) {
 				/*
 				 * This is problematical; it's not clear
@@ -2105,7 +2232,7 @@ unp_gc(void)
 			 */
 			lck_mtx_unlock(&fg->fg_lock);
 
-			unp_scan(so->so_rcv.sb_mb, unp_mark);
+			unp_scan(so->so_rcv.sb_mb, unp_mark, 0);
 		}
 	} while (unp_defer);
 	/*
@@ -2184,7 +2311,8 @@ unp_gc(void)
 
 		tfg = *fpp;
 
-		if (tfg->fg_type == DTYPE_SOCKET && tfg->fg_data != NULL) {
+		if (FILEGLOB_DTYPE(tfg) == DTYPE_SOCKET &&
+		    tfg->fg_data != NULL) {
 			so = (struct socket *)(tfg->fg_data);
 
 			socket_lock(so, 0);
@@ -2217,7 +2345,7 @@ void
 unp_dispose(struct mbuf *m)
 {
 	if (m) {
-		unp_scan(m, unp_discard);
+		unp_scan(m, unp_discard, NULL);
 	}
 }
 
@@ -2234,9 +2362,8 @@ unp_listen(struct unpcb *unp, proc_t p)
 	return (0);
 }
 
-/* should run under kernel funnel */
 static void
-unp_scan(struct mbuf *m0, void (*op)(struct fileglob *))
+unp_scan(struct mbuf *m0, void (*op)(struct fileglob *, void *arg), void *arg)
 {
 	struct mbuf *m;
 	struct fileglob **rp;
@@ -2256,16 +2383,15 @@ unp_scan(struct mbuf *m0, void (*op)(struct fileglob *))
 				    sizeof (int);
 				rp = (struct fileglob **)(cm + 1);
 				for (i = 0; i < qfds; i++)
-					(*op)(*rp++);
+					(*op)(*rp++, arg);
 				break;		/* XXX, but saves time */
 			}
 		m0 = m0->m_act;
 	}
 }
 
-/* should run under kernel funnel */
 static void
-unp_mark(struct fileglob *fg)
+unp_mark(struct fileglob *fg, __unused void *arg)
 {
 	lck_mtx_lock(&fg->fg_lock);
 
@@ -2280,25 +2406,22 @@ unp_mark(struct fileglob *fg)
 	unp_defer++;
 }
 
-/* should run under kernel funnel */
 static void
-unp_discard(struct fileglob *fg)
+unp_discard(struct fileglob *fg, void *p)
 {
-	proc_t p = current_proc();		/* XXX */
+	if (p == NULL)
+		p = current_proc();		/* XXX */
 
 	(void) OSAddAtomic(1, &unp_disposed);
+	if (fg_removeuipc_mark(fg)) {
+		VERIFY(fg->fg_lflags & FG_RMMSGQ);
+		fg_removeuipc(fg);
+	}
+	(void) OSAddAtomic(-1, &unp_rights);
 
 	proc_fdlock(p);
-	unp_discard_fdlocked(fg, p);
-	proc_fdunlock(p);
-}
-static void
-unp_discard_fdlocked(struct fileglob *fg, proc_t p)
-{
-	fg_removeuipc(fg);
-
-	(void) OSAddAtomic(-1, &unp_rights);
 	(void) closef_locked((struct fileproc *)0, fg, p);
+	proc_fdunlock(p);
 }
 
 int
@@ -2320,9 +2443,10 @@ unp_lock(struct socket *so, int refcount, void * lr)
                 panic("unp_lock: so=%p so_pcb=%p lr=%p ref=0x%x\n",
                 so, so->so_pcb, lr_saved, so->so_usecount);
 
-        if (refcount)
-                so->so_usecount++;
-
+        if (refcount) {
+		VERIFY(so->so_usecount > 0);
+		so->so_usecount++;
+	}
         so->lock_lr[so->next_lock_lr] = lr_saved;
         so->next_lock_lr = (so->next_lock_lr+1) % SO_LCKDBG_MAX;
         return (0);
@@ -2349,7 +2473,7 @@ unp_unlock(struct socket *so, int refcount, void * lr)
         } else {
                 mutex_held = &((struct unpcb *)so->so_pcb)->unp_mtx;
         }
-        lck_mtx_assert(mutex_held, LCK_MTX_ASSERT_OWNED);
+        LCK_MTX_ASSERT(mutex_held, LCK_MTX_ASSERT_OWNED);
         so->unlock_lr[so->next_unlock_lr] = lr_saved;
         so->next_unlock_lr = (so->next_unlock_lr+1) % SO_LCKDBG_MAX;
 
@@ -2373,7 +2497,7 @@ unp_unlock(struct socket *so, int refcount, void * lr)
 }
 
 lck_mtx_t *
-unp_getlock(struct socket *so, __unused int locktype)
+unp_getlock(struct socket *so, __unused int flags)
 {
         struct unpcb *unp = (struct unpcb *)so->so_pcb;
 

@@ -33,7 +33,7 @@
 .\"
 .\"     @(#)tcp.4	8.1 (Berkeley) 6/5/93
 .\"
-.Dd February 28, 2007
+.Dd March 18, 2015
 .Dt TCP 4
 .Os BSD 4.2
 .Sh NAME
@@ -87,6 +87,8 @@ Only passive sockets may use the
 call to accept incoming connections.
 Only active sockets may use the
 .Xr connect 2
+or
+.Xr connectx 2
 call to initiate connections.
 .Pp
 Passive sockets may
@@ -185,6 +187,39 @@ connections. The default value is specified by the
 .Tn MIB
 variable
 .Va net.inet.tcp.keepinit .
+.It Dv TCP_KEEPINTVL
+When keepalive probes are enabled, this option will set the amount of time in seconds between successive keepalives sent to probe an unresponsive peer. 
+.It Dv TCP_KEEPCNT
+.Tn When keepalive probes are enabled, this option will set the number of times a keepalive probe should be repeated if the peer is not responding. After this many probes, the connection will be closed. 
+.It Dv TCP_SENDMOREACKS
+When a stream of 
+.Tn TCP
+data packets are received, OS X uses an algorithm to reduce the number of acknowlegements by generating a 
+.Tn TCP
+acknowlegement for 8 data packets instead of acknowledging every other data packet. When this socket option is enabled, the connection will always send a
+.Tn TCP
+acknowledgement for every other data packet.
+.It Dv TCP_ENABLE_ECN
+Using Explicit Congestion Notification (ECN) on
+.Tn TCP
+allows bi-directional end-to-end notification of congestion without dropping packets. Conventionally TCP/IP networks signal congestion by dropping packets. When ECN is successfully negotiated, an ECN-aware router may set a mark in the IP header instead of dropping a packet in order to signal impending congestion. The
+.Tn TCP
+receiver of the packet echoes congestion indication to the 
+.Tn TCP
+sender, which reduces it's transmission rate as if it detected a dropped packet. This will avoid unnecessary retransmissions and will improve latency by saving the time required for recovering a lost packet.
+.It Dv TCP_NOTSENT_LOWAT
+The send socket buffer of a
+.Tn TCP sender has unsent and unacknowledged data. This option allows a 
+.Tn TCP sender to control the amount of unsent data kept in the send socket buffer. The value of the option should be the maximum amount of unsent data in bytes. Kevent, poll and select will generate a write notification when the unsent data falls below the amount given by this option. This will allow an application to generate just-in-time fresh updates for real-time communication.
+.It Dv TCP_FASTOPEN
+The TCP listener can set this option to use TCP Fast Open feature. After
+setting this option, an
+.Xr accept 2
+may return a socket that is in SYN_RECEIVED state but is readable and writable.
+.It Dv TCP_CONNECTION_INFO
+This socket option can be used to obtain TCP connection level statistics. The
+"struct tcp_connection_info" defined in <netinet/tcp_var.h> is copied to the
+user buffer.
 .El
 .Pp
 The option level for the
@@ -210,8 +245,10 @@ and the reverse source route is used in responding.
 .Pp
 When a
 .Tn TCP
-socket is set non-blocking, and the connection cannot be established immediatly, 
+socket is set non-blocking, and the connection cannot be established immediately, 
 .Xr connect 2
+or
+.Xr connectx 2
 returns with the error
 .Dv EINPROGRESS ,
 and the connection is established asynchronously.
@@ -229,8 +266,10 @@ can be retrieved via the socket option
 .Dv SO_ERROR .
 .Pp
 Note that even if the socket is non-blocking, it is possible for the connection 
-to be established immediatly. In that case 
+to be established immediately. In that case 
 .Xr connect 2
+or
+.Xr connectx 2
 does not return with 
 .Dv EINPROGRESS .
 .Sh DIAGNOSTICS
@@ -266,16 +305,29 @@ address;
 .It Bq Er EINPROGRESS
 returned by
 .Xr connect 2
+or
+.Xr connectx 2
 when the socket is set nonblocking, and the connection cannot be 
 immediately established;
 .It Bq Er EALREADY
 returned by
 .Xr connect 2
+or
+.Xr connectx 2
 when connection request is already in progress for the specified socket.
+.It Bq Er ENODATA
+returned by
+.Xr recv 2
+or
+.Xr send 2
+in case a connection is experiencing a data-stall (probably due to a middlebox issue).
+It is advised that the current connection gets closed by the application and a
+new attempt is being made.
 .
 .El
 .Sh SEE ALSO
 .Xr connect 2 ,
+.Xr connectx 2 ,
 .Xr getsockopt 2 ,
 .Xr kqueue 2 ,
 .Xr poll 2 ,

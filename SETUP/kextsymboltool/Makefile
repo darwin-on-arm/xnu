@@ -3,32 +3,28 @@ export MakeInc_def=${SRCROOT}/makedefs/MakeInc.def
 export MakeInc_rule=${SRCROOT}/makedefs/MakeInc.rule
 export MakeInc_dir=${SRCROOT}/makedefs/MakeInc.dir
 
-
 include $(MakeInc_cmd)
 include $(MakeInc_def)
 
 OBJS = kextsymboltool.o
 
-CFLAGS = -isysroot $(HOST_SDKROOT) -g -O0 -I$(SOURCE) -I.
+CFLAGS = -isysroot $(HOST_SDKROOT) -mmacosx-version-min=$(HOST_OS_VERSION) -g -O0 -I$(SOURCE) -I.
 
 WARNFLAGS = -Wall
 
-LDFLAGS = -isysroot $(HOST_SDKROOT) -L$(HOST_SPARSE_SDKROOT)/usr/local/lib/system -lstdc++
-ifneq ($(HOST_SPARSE_SDKROOT),/)
-LDFLAGS += -lmacho
-endif
+LDFLAGS = -isysroot $(HOST_SDKROOT) -mmacosx-version-min=$(HOST_OS_VERSION) -lstdc++
 
 kextsymboltool: $(OBJS)
+	@echo "$(ColorH)HOST_LD$(Color0)       $(ColorF)$@$(Color0)"
 	$(_v)$(HOST_CC) $(LDFLAGS) -o $@ $^
-	@echo HOST_LD $@
-	$(_v)$(HOST_CODESIGN) -s - $@
-	@echo HOST_CODESIGN $@
+	@echo "$(ColorH)HOST_CODESIGN$(Color0) $(ColorF)$@$(Color0)"
+	$(_v)env CODESIGN_ALLOCATE=$(HOST_CODESIGN_ALLOCATE) $(HOST_CODESIGN) -s - $@
 
-.c.o:
+%.o: %.c
+	@echo "$(ColorH)HOST_CC$(Color0)       $(ColorF)$@$(Color0)"
 	$(_v)$(HOST_CC) $(WARNFLAGS) $(CFLAGS) -c -o $@ $<
-	@echo HOST_CC $@
 
-do_build_setup: kextsymboltool
+do_build_setup:: kextsymboltool
 
 include $(MakeInc_rule)
 include $(MakeInc_dir)

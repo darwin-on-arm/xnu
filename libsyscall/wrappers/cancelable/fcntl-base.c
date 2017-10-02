@@ -40,18 +40,35 @@ fcntl(int fd, int cmd, ...)
 	va_start(ap, cmd);
 	switch(cmd) {
 	 case F_GETLK:
+	 case F_GETLKPID:
 	 case F_SETLK:
 	 case F_SETLKW:
+	 case F_SETLKWTIMEOUT:
+	case F_OFD_GETLK:
+	case F_OFD_GETLKPID:
+	case F_OFD_SETLK:
+	case F_OFD_SETLKW:
+	case F_OFD_SETLKWTIMEOUT:
 	 case F_PREALLOCATE:
+	 case F_PUNCHHOLE:
 	 case F_SETSIZE:
 	 case F_RDADVISE:
 	 case F_LOG2PHYS:
 	 case F_LOG2PHYS_EXT:
 	 case F_GETPATH:
 	 case F_GETPATH_MTMINFO:
+	 case F_GETCODEDIR:
 	 case F_PATHPKG_CHECK:
+	 case F_OPENFROM:
+	 case F_UNLINKFROM:
 	 case F_ADDSIGS:
 	 case F_ADDFILESIGS:
+	 case F_ADDFILESIGS_FOR_DYLD_SIM:
+	 case F_ADDFILESIGS_RETURN:
+	 case F_FINDSIGS:
+	 case F_TRANSCODEKEY:
+	 case F_TRIM_ACTIVE_FILE:
+	 case F_CHECK_LV:
 		arg = va_arg(ap, void *);
 		break;
 	 default:

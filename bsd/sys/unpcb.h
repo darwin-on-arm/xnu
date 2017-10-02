@@ -67,6 +67,7 @@
 #include <sys/queue.h>
 #include <sys/un.h>
 #include <sys/ucred.h>
+#include <sys/socketvar.h>
 
 /*
  * Protocol control block for an active

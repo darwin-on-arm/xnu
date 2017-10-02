@@ -25,35 +25,21 @@
 
 /* #pragma ident	"@(#)systrace.c	1.6	06/09/19 SMI" */
 
-#if !defined(__APPLE__)
-#include <sys/dtrace.h>
-#include <sys/systrace.h>
-#include <sys/stat.h>
-#include <sys/systm.h>
-#include <sys/conf.h>
-#include <sys/ddi.h>
-#include <sys/sunddi.h>
-#include <sys/atomic.h>
-#define	SYSTRACE_ARTIFICIAL_FRAMES	1
-#else
-
 #ifdef KERNEL
 #ifndef _KERNEL
 #define _KERNEL /* Solaris vs. Darwin */
 #endif
 #endif
 
-#define MACH__POSIX_C_SOURCE_PRIVATE 1 /* pulls in suitable savearea from mach/ppc/thread_status.h */
 #include <kern/thread.h>
 #include <mach/thread_status.h>
+
 /* XXX All of these should really be derived from syscall_sw.h */
-#if defined(__i386__) || defined (__x86_64__)
+#if defined (__x86_64__)
 #define SYSCALL_CLASS_SHIFT 24
 #define SYSCALL_CLASS_MASK  (0xFF << SYSCALL_CLASS_SHIFT)
 #define SYSCALL_NUMBER_MASK (~SYSCALL_CLASS_MASK)
 #define I386_SYSCALL_NUMBER_MASK (0xFFFF)
-
-typedef x86_saved_state_t savearea_t;
 #endif
 
 #include <sys/param.h>
@@ -63,10 +49,12 @@ typedef x86_saved_state_t savearea_t;
 #include <sys/ioctl.h>
 #include <sys/conf.h>
 #include <sys/fcntl.h>
+#include <sys/syscall.h>
 #include <miscfs/devfs/devfs.h>
 
 #include <sys/dtrace.h>
 #include <sys/dtrace_impl.h>
+#include <sys/systrace_args.h>
 #include "systrace.h"
 #include <sys/stat.h>
 #include <sys/systm.h>
@@ -75,12 +63,17 @@ typedef x86_saved_state_t savearea_t;
 
 #include <machine/pal_routines.h>
 
-#if defined(__i386__) || defined (__x86_64__)
+#if defined (__x86_64__)
 #define	SYSTRACE_ARTIFICIAL_FRAMES	2
+#define MACHTRACE_ARTIFICIAL_FRAMES 3
+#elif defined(__arm__) || defined(__arm64__)
+#define SYSTRACE_ARTIFICIAL_FRAMES  2
 #define MACHTRACE_ARTIFICIAL_FRAMES 3
 #else
 #error Unknown Architecture
 #endif
+
+#define SYSTRACE_NARGS (int)(sizeof(((uthread_t)NULL)->uu_arg) / sizeof(((uthread_t)NULL)->uu_arg[0]))
 
 #include <sys/sysent.h>
 #define sy_callc sy_call /* Map Solaris slot name to Darwin's */
@@ -102,7 +95,8 @@ static lck_mtx_t	dtrace_systrace_lock;		/* probe state lock */
 systrace_sysent_t *systrace_sysent = NULL;
 void (*systrace_probe)(dtrace_id_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 
-static uint64_t systrace_getarg(void *, dtrace_id_t, void *, int, int);	
+static uint64_t systrace_getargval(void *, dtrace_id_t, void *, int, int);
+static void systrace_getargdesc(void *, dtrace_id_t, void *, dtrace_argdesc_t *);
 
 void
 systrace_stub(dtrace_id_t id, uint64_t arg0, uint64_t arg1,
@@ -114,19 +108,15 @@ systrace_stub(dtrace_id_t id, uint64_t arg0, uint64_t arg1,
 int32_t
 dtrace_systrace_syscall(struct proc *pp, void *uap, int *rv)
 {
-	boolean_t           flavor;
-	unsigned short      code;
+	unsigned short      code;	/* The system call number */
 
 	systrace_sysent_t *sy;
 	dtrace_id_t id;
 	int32_t rval;
-#if 0 /* XXX */
-	proc_t *p;
-#endif
 	syscall_arg_t *ip = (syscall_arg_t *)uap;
+	uint64_t uargs[SYSTRACE_NARGS] = {0};
 
-#if defined(__i386__) || defined (__x86_64__)
-#pragma unused(flavor)
+#if defined (__x86_64__)
 	{
 		pal_register_cache_state(current_thread(), VALID);
 		x86_saved_state_t   *tagged_regs = (x86_saved_state_t *)find_user_regs(current_thread());
@@ -150,29 +140,77 @@ dtrace_systrace_syscall(struct proc *pp, void *uap, int *rv)
 			}
 		}
 	}
+#elif defined(__arm__)
+	{
+		/*
+		 * On arm, syscall numbers depend on a flavor (indirect or not)
+		 * and can be in either r0 or r12  (always u32)
+		 */
+
+		/* See bsd/dev/arm/systemcalls.c:arm_get_syscall_number */
+		arm_saved_state_t *arm_regs = (arm_saved_state_t *) find_user_regs(current_thread());
+
+		/* Check for indirect system call */
+		if (arm_regs->r[12] != 0)
+			code = arm_regs->r[12];
+		else
+			code = arm_regs->r[0];
+	}
+#elif defined(__arm64__)
+	{
+		/*
+		 * On arm64, syscall numbers depend on a flavor (indirect or not)
+		 * ... and for u32 can be in either r0 or r12
+		 * ... and for u64 can be in either x0 or x16
+		 */
+
+		/* see bsd/dev/arm/systemcalls.c:arm_get_syscall_number */		
+		arm_saved_state_t *arm_regs = (arm_saved_state_t *) find_user_regs(current_thread());
+
+		if (is_saved_state32(arm_regs)) {
+			/* Check for indirect system call */			
+			if (saved_state32(arm_regs)->r[12] != 0) {
+				code = saved_state32(arm_regs)->r[12];
+			}
+			else {
+				code = saved_state32(arm_regs)->r[0];
+			}
+		} else {
+			/* Check for indirect system call */
+			if (saved_state64(arm_regs)->x[ARM64_SYSCALL_CODE_REG_NUM] != 0 ) {
+				code = saved_state64(arm_regs)->x[ARM64_SYSCALL_CODE_REG_NUM];
+			}
+			else {
+				code = saved_state64(arm_regs)->x[0];
+			}
+		}
+	}
 #else
 #error Unknown Architecture
 #endif
 
 	// Bounds "check" the value of code a la unix_syscall
-	sy = (code >= NUM_SYSENT) ? &systrace_sysent[63] : &systrace_sysent[code];
+	sy = (code >= nsysent) ? &systrace_sysent[SYS_invalid] : &systrace_sysent[code];
+
+	systrace_args(code, ip, uargs);
 
 	if ((id = sy->stsy_entry) != DTRACE_IDNONE) {
 		uthread_t uthread = (uthread_t)get_bsdthread_info(current_thread());		
 		if (uthread)
-			uthread->t_dtrace_syscall_args = (void *)ip;
+			uthread->t_dtrace_syscall_args = uargs;
 		
-		if (ip)
-			(*systrace_probe)(id, *ip, *(ip+1), *(ip+2), *(ip+3), *(ip+4));
-		else
-			(*systrace_probe)(id, 0, 0, 0, 0, 0);
+		static_assert(SYSTRACE_NARGS >= 5, "not enough system call arguments");
+		(*systrace_probe)(id, uargs[0], uargs[1], uargs[2], uargs[3], uargs[4]);
 		
 		if (uthread)
-			uthread->t_dtrace_syscall_args = (void *)0;
+			uthread->t_dtrace_syscall_args = NULL;
 	}
+
+
 
 #if 0 /* XXX */
 	/*
+	 * APPLE NOTE: Not implemented.
 	 * We want to explicitly allow DTrace consumers to stop a process
 	 * before it actually executes the meat of the syscall.
 	 */
@@ -269,7 +307,7 @@ dtrace_systrace_syscall_return(unsigned short code, int rval, int *rv)
 	dtrace_id_t id;
 
 	// Bounds "check" the value of code a la unix_syscall_return
-	sy = (code >= NUM_SYSENT) ? &systrace_sysent[63] : &systrace_sysent[code];
+	sy = (code >= nsysent) ? &systrace_sysent[SYS_invalid] : &systrace_sysent[code];
 
 	if ((id = sy->stsy_return) != DTRACE_IDNONE) {
 		uint64_t munged_rv0, munged_rv1;
@@ -327,7 +365,6 @@ dtrace_systrace_syscall_return(unsigned short code, int rval, int *rv)
 		(*systrace_probe)(id, munged_rv0, munged_rv0, munged_rv1, (uint64_t)rval, 0);
 	}
 }
-#endif /* __APPLE__ */
 
 #define	SYSTRACE_SHIFT			16
 #define	SYSTRACE_ISENTRY(x)		((int)(x) >> SYSTRACE_SHIFT)
@@ -342,45 +379,19 @@ dtrace_systrace_syscall_return(unsigned short code, int rval, int *rv)
 static dev_info_t *systrace_devi;
 static dtrace_provider_id_t systrace_id;
 
-#if !defined (__APPLE__)
-static void
-systrace_init(struct sysent *actual, systrace_sysent_t **interposed)
-{
-	systrace_sysent_t *sysent = *interposed;
-	int i;
+/*
+ * APPLE NOTE: Avoid name clash with Darwin automagic conf symbol.
+ * See balanced undef below.
+ */
+#define systrace_init _systrace_init
 
-	if (sysent == NULL) {
-		*interposed = sysent = kmem_zalloc(sizeof (systrace_sysent_t) *
-		    NSYSCALL, KM_SLEEP);
-	}
-
-	for (i = 0; i < NSYSCALL; i++) {
-		struct sysent *a = &actual[i];
-		systrace_sysent_t *s = &sysent[i];
-
-		if (LOADABLE_SYSCALL(a) && !LOADED_SYSCALL(a))
-			continue;
-
-		if (a->sy_callc == dtrace_systrace_syscall)
-			continue;
-
-#ifdef _SYSCALL32_IMPL
-		if (a->sy_callc == dtrace_systrace_syscall32)
-			continue;
-#endif
-
-		s->stsy_underlying = a->sy_callc;
-	}
-}
-#else
-#define systrace_init _systrace_init /* Avoid name clash with Darwin automagic conf symbol */
 static void
 systrace_init(struct sysent *actual, systrace_sysent_t **interposed)
 {
 
 	systrace_sysent_t *ssysent = *interposed;  /* Avoid sysent shadow warning
 							   from bsd/sys/sysent.h */
-	int i;
+	unsigned int i;
 
 	if (ssysent == NULL) {
 		*interposed = ssysent = kmem_zalloc(sizeof (systrace_sysent_t) *
@@ -397,33 +408,24 @@ systrace_init(struct sysent *actual, systrace_sysent_t **interposed)
 		if (a->sy_callc == dtrace_systrace_syscall)
 			continue;
 
-#ifdef _SYSCALL32_IMPL
-		if (a->sy_callc == dtrace_systrace_syscall32)
-			continue;
-#endif
-
 		s->stsy_underlying = a->sy_callc;
 		s->stsy_return_type = a->sy_return_type;
 	}
 	lck_mtx_init(&dtrace_systrace_lock, dtrace_lck_grp, dtrace_lck_attr);
 }
 
-#endif /* __APPLE__ */
 
 /*ARGSUSED*/
 static void
 systrace_provide(void *arg, const dtrace_probedesc_t *desc)
 {
 #pragma unused(arg) /* __APPLE__ */
-	int i;
+	unsigned int i;
 
 	if (desc != NULL)
 		return;
 
 	systrace_init(sysent, &systrace_sysent);
-#ifdef _SYSCALL32_IMPL
-	systrace_init(sysent32, &systrace_sysent32);
-#endif
 
 	for (i = 0; i < NSYSCALL; i++) {
 		if (systrace_sysent[i].stsy_underlying == NULL)
@@ -442,15 +444,9 @@ systrace_provide(void *arg, const dtrace_probedesc_t *desc)
 
 		systrace_sysent[i].stsy_entry = DTRACE_IDNONE;
 		systrace_sysent[i].stsy_return = DTRACE_IDNONE;
-#ifdef _SYSCALL32_IMPL
-		systrace_sysent32[i].stsy_entry = DTRACE_IDNONE;
-		systrace_sysent32[i].stsy_return = DTRACE_IDNONE;
-#endif
 	}
 }
-#if defined(__APPLE__)
 #undef systrace_init
-#endif
 
 /*ARGSUSED*/
 static void
@@ -467,14 +463,8 @@ systrace_destroy(void *arg, dtrace_id_t id, void *parg)
 	 */
 	if (SYSTRACE_ISENTRY((uintptr_t)parg)) {
 		ASSERT(systrace_sysent[sysnum].stsy_entry == DTRACE_IDNONE);
-#ifdef _SYSCALL32_IMPL
-		ASSERT(systrace_sysent32[sysnum].stsy_entry == DTRACE_IDNONE);
-#endif
 	} else {
 		ASSERT(systrace_sysent[sysnum].stsy_return == DTRACE_IDNONE);
-#ifdef _SYSCALL32_IMPL
-		ASSERT(systrace_sysent32[sysnum].stsy_return == DTRACE_IDNONE);
-#endif
 	}
 }
 
@@ -490,25 +480,14 @@ systrace_enable(void *arg, dtrace_id_t id, void *parg)
 
 	if (SYSTRACE_ISENTRY((uintptr_t)parg)) {
 		systrace_sysent[sysnum].stsy_entry = id;
-#ifdef _SYSCALL32_IMPL
-		systrace_sysent32[sysnum].stsy_entry = id;
-#endif
 	} else {
 		systrace_sysent[sysnum].stsy_return = id;
-#ifdef _SYSCALL32_IMPL
-		systrace_sysent32[sysnum].stsy_return = id;
-#endif
 	}
 
 	if (enabled) {
 		ASSERT(sysent[sysnum].sy_callc == dtrace_systrace_syscall);
 		return(0);
 	}
-#ifdef _SYSCALL32_IMPL
-	(void) casptr(&sysent32[sysnum].sy_callc,
-	    (void *)systrace_sysent32[sysnum].stsy_underlying,
-	    (void *)dtrace_systrace_syscall32);
-#endif
 
 	lck_mtx_lock(&dtrace_systrace_lock);
 	if (sysent[sysnum].sy_callc == systrace_sysent[sysnum].stsy_underlying) {
@@ -535,23 +514,12 @@ systrace_disable(void *arg, dtrace_id_t id, void *parg)
 			ml_nofault_copy((vm_offset_t)&systrace_sysent[sysnum].stsy_underlying, (vm_offset_t)&sysent[sysnum].sy_callc, sizeof(systrace_sysent[sysnum].stsy_underlying));
 		lck_mtx_unlock(&dtrace_systrace_lock);
 
-#ifdef _SYSCALL32_IMPL
-		(void) casptr(&sysent32[sysnum].sy_callc,
-		    (void *)dtrace_systrace_syscall32,
-		    (void *)systrace_sysent32[sysnum].stsy_underlying);
-#endif
 	}
 
 	if (SYSTRACE_ISENTRY((uintptr_t)parg)) {
 		systrace_sysent[sysnum].stsy_entry = DTRACE_IDNONE;
-#ifdef _SYSCALL32_IMPL
-		systrace_sysent32[sysnum].stsy_entry = DTRACE_IDNONE;
-#endif
 	} else {
 		systrace_sysent[sysnum].stsy_return = DTRACE_IDNONE;
-#ifdef _SYSCALL32_IMPL
-		systrace_sysent32[sysnum].stsy_return = DTRACE_IDNONE;
-#endif
 	}
 }
 
@@ -570,8 +538,8 @@ static dtrace_pops_t systrace_pops = {
 	systrace_disable,
 	NULL,
 	NULL,
-	NULL,
-	systrace_getarg,
+	systrace_getargdesc,
+	systrace_getargval,
 	NULL,
 	systrace_destroy
 };
@@ -588,19 +556,6 @@ systrace_attach(dev_info_t *devi, ddi_attach_cmd_t cmd)
 		return (DDI_FAILURE);
 	}
 
-#if !defined(__APPLE__)	
-	systrace_probe = (void (*)())dtrace_probe;
-	membar_enter();
-
-	if (ddi_create_minor_node(devi, "systrace", S_IFCHR, 0,
-	    DDI_PSEUDO, NULL) == DDI_FAILURE ||
-	    dtrace_register("syscall", &systrace_attr, DTRACE_PRIV_USER, NULL,
-	    &systrace_pops, NULL, &systrace_id) != 0) {
-		systrace_probe = systrace_stub;
-		ddi_remove_minor_node(devi, NULL);
-		return (DDI_FAILURE);
-	}
-#else
 	systrace_probe = (void(*))&dtrace_probe;
 	membar_enter();
 
@@ -612,7 +567,6 @@ systrace_attach(dev_info_t *devi, ddi_attach_cmd_t cmd)
 		ddi_remove_minor_node(devi, NULL);
 		return (DDI_FAILURE);
 	}
-#endif /* __APPLE__ */
 
 	ddi_report_dev(devi);
 	systrace_devi = devi;
@@ -620,6 +574,10 @@ systrace_attach(dev_info_t *devi, ddi_attach_cmd_t cmd)
 	return (DDI_SUCCESS);
 }
 
+
+/*
+ * APPLE NOTE:  systrace_detach not implemented
+ */
 #if !defined(__APPLE__)
 static int
 systrace_detach(dev_info_t *devi, ddi_detach_cmd_t cmd)
@@ -640,118 +598,27 @@ systrace_detach(dev_info_t *devi, ddi_detach_cmd_t cmd)
 	systrace_probe = systrace_stub;
 	return (DDI_SUCCESS);
 }
+#endif /* __APPLE__ */
 
-/*ARGSUSED*/
-static int
-systrace_info(dev_info_t *dip, ddi_info_cmd_t infocmd, void *arg, void **result)
-{
-	int error;
 
-	switch (infocmd) {
-	case DDI_INFO_DEVT2DEVINFO:
-		*result = (void *)systrace_devi;
-		error = DDI_SUCCESS;
-		break;
-	case DDI_INFO_DEVT2INSTANCE:
-		*result = (void *)0;
-		error = DDI_SUCCESS;
-		break;
-	default:
-		error = DDI_FAILURE;
-	}
-	return (error);
-}
-
-/*ARGSUSED*/
-static int
-systrace_open(dev_t *devp, int flag, int otyp, cred_t *cred_p)
-{
-	return (0);
-}
-
-static struct cb_ops systrace_cb_ops = {
-	systrace_open,		/* open */
-	nodev,			/* close */
-	nulldev,		/* strategy */
-	nulldev,		/* print */
-	nodev,			/* dump */
-	nodev,			/* read */
-	nodev,			/* write */
-	nodev,			/* ioctl */
-	nodev,			/* devmap */
-	nodev,			/* mmap */
-	nodev,			/* segmap */
-	nochpoll,		/* poll */
-	ddi_prop_op,		/* cb_prop_op */
-	0,			/* streamtab  */
-	D_NEW | D_MP		/* Driver compatibility flag */
-};
-
-static struct dev_ops systrace_ops = {
-	DEVO_REV,		/* devo_rev, */
-	0,			/* refcnt  */
-	systrace_info,		/* get_dev_info */
-	nulldev,		/* identify */
-	nulldev,		/* probe */
-	systrace_attach,	/* attach */
-	systrace_detach,	/* detach */
-	nodev,			/* reset */
-	&systrace_cb_ops,	/* driver operations */
-	NULL,			/* bus operations */
-	nodev			/* dev power */
-};
-
-/*
- * Module linkage information for the kernel.
- */
-static struct modldrv modldrv = {
-	&mod_driverops,		/* module type (this is a pseudo driver) */
-	"System Call Tracing",	/* name of module */
-	&systrace_ops,		/* driver ops */
-};
-
-static struct modlinkage modlinkage = {
-	MODREV_1,
-	(void *)&modldrv,
-	NULL
-};
-
-int
-_init(void)
-{
-	return (mod_install(&modlinkage));
-}
-
-int
-_info(struct modinfo *modinfop)
-{
-	return (mod_info(&modlinkage, modinfop));
-}
-
-int
-_fini(void)
-{
-	return (mod_remove(&modlinkage));
-}
-#else
 typedef kern_return_t (*mach_call_t)(void *);
 
-/* XXX From #include <kern/syscall_sw.h> which may be changed for 64 bit! */
-typedef void    mach_munge_t(const void *, void *);
+/* APPLE NOTE: From #include <kern/syscall_sw.h> which may be changed for 64 bit! */
+typedef void    mach_munge_t(void *);
 
 typedef struct {
 	int			mach_trap_arg_count;
 	kern_return_t		(*mach_trap_function)(void *);
-#if 0 /* no active architectures use mungers for mach traps */
+#if defined(__arm64__) || defined(__x86_64__)
 	mach_munge_t		*mach_trap_arg_munge32; /* system call arguments for 32-bit */
-	mach_munge_t		*mach_trap_arg_munge64; /* system call arguments for 64-bit */
 #endif
+	int			mach_trap_u32_words;
 #if	MACH_ASSERT
 	const char*		mach_trap_name;
 #endif /* MACH_ASSERT */
 } mach_trap_t;
 
-extern mach_trap_t              mach_trap_table[];
+extern const mach_trap_t              mach_trap_table[]; /* syscall_sw.h now declares this as const */
 extern int                      mach_trap_count;
 
 extern const char *mach_syscall_name_table[];
@@ -796,8 +663,7 @@ static dtrace_provider_id_t machtrace_id;
 static kern_return_t
 dtrace_machtrace_syscall(struct mach_call_args *args)
 {
-	boolean_t           flavor;
-	unsigned short      code;
+	int code;	/* The mach call number */
 
 	machtrace_sysent_t *sy;
 	dtrace_id_t id;
@@ -808,8 +674,7 @@ dtrace_machtrace_syscall(struct mach_call_args *args)
 	syscall_arg_t *ip = (syscall_arg_t *)args;
 	mach_call_t mach_call;
 
-#if defined(__i386__) || defined (__x86_64__)
-#pragma unused(flavor)
+#if defined (__x86_64__)
 	{
 		pal_register_cache_state(current_thread(), VALID);
 		x86_saved_state_t   *tagged_regs = (x86_saved_state_t *)find_user_regs(current_thread());
@@ -819,6 +684,28 @@ dtrace_machtrace_syscall(struct mach_call_args *args)
 		} else {
 			code = -saved_state32(tagged_regs)->eax;
 		}
+	}
+#elif defined(__arm__)
+	{
+		/* r12 has the machcall number, but it is -ve */
+		arm_saved_state_t *arm_regs = (arm_saved_state_t *) find_user_regs(current_thread());
+		code = (int)arm_regs->r[12];
+		ASSERT(code < 0);    /* Otherwise it would be a Unix syscall */
+		code = -code;
+	}
+#elif defined(__arm64__)
+	{
+		/* From arm/thread_status.h:get_saved_state_svc_number */
+		arm_saved_state_t *arm_regs = (arm_saved_state_t *) find_user_regs(current_thread());
+		if (is_saved_state32(arm_regs)) {
+			code = (int)saved_state32(arm_regs)->r[12];
+		} else {
+			code = (int)saved_state64(arm_regs)->x[ARM64_SYSCALL_CODE_REG_NUM];
+		}
+
+                /* From bsd/arm64.c:mach_syscall */
+		ASSERT(code < 0);    /* Otherwise it would be a Unix syscall */
+		code = -code;		
 	}
 #else
 #error Unknown Architecture
@@ -840,6 +727,7 @@ dtrace_machtrace_syscall(struct mach_call_args *args)
 
 #if 0 /* XXX */
 	/*
+	 * APPLE NOTE:  Not implemented.
 	 * We want to explicitly allow DTrace consumers to stop a process
 	 * before it actually executes the meat of the syscall.
 	 */
@@ -862,7 +750,7 @@ dtrace_machtrace_syscall(struct mach_call_args *args)
 }
 
 static void
-machtrace_init(mach_trap_t *actual, machtrace_sysent_t **interposed)
+machtrace_init(const mach_trap_t *actual, machtrace_sysent_t **interposed)
 {
 	machtrace_sysent_t *msysent = *interposed;
 	int i;
@@ -873,7 +761,7 @@ machtrace_init(mach_trap_t *actual, machtrace_sysent_t **interposed)
 	}
 
 	for (i = 0; i < NSYSCALL; i++) {
-		mach_trap_t *a = &actual[i];
+		const mach_trap_t *a = &actual[i];
 		machtrace_sysent_t *s = &msysent[i];
 
 		if (LOADABLE_SYSCALL(a) && !LOADED_SYSCALL(a))
@@ -1033,16 +921,6 @@ machtrace_attach(dev_info_t *devi, ddi_attach_cmd_t cmd)
 			return (DDI_FAILURE);
 	}
 
-#if !defined(__APPLE__)
-	machtrace_probe = (void (*)())dtrace_probe;
-	membar_enter();
-
-	if (ddi_create_minor_node(devi, "machtrace", S_IFCHR, 0,
-				DDI_PSEUDO, NULL) == DDI_FAILURE ||
-			dtrace_register("mach_trap", &machtrace_attr, DTRACE_PRIV_USER, NULL,
-				&machtrace_pops, NULL, &machtrace_id) != 0) {
-		machtrace_probe = systrace_stub;
-#else
 	machtrace_probe = dtrace_probe;
 	membar_enter();
 	
@@ -1051,7 +929,6 @@ machtrace_attach(dev_info_t *devi, ddi_attach_cmd_t cmd)
 			dtrace_register("mach_trap", &machtrace_attr, DTRACE_PRIV_USER, NULL,
 				&machtrace_pops, NULL, &machtrace_id) != 0) {
                 machtrace_probe = (void (*))&systrace_stub;
-#endif /* __APPLE__ */		
 		ddi_remove_minor_node(devi, NULL);
 		return (DDI_FAILURE);
 	}
@@ -1101,6 +978,10 @@ void systrace_init( void );
 void systrace_init( void )
 {
 	if (0 == gSysTraceInited) {
+		if (dtrace_sdt_probes_restricted()) {
+			return;
+		}
+
 		int majdevno = cdevsw_add(SYSTRACE_MAJOR, &systrace_cdevsw);
 
 		if (majdevno < 0) {
@@ -1117,30 +998,57 @@ void systrace_init( void )
 		panic("systrace_init: called twice!\n");
 }
 #undef SYSTRACE_MAJOR
-#endif /* __APPLE__ */
 
 static uint64_t
-systrace_getarg(void *arg, dtrace_id_t id, void *parg, int argno, int aframes)
+systrace_getargval(void *arg, dtrace_id_t id, void *parg, int argno, int aframes)
 {
 #pragma unused(arg,id,parg,aframes)     /* __APPLE__ */
 	uint64_t val = 0;
-	syscall_arg_t *stack = (syscall_arg_t *)NULL;
+	uint64_t *uargs = NULL;
 
 	uthread_t uthread = (uthread_t)get_bsdthread_info(current_thread());	
 
 	if (uthread)
-		stack = (syscall_arg_t *)uthread->t_dtrace_syscall_args;
-
-	if (!stack)
+		uargs = uthread->t_dtrace_syscall_args;
+	if (!uargs)
+		return(0);
+	if (argno < 0 || argno > SYSTRACE_NARGS)
 		return(0);
 
 	DTRACE_CPUFLAG_SET(CPU_DTRACE_NOFAULT);
-	/* dtrace_probe arguments arg0 .. arg4 are 64bits wide */
-	val = (uint64_t)*(stack+argno);
+	val = uargs[argno];
 	DTRACE_CPUFLAG_CLEAR(CPU_DTRACE_NOFAULT);
 	return (val);
 }
 
+static void
+systrace_getargdesc(void *arg, dtrace_id_t id, void *parg,
+	dtrace_argdesc_t *desc)
+{
+#pragma unused(arg, id)
+	int sysnum = SYSTRACE_SYSNUM(parg);
+	uthread_t uthread = (uthread_t)get_bsdthread_info(current_thread());
+	uint64_t *uargs = NULL;
+
+	if (!uthread) {
+		desc->dtargd_ndx = DTRACE_ARGNONE;
+		return;
+	}
+
+	uargs = uthread->t_dtrace_syscall_args;
+
+	if (SYSTRACE_ISENTRY((uintptr_t)parg)) {
+		systrace_entry_setargdesc(sysnum, desc->dtargd_ndx,
+			desc->dtargd_native, sizeof(desc->dtargd_native));
+	}
+	else {
+		systrace_return_setargdesc(sysnum, desc->dtargd_ndx,
+			desc->dtargd_native, sizeof(desc->dtargd_native));
+	}
+
+	if (desc->dtargd_native[0] == '\0')
+		desc->dtargd_ndx = DTRACE_ARGNONE;
+}
 
 static uint64_t
 machtrace_getarg(void *arg, dtrace_id_t id, void *parg, int argno, int aframes)

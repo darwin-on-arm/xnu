@@ -54,71 +54,54 @@
 #ifndef _SECURITY_MAC_MACH_INTERNAL_H_
 #define _SECURITY_MAC_MACH_INTERNAL_H_
 
-int mac_task_check_service(task_t self, task_t obj, const char *perm);
-void mac_task_label_update_internal(struct label *pl, struct task *t);
-int mac_port_label_compute(struct label *subj, struct label *obj,
-    const char *serv, struct label *out);
-int mac_port_check_method(task_t task, struct label *sub, struct label *obj, int msgid);
+#ifndef PRIVATE
+#warning "MAC policy is not KPI, see Technical Q&A QA1574, this header will be removed in next version"
+#endif
 
 /* mac_do_machexc() flags */
 #define	MAC_DOEXCF_TRACED	0x01	/* Only do mach exeception if
 					   being ptrace()'ed */
+struct exception_action;
 struct uthread;
+struct task;
+
 int	mac_do_machexc(int64_t code, int64_t subcode, uint32_t flags __unused);
 int	mac_schedule_userret(void);
-struct label *mac_thread_get_threadlabel(struct thread *thread);
-struct label *mac_thread_get_uthreadlabel(struct uthread *uthread);
 
 #if CONFIG_MACF
 void mac_policy_init(void);
 void mac_policy_initmach(void);
 
 /* tasks */
-void mac_task_label_init(struct label *);
-void mac_task_label_copy(struct label *src, struct label *dest);
-void mac_task_label_destroy(struct label *);
-void mac_task_label_associate(struct task *, struct task *, struct label *,
-    struct label *, struct label *);
-void mac_task_label_associate_kernel(struct task *, struct label *, struct label *);
-void mac_task_label_modify( struct task *pt, void *arg,
-    void (*f)(struct label *l, void *arg));
-struct label *mac_task_get_label(struct task *task);
+int	mac_task_check_expose_task(struct task *t);
 
-/* ports */
-void mac_port_label_init(struct label *l);
-void mac_port_label_destroy(struct label *l);
-void mac_port_label_associate(struct label *it, struct label *st, struct label *plabel);
-void mac_port_label_associate_kernel(struct label *plabel, int isreply);
-void mac_port_label_update_kobject(struct label *plabel, int kotype);
-void mac_port_label_copy(struct label *src, struct label *dest);
-void mac_port_label_update_cred(struct label *src, struct label *dest);
-int mac_port_check_label_update(struct label *task, struct label *oldl, struct label *newl);
-
-int mac_port_check_send(struct label *task, struct label *port);
-int mac_port_check_receive(struct label *task, struct label *sender);
-int mac_port_check_make_send(struct label *task, struct label *port);
-int mac_port_check_make_send_once(struct label *task, struct label *port);
-int mac_port_check_move_receive(struct label *task, struct label *port);
-int mac_port_check_copy_send(struct label *task, struct label *port);
-int mac_port_check_move_send(struct label *task, struct label *port);
-int mac_port_check_move_send_once(struct label *task, struct label *port);
-
-int mac_port_check_hold_send(struct label *task, struct label *port);
-int mac_port_check_hold_send_once(struct label *task, struct label *port);
-int mac_port_check_hold_receive(struct label *task, struct label *port);
-
-int mac_task_label_externalize(struct label *, char *e, char *out, size_t olen, int flags);
-int mac_task_label_internalize(struct label *label, char *string);
-int mac_port_label_externalize(struct label *, char *e, char *out, size_t olen, int flags);
-int mac_port_label_internalize(struct label *label, char *string);
-
-void	mac_task_label_update(struct label *cred, struct label *task);
-int	mac_port_check_service(struct label *subj, struct label *obj,
-	    const char *serv, const char *perm);
+int	mac_task_check_set_host_special_port(struct task *task,
+	    int id, struct ipc_port *port);
+int	mac_task_check_set_host_exception_port(struct task *task,
+	    unsigned int exception);
+int	mac_task_check_set_host_exception_ports(struct task *task,
+	    unsigned int exception_mask);
 
 /* threads */
 void	act_set_astmacf(struct thread *);
 void	mac_thread_userret(struct thread *);
+
+/* exception actions */
+struct label *mac_exc_create_label(void);
+void mac_exc_free_label(struct label *label);
+
+void mac_exc_associate_action_label(struct exception_action *action, struct label *label);
+void mac_exc_free_action_label(struct exception_action *action);
+
+int mac_exc_update_action_label(struct exception_action *action, struct label *newlabel);
+int mac_exc_inherit_action_label(struct exception_action *parent, struct exception_action *child);
+int mac_exc_update_task_crash_label(struct task *task, struct label *newlabel);
+
+int mac_exc_action_check_exception_send(struct task *victim_task, struct exception_action *action);
+
+struct label *mac_exc_create_label_for_proc(struct proc *proc);
+struct label *mac_exc_create_label_for_current_proc(void);
+
 #endif /* MAC */
 
 #endif	/* !_SECURITY_MAC_MACH_INTERNAL_H_ */

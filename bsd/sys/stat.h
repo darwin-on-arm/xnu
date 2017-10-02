@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2008 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2014 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -79,75 +79,32 @@
 #endif /* KERNEL */
 
 /* [XSI] The timespec structure may be defined as described in <time.h> */
-#define __need_struct_timespec
+#include <sys/_types/_timespec.h>
 #ifdef KERNEL
-#define __need_struct_user64_timespec
-#define __need_struct_user32_timespec
+#include <sys/_types/_user64_timespec.h>
+#include <sys/_types/_user32_timespec.h>
 #endif /* KERNEL */
-#include <sys/_structs.h>
 
 /*
  * [XSI] The blkcnt_t, blksize_t, dev_t, ino_t, mode_t, nlink_t, uid_t,
  * gid_t, off_t, and time_t types shall be defined as described in
  * <sys/types.h>.
  */
-#ifndef _BLKCNT_T
-typedef	__darwin_blkcnt_t	blkcnt_t;
-#define	_BLKCNT_T
-#endif
-
-#ifndef _BLKSIZE_T
-typedef	__darwin_blksize_t	blksize_t;
-#define	_BLKSIZE_T
-#endif
-
-#ifndef _DEV_T
-typedef	__darwin_dev_t		dev_t;		/* device number */
-#define _DEV_T
-#endif
-
-#ifndef	_INO_T
-typedef	__darwin_ino_t		ino_t;		/* inode number */
-#define _INO_T
-#endif
+#include <sys/_types/_blkcnt_t.h>
+#include <sys/_types/_blksize_t.h>
+#include <sys/_types/_dev_t.h>			/* device number */
+#include <sys/_types/_ino_t.h>
 
 #if !defined(_POSIX_C_SOURCE) || defined(_DARWIN_C_SOURCE)
-#ifndef	_INO64_T
-typedef	__darwin_ino64_t	ino64_t;	/* 64bit inode number */
-#define _INO64_T
-#endif
+#include <sys/_types/_ino64_t.h>
 #endif /* !defined(_POSIX_C_SOURCE) || defined(_DARWIN_C_SOURCE) */
 
-#ifndef	_MODE_T
-typedef	__darwin_mode_t		mode_t;
-#define _MODE_T
-#endif
-
-#ifndef _NLINK_T
-typedef	__uint16_t		nlink_t;	/* link count */
-#define	_NLINK_T
-#endif
-
-#ifndef _UID_T
-typedef __darwin_uid_t		uid_t;		/* user id */
-#define _UID_T
-#endif
-
-#ifndef _GID_T
-typedef __darwin_gid_t		gid_t;
-#define _GID_T
-#endif
-
-#ifndef _OFF_T
-typedef __darwin_off_t		off_t;
-#define _OFF_T
-#endif
-
-#ifndef	_TIME_T
-#define	_TIME_T
-typedef	__darwin_time_t		time_t;
-#endif
-
+#include <sys/_types/_mode_t.h>
+#include <sys/_types/_nlink_t.h>
+#include <sys/_types/_uid_t.h>
+#include <sys/_types/_gid_t.h>
+#include <sys/_types/_off_t.h>
+#include <sys/_types/_time_t.h>
 
 #if !defined(_POSIX_C_SOURCE) || defined(_DARWIN_C_SOURCE)
 /*
@@ -411,7 +368,15 @@ struct user32_stat64 {
 	__uint32_t	st_gen;					/* file generation number */
 	__uint32_t	st_lspare;				/* RESERVED: DO NOT USE! */
 	__int64_t	st_qspare[2];			/* RESERVED: DO NOT USE! */
+#if __arm__ && (__BIGGEST_ALIGNMENT__ > 4)
+/* For the newer ARMv7k ABI where 64-bit types are 64-bit aligned, but pointers
+ * are 32-bit:
+ * Applying attributes here causes a mismatch with the user-space struct stat64
+ */
+};
+#else
 } __attribute__((packed,aligned(4)));
+#endif
 
 extern void munge_user64_stat64(struct stat64 *sbp, struct user64_stat64 *usbp);
 extern void munge_user32_stat64(struct stat64 *sbp, struct user32_stat64 *usbp);
@@ -432,48 +397,7 @@ extern void munge_user32_stat64(struct stat64 *sbp, struct user32_stat64 *usbp);
  * [XSI] The following are symbolic names for the values of type mode_t.  They
  * are bitmap values.
  */
-#ifndef S_IFMT
-/* File type */
-#define	S_IFMT		0170000		/* [XSI] type of file mask */
-#define	S_IFIFO		0010000		/* [XSI] named pipe (fifo) */
-#define	S_IFCHR		0020000		/* [XSI] character special */
-#define	S_IFDIR		0040000		/* [XSI] directory */
-#define	S_IFBLK		0060000		/* [XSI] block special */
-#define	S_IFREG		0100000		/* [XSI] regular */
-#define	S_IFLNK		0120000		/* [XSI] symbolic link */
-#define	S_IFSOCK	0140000		/* [XSI] socket */
-#if !defined(_POSIX_C_SOURCE) || defined(_DARWIN_C_SOURCE)
-#define	S_IFWHT		0160000		/* OBSOLETE: whiteout */
-#endif
-
-/* File mode */
-/* Read, write, execute/search by owner */
-#define	S_IRWXU		0000700		/* [XSI] RWX mask for owner */
-#define	S_IRUSR		0000400		/* [XSI] R for owner */
-#define	S_IWUSR		0000200		/* [XSI] W for owner */
-#define	S_IXUSR		0000100		/* [XSI] X for owner */
-/* Read, write, execute/search by group */
-#define	S_IRWXG		0000070		/* [XSI] RWX mask for group */
-#define	S_IRGRP		0000040		/* [XSI] R for group */
-#define	S_IWGRP		0000020		/* [XSI] W for group */
-#define	S_IXGRP		0000010		/* [XSI] X for group */
-/* Read, write, execute/search by others */
-#define	S_IRWXO		0000007		/* [XSI] RWX mask for other */
-#define	S_IROTH		0000004		/* [XSI] R for other */
-#define	S_IWOTH		0000002		/* [XSI] W for other */
-#define	S_IXOTH		0000001		/* [XSI] X for other */
-
-#define	S_ISUID		0004000		/* [XSI] set user id on execution */
-#define	S_ISGID		0002000		/* [XSI] set group id on execution */
-#define	S_ISVTX		0001000		/* [XSI] directory restrcted delete */
-
-#if !defined(_POSIX_C_SOURCE) || defined(_DARWIN_C_SOURCE)
-#define	S_ISTXT		S_ISVTX		/* sticky bit: not supported */
-#define	S_IREAD		S_IRUSR		/* backward compatability */
-#define	S_IWRITE	S_IWUSR		/* backward compatability */
-#define	S_IEXEC		S_IXUSR		/* backward compatability */
-#endif
-#endif	/* !S_IFMT */
+#include <sys/_types/_s_ifmt.h>
 
 /*
  * [XSI] The following macros shall be provided to test whether a file is
@@ -552,24 +476,33 @@ extern void munge_user32_stat64(struct stat64 *sbp, struct user32_stat64 *usbp);
  * in Mac OS X.
  */
 /* #define UF_NOUNLINK	0x00000010 */	/* file may not be removed or renamed */
-#define UF_COMPRESSED	0x00000020	/* file is hfs-compressed */
-#define UF_TRACKED		0x00000040	/* file renames and deletes are tracked */
-/* Bits 0x0080 through 0x4000 are currently undefined. */
+#define UF_COMPRESSED	0x00000020	/* file is compressed (some file-systems) */
+
+/* UF_TRACKED is used for dealing with document IDs.  We no longer issue
+   notifications for deletes or renames for files which have UF_TRACKED set. */
+#define UF_TRACKED		0x00000040
+
+#define UF_DATAVAULT	0x00000080	/* entitlement required for reading */
+					/* and writing */
+
+/* Bits 0x0100 through 0x4000 are currently undefined. */
 #define UF_HIDDEN	0x00008000	/* hint that this item should not be */
 					/* displayed in a GUI */
 /*
  * Super-user changeable flags.
  */
+#define	SF_SUPPORTED	0x001f0000	/* mask of superuser supported flags */
 #define	SF_SETTABLE	0xffff0000	/* mask of superuser changeable flags */
 #define	SF_ARCHIVED	0x00010000	/* file is archived */
 #define	SF_IMMUTABLE	0x00020000	/* file may not be changed */
 #define	SF_APPEND	0x00040000	/* writes to file may only append */
+#define SF_RESTRICTED	0x00080000	/* entitlement required for writing */
+#define SF_NOUNLINK	0x00100000	/* Item may not be removed, renamed or mounted on */
 
 /*
  * The following two bits are reserved for FreeBSD.  They are not
  * implemented in Mac OS X.
  */
-/* #define SF_NOUNLINK	0x00100000 */	/* file may not be removed or renamed */
 /* #define SF_SNAPSHOT	0x00200000 */	/* snapshot inode */
 /* NOTE: There is no SF_HIDDEN bit. */
 
@@ -597,12 +530,23 @@ int	stat(const char *, struct stat *) __DARWIN_INODE64(stat);
 int	mknod(const char *, mode_t, dev_t);
 mode_t	umask(mode_t);
 
-#if !defined(_POSIX_C_SOURCE) || defined(_DARWIN_C_SOURCE)
-#ifndef _FILESEC_T
-struct _filesec;
-typedef struct _filesec	*filesec_t;
-#define _FILESEC_T
+#if __DARWIN_C_LEVEL >= 200809L
+int	fchmodat(int, const char *, mode_t, int) __OSX_AVAILABLE_STARTING(__MAC_10_10, __IPHONE_8_0);
+int	fstatat(int, const char *, struct stat *, int) __DARWIN_INODE64(fstatat) __OSX_AVAILABLE_STARTING(__MAC_10_10, __IPHONE_8_0);
+int	mkdirat(int, const char *, mode_t) __OSX_AVAILABLE_STARTING(__MAC_10_10, __IPHONE_8_0);
+
+#define	UTIME_NOW	-1
+#define	UTIME_OMIT	-2
+
+int	futimens(int __fd, const struct timespec __times[2]) __API_AVAILABLE(macosx(10.13), ios(11.0), tvos(11.0), watchos(4.0));
+int	utimensat(int __fd, const char *__path, const struct timespec __times[2],
+		int __flag) __API_AVAILABLE(macosx(10.13), ios(11.0), tvos(11.0), watchos(4.0));
 #endif
+
+#if !defined(_POSIX_C_SOURCE) || defined(_DARWIN_C_SOURCE)
+
+#include <sys/_types/_filesec_t.h>
+
 int	chflags(const char *, __uint32_t);
 int	chmodx_np(const char *, filesec_t);
 int	fchflags(int, __uint32_t);

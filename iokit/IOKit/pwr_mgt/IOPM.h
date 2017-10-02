@@ -90,6 +90,12 @@ enum {
 
     @constant kIOPMInitialDeviceState
     Indicates the initial power state for the device. If <code>initialPowerStateForDomainState()</code> returns a power state with this flag set in the capability field, then the initial power change is performed without calling the driver's <code>setPowerState()</code>.
+
+    @constant kIOPMRootDomainState
+    An indication that the power flags represent the state of the root power
+    domain. This bit must not be set in the IOPMPowerState structure.
+    Power Management may pass this bit to initialPowerStateForDomainState()
+    to map from a global system state to the desired device state.
 */
 typedef unsigned long IOPMPowerFlags;
 enum {
@@ -101,7 +107,8 @@ enum {
     kIOPMRestartCapability          = 0x00000080,
     kIOPMSleep                      = 0x00000001,
     kIOPMRestart                    = 0x00000080,
-    kIOPMInitialDeviceState         = 0x00000100
+    kIOPMInitialDeviceState         = 0x00000100,
+    kIOPMRootDomainState            = 0x00000200
 };
 
 /*
@@ -222,6 +229,15 @@ enum {
  */
  #define kIOPMSleepWakeUUIDKey              "SleepWakeUUID"
 
+/* kIOPMBootSessionUUIDKey
+ * Key refers to a CFStringRef that will uniquely identify
+ * a boot cycle.
+ * The key becomes valid at boot time and remains valid 
+ * till shutdown. The property value will remain same across 
+ * sleep/wake/hibernate cycle.
+ */
+#define kIOPMBootSessionUUIDKey             "BootSessionUUID"
+
 /* kIOPMDeepSleepEnabledKey
  * Indicates the Deep Sleep enable state.
  * It has a boolean value.
@@ -246,6 +262,30 @@ enum {
  *  not present == Retain FV key when going to standby mode
  */
 #define kIOPMDestroyFVKeyOnStandbyKey       "DestroyFVKeyOnStandby"
+
+/*******************************************************************************
+ *
+ * Properties that can control power management behavior
+ *
+ ******************************************************************************/
+
+/* kIOPMResetPowerStateOnWakeKey
+ * If an IOService publishes this key with the value of kOSBooleanTrue,
+ * then PM will disregard the influence from changePowerStateToPriv() or
+ * any activity tickles that occurred before system sleep when resolving
+ * the initial device power state on wake. Influences from power children
+ * and changePowerStateTo() are not eliminated. At the earliest opportunity
+ * upon system wake, PM will query the driver for a new power state to be
+ * installed as the initial changePowerStateToPriv() influence, by calling
+ * initialPowerStateForDomainState() with both kIOPMRootDomainState and
+ * kIOPMPowerOn flags set. The default implementation will always return
+ * the lowest power state. Drivers can override this default behavior to
+ * immediately raise the power state when there are work blocked on the
+ * power change, and cannot afford to wait until the next activity tickle.
+ * This property should be statically added to a driver's plist or set at
+ * runtime before calling PMinit().
+ */
+#define kIOPMResetPowerStateOnWakeKey       "IOPMResetPowerStateOnWake"
 
 /*******************************************************************************
  *
@@ -296,7 +336,13 @@ enum {
     /*! kIOPMDriverAssertionMagicPacketWakeEnabledBit
      * When set, driver is informing PM that magic packet wake is enabled.
      */
-    kIOPMDriverAssertionMagicPacketWakeEnabledBit   = 0x100
+    kIOPMDriverAssertionMagicPacketWakeEnabledBit   = 0x100,
+
+    /*! kIOPMDriverAssertionNetworkKeepAliveActiveBit
+     * When set, driver is informing PM that it is holding the network
+     * interface up to do TCPKeepAlive
+     */
+    kIOPMDriverAssertionNetworkKeepAliveActiveBit   = 0x200
 };
 
  /* kIOPMAssertionsDriverKey
@@ -330,6 +376,7 @@ enum {
 #define kIOPMDriverAssertionModifiedTimeKey     "ModifiedTime"
 #define kIOPMDriverAssertionOwnerStringKey      "Owner"
 #define kIOPMDriverAssertionOwnerServiceKey     "ServicePtr"
+#define kIOPMDriverAssertionRegistryEntryIDKey  "RegistryEntryID"
 #define kIOPMDriverAssertionLevelKey            "Level"
 #define kIOPMDriverAssertionAssertedKey         "Assertions"
 
@@ -565,6 +612,27 @@ enum {
 #define kIOPMPSAdapterDetailsAmperageKey	    "Amperage"
 #define kIOPMPSAdapterDetailsDescriptionKey	    "Description"
 #define kIOPMPSAdapterDetailsPMUConfigurationKey    "PMUConfiguration"
+#define kIOPMPSAdapterDetailsVoltage            "AdapterVoltage"
+
+// values for kIOPSPowerAdapterFamilyKey
+enum {
+    kIOPSFamilyCodeDisconnected     = 0,
+    kIOPSFamilyCodeUnsupported      = kIOReturnUnsupported,
+    kIOPSFamilyCodeFirewire     = iokit_family_err(sub_iokit_firewire, 0),
+    kIOPSFamilyCodeUSBHost      = iokit_family_err(sub_iokit_usb, 0),
+    kIOPSFamilyCodeUSBHostSuspended   = iokit_family_err(sub_iokit_usb, 1),
+    kIOPSFamilyCodeUSBDevice      = iokit_family_err(sub_iokit_usb, 2),
+    kIOPSFamilyCodeUSBAdapter     = iokit_family_err(sub_iokit_usb, 3),
+    kIOPSFamilyCodeUSBChargingPortDedicated = iokit_family_err(sub_iokit_usb, 4),
+    kIOPSFamilyCodeUSBChargingPortDownstream  = iokit_family_err(sub_iokit_usb, 5),
+    kIOPSFamilyCodeUSBChargingPort    = iokit_family_err(sub_iokit_usb, 6),
+    kIOPSFamilyCodeUSBUnknown     = iokit_family_err(sub_iokit_usb, 7),
+    kIOPSFamilyCodeAC       = iokit_family_err(sub_iokit_pmu, 0),
+    kIOPSFamilyCodeExternal     = iokit_family_err(sub_iokit_pmu, 1),
+    kIOPSFamilyCodeExternal2     = iokit_family_err(sub_iokit_pmu, 2),
+    kIOPSFamilyCodeExternal3     = iokit_family_err(sub_iokit_pmu, 3),
+    kIOPSFamilyCodeExternal4     = iokit_family_err(sub_iokit_pmu, 4),
+};
 
 // Battery's time remaining estimate is invalid this long (seconds) after a wake
 #define kIOPMPSInvalidWakeSecondsKey           "BatteryInvalidWakeSeconds"
@@ -636,18 +704,27 @@ enum {
 #define kIOPMThermalLevelWarningKey                     "Thermal_Level_Warning"
 
 /* Thermal Warning Level values
- *      kIOPMThermalWarningLevelNormal - under normal operating conditions
- *      kIOPMThermalWarningLevelDanger - thermal pressure may cause system slowdown
- *      kIOPMThermalWarningLevelCrisis - thermal conditions may cause imminent shutdown
+ *      kIOPMThermalLevelNormal   - under normal operating conditions
+ *      kIOPMThermalLevelDanger   - thermal pressure may cause system slowdown
+ *      kIOPMThermalLevelCritical - thermal conditions may cause imminent shutdown
  *
  * The platform may define additional thermal levels if necessary.
+ * Platform specific values are defined from 100 and above
  */
 enum {
-  kIOPMThermalWarningLevelNormal    = 0,
-  kIOPMThermalWarningLevelDanger    = 5,
-  kIOPMThermalWarningLevelCrisis    = 10
+  kIOPMThermalLevelNormal    = 0,
+  kIOPMThermalLevelDanger    = 5,
+  kIOPMThermalLevelCritical  = 10,
+
+  kIOPMThermalLevelWarning = 100,
+  kIOPMThermalLevelTrap    = 110,
+
+  kIOPMThermalLevelUnknown = 255,
 };
 
+#define kIOPMThermalWarningLevelNormal kIOPMThermalLevelNormal
+#define kIOPMThermalWarningLevelDanger kIOPMThermalLevelWarning
+#define kIOPMThermalWarningLevelCrisis kIOPMThermalLevelCritical
 
 // PM Settings Controller setting types
 // Settings types used primarily with:

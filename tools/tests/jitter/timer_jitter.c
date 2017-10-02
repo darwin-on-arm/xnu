@@ -29,7 +29,7 @@
 #include <stdio.h>
 #include <math.h>
 #include <sys/wait.h>
-#include <sys/syscall.h>
+#include <sys/kdebug.h>
 #include <sys/types.h>
 #include <sys/ptrace.h>
 #include <semaphore.h>
@@ -46,6 +46,10 @@
 #include <mach/mach.h>
 #include <mach/task.h>
 #include <mach/semaphore.h>
+
+#include <libproc_internal.h>
+
+#include <os/tsd.h> /* private header for _os_cpu_number */
 
 typedef enum my_policy_type { MY_POLICY_REALTIME, MY_POLICY_TIMESHARE, MY_POLICY_FIXEDPRI } my_policy_type_t;
 
@@ -68,8 +72,6 @@ struct second_thread_args {
 	volatile uint64_t last_poke_time;
 	volatile int cpuno;
 };
-
-extern int cpu_number(void);
 
 void *
 second_thread(void *args);
@@ -354,6 +356,18 @@ main(int argc, char **argv)
 		exit(1);
 	}
 
+	/*
+	 * Disable the wake monitor.  If we are
+	 * performing a large number of
+	 * iterations, the wake monitor may
+	 * cause this process to get suspended,
+	 * thus causing a large jitter value.
+	 */
+	if (proc_disable_wakemon(getpid()) != KERN_SUCCESS) {
+		printf("Couldn't disable wake monitor.\n");
+		/* For now, do not exit; this call could be locked down */
+	}
+
 	/* 
 	 * Repeatedly pick a random timer length and 
 	 * try to sleep exactly that long 
@@ -371,12 +385,12 @@ main(int argc, char **argv)
 		
 		/* Too much: cut a tracepoint for a debugger */
 		if (jitter_arr[i] >= too_much) {
-			syscall(SYS_kdebug_trace, 0xeeeeeeee, 0, 0, 0, 0);
+			kdebug_trace(0xeeeee0 | DBG_FUNC_NONE, 0, 0, 0, 0);
 		}
 
 		if (wakeup_second_thread) {
 			secargs.last_poke_time = mach_absolute_time();
-			secargs.cpuno = cpu_number();
+			secargs.cpuno = _os_cpu_number();
 			OSMemoryBarrier();
 			kret = semaphore_signal(wakeup_semaphore);
 			if (kret != KERN_SUCCESS) {
@@ -451,7 +465,7 @@ second_thread(void *args)
 		}
 
 		wake_time = mach_absolute_time();
-		cpuno = cpu_number();
+		cpuno = _os_cpu_number();
 		if (wake_time < secargs->last_poke_time) {
 			/* Woke in past, unsynchronized mach_absolute_time()? */
 			
@@ -466,7 +480,7 @@ second_thread(void *args)
 		
 		/* Too much: cut a tracepoint for a debugger */
 		if (secargs->wakeup_second_jitter_arr[i] >= secargs->too_much) {
-			syscall(SYS_kdebug_trace, 0xeeeeeeef, 0, 0, 0, 0);
+			kdebug_trace(0xeeeee4 | DBG_FUNC_NONE, 0, 0, 0, 0);
 		}
 
 		kret = semaphore_signal(secargs->return_semaphore);

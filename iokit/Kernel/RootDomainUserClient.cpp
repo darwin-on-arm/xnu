@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998-2000 Apple Computer, Inc. All rights reserved.
+ * Copyright (c) 1998-2012 Apple Computer, Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -37,6 +37,7 @@
 #include "RootDomainUserClient.h"
 #include <IOKit/pwr_mgt/IOPMLibDefs.h>
 #include <IOKit/pwr_mgt/IOPMPrivate.h>
+#include <sys/proc.h>
 
 #define super IOUserClient
 
@@ -46,17 +47,17 @@ OSDefineMetaClassAndStructors(RootDomainUserClient, IOUserClient)
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
-bool RootDomainUserClient::initWithTask(task_t owningTask, void *security_id, 
-					UInt32 type, OSDictionary * properties)
+bool RootDomainUserClient::initWithTask(task_t owningTask, void *security_id,
+                    UInt32 type, OSDictionary * properties)
 {
     if (properties)
-	properties->setObject(kIOUserClientCrossEndianCompatibleKey, kOSBooleanTrue);
+    properties->setObject(kIOUserClientCrossEndianCompatibleKey, kOSBooleanTrue);
 
     if (!super::initWithTask(owningTask, security_id, type, properties))
-	return false;
+    return false;
 
     fOwningTask = owningTask;
-    task_reference (fOwningTask);    
+    task_reference (fOwningTask);
     return true;
 }
 
@@ -77,9 +78,9 @@ IOReturn RootDomainUserClient::secureSleepSystem( uint32_t *return_code )
     return secureSleepSystemOptions(NULL, 0, return_code);
 }
 
-IOReturn RootDomainUserClient::secureSleepSystemOptions( 
-    const void      *inOptions, 
-    IOByteCount     inOptionsSize __unused,
+IOReturn RootDomainUserClient::secureSleepSystemOptions(
+    const void      *inOptions,
+    IOByteCount     inOptionsSize,
     uint32_t        *returnCode)
 {
 
@@ -91,39 +92,44 @@ IOReturn RootDomainUserClient::secureSleepSystemOptions(
 
     ret = clientHasPrivilege(fOwningTask, kIOClientPrivilegeLocalUser);
     local_priv = (kIOReturnSuccess == ret);
-    
+
     ret = clientHasPrivilege(fOwningTask, kIOClientPrivilegeAdministrator);
     admin_priv = (kIOReturnSuccess == ret);
-    
-    
+
+
     if (inOptions)
     {
         unserializedOptions = OSDynamicCast( OSDictionary,
-                                             OSUnserializeXML((const char *)inOptions, &unserializeErrorString));
-    
+                                             OSUnserializeXML((const char *)inOptions, inOptionsSize, &unserializeErrorString));
+
         if (!unserializedOptions) {
-            IOLog("IOPMRootDomain SleepSystem unserialization failure: %s\n", 
+            IOLog("IOPMRootDomain SleepSystem unserialization failure: %s\n",
                 unserializeErrorString ? unserializeErrorString->getCStringNoCopy() : "Unknown");
         }
     }
 
-    if ( (local_priv || admin_priv) 
-          && fOwner ) 
+    if ( (local_priv || admin_priv) && fOwner )
     {
-        if (unserializedOptions) 
+        proc_t p;
+        p = (proc_t)get_bsdtask_info(fOwningTask);
+        if (p) {
+            fOwner->setProperty("SleepRequestedByPID", proc_pid(p), 32);
+        }
+
+        if (unserializedOptions)
         {
             // Publish Sleep Options in registry under root_domain
-            fOwner->setProperty( kRootDomainSleepOptionsKey, unserializedOptions);            
+            fOwner->setProperty( kRootDomainSleepOptionsKey, unserializedOptions);
 
             *returnCode = fOwner->sleepSystemOptions( unserializedOptions );
 
-            unserializedOptions->release();        
+            unserializedOptions->release();
         } else {
             // No options
             // Clear any pre-existing options
             fOwner->removeProperty( kRootDomainSleepOptionsKey );
 
-            *returnCode = fOwner->sleepSystemOptions( NULL );        
+            *returnCode = fOwner->sleepSystemOptions( NULL );
         }
 
     } else {
@@ -133,7 +139,7 @@ IOReturn RootDomainUserClient::secureSleepSystemOptions(
     return kIOReturnSuccess;
 }
 
-IOReturn RootDomainUserClient::secureSetAggressiveness( 
+IOReturn RootDomainUserClient::secureSetAggressiveness(
     unsigned long   type,
     unsigned long   newLevel,
     int             *return_code )
@@ -144,7 +150,7 @@ IOReturn RootDomainUserClient::secureSetAggressiveness(
 
     ret = clientHasPrivilege(fOwningTask, kIOClientPrivilegeLocalUser);
     local_priv = (kIOReturnSuccess == ret);
-    
+
     ret = clientHasPrivilege(fOwningTask, kIOClientPrivilegeAdministrator);
     admin_priv = (kIOReturnSuccess == ret);
 
@@ -162,7 +168,7 @@ IOReturn RootDomainUserClient::secureSetMaintenanceWakeCalendar(
 {
     int                     admin_priv = 0;
     IOReturn                ret = kIOReturnNotPrivileged;
-    
+
     ret = clientHasPrivilege(fOwningTask, kIOClientPrivilegeAdministrator);
     admin_priv = (kIOReturnSuccess == ret);
 
@@ -179,7 +185,7 @@ IOReturn RootDomainUserClient::secureSetUserAssertionLevels(
 {
     int                     admin_priv = 0;
     IOReturn                ret = kIOReturnNotPrivileged;
-    
+
     ret = clientHasPrivilege(fOwningTask, kIOClientPrivilegeAdministrator);
     admin_priv = (kIOReturnSuccess == ret);
 
@@ -192,7 +198,7 @@ IOReturn RootDomainUserClient::secureSetUserAssertionLevels(
 }
 
 IOReturn RootDomainUserClient::secureGetSystemSleepType(
-    uint32_t    *outSleepType)
+    uint32_t    *outSleepType, uint32_t *sleepTimer)
 {
     int                     admin_priv = 0;
     IOReturn                ret;
@@ -201,7 +207,7 @@ IOReturn RootDomainUserClient::secureGetSystemSleepType(
     admin_priv = (kIOReturnSuccess == ret);
 
     if (admin_priv && fOwner) {
-        ret = fOwner->getSystemSleepType(outSleepType);
+        ret = fOwner->getSystemSleepType(outSleepType, sleepTimer);
     } else {
         ret = kIOReturnNotPrivileged;
     }
@@ -210,48 +216,30 @@ IOReturn RootDomainUserClient::secureGetSystemSleepType(
 
 IOReturn RootDomainUserClient::clientClose( void )
 {
-    detach(fOwner);
-    
-    if(fOwningTask) {
-        task_deallocate(fOwningTask);
-        fOwningTask = 0;
-    }   
-    
+    terminate();
+
     return kIOReturnSuccess;
 }
 
-IOReturn RootDomainUserClient::clientMemoryForType(
-    UInt32 type,
-    IOOptionBits *options,
-    IOMemoryDescriptor ** memory)
+void RootDomainUserClient::stop( IOService *provider)
 {
-    if (!fOwner)
-        return kIOReturnNotReady;
-
-    if (kPMRootDomainMapTraceBuffer == type)
-    {
-        *memory = fOwner->getPMTraceMemoryDescriptor();
-        if (*memory) {
-            (*memory)->retain();
-            *options = 0;
-            return kIOReturnSuccess;
-        } else {
-            return kIOReturnNotFound;
-        }
-
+    if(fOwningTask) {
+        task_deallocate(fOwningTask);
+        fOwningTask = 0;
     }
-    return kIOReturnUnsupported;
+
+    super::stop(provider);
 }
 
 IOReturn RootDomainUserClient::externalMethod(
-    uint32_t selector, 
+    uint32_t selector,
     IOExternalMethodArguments * arguments,
-    IOExternalMethodDispatch * dispatch __unused, 
+    IOExternalMethodDispatch * dispatch __unused,
     OSObject * target __unused,
     void * reference __unused )
 {
-    IOReturn    ret = kIOReturnBadArgument;    
-    
+    IOReturn    ret = kIOReturnBadArgument;
+
     switch (selector)
     {
         case kPMSetAggressiveness:
@@ -264,7 +252,7 @@ IOReturn RootDomainUserClient::externalMethod(
                                 (int *)&arguments->scalarOutput[0]);
             }
             break;
-        
+
         case kPMGetAggressiveness:
             if ((1 == arguments->scalarInputCount)
                 && (1 == arguments->scalarOutputCount))
@@ -274,12 +262,12 @@ IOReturn RootDomainUserClient::externalMethod(
                                 (unsigned long *)&arguments->scalarOutput[0]);
             }
             break;
-        
+
         case kPMSleepSystem:
             if (1 == arguments->scalarOutputCount)
             {
                 ret = this->secureSleepSystem(
-                                (uint32_t *)&arguments->scalarOutput[0]);            
+                                (uint32_t *)&arguments->scalarOutput[0]);
             }
             break;
 
@@ -316,17 +304,20 @@ IOReturn RootDomainUserClient::externalMethod(
                     (uint32_t *)&arguments->scalarOutput[0]);
             break;
         case kPMSetMaintenanceWakeCalendar:
-            ret = this->secureSetMaintenanceWakeCalendar(
-                    (IOPMCalendarStruct *)arguments->structureInput, 
-                    (uint32_t *)&arguments->structureOutput);
-            arguments->structureOutputSize = sizeof(uint32_t);
+            if ((arguments->structureInputSize >= sizeof(IOPMCalendarStruct)) &&
+                (arguments->structureOutputSize >= sizeof(uint32_t) )) {
+                ret = this->secureSetMaintenanceWakeCalendar(
+                                                             (IOPMCalendarStruct *)arguments->structureInput,
+                                                             (uint32_t *)&arguments->structureOutput);
+                arguments->structureOutputSize = sizeof(uint32_t);
+            }
             break;
-            
+
         case kPMSetUserAssertionLevels:
             ret = this->secureSetUserAssertionLevels(
                         (uint32_t)arguments->scalarInput[0]);
             break;
-            
+
         case kPMActivityTickle:
             if ( fOwner->checkSystemCanSustainFullWake() )
             {
@@ -342,61 +333,38 @@ IOReturn RootDomainUserClient::externalMethod(
             break;
 
         case kPMGetSystemSleepType:
-            if (1 == arguments->scalarOutputCount)
+            if (2 == arguments->scalarOutputCount)
             {
                 ret = this->secureGetSystemSleepType(
-                        (uint32_t *) &arguments->scalarOutput[0]);
+                        (uint32_t *) &arguments->scalarOutput[0],
+                        (uint32_t *) &arguments->scalarOutput[1]);
             }
             break;
-/*
-        case kPMMethodCopySystemTimeline:
-            // intentional fallthrough
-        case kPMMethodCopyDetailedTimeline:
 
-            if (!arguments->structureOutputDescriptor)
-            {
-                // TODO: Force IOKit.framework to always send this data out
-                // of line; so I don't have to create a MemoryDescriptor here.
-                mem_size = arguments->structureOutputSize;
-                mem = IOMemoryDescriptor::withAddressRange(
-                                    (mach_vm_address_t)arguments->structureOutput, 
-                                    (mach_vm_size_t)mem_size,
-                                    kIODirectionIn, current_task());
-            } else {
-                mem_size = arguments->structureOutputDescriptorSize;
-                if (( mem = arguments->structureOutputDescriptor ))
-                    mem->retain();   
-            }
-            
-            if (mem)
-            {
-                mem->prepare(kIODirectionNone);
-    
-                if (kPMMethodCopySystemTimeline == selector) {
-                    arguments->scalarOutput[0] = fOwner->copySystemTimeline(
-                                    mem, &mem_size);
-                } 
-                else
-                if (kPMMethodCopyDetailedTimeline == selector) {
-                    arguments->scalarOutput[0] = fOwner->copyDetailedTimeline(
-                                    mem, &mem_size);
-                }
-            
-                if (arguments->structureOutputDescriptor) {
-                    arguments->structureOutputDescriptorSize = mem_size;
-                } else {
-                    arguments->structureOutputSize = mem_size;
-                }
-            
-                mem->release();
-
-                ret = kIOReturnSuccess;
-            } else {
-                ret = kIOReturnCannotWire;
-            }
-            
+#if defined(__i386__) || defined(__x86_64__)
+        case kPMSleepWakeWatchdogEnable:
+            ret = clientHasPrivilege(fOwningTask, kIOClientPrivilegeAdministrator);
+            if (ret == kIOReturnSuccess)
+               fOwner->sleepWakeDebugEnableWdog();
             break;
-*/
+
+
+        case kPMSleepWakeDebugTrig:
+            ret = clientHasPrivilege(fOwningTask, kIOClientPrivilegeAdministrator);
+            if (ret == kIOReturnSuccess)
+               fOwner->sleepWakeDebugTrig(false);
+            break;
+#endif
+
+        case kPMSetDisplayPowerOn:
+            if (1 == arguments->scalarInputCount)
+            {
+                ret = clientHasPrivilege(fOwningTask, kIOClientPrivilegeAdministrator);
+                if (ret == kIOReturnSuccess)
+                    fOwner->setDisplayPowerOn((uint32_t)arguments->scalarInput[0]);
+            }
+            break;
+
         default:
             // bad selector
             return kIOReturnBadArgument;
@@ -410,7 +378,7 @@ IOReturn RootDomainUserClient::externalMethod(
  * We maintain getTargetAndExternalMethod since it's an exported symbol,
  * and only for that reason.
  */
-IOExternalMethod * RootDomainUserClient::getTargetAndMethodForIndex( 
+IOExternalMethod * RootDomainUserClient::getTargetAndMethodForIndex(
     IOService ** targetP, UInt32 index )
 {
     // DO NOT EDIT
@@ -420,6 +388,6 @@ IOExternalMethod * RootDomainUserClient::getTargetAndMethodForIndex(
 /* setPreventative
  * Does nothing. Exists only for exported symbol compatibility.
  */
-void 
+void
 RootDomainUserClient::setPreventative(UInt32 on_off, UInt32 types_of_sleep)
 { return; } // DO NOT EDIT

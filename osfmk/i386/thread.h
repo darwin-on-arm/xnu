@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2010 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2012 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -71,39 +71,26 @@
 #include <mach/i386/fp_reg.h>
 #include <mach/thread_status.h>
 
-#include <kern/lock.h>
+#include <kern/simple_lock.h>
 
+#include <i386/fpu.h>
 #include <i386/iopb.h>
 #include <i386/seg.h>
 #include <i386/tss.h>
 #include <i386/eflags.h>
 
 #include <i386/cpu_data.h>
+#include <i386/proc_reg.h>
 
 #include <machine/pal_routines.h>
 
 /*
- *	x86_kernel_state:
+ *	machine_thread_kernel_state, x86_kernel_state:
  *
  *	This structure corresponds to the state of kernel registers
  *	as saved in a context-switch.  It lives at the base of the stack.
  */
 
-#ifdef __i386__
-struct x86_kernel_state {
-	uint32_t	k_ebx;	/* kernel context */
-	uint32_t	k_esp;
-	uint32_t	k_ebp;
-	uint32_t	k_edi;
-	uint32_t	k_esi;
-	uint32_t	k_eip;
-	/*
-	 * Kernel stacks are 16-byte aligned with x86_kernel_state at the top,
-	 * so we need a couple of dummy 32-bit words here.
-	 */
-	uint32_t	dummy[2];
-};
-#else
 struct x86_kernel_state {
 	uint64_t	k_rbx;	/* kernel context */
 	uint64_t	k_rsp;
@@ -114,12 +101,16 @@ struct x86_kernel_state {
 	uint64_t	k_r15;
 	uint64_t	k_rip;
 };
+
+#ifdef	MACH_KERNEL_PRIVATE
+typedef struct x86_kernel_state machine_thread_kernel_state;
+#include <kern/thread_kernel_state.h>
 #endif
 
 /*
  * Maps state flavor to number of words in the state:
  */
-__private_extern__ unsigned int _MachineStateCount[];
+extern unsigned int _MachineStateCount[];
 
 /*
  * The machine-dependent thread state - registers and all platform-dependent
@@ -128,14 +119,12 @@ __private_extern__ unsigned int _MachineStateCount[];
  * as the PCB.
  */
 struct machine_thread {
-	void			*sf;
 	x86_saved_state_t	*iss;
 	void			*ifps;
 	void			*ids;
 	decl_simple_lock_data(,lock);		/* protects ifps and ids */
-	uint64_t		iss_pte0;
-	uint64_t		iss_pte1;
-	uint32_t		arg_store_valid;
+	xstate_t		xstate;
+
 #ifdef	MACH_BSD
 	uint64_t		cthread_self;	/* for use of cthread package */
         struct real_descriptor	cthread_desc;
@@ -144,11 +133,16 @@ struct machine_thread {
 #endif
 
 	struct pal_pcb		pal_pcb;
-
 	uint32_t		specFlags;
+	/* N.B.: These "specFlags" are read-modify-written non-atomically within
+	 * the copyio routine. So conceivably any exception that modifies the
+	 * flags in a persistent manner could be clobbered if it occurs within
+	 * a copyio context. For now, the only other flag here is OnProc which
+	 * is not modified except at context switch.
+	 */
 #define		OnProc		0x1
 #define		CopyIOActive 	0x2 /* Checked to ensure DTrace actions do not re-enter copyio(). */
-  
+	uint64_t		thread_gpu_ns;
 #if NCOPY_WINDOWS > 0
         struct {
 	        user_addr_t	user_base;
@@ -181,19 +175,21 @@ extern void *act_thread_csave(void);
 extern void act_thread_catt(void *ctx);
 extern void act_thread_cfree(void *ctx);
 
+#define FIND_PERFCONTROL_STATE(th)	(PERFCONTROL_STATE_NULL)
 
 /*
  *	On the kernel stack is:
  *	stack:	...
- *		struct x86_kernel_state
+ *		struct thread_kernel_state
  *	stack+kernel_stack_size
  */
 
+
 #define STACK_IKS(stack)	\
-	((struct x86_kernel_state *)((stack) + kernel_stack_size) - 1)
+	(&(((struct thread_kernel_state *)((stack) + kernel_stack_size)) - 1)->machine)
 
 /*
- * Return the current stack depth including x86_kernel_state
+ * Return the current stack depth including thread_kernel_state
  */
 static inline vm_offset_t
 current_stack_depth(void)
@@ -208,7 +204,7 @@ current_stack_depth(void)
        __asm__ volatile("mov %%esp, %0" : "=m" (stack_ptr));
 #endif
 	return (current_cpu_datap()->cpu_kernel_stack
-		+ sizeof(struct x86_kernel_state)
+		+ sizeof(struct thread_kernel_state)
 		- stack_ptr); 
 }
 

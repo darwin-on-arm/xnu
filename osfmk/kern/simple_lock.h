@@ -75,8 +75,6 @@
 #include <kern/kern_types.h>
 #include <machine/simple_lock.h>
 
-#include <machine/lock.h>
-
 #ifdef	MACH_KERNEL_PRIVATE
 #include <mach_ldebug.h>
 
@@ -91,7 +89,7 @@ extern void			hw_lock_unlock(
 
 extern unsigned int		hw_lock_to(
 					hw_lock_t,
-					unsigned int);
+					uint64_t);
 
 extern unsigned int		hw_lock_try(
 					hw_lock_t);
@@ -126,18 +124,6 @@ extern uint32_t			hw_atomic_and(
 extern void			hw_atomic_or_noret(
 					volatile uint32_t	*dest,
 					uint32_t	mask);
-
-
-extern void			hw_atomic_and_noret(
-					volatile uint32_t	*dest,
-					uint32_t	mask);
-
-
-#ifdef __arm__
-#define hw_atomic_or     hw_atomic_or_noret
-#define hw_atomic_and    hw_atomic_and_noret
-#endif
-
 /*
  * Variant of hw_atomic_and which doesn't return a value; potentially
  * more efficient on some platforms.
@@ -180,6 +166,9 @@ extern void			usimple_unlock(
 extern unsigned int		usimple_lock_try(
 					usimple_lock_t);
 
+extern void		usimple_lock_try_lock_loop(
+					usimple_lock_t);
+
 __END_DECLS
 
 #define	ETAP_NO_TRACE	0
@@ -195,9 +184,8 @@ __END_DECLS
 #define	simple_lock(l)		usimple_lock(l)
 #define	simple_unlock(l)	usimple_unlock(l)
 #define simple_lock_try(l)	usimple_lock_try(l)
+#define simple_lock_try_lock_loop(l)	usimple_lock_try_lock_loop(l)
 #define simple_lock_addr(l)	(&(l))
-#define thread_sleep_simple_lock(l, e, i) \
-				thread_sleep_usimple_lock((l), (e), (i))
 #endif /* !defined(simple_lock_init) */
 
 #endif /*!_KERN_SIMPLE_LOCK_H_*/

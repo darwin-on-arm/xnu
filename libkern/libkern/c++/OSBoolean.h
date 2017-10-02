@@ -63,6 +63,7 @@ class OSString;
 class OSBoolean : public OSObject
 {
     OSDeclareDefaultStructors(OSBoolean)
+    friend class OSSerialize;
 
 protected:
     bool value;
@@ -79,7 +80,7 @@ protected:
     */
     virtual void taggedRelease(
         const void * tag,
-        const int    when) const;
+        const int    when) const APPLE_KEXT_OVERRIDE;
 
 public:
     static void initialize();
@@ -112,7 +113,7 @@ public:
     * @discussion
     * This function should never be called.
     */
-    virtual void free();
+    virtual void free() APPLE_KEXT_OVERRIDE;
 
 
    /*!
@@ -123,7 +124,7 @@ public:
     *
     * @param tag  Unused. 
     */
-    virtual void taggedRetain(const void * tag) const;
+    virtual void taggedRetain(const void * tag) const APPLE_KEXT_OVERRIDE;
 
 
    /*!
@@ -209,7 +210,7 @@ public:
     * if that object is derived from OSBoolean
     * and represents the same C++ <code>bool</code> value.
     */
-    virtual bool isEqualTo(const OSMetaClassBase * anObject) const;
+    virtual bool isEqualTo(const OSMetaClassBase * anObject) const APPLE_KEXT_OVERRIDE;
 
 
    /*!
@@ -224,7 +225,7 @@ public:
     * @result
     * <code>true</code> if serialization succeeds, <code>false</code> if not.
     */
-    virtual bool serialize(OSSerialize * serializer) const;
+    virtual bool serialize(OSSerialize * serializer) const APPLE_KEXT_OVERRIDE;
 
     OSMetaClassDeclareReservedUnused(OSBoolean, 0);
     OSMetaClassDeclareReservedUnused(OSBoolean, 1);
@@ -237,34 +238,34 @@ public:
 };
 
 /*!
- * @const kOSBoolean<code>true</code>
+ * @const kOSBooleanTrue
  *
  * @abstract
  * The OSBoolean constant for <code>true</code>.
  *
  * @discussion
- * The OSBoolean constant for <code>true</code>.
+ * kOSBooleanTrue is the OSBoolean constant for <code>true</code>.
  * This object does not need to be retained or released (but it can be).
  * Comparisons of the form
- * booleanObject == kOSBooleanTrue</code> are acceptable
- * and are equivalent to 
+ * <code>booleanObject == kOSBooleanTrue</code>
+ * are acceptable and are equivalent to 
  * <code>booleanObject->getValue() == true</code>.
  */
 extern OSBoolean * const & kOSBooleanTrue;
 
 /*!
- * @const kOSBoolean<code>false</code>
+ * @const kOSBooleanFalse
  *
  * @abstract
  * The OSBoolean constant for <code>false</code>.
  *
  * @discussion
- * The OSBoolean constant for <code>false</code>.
+ * kOSBooleanFalse is the OSBoolean constant for <code>false</code>.
  * This object does not need to be retained or released (but it can be).
  * Comparisons of the form
  * <code>booleanObject == kOSBooleanFalse</code>
  * are acceptable and are equivalent to
- * <code>booleanObject->getValue() == <code>false</code>.
+ * <code>booleanObject->getValue() == false</code>.
  */
 extern OSBoolean * const & kOSBooleanFalse;
 

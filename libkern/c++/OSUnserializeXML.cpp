@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1999-2009 Apple Inc. All rights reserved.
+ * Copyright (c) 1999-2013 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -159,6 +159,9 @@
 #include <libkern/c++/OSContainers.h>
 #include <libkern/c++/OSLib.h>
 
+#define MAX_OBJECTS	         131071
+#define MAX_REFED_OBJECTS	 65535
+
 #define YYSTYPE object_t *
 #define YYPARSE_PARAM	state
 #define YYLEX_PARAM	(parser_state_t *)state
@@ -170,7 +173,7 @@ typedef	struct object {
 	struct object	*free;
 	struct object	*elements;
 	OSObject	*object;
-	OSString	*key;			// for dictionary
+	OSSymbol	*key;			// for dictionary
 	int		size;
 	void		*data;			// for data
 	char		*string;		// for string & symbol
@@ -189,6 +192,8 @@ typedef struct parser_state {
 	OSDictionary	*tags;			// used to remember "ID" tags
 	OSString	**errorString;		// parse error with line
 	OSObject	*parsedObject;		// resultant object of parsed text
+	int		parsedObjectCount;
+	int		retrievedObjectCount;
 } parser_state_t;
 
 #define STATE		((parser_state_t *)state)
@@ -209,6 +214,7 @@ static object_t		*buildDictionary(parser_state_t *state, object_t *o);
 static object_t		*buildArray(parser_state_t *state, object_t *o);
 static object_t		*buildSet(parser_state_t *state, object_t *o);
 static object_t		*buildString(parser_state_t *state, object_t *o);
+static object_t		*buildSymbol(parser_state_t *state, object_t *o);
 static object_t		*buildData(parser_state_t *state, object_t *o);
 static object_t		*buildNumber(parser_state_t *state, object_t *o);
 static object_t		*buildBoolean(parser_state_t *state, object_t *o);
@@ -257,7 +263,7 @@ typedef int YYSTYPE;
 
 
 /* Line 216 of yacc.c.  */
-#line 211 "OSUnserializeXML.tab.c"
+#line 215 "OSUnserializeXML.tab.c"
 
 #ifdef short
 # undef short
@@ -547,12 +553,12 @@ static const yytype_int8 yyrhs[] =
 };
 
 /* YYRLINE[YYN] -- source line where rule number YYN was defined.  */
-static const yytype_uint8 yyrline[] =
+static const yytype_uint16 yyrline[] =
 {
-       0,   145,   145,   148,   153,   158,   159,   160,   161,   162,
-     163,   164,   165,   178,   181,   184,   187,   188,   193,   202,
-     207,   210,   213,   216,   219,   222,   225,   228,   235,   238,
-     241,   244,   247
+       0,   149,   149,   152,   157,   162,   174,   186,   198,   210,
+     222,   234,   246,   265,   268,   271,   274,   275,   290,   299,
+     311,   314,   317,   320,   323,   326,   329,   332,   339,   342,
+     345,   348,   351
 };
 #endif
 
@@ -931,7 +937,7 @@ int yydebug;
 
 /* YYINITDEPTH -- initial size of the parser's stacks.  */
 #ifndef	YYINITDEPTH
-# define YYINITDEPTH 200
+# define YYINITDEPTH 64
 #endif
 
 /* YYMAXDEPTH -- maximum size the stacks can grow to (effective only
@@ -1490,14 +1496,14 @@ yyreduce:
   switch (yyn)
     {
         case 2:
-#line 145 "OSUnserializeXML.y"
+#line 149 "OSUnserializeXML.y"
     { yyerror("unexpected end of buffer");
 				  YYERROR;
 				;}
     break;
 
   case 3:
-#line 148 "OSUnserializeXML.y"
+#line 152 "OSUnserializeXML.y"
     { STATE->parsedObject = (yyvsp[(1) - (1)])->object;
 				  (yyvsp[(1) - (1)])->object = 0;
 				  freeObject(STATE, (yyvsp[(1) - (1)]));
@@ -1506,85 +1512,183 @@ yyreduce:
     break;
 
   case 4:
-#line 153 "OSUnserializeXML.y"
+#line 157 "OSUnserializeXML.y"
     { yyerror("syntax error");
 				  YYERROR;
 				;}
     break;
 
   case 5:
-#line 158 "OSUnserializeXML.y"
-    { (yyval) = buildDictionary(STATE, (yyvsp[(1) - (1)])); ;}
+#line 162 "OSUnserializeXML.y"
+    { (yyval) = buildDictionary(STATE, (yyvsp[(1) - (1)]));
+
+				  if (!yyval->object) {
+				    yyerror("buildDictionary");
+				    YYERROR;
+				  }
+				  STATE->parsedObjectCount++;
+				  if (STATE->parsedObjectCount > MAX_OBJECTS) {
+				    yyerror("maximum object count");
+				    YYERROR;
+				  }
+				;}
     break;
 
   case 6:
-#line 159 "OSUnserializeXML.y"
-    { (yyval) = buildArray(STATE, (yyvsp[(1) - (1)])); ;}
+#line 174 "OSUnserializeXML.y"
+    { (yyval) = buildArray(STATE, (yyvsp[(1) - (1)]));
+
+				  if (!yyval->object) {
+				    yyerror("buildArray");
+				    YYERROR;
+				  }
+				  STATE->parsedObjectCount++;
+				  if (STATE->parsedObjectCount > MAX_OBJECTS) {
+				    yyerror("maximum object count");
+				    YYERROR;
+				  }
+				;}
     break;
 
   case 7:
-#line 160 "OSUnserializeXML.y"
-    { (yyval) = buildSet(STATE, (yyvsp[(1) - (1)])); ;}
+#line 186 "OSUnserializeXML.y"
+    { (yyval) = buildSet(STATE, (yyvsp[(1) - (1)]));
+
+				  if (!yyval->object) {
+				    yyerror("buildSet");
+				    YYERROR;
+				  }
+				  STATE->parsedObjectCount++;
+				  if (STATE->parsedObjectCount > MAX_OBJECTS) {
+				    yyerror("maximum object count");
+				    YYERROR;
+				  }
+				;}
     break;
 
   case 8:
-#line 161 "OSUnserializeXML.y"
-    { (yyval) = buildString(STATE, (yyvsp[(1) - (1)])); ;}
+#line 198 "OSUnserializeXML.y"
+    { (yyval) = buildString(STATE, (yyvsp[(1) - (1)]));
+
+				  if (!yyval->object) {
+				    yyerror("buildString");
+				    YYERROR;
+				  }
+				  STATE->parsedObjectCount++;
+				  if (STATE->parsedObjectCount > MAX_OBJECTS) {
+				    yyerror("maximum object count");
+				    YYERROR;
+				  }
+				;}
     break;
 
   case 9:
-#line 162 "OSUnserializeXML.y"
-    { (yyval) = buildData(STATE, (yyvsp[(1) - (1)])); ;}
+#line 210 "OSUnserializeXML.y"
+    { (yyval) = buildData(STATE, (yyvsp[(1) - (1)]));
+
+				  if (!yyval->object) {
+				    yyerror("buildData");
+				    YYERROR;
+				  }
+				  STATE->parsedObjectCount++;
+				  if (STATE->parsedObjectCount > MAX_OBJECTS) {
+				    yyerror("maximum object count");
+				    YYERROR;
+				  }
+				;}
     break;
 
   case 10:
-#line 163 "OSUnserializeXML.y"
-    { (yyval) = buildNumber(STATE, (yyvsp[(1) - (1)])); ;}
+#line 222 "OSUnserializeXML.y"
+    { (yyval) = buildNumber(STATE, (yyvsp[(1) - (1)]));
+
+				  if (!yyval->object) {
+				    yyerror("buildNumber");
+				    YYERROR;
+				  }
+				  STATE->parsedObjectCount++;
+				  if (STATE->parsedObjectCount > MAX_OBJECTS) {
+				    yyerror("maximum object count");
+				    YYERROR;
+				  }
+				;}
     break;
 
   case 11:
-#line 164 "OSUnserializeXML.y"
-    { (yyval) = buildBoolean(STATE, (yyvsp[(1) - (1)])); ;}
+#line 234 "OSUnserializeXML.y"
+    { (yyval) = buildBoolean(STATE, (yyvsp[(1) - (1)]));
+
+				  if (!yyval->object) {
+				    yyerror("buildBoolean");
+				    YYERROR;
+				  }
+				  STATE->parsedObjectCount++;
+				  if (STATE->parsedObjectCount > MAX_OBJECTS) {
+				    yyerror("maximum object count");
+				    YYERROR;
+				  }
+				;}
     break;
 
   case 12:
-#line 165 "OSUnserializeXML.y"
+#line 246 "OSUnserializeXML.y"
     { (yyval) = retrieveObject(STATE, (yyvsp[(1) - (1)])->idref);
 				  if ((yyval)) {
+				    STATE->retrievedObjectCount++;
+				    if (STATE->retrievedObjectCount > MAX_REFED_OBJECTS) {
+				      yyerror("maximum object reference count");
+				      YYERROR;
+				    }
 				    (yyval)->object->retain();
 				  } else { 
 				    yyerror("forward reference detected");
 				    YYERROR;
 				  }
 				  freeObject(STATE, (yyvsp[(1) - (1)]));
+
+				  STATE->parsedObjectCount++;
+				  if (STATE->parsedObjectCount > MAX_OBJECTS) {
+				    yyerror("maximum object count");
+				    YYERROR;
+				  }
 				;}
     break;
 
   case 13:
-#line 178 "OSUnserializeXML.y"
+#line 265 "OSUnserializeXML.y"
     { (yyval) = (yyvsp[(1) - (2)]);
 				  (yyval)->elements = NULL;
 				;}
     break;
 
   case 14:
-#line 181 "OSUnserializeXML.y"
+#line 268 "OSUnserializeXML.y"
     { (yyval) = (yyvsp[(1) - (3)]);
 				  (yyval)->elements = (yyvsp[(2) - (3)]);
 				;}
     break;
 
   case 17:
-#line 188 "OSUnserializeXML.y"
+#line 275 "OSUnserializeXML.y"
     { (yyval) = (yyvsp[(2) - (2)]);
 				  (yyval)->next = (yyvsp[(1) - (2)]);
+
+				  object_t *o;
+				  o = (yyval)->next;
+				  while (o) {
+				    if (o->key == (yyval)->key) {
+				      yyerror("duplicate dictionary key");
+				      YYERROR;
+				    }
+				    o = o->next;
+				  }
 				;}
     break;
 
   case 18:
-#line 193 "OSUnserializeXML.y"
+#line 290 "OSUnserializeXML.y"
     { (yyval) = (yyvsp[(1) - (2)]);
-				  (yyval)->key = (OSString *)(yyval)->object;
+				  (yyval)->key = (OSSymbol *)(yyval)->object;
 				  (yyval)->object = (yyvsp[(2) - (2)])->object;
 				  (yyval)->next = NULL; 
 				  (yyvsp[(2) - (2)])->object = 0;
@@ -1593,47 +1697,54 @@ yyreduce:
     break;
 
   case 19:
-#line 202 "OSUnserializeXML.y"
-    { (yyval) = buildString(STATE, (yyvsp[(1) - (1)])); ;}
+#line 299 "OSUnserializeXML.y"
+    { (yyval) = buildSymbol(STATE, (yyvsp[(1) - (1)]));
+
+//				  STATE->parsedObjectCount++;
+//				  if (STATE->parsedObjectCount > MAX_OBJECTS) {
+//				    yyerror("maximum object count");
+//				    YYERROR;
+//				  }
+				;}
     break;
 
   case 20:
-#line 207 "OSUnserializeXML.y"
+#line 311 "OSUnserializeXML.y"
     { (yyval) = (yyvsp[(1) - (2)]);
 				  (yyval)->elements = NULL;
 				;}
     break;
 
   case 21:
-#line 210 "OSUnserializeXML.y"
+#line 314 "OSUnserializeXML.y"
     { (yyval) = (yyvsp[(1) - (3)]);
 				  (yyval)->elements = (yyvsp[(2) - (3)]);
 				;}
     break;
 
   case 23:
-#line 216 "OSUnserializeXML.y"
+#line 320 "OSUnserializeXML.y"
     { (yyval) = (yyvsp[(1) - (2)]);
 				  (yyval)->elements = NULL;
 				;}
     break;
 
   case 24:
-#line 219 "OSUnserializeXML.y"
+#line 323 "OSUnserializeXML.y"
     { (yyval) = (yyvsp[(1) - (3)]);
 				  (yyval)->elements = (yyvsp[(2) - (3)]);
 				;}
     break;
 
   case 26:
-#line 225 "OSUnserializeXML.y"
+#line 329 "OSUnserializeXML.y"
     { (yyval) = (yyvsp[(1) - (1)]); 
 				  (yyval)->next = NULL; 
 				;}
     break;
 
   case 27:
-#line 228 "OSUnserializeXML.y"
+#line 332 "OSUnserializeXML.y"
     { (yyval) = (yyvsp[(2) - (2)]);
 				  (yyval)->next = (yyvsp[(1) - (2)]);
 				;}
@@ -1641,7 +1752,7 @@ yyreduce:
 
 
 /* Line 1267 of yacc.c.  */
-#line 1595 "OSUnserializeXML.tab.c"
+#line 1699 "OSUnserializeXML.tab.c"
       default: break;
     }
   YY_SYMBOL_PRINT ("-> $$ =", yyr1[yyn], &yyval, &yyloc);
@@ -1855,7 +1966,7 @@ yyreturn:
 }
 
 
-#line 250 "OSUnserializeXML.y"
+#line 354 "OSUnserializeXML.y"
 
 
 int
@@ -1938,6 +2049,7 @@ getTag(parser_state_t *state,
 		if (c == '\n') state->lineNumber++;
 		if (c != '?') continue;
 		c = nextChar();
+		if (!c) return TAG_IGNORE;
 		if (c == '>') {
 		    (void)nextChar();
 		    return TAG_IGNORE;
@@ -1992,6 +2104,7 @@ getTag(parser_state_t *state,
 			values[*attributeCount][length++] = c;
 			if (length >= (TAG_MAX_LENGTH - 1)) return TAG_BAD;
 			c = nextChar();
+			if (!c) return TAG_BAD;
 		}
 		values[*attributeCount][length] = 0;
 
@@ -2657,6 +2770,21 @@ buildString(parser_state_t *state, object_t *o)
 };
 
 object_t *
+buildSymbol(parser_state_t *state, object_t *o)
+{
+	OSSymbol *symbol;
+
+	symbol = (OSSymbol *)OSSymbol::withCString(o->string);
+	if (o->idref >= 0) rememberObject(state, o->idref, symbol);
+
+	free(o->string);
+	o->string = 0;
+	o->object = symbol;
+
+	return o;
+};
+
+object_t *
 buildData(parser_state_t *state, object_t *o)
 {
 	OSData *data;
@@ -2697,9 +2825,10 @@ OSObject*
 OSUnserializeXML(const char *buffer, OSString **errorString)
 {
 	OSObject *object;
-	parser_state_t *state = (parser_state_t *)malloc(sizeof(parser_state_t));
 
-	if ((!state) || (!buffer)) return 0;
+	if (!buffer) return 0;
+	parser_state_t *state = (parser_state_t *)malloc(sizeof(parser_state_t));
+	if (!state) return 0;
 
 	// just in case
 	if (errorString) *errorString = NULL;
@@ -2712,6 +2841,8 @@ OSUnserializeXML(const char *buffer, OSString **errorString)
 	state->tags = OSDictionary::withCapacity(128);
 	state->errorString = errorString;
 	state->parsedObject = 0;
+	state->parsedObjectCount = 0;
+	state->retrievedObjectCount = 0;
 
 	(void)yyparse((void *)state);
 
@@ -2722,6 +2853,22 @@ OSUnserializeXML(const char *buffer, OSString **errorString)
 	free(state);
 
 	return object;
+}
+
+#include <libkern/OSSerializeBinary.h>
+
+OSObject*
+OSUnserializeXML(const char *buffer, size_t bufferSize, OSString **errorString)
+{
+	if (!buffer) return (0);
+    if (bufferSize < sizeof(kOSSerializeBinarySignature)) return (0);
+
+	if (!strcmp(kOSSerializeBinarySignature, buffer)) return OSUnserializeBinary(buffer, bufferSize, errorString);
+
+	// XML must be null terminated
+	if (buffer[bufferSize - 1]) return 0;
+
+	return OSUnserializeXML(buffer, errorString);
 }
 
 

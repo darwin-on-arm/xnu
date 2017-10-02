@@ -31,22 +31,73 @@
 
 #include <pexpert/pexpert.h>
 #include <pexpert/protos.h>
+#include <pexpert/device_tree.h>
 #include <kern/debug.h>
 
+#if CONFIG_EMBEDDED
+#include <libkern/section_keywords.h>
+#endif
+
 static int DEBUGFlag;
+
+#if CONFIG_EMBEDDED
+SECURITY_READ_ONLY_LATE(static uint32_t) gPEKernelConfigurationBitmask;
+#else
+static uint32_t gPEKernelConfigurationBitmask;
+#endif
 
 int32_t gPESerialBaud = -1;
 
 void pe_init_debug(void)
 {
-  if (!PE_parse_boot_argn("debug", &DEBUGFlag, sizeof (DEBUGFlag)))
-    DEBUGFlag = 0;
+	boolean_t boot_arg_value;
+
+	if (!PE_parse_boot_argn("debug", &DEBUGFlag, sizeof (DEBUGFlag)))
+		DEBUGFlag = 0;
+
+	gPEKernelConfigurationBitmask = 0;
+
+	if (!PE_parse_boot_argn("assertions", &boot_arg_value, sizeof(boot_arg_value))) {
+#if MACH_ASSERT
+		boot_arg_value = TRUE;
+#else
+		boot_arg_value = FALSE;
+#endif
+	}
+	gPEKernelConfigurationBitmask |= (boot_arg_value ? kPEICanHasAssertions : 0);
+
+	if (!PE_parse_boot_argn("statistics", &boot_arg_value, sizeof(boot_arg_value))) {
+#if DEVELOPMENT || DEBUG
+		boot_arg_value = TRUE;
+#else
+		boot_arg_value = FALSE;
+#endif
+	}
+	gPEKernelConfigurationBitmask |= (boot_arg_value ? kPEICanHasStatistics : 0);
+
+#if SECURE_KERNEL
+	boot_arg_value = FALSE;
+#else
+	if (!PE_i_can_has_debugger(NULL)) {
+		boot_arg_value = FALSE;
+	} else if (!PE_parse_boot_argn("diagnostic_api", &boot_arg_value, sizeof(boot_arg_value)))  {
+		boot_arg_value = TRUE;
+	}
+#endif
+	gPEKernelConfigurationBitmask |= (boot_arg_value ? kPEICanHasDiagnosticAPI : 0);
+
 }
 
 void PE_enter_debugger(const char *cause)
 {
   if (DEBUGFlag & DB_NMI)
     Debugger(cause);
+}
+
+uint32_t
+PE_i_can_has_kernel_configuration(void)
+{
+	return gPEKernelConfigurationBitmask;
 }
 
 /* extern references */
@@ -62,6 +113,41 @@ void PE_init_printf(boolean_t vm_initialized)
   } else {
     vcattach();
   }
+}
+
+uint32_t
+PE_get_random_seed(unsigned char *dst_random_seed, uint32_t request_size)
+{
+	DTEntry		entryP;
+	uint32_t	size = 0;
+	void		*dt_random_seed;
+
+        if ((DTLookupEntry(NULL, "/chosen", &entryP) == kSuccess)
+	    && (DTGetProperty(entryP, "random-seed",
+				(void **)&dt_random_seed, &size) == kSuccess)) {
+		unsigned char *src_random_seed;
+		unsigned int i;
+		unsigned int null_count = 0;
+
+		src_random_seed = (unsigned char *)dt_random_seed;
+
+		if (size > request_size) size = request_size;
+
+		/*
+		 * Copy from the device tree into the destination buffer,
+		 * count the number of null bytes and null out the device tree.
+		 */
+		for (i=0 ; i< size; i++, src_random_seed++, dst_random_seed++) {
+			*dst_random_seed = *src_random_seed;
+			null_count += *src_random_seed == (unsigned char)0;
+			*src_random_seed = (unsigned char)0;
+		}
+		if (null_count == size)
+			/* All nulls is no seed - return 0 */
+			size = 0;
+	}
+
+	return(size);
 }
 
 unsigned char appleClut8[ 256 * 3 ] = {
@@ -146,3 +232,4 @@ unsigned char appleClut8[ 256 * 3 ] = {
 	0xAA,0xAA,0xAA, 0x88,0x88,0x88,	0x77,0x77,0x77,	0x55,0x55,0x55,
 	0x44,0x44,0x44, 0x22,0x22,0x22,	0x11,0x11,0x11,	0x00,0x00,0x00
 };
+

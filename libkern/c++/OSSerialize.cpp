@@ -36,6 +36,8 @@ __END_DECLS
 #include <libkern/c++/OSContainers.h>
 #include <libkern/c++/OSLib.h>
 #include <libkern/c++/OSDictionary.h>
+#include <libkern/OSSerializeBinary.h>
+#include <IOKit/IOLib.h>
 
 #define super OSObject
 
@@ -49,14 +51,6 @@ OSMetaClassDefineReservedUnused(OSSerialize, 5);
 OSMetaClassDefineReservedUnused(OSSerialize, 6);
 OSMetaClassDefineReservedUnused(OSSerialize, 7);
 
-#if OSALLOCDEBUG
-extern "C" {
-    extern int debug_container_malloc_size;
-};
-#define ACCUMSIZE(s) do { debug_container_malloc_size += (s); } while(0)
-#else
-#define ACCUMSIZE(s)
-#endif
 
 char * OSSerialize::text() const
 {
@@ -65,47 +59,64 @@ char * OSSerialize::text() const
 
 void OSSerialize::clearText()
 {
-	bzero((void *)data, capacity);
-	length = 1;
-	tag = 0;
+	if (binary)
+	{
+		length = sizeof(kOSSerializeBinarySignature);
+		bzero(&data[length], capacity - length);
+		endCollection = true;
+	}
+    else
+    {
+		bzero((void *)data, capacity);
+		length = 1;
+    }
 	tags->flushCollection();
 }
 
 bool OSSerialize::previouslySerialized(const OSMetaClassBase *o)
 {
 	char temp[16];
-	OSString *tagString;
+	unsigned int tagIdx;
+
+	if (binary) return (binarySerialize(o));
 
 	// look it up
-	tagString = (OSString *)tags->getObject((const OSSymbol *) o);
+	tagIdx = tags->getNextIndexOfObject(o, 0);
 
 // xx-review: no error checking here for addString calls!
 	// does it exist?
-	if (tagString) {
+	if (tagIdx != -1U) {
 		addString("<reference IDREF=\"");
-		addString(tagString->getCStringNoCopy());
+		snprintf(temp, sizeof(temp), "%u", tagIdx);
+		addString(temp);
 		addString("\"/>");
 		return true;
 	}
 
-	// build a tag
-	snprintf(temp, sizeof(temp), "%u", tag++);
-	tagString = OSString::withCString(temp);
-
-	// add to tag dictionary
-        tags->setObject((const OSSymbol *) o, tagString);// XXX check return
-	tagString->release();
+	// add to tag array
+    tags->setObject(o);// XXX check return
 
 	return false;
 }
 
 bool OSSerialize::addXMLStartTag(const OSMetaClassBase *o, const char *tagString)
 {
+	char temp[16];
+	unsigned int tagIdx;
+
+	if (binary)
+    {
+		printf("class %s: xml serialize\n", o->getMetaClass()->getClassName());
+		return (false);
+	}
 
 	if (!addChar('<')) return false;
 	if (!addString(tagString)) return false;
 	if (!addString(" ID=\"")) return false;
-	if (!addString(((OSString *)tags->getObject((const OSSymbol *)o))->getCStringNoCopy())) 
+	tagIdx = tags->getNextIndexOfObject(o, 0);
+	assert(tagIdx != -1U);
+	snprintf(temp, sizeof(temp), "%u", tagIdx);
+	if (!addString(temp))
 		return false;
 	if (!addChar('\"')) return false;
 	if (!addChar('>')) return false;
@@ -124,6 +135,12 @@ bool OSSerialize::addXMLEndTag(const char *tagString)
 
 bool OSSerialize::addChar(const char c)
 {
+	if (binary)
+    {
+		printf("xml serialize\n");
+		return (false);
+	}
+
 	// add char, possibly extending our capacity
 	if (length >= capacity && length >=ensureCapacity(capacity+capacityIncrement))
 		return false;
@@ -148,20 +165,28 @@ bool OSSerialize::initWithCapacity(unsigned int inCapacity)
     if (!super::init())
             return false;
 
-    tags = OSDictionary::withCapacity(32);
+    tags = OSArray::withCapacity(256);
     if (!tags) {
         return false;
     }
 
-    tag = 0;
     length = 1;
-    capacity = (inCapacity) ? round_page_32(inCapacity) : round_page_32(1);
+
+    if (!inCapacity) {
+        inCapacity = 1;
+    }
+    if (round_page_overflow(inCapacity, &capacity)) {
+        tags->release();
+        tags = 0;
+        return false;
+    }
+
     capacityIncrement = capacity;
 
     // allocate from the kernel map so that we can safely map this data
     // into user space (the primary use of the OSSerialize object)
     
-    kern_return_t rc = kmem_alloc(kernel_map, (vm_offset_t *)&data, capacity);
+    kern_return_t rc = kmem_alloc(kernel_map, (vm_offset_t *)&data, capacity, IOMemoryTag(kernel_map));
     if (rc) {
         tags->release();
         tags = 0;
@@ -170,7 +195,7 @@ bool OSSerialize::initWithCapacity(unsigned int inCapacity)
     bzero((void *)data, capacity);
 
 
-    ACCUMSIZE(capacity);
+    OSCONTAINER_ACCUMSIZE(capacity);
 
     return true;
 }
@@ -203,20 +228,22 @@ unsigned int OSSerialize::ensureCapacity(unsigned int newCapacity)
 	if (newCapacity <= capacity)
 		return capacity;
 
-	// round up
-	newCapacity = round_page_32(newCapacity);
+	if (round_page_overflow(newCapacity, &newCapacity)) {
+		return capacity;
+	}
 
 	kern_return_t rc = kmem_realloc(kernel_map,
 					(vm_offset_t)data,
 					capacity,
 					(vm_offset_t *)&newData,
-					newCapacity);
+					newCapacity,
+					VM_KERN_MEMORY_IOKIT);
 	if (!rc) {
-	    ACCUMSIZE(newCapacity);
+	    OSCONTAINER_ACCUMSIZE(newCapacity);
 
 	    // kmem realloc does not free the old address range
 	    kmem_free(kernel_map, (vm_offset_t)data, capacity); 
-	    ACCUMSIZE(-capacity);
+	    OSCONTAINER_ACCUMSIZE(-((size_t)capacity));
 	    
 	    // kmem realloc does not zero out the new memory
 	    // and this could end up going to user land
@@ -236,7 +263,7 @@ void OSSerialize::free()
 
     if (data) {
 	kmem_free(kernel_map, (vm_offset_t)data, capacity); 
-        ACCUMSIZE( -capacity );
+        OSCONTAINER_ACCUMSIZE( -((size_t)capacity) );
     }
     super::free();
 }

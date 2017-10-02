@@ -48,7 +48,8 @@ static zone_t			host_notify_zone;
 static queue_head_t		host_notify_queue[HOST_NOTIFY_TYPE_MAX+1];
 
 static mach_msg_id_t	host_notify_replyid[HOST_NOTIFY_TYPE_MAX+1] =
-								{ HOST_CALENDAR_CHANGED_REPLYID };
+								{ HOST_CALENDAR_CHANGED_REPLYID,
+								  HOST_CALENDAR_SET_REPLYID };
 
 struct host_notify_entry {
 	queue_chain_t		entries;
@@ -100,7 +101,7 @@ host_request_notification(
 	lck_mtx_lock(&host_notify_lock);
 
 	ip_lock(port);
-	if (!ip_active(port) || ip_kotype(port) != IKOT_NONE) {
+	if (!ip_active(port) || port->ip_tempowner || ip_kotype(port) != IKOT_NONE) {
 		ip_unlock(port);
 
 		lck_mtx_unlock(&host_notify_lock);
@@ -167,10 +168,11 @@ host_notify_all(
 		send_queue.next->prev = &send_queue;
 		send_queue.prev->next = &send_queue;
 
-		msg->msgh_bits = MACH_MSGH_BITS(MACH_MSG_TYPE_MOVE_SEND_ONCE, 0);
+		msg->msgh_bits =
+		    MACH_MSGH_BITS_SET(MACH_MSG_TYPE_MOVE_SEND_ONCE, 0, 0, 0);
 		msg->msgh_local_port = MACH_PORT_NULL;
+		msg->msgh_voucher_port = MACH_PORT_NULL;
 		msg->msgh_id = host_notify_replyid[notify_type];
-		msg->msgh_reserved = 0;
 
 		while ((entry = (host_notify_t)dequeue(&send_queue)) != NULL) {
 			ipc_port_t		port;
@@ -204,4 +206,12 @@ host_notify_calendar_change(void)
 	__Request__host_calendar_changed_t	msg;
 
 	host_notify_all(HOST_NOTIFY_CALENDAR_CHANGE, &msg.Head, sizeof (msg));
+}
+
+void
+host_notify_calendar_set(void)
+{
+	__Request__host_calendar_set_t	msg;
+
+	host_notify_all(HOST_NOTIFY_CALENDAR_SET, &msg.Head, sizeof (msg));
 }

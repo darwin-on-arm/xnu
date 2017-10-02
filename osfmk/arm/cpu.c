@@ -1,1060 +1,604 @@
 /*
- * Copyright 2013, winocm. <winocm@icloud.com>
- * All rights reserved.
- * 
- * Redistribution and use in source and binary forms, with or without modification,
- * are permitted provided that the following conditions are met:
- * 
- *   Redistributions of source code must retain the above copyright notice, this
- *   list of conditions and the following disclaimer.
- * 
- *   Redistributions in binary form must reproduce the above copyright notice, this
- *   list of conditions and the following disclaimer in the documentation and/or
- *   other materials provided with the distribution.
- * 
- *   If you are going to use this software in any form that does not involve
- *   releasing the source to this project or improving it, let me know beforehand.
+ * Copyright (c) 2007-2016 Apple Inc. All rights reserved.
  *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
- * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
- * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
- * ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
- * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
- * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
- * ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
- * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- */
-/*-
- * Copyright (c) 1995 Mark Brinicombe.
- * Copyright (c) 1995 Brini.
- * All rights reserved.
+ * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- * 1. Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- * 2. Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in the
- *    documentation and/or other materials provided with the distribution.
- * 3. All advertising materials mentioning features or use of this software
- *    must display the following acknowledgement:
- *  This product includes software developed by Brini.
- * 4. The name of the company nor the name of the author may be used to
- *    endorse or promote products derived from this software without specific
- *    prior written permission.
+ * This file contains Original Code and/or Modifications of Original Code
+ * as defined in and that are subject to the Apple Public Source License
+ * Version 2.0 (the 'License'). You may not use this file except in
+ * compliance with the License. The rights granted to you under the License
+ * may not be used to create, or enable the creation or redistribution of,
+ * unlawful or unlicensed copies of an Apple operating system, or to
+ * circumvent, violate, or enable the circumvention or violation of, any
+ * terms of an Apple operating system software license agreement.
  *
- * THIS SOFTWARE IS PROVIDED BY BRINI ``AS IS'' AND ANY EXPRESS OR IMPLIED
- * WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
- * MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
- * IN NO EVENT SHALL BRINI OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
- * INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
- * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
- * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
- * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
- * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
- * SUCH DAMAGE.
+ * Please obtain a copy of the License at
+ * http://www.opensource.apple.com/apsl/ and read it before using this file.
  *
- * RiscBSD kernel project
+ * The Original Code and all software distributed under the License are
+ * distributed on an 'AS IS' basis, WITHOUT WARRANTY OF ANY KIND, EITHER
+ * EXPRESS OR IMPLIED, AND APPLE HEREBY DISCLAIMS ALL SUCH WARRANTIES,
+ * INCLUDING WITHOUT LIMITATION, ANY WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE, QUIET ENJOYMENT OR NON-INFRINGEMENT.
+ * Please see the License for the specific language governing rights and
+ * limitations under the License.
  *
- * cpu.c
- *
- * Probing and configuration for the master CPU
- *
- * Created      : 10/10/95
+ * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
 /*
- * CPU bootstrap, used to create core structures for the boot processor.
+ *	File:	arm/cpu.c
  *
- * SMP support coming soon.
+ *	cpu specific routines
  */
 
 #include <kern/kalloc.h>
-#include <kern/misc_protos.h>
 #include <kern/machine.h>
-#include <mach/processor_info.h>
-#include <arm/pmap.h>
-#include <arm/machine_routines.h>
-#include <vm/vm_kern.h>
-#include <kern/timer_call.h>
-#include <kern/etimer.h>
-#include <kern/processor.h>
+#include <kern/cpu_number.h>
+#include <kern/thread.h>
+#include <kern/timer_queue.h>
+#include <arm/cpu_data.h>
+#include <arm/cpuid.h>
+#include <arm/caches_internal.h>
+#include <arm/cpu_data_internal.h>
+#include <arm/cpu_internal.h>
 #include <arm/misc_protos.h>
-#include <mach/machine.h>
-#include <arm/arch.h>
-#include "proc_reg.h"
+#include <arm/machine_cpu.h>
+#include <arm/rtclock.h>
+#include <arm/proc_reg.h>
+#include <mach/processor_info.h>
+#include <vm/pmap.h>
+#include <vm/vm_kern.h>
+#include <vm/vm_map.h>
+#include <pexpert/arm/board_config.h>
+#include <pexpert/arm/protos.h>
+#include <sys/kdebug.h>
+
+#include <machine/atomic.h>
+
+#if KPC
+#include <kern/kpc.h>
+#endif
+
+extern unsigned int resume_idle_cpu;
+extern unsigned int start_cpu;
+
+unsigned int   start_cpu_paddr;
+
+extern boolean_t	idle_enable;
+extern unsigned int	real_ncpus;
+extern uint64_t		wake_abstime;
+
+extern void* wfi_inst;
+unsigned wfi_fast = 1;
+unsigned patch_to_nop = 0xe1a00000;
+
+void	*LowExceptionVectorsAddr;
+#define	IOS_STATE		(((vm_offset_t)LowExceptionVectorsAddr + 0x80))
+#define	IOS_STATE_SIZE	(0x08UL)
+static const uint8_t suspend_signature[] = {'X', 'S', 'O', 'M', 'P', 'S', 'U', 'S'};
+static const uint8_t running_signature[] = {'X', 'S', 'O', 'M', 'N', 'N', 'U', 'R'};
 
 /*
- * Initial stack for first CPU.
+ *	Routine:	cpu_bootstrap
+ *	Function:
  */
-extern uint32_t intstack_top[]; /* top */
-extern uint32_t intstack[];     /* bottom */
+void
+cpu_bootstrap(void)
+{
+}
 
-struct processor BootProcessor;
-cpu_data_t cpu_data_master;
-
-enum cpu_class {
-    CPU_CLASS_NONE,
-    CPU_CLASS_ARM2,
-    CPU_CLASS_ARM2AS,
-    CPU_CLASS_ARM3,
-    CPU_CLASS_ARM6,
-    CPU_CLASS_ARM7,
-    CPU_CLASS_ARM7TDMI,
-    CPU_CLASS_ARM8,
-    CPU_CLASS_ARM9TDMI,
-    CPU_CLASS_ARM9ES,
-    CPU_CLASS_ARM9EJS,
-    CPU_CLASS_ARM10E,
-    CPU_CLASS_ARM10EJ,
-    CPU_CLASS_CORTEXA,
-    CPU_CLASS_SA1,
-    CPU_CLASS_XSCALE,
-    CPU_CLASS_ARM11J,
-    CPU_CLASS_MARVELL
-};
-
-static const char *const generic_steppings[16] = {
-    "rev 0", "rev 1", "rev 2", "rev 3",
-    "rev 4", "rev 5", "rev 6", "rev 7",
-    "rev 8", "rev 9", "rev 10", "rev 11",
-    "rev 12", "rev 13", "rev 14", "rev 15",
-};
-
-static const char *const sa110_steppings[16] = {
-    "rev 0", "step J", "step K", "step S",
-    "step T", "rev 5", "rev 6", "rev 7",
-    "rev 8", "rev 9", "rev 10", "rev 11",
-    "rev 12", "rev 13", "rev 14", "rev 15",
-};
-
-static const char *const sa1100_steppings[16] = {
-    "rev 0", "step B", "step C", "rev 3",
-    "rev 4", "rev 5", "rev 6", "rev 7",
-    "step D", "step E", "rev 10" "step G",
-    "rev 12", "rev 13", "rev 14", "rev 15",
-};
-
-static const char *const sa1110_steppings[16] = {
-    "step A-0", "rev 1", "rev 2", "rev 3",
-    "step B-0", "step B-1", "step B-2", "step B-3",
-    "step B-4", "step B-5", "rev 10", "rev 11",
-    "rev 12", "rev 13", "rev 14", "rev 15",
-};
-
-static const char *const ixp12x0_steppings[16] = {
-    "(IXP1200 step A)", "(IXP1200 step B)",
-    "rev 2", "(IXP1200 step C)",
-    "(IXP1200 step D)", "(IXP1240/1250 step A)",
-    "(IXP1240 step B)", "(IXP1250 step B)",
-    "rev 8", "rev 9", "rev 10", "rev 11",
-    "rev 12", "rev 13", "rev 14", "rev 15",
-};
-
-static const char *const xscale_steppings[16] = {
-    "step A-0", "step A-1", "step B-0", "step C-0",
-    "step D-0", "rev 5", "rev 6", "rev 7",
-    "rev 8", "rev 9", "rev 10", "rev 11",
-    "rev 12", "rev 13", "rev 14", "rev 15",
-};
-
-static const char *const i80219_steppings[16] = {
-    "step A-0", "rev 1", "rev 2", "rev 3",
-    "rev 4", "rev 5", "rev 6", "rev 7",
-    "rev 8", "rev 9", "rev 10", "rev 11",
-    "rev 12", "rev 13", "rev 14", "rev 15",
-};
-
-static const char *const i80321_steppings[16] = {
-    "step A-0", "step B-0", "rev 2", "rev 3",
-    "rev 4", "rev 5", "rev 6", "rev 7",
-    "rev 8", "rev 9", "rev 10", "rev 11",
-    "rev 12", "rev 13", "rev 14", "rev 15",
-};
-
-static const char *const i81342_steppings[16] = {
-    "step A-0", "rev 1", "rev 2", "rev 3",
-    "rev 4", "rev 5", "rev 6", "rev 7",
-    "rev 8", "rev 9", "rev 10", "rev 11",
-    "rev 12", "rev 13", "rev 14", "rev 15",
-};
-
-/* Steppings for PXA2[15]0 */
-static const char *const pxa2x0_steppings[16] = {
-    "step A-0", "step A-1", "step B-0", "step B-1",
-    "step B-2", "step C-0", "rev 6", "rev 7",
-    "rev 8", "rev 9", "rev 10", "rev 11",
-    "rev 12", "rev 13", "rev 14", "rev 15",
-};
-
-/* Steppings for PXA255/26x.
- * rev 5: PXA26x B0, rev 6: PXA255 A0
- */
-static const char *const pxa255_steppings[16] = {
-    "rev 0", "rev 1", "rev 2", "step A-0",
-    "rev 4", "step B-0", "step A-0", "rev 7",
-    "rev 8", "rev 9", "rev 10", "rev 11",
-    "rev 12", "rev 13", "rev 14", "rev 15",
-};
-
-/* Stepping for PXA27x */
-static const char *const pxa27x_steppings[16] = {
-    "step A-0", "step A-1", "step B-0", "step B-1",
-    "step C-0", "rev 5", "rev 6", "rev 7",
-    "rev 8", "rev 9", "rev 10", "rev 11",
-    "rev 12", "rev 13", "rev 14", "rev 15",
-};
-
-static const char *const ixp425_steppings[16] = {
-    "step 0 (A0)", "rev 1 (ARMv5TE)", "rev 2", "rev 3",
-    "rev 4", "rev 5", "rev 6", "rev 7",
-    "rev 8", "rev 9", "rev 10", "rev 11",
-    "rev 12", "rev 13", "rev 14", "rev 15",
-};
-
-struct cpuidtab {
-    u_int32_t cpuid;
-    enum cpu_class cpu_class;
-    const char *cpu_name;
-    const char *const *cpu_steppings;
-};
-
-const struct cpuidtab cpuids[] = {
-    {CPU_ID_ARM2, CPU_CLASS_ARM2, "ARM2",
-     generic_steppings},
-    {CPU_ID_ARM250, CPU_CLASS_ARM2AS, "ARM250",
-     generic_steppings},
-
-    {CPU_ID_ARM3, CPU_CLASS_ARM3, "ARM3",
-     generic_steppings},
-
-    {CPU_ID_ARM600, CPU_CLASS_ARM6, "ARM600",
-     generic_steppings},
-    {CPU_ID_ARM610, CPU_CLASS_ARM6, "ARM610",
-     generic_steppings},
-    {CPU_ID_ARM620, CPU_CLASS_ARM6, "ARM620",
-     generic_steppings},
-
-    {CPU_ID_ARM700, CPU_CLASS_ARM7, "ARM700",
-     generic_steppings},
-    {CPU_ID_ARM710, CPU_CLASS_ARM7, "ARM710",
-     generic_steppings},
-    {CPU_ID_ARM7500, CPU_CLASS_ARM7, "ARM7500",
-     generic_steppings},
-    {CPU_ID_ARM710A, CPU_CLASS_ARM7, "ARM710a",
-     generic_steppings},
-    {CPU_ID_ARM7500FE, CPU_CLASS_ARM7, "ARM7500FE",
-     generic_steppings},
-    {CPU_ID_ARM710T, CPU_CLASS_ARM7TDMI, "ARM710T",
-     generic_steppings},
-    {CPU_ID_ARM720T, CPU_CLASS_ARM7TDMI, "ARM720T",
-     generic_steppings},
-    {CPU_ID_ARM740T8K, CPU_CLASS_ARM7TDMI, "ARM740T (8 KB cache)",
-     generic_steppings},
-    {CPU_ID_ARM740T4K, CPU_CLASS_ARM7TDMI, "ARM740T (4 KB cache)",
-     generic_steppings},
-
-    {CPU_ID_ARM810, CPU_CLASS_ARM8, "ARM810",
-     generic_steppings},
-
-    {CPU_ID_ARM920T, CPU_CLASS_ARM9TDMI, "ARM920T",
-     generic_steppings},
-    {CPU_ID_ARM920T_ALT, CPU_CLASS_ARM9TDMI, "ARM920T",
-     generic_steppings},
-    {CPU_ID_ARM922T, CPU_CLASS_ARM9TDMI, "ARM922T",
-     generic_steppings},
-    {CPU_ID_ARM926EJS, CPU_CLASS_ARM9EJS, "ARM926EJ-S",
-     generic_steppings},
-    {CPU_ID_ARM940T, CPU_CLASS_ARM9TDMI, "ARM940T",
-     generic_steppings},
-    {CPU_ID_ARM946ES, CPU_CLASS_ARM9ES, "ARM946E-S",
-     generic_steppings},
-    {CPU_ID_ARM966ES, CPU_CLASS_ARM9ES, "ARM966E-S",
-     generic_steppings},
-    {CPU_ID_ARM966ESR1, CPU_CLASS_ARM9ES, "ARM966E-S",
-     generic_steppings},
-    {CPU_ID_FA526, CPU_CLASS_ARM9TDMI, "FA526",
-     generic_steppings},
-    {CPU_ID_FA626TE, CPU_CLASS_ARM9ES, "FA626TE",
-     generic_steppings},
-
-    {CPU_ID_TI925T, CPU_CLASS_ARM9TDMI, "TI ARM925T",
-     generic_steppings},
-
-    {CPU_ID_ARM1020E, CPU_CLASS_ARM10E, "ARM1020E",
-     generic_steppings},
-    {CPU_ID_ARM1022ES, CPU_CLASS_ARM10E, "ARM1022E-S",
-     generic_steppings},
-    {CPU_ID_ARM1026EJS, CPU_CLASS_ARM10EJ, "ARM1026EJ-S",
-     generic_steppings},
-
-    {CPU_ID_CORTEXA5, CPU_CLASS_CORTEXA, "Cortex A5",
-     generic_steppings},
-    {CPU_ID_CORTEXA7, CPU_CLASS_CORTEXA, "Cortex A7",
-     generic_steppings},
-    {CPU_ID_CORTEXA8R0, CPU_CLASS_CORTEXA, "Cortex A8-r0",
-     generic_steppings},
-    {CPU_ID_CORTEXA8R1, CPU_CLASS_CORTEXA, "Cortex A8-r1",
-     generic_steppings},
-    {CPU_ID_CORTEXA8R2, CPU_CLASS_CORTEXA, "Cortex A8-r2",
-     generic_steppings},
-    {CPU_ID_CORTEXA8R3, CPU_CLASS_CORTEXA, "Cortex A8-r3",
-     generic_steppings},
-    {CPU_ID_CORTEXA9R1, CPU_CLASS_CORTEXA, "Cortex A9-r1",
-     generic_steppings},
-    {CPU_ID_CORTEXA9R2, CPU_CLASS_CORTEXA, "Cortex A9-r2",
-     generic_steppings},
-    {CPU_ID_CORTEXA9R3, CPU_CLASS_CORTEXA, "Cortex A9-r3",
-     generic_steppings},
-    {CPU_ID_CORTEXA15, CPU_CLASS_CORTEXA, "Cortex A15",
-     generic_steppings},
-
-    {CPU_ID_SA110, CPU_CLASS_SA1, "SA-110",
-     sa110_steppings},
-    {CPU_ID_SA1100, CPU_CLASS_SA1, "SA-1100",
-     sa1100_steppings},
-    {CPU_ID_SA1110, CPU_CLASS_SA1, "SA-1110",
-     sa1110_steppings},
-
-    {CPU_ID_IXP1200, CPU_CLASS_SA1, "IXP1200",
-     ixp12x0_steppings},
-
-    {CPU_ID_80200, CPU_CLASS_XSCALE, "i80200",
-     xscale_steppings},
-
-    {CPU_ID_80321_400, CPU_CLASS_XSCALE, "i80321 400MHz",
-     i80321_steppings},
-    {CPU_ID_80321_600, CPU_CLASS_XSCALE, "i80321 600MHz",
-     i80321_steppings},
-    {CPU_ID_80321_400_B0, CPU_CLASS_XSCALE, "i80321 400MHz",
-     i80321_steppings},
-    {CPU_ID_80321_600_B0, CPU_CLASS_XSCALE, "i80321 600MHz",
-     i80321_steppings},
-
-    {CPU_ID_81342, CPU_CLASS_XSCALE, "i81342",
-     i81342_steppings},
-
-    {CPU_ID_80219_400, CPU_CLASS_XSCALE, "i80219 400MHz",
-     i80219_steppings},
-    {CPU_ID_80219_600, CPU_CLASS_XSCALE, "i80219 600MHz",
-     i80219_steppings},
-
-    {CPU_ID_PXA27X, CPU_CLASS_XSCALE, "PXA27x",
-     pxa27x_steppings},
-    {CPU_ID_PXA250A, CPU_CLASS_XSCALE, "PXA250",
-     pxa2x0_steppings},
-    {CPU_ID_PXA210A, CPU_CLASS_XSCALE, "PXA210",
-     pxa2x0_steppings},
-    {CPU_ID_PXA250B, CPU_CLASS_XSCALE, "PXA250",
-     pxa2x0_steppings},
-    {CPU_ID_PXA210B, CPU_CLASS_XSCALE, "PXA210",
-     pxa2x0_steppings},
-    {CPU_ID_PXA250C, CPU_CLASS_XSCALE, "PXA255",
-     pxa255_steppings},
-    {CPU_ID_PXA210C, CPU_CLASS_XSCALE, "PXA210",
-     pxa2x0_steppings},
-
-    {CPU_ID_IXP425_533, CPU_CLASS_XSCALE, "IXP425 533MHz",
-     ixp425_steppings},
-    {CPU_ID_IXP425_400, CPU_CLASS_XSCALE, "IXP425 400MHz",
-     ixp425_steppings},
-    {CPU_ID_IXP425_266, CPU_CLASS_XSCALE, "IXP425 266MHz",
-     ixp425_steppings},
-
-    /*
-     * XXX ixp435 steppings? 
-     */
-    {CPU_ID_IXP435, CPU_CLASS_XSCALE, "IXP435",
-     ixp425_steppings},
-
-    {CPU_ID_ARM1136JS, CPU_CLASS_ARM11J, "ARM1136J-S",
-     generic_steppings},
-    {CPU_ID_ARM1136JSR1, CPU_CLASS_ARM11J, "ARM1136J-S R1",
-     generic_steppings},
-    {CPU_ID_ARM1176JZS, CPU_CLASS_ARM11J, "ARM1176JZ-S",
-     generic_steppings},
-
-    {CPU_ID_MV88FR131, CPU_CLASS_MARVELL, "Feroceon 88FR131",
-     generic_steppings},
-
-    {CPU_ID_MV88FR571_VD, CPU_CLASS_MARVELL, "Feroceon 88FR571-VD",
-     generic_steppings},
-    {CPU_ID_MV88SV581X_V7, CPU_CLASS_MARVELL, "Sheeva 88SV581x",
-     generic_steppings},
-    {CPU_ID_ARM_88SV581X_V7, CPU_CLASS_MARVELL, "Sheeva 88SV581x",
-     generic_steppings},
-    {CPU_ID_MV88SV584X_V7, CPU_CLASS_MARVELL, "Sheeva 88SV584x",
-     generic_steppings},
-
-    {0, CPU_CLASS_NONE, NULL, NULL}
-};
-
-struct cpu_classtab {
-    const char *class_name;
-    const char *class_option;
-};
-
-const struct cpu_classtab cpu_classes[] = {
-    {"unknown", NULL},          /* CPU_CLASS_NONE */
-    {"ARM2", "CPU_ARM2"},       /* CPU_CLASS_ARM2 */
-    {"ARM2as", "CPU_ARM250"},   /* CPU_CLASS_ARM2AS */
-    {"ARM3", "CPU_ARM3"},       /* CPU_CLASS_ARM3 */
-    {"ARM6", "CPU_ARM6"},       /* CPU_CLASS_ARM6 */
-    {"ARM7", "CPU_ARM7"},       /* CPU_CLASS_ARM7 */
-    {"ARM7TDMI", "CPU_ARM7TDMI"},   /* CPU_CLASS_ARM7TDMI */
-    {"ARM8", "CPU_ARM8"},       /* CPU_CLASS_ARM8 */
-    {"ARM9TDMI", "CPU_ARM9TDMI"},   /* CPU_CLASS_ARM9TDMI */
-    {"ARM9E-S", "CPU_ARM9E"},   /* CPU_CLASS_ARM9ES */
-    {"ARM9EJ-S", "CPU_ARM9E"},  /* CPU_CLASS_ARM9EJS */
-    {"ARM10E", "CPU_ARM10"},    /* CPU_CLASS_ARM10E */
-    {"ARM10EJ", "CPU_ARM10"},   /* CPU_CLASS_ARM10EJ */
-    {"Cortex-A", "CPU_CORTEXA"},    /* CPU_CLASS_CORTEXA */
-    {"SA-1", "CPU_SA110"},      /* CPU_CLASS_SA1 */
-    {"XScale", "CPU_XSCALE_..."},   /* CPU_CLASS_XSCALE */
-    {"ARM11J", "CPU_ARM11"},    /* CPU_CLASS_ARM11J */
-    {"Marvell", "CPU_MARVELL"}, /* CPU_CLASS_MARVELL */
-};
 
 /*
- * Report the type of the specified arm processor. This uses the generic and
- * arm specific information in the cpu structure to identify the processor.
- * The remaining fields in the cpu structure are filled in appropriately.
+ *	Routine:	cpu_sleep
+ *	Function:
  */
-
-static const char *const wtnames[] = {
-    "write-through",
-    "write-back",
-    "write-back",
-    "**unknown 3**",
-    "**unknown 4**",
-    "write-back-locking",       /* XXX XScale-specific? */
-    "write-back-locking-A",
-    "write-back-locking-B",
-    "**unknown 8**",
-    "**unknown 9**",
-    "**unknown 10**",
-    "**unknown 11**",
-    "**unknown 12**",
-    "**unknown 13**",
-    "write-back-locking-C",
-    "**unknown 15**",
-};
-
-int arm_picache_size;
-int arm_picache_line_size;
-int arm_picache_ways;
-
-int arm_pdcache_size;           /* and unified */
-int arm_pdcache_line_size;
-int arm_pdcache_ways;
-
-int arm_pcache_type;
-int arm_pcache_unified;
-
-int arm_dcache_align;
-int arm_dcache_align_mask;
-
-u_int arm_cache_level;
-u_int arm_cache_type[14];
-u_int arm_cache_loc;
-
-static int arm_dcache_l2_nsets;
-static int arm_dcache_l2_assoc;
-static int arm_dcache_l2_linesize;
-
-arm_processor_id_t arm_processor_id;
-
-void get_cachetype_cp15()
+void
+cpu_sleep(void)
 {
-    u_int ctype, isize, dsize, cpuid;
-    u_int clevel, csize, i, sel;
-    u_int multiplier;
-    u_char type;
+	cpu_data_t     *cpu_data_ptr = getCpuDatap();
+	pmap_switch_user_ttb(kernel_pmap);
+	cpu_data_ptr->cpu_active_thread = current_thread();
+	cpu_data_ptr->cpu_reset_handler = (vm_offset_t) start_cpu_paddr;
+	cpu_data_ptr->cpu_flags |= SleepState;
+	cpu_data_ptr->cpu_user_debug = NULL;
 
-    __asm __volatile("mrc p15, 0, %0, c0, c0, 1":"=r"(ctype));
+	CleanPoC_Dcache();
 
-    cpuid = armreg_midr_read();
-    arm_processor_id.processor_midr = cpuid;
+	PE_cpu_machine_quiesce(cpu_data_ptr->cpu_id);
 
-    /*
-     * ...and thus spake the ARM ARM:
-     *
-     * If an <opcode2> value corresponding to an unimplemented or
-     * reserved ID register is encountered, the System Control
-     * processor returns the value of the main ID register.
-     */
-    if (ctype == cpuid)
-        goto out;
-
-    if (CPU_CT_FORMAT(ctype) == CPU_CT_ARMV7) {
-        __asm __volatile("mrc p15, 1, %0, c0, c0, 1":"=r"(clevel));
-        arm_cache_level = clevel;
-        arm_cache_loc = CPU_CLIDR_LOC(arm_cache_level);
-        i = 0;
-        while ((type = (clevel & 0x7)) && i < 7) {
-            if (type == CACHE_DCACHE || type == CACHE_UNI_CACHE ||
-                type == CACHE_SEP_CACHE) {
-                sel = i << 1;
-                __asm __volatile("mcr p15, 2, %0, c0, c0, 0"::"r"(sel));
-                __asm __volatile("mrc p15, 1, %0, c0, c0, 0":"=r"(csize));
-                arm_cache_type[sel] = csize;
-                arm_dcache_align = 1 << (CPUV7_CT_xSIZE_LEN(csize) + 4);
-                arm_dcache_align_mask = arm_dcache_align - 1;
-            }
-            if (type == CACHE_ICACHE || type == CACHE_SEP_CACHE) {
-                sel = (i << 1) | 1;
-                __asm __volatile("mcr p15, 2, %0, c0, c0, 0"::"r"(sel));
-                __asm __volatile("mrc p15, 1, %0, c0, c0, 0":"=r"(csize));
-                arm_cache_type[sel] = csize;
-            }
-            i++;
-            clevel >>= 3;
-        }
-    } else {
-        if ((ctype & CPU_CT_S) == 0)
-            arm_pcache_unified = 1;
-
-        /*
-         * If you want to know how this code works, go read the ARM ARM.
-         */
-
-        arm_pcache_type = CPU_CT_CTYPE(ctype);
-
-        if (arm_pcache_unified == 0) {
-            isize = CPU_CT_ISIZE(ctype);
-            multiplier = (isize & CPU_CT_xSIZE_M) ? 3 : 2;
-            arm_picache_line_size = 1U << (CPU_CT_xSIZE_LEN(isize) + 3);
-            if (CPU_CT_xSIZE_ASSOC(isize) == 0) {
-                if (isize & CPU_CT_xSIZE_M)
-                    arm_picache_line_size = 0;  /* not present */
-                else
-                    arm_picache_ways = 1;
-            } else {
-                arm_picache_ways = multiplier << (CPU_CT_xSIZE_ASSOC(isize) - 1);
-            }
-            arm_picache_size = multiplier << (CPU_CT_xSIZE_SIZE(isize) + 8);
-        }
-
-        dsize = CPU_CT_DSIZE(ctype);
-        multiplier = (dsize & CPU_CT_xSIZE_M) ? 3 : 2;
-        arm_pdcache_line_size = 1U << (CPU_CT_xSIZE_LEN(dsize) + 3);
-        if (CPU_CT_xSIZE_ASSOC(dsize) == 0) {
-            if (dsize & CPU_CT_xSIZE_M)
-                arm_pdcache_line_size = 0;  /* not present */
-            else
-                arm_pdcache_ways = 1;
-        } else {
-            arm_pdcache_ways = multiplier << (CPU_CT_xSIZE_ASSOC(dsize) - 1);
-        }
-        arm_pdcache_size = multiplier << (CPU_CT_xSIZE_SIZE(dsize) + 8);
-
-        arm_dcache_align = arm_pdcache_line_size;
-
-        arm_dcache_l2_assoc = CPU_CT_xSIZE_ASSOC(dsize) + multiplier - 2;
-        arm_dcache_l2_linesize = CPU_CT_xSIZE_LEN(dsize) + 3;
-        arm_dcache_l2_nsets = 6 + CPU_CT_xSIZE_SIZE(dsize) -
-            CPU_CT_xSIZE_ASSOC(dsize) - CPU_CT_xSIZE_LEN(dsize);
-
- out:
-        arm_dcache_align_mask = arm_dcache_align - 1;
-    }
 }
 
-static void print_enadis(int enadis, char *s)
+_Atomic uint32_t cpu_idle_count = 0;
+
+/*
+ *	Routine:	cpu_idle
+ *	Function:
+ */
+void __attribute__((noreturn))
+cpu_idle(void)
 {
+	cpu_data_t     *cpu_data_ptr = getCpuDatap();
+	uint64_t	new_idle_timeout_ticks = 0x0ULL, lastPop;
 
-    kprintf(" %s %sabled", s, (enadis == 0) ? "dis" : "en");
-}
+	if ((!idle_enable) || (cpu_data_ptr->cpu_signal & SIGPdisabled))
+		Idle_load_context();
+	if (!SetIdlePop())
+		Idle_load_context();
+	lastPop = cpu_data_ptr->rtcPop;
 
-int ctrl;
-enum cpu_class cpu_class = CPU_CLASS_NONE;
+	pmap_switch_user_ttb(kernel_pmap);
+	cpu_data_ptr->cpu_active_thread = current_thread();
+	if (cpu_data_ptr->cpu_user_debug)
+		arm_debug_set(NULL);
+	cpu_data_ptr->cpu_user_debug = NULL;
 
-u_int cpu_pfr(int num)
-{
-    u_int feat = 0;
+	if (cpu_data_ptr->cpu_idle_notify)
+		((processor_idle_t) cpu_data_ptr->cpu_idle_notify) (cpu_data_ptr->cpu_id, TRUE, &new_idle_timeout_ticks);
 
-    switch (num) {
-    case 0:
- __asm __volatile("mrc p15, 0, %0, c0, c1, 0":"=r"(feat));
-        break;
-    case 1:
- __asm __volatile("mrc p15, 0, %0, c0, c1, 1":"=r"(feat));
-        break;
-    default:
-        panic("Processor Feature Register %d not implemented", num);
-        break;
-    }
+	if (cpu_data_ptr->idle_timer_notify != 0) {
+		if (new_idle_timeout_ticks == 0x0ULL) {
+			/* turn off the idle timer */
+			cpu_data_ptr->idle_timer_deadline = 0x0ULL;
+		} else {
+			/* set the new idle timeout */
+			clock_absolutetime_interval_to_deadline(new_idle_timeout_ticks, &cpu_data_ptr->idle_timer_deadline);
+		}
+		timer_resync_deadlines();
+		if (cpu_data_ptr->rtcPop != lastPop)
+			SetIdlePop();
+	}
 
-    return (feat);
-}
-
-static
-void identify_armv7(void)
-{
-    u_int feature;
-
-    kprintf("Supported features:");
-    /*
-     * Get Processor Feature Register 0 
-     */
-    feature = cpu_pfr(0);
-
-    if (feature & ARM_PFR0_ARM_ISA_MASK) {
-        kprintf(" ARM_ISA");
-        arm_processor_id.processor_features |= kProcessorFeatureARM_ISA;
-    }
-
-    if (feature & ARM_PFR0_THUMB2) {
-        kprintf(" THUMB2"); 
-        arm_processor_id.processor_features |= kProcessorFeatureThumb2 | kProcessorFeatureThumb;
-    } else if (feature & ARM_PFR0_THUMB) {
-        kprintf(" THUMB");
-        arm_processor_id.processor_features |= kProcessorFeatureThumb;
-    }
-
-    if (feature & ARM_PFR0_JAZELLE_MASK) {
-        kprintf(" JAZELLE");
-        arm_processor_id.processor_features |= kProcessorFeatureJazelle;
-    }
-
-    if (feature & ARM_PFR0_THUMBEE_MASK) {
-        kprintf(" THUMBEE");
-        arm_processor_id.processor_features |= kProcessorFeatureThumbEE;
-    }
-
-    /*
-     * Get Processor Feature Register 1 
-     */
-    feature = cpu_pfr(1);
-
-    if (feature & ARM_PFR1_ARMV4_MASK) {
-        kprintf(" ARMv4");
-        arm_processor_id.processor_features |= kProcessorFeatureARMv4;
-    }
-
-    if (feature & ARM_PFR1_SEC_EXT_MASK) {
-        kprintf(" Security_Ext");
-        arm_processor_id.processor_features |= kProcessorFeatureSecurity;
-    }
-
-    if (feature & ARM_PFR1_MICROCTRL_MASK) {
-        kprintf(" M_profile");
-        arm_processor_id.processor_features |= kProcessorFeatureMicrocontroller;
-    }
-
-    kprintf("\n");
-}
-
-void identify_arm_cpu(void)
-{
-    u_int cpuid, reg, size, sets, ways;
-    u_int8_t type, linesize;
-    int i;
-
-    cpuid = armreg_midr_read();
-    ctrl = armreg_sctrl_read();
-
-    if (cpuid == 0) {
-        kprintf("Processor failed probe - no CPU ID\n");
-        return;
-    }
-
-    for (i = 0; cpuids[i].cpuid != 0; i++)
-        if (cpuids[i].cpuid == (cpuid & CPU_ID_CPU_MASK)) {
-            cpu_class = cpuids[i].cpu_class;
-            arm_processor_id.processor_class = cpuids[i].cpu_name;
-            kprintf("CPU: %s %s (%s core)\n",
-                   cpuids[i].cpu_name,
-                   cpuids[i].cpu_steppings[cpuid &
-                                           CPU_ID_REVISION_MASK],
-                   cpu_classes[cpu_class].class_name);
-            break;
-        }
-    if (cpuids[i].cpuid == 0) {
-        kprintf("unknown CPU (ID = 0x%x)\n", cpuid);
-        arm_processor_id.processor_class = "Unknown";
-    }
-
-    kprintf(" ");
-
-    if ((cpuid & CPU_ID_ARCH_MASK) == CPU_ID_CPUID_SCHEME) {
-        identify_armv7();
-    } else {
-        if (ctrl & CPU_CONTROL_BEND_ENABLE)
-            kprintf(" Big-endian");
-        else
-            kprintf(" Little-endian");
-
-        switch (cpu_class) {
-        case CPU_CLASS_ARM6:
-        case CPU_CLASS_ARM7:
-        case CPU_CLASS_ARM7TDMI:
-        case CPU_CLASS_ARM8:
-            print_enadis(ctrl & CPU_CONTROL_IDC_ENABLE, "IDC");
-            break;
-        case CPU_CLASS_ARM9TDMI:
-        case CPU_CLASS_ARM9ES:
-        case CPU_CLASS_ARM9EJS:
-        case CPU_CLASS_ARM10E:
-        case CPU_CLASS_ARM10EJ:
-        case CPU_CLASS_SA1:
-        case CPU_CLASS_XSCALE:
-        case CPU_CLASS_ARM11J:
-        case CPU_CLASS_MARVELL:
-            print_enadis(ctrl & CPU_CONTROL_DC_ENABLE, "DC");
-            print_enadis(ctrl & CPU_CONTROL_IC_ENABLE, "IC");
-#ifdef CPU_XSCALE_81342
-            print_enadis(ctrl & CPU_CONTROL_L2_ENABLE, "L2");
+#if KPC
+	kpc_idle();
 #endif
-#if defined(SOC_MV_KIRKWOOD) || defined(SOC_MV_DISCOVERY)
-            i = sheeva_control_ext(0, 0);
-            print_enadis(i & MV_WA_ENABLE, "WA");
-            print_enadis(i & MV_DC_STREAM_ENABLE, "DC streaming");
-            kprintf("\n ");
-            print_enadis((i & MV_BTB_DISABLE) == 0, "BTB");
-            print_enadis(i & MV_L2_ENABLE, "L2");
-            print_enadis((i & MV_L2_PREFETCH_DISABLE) == 0, "L2 prefetch");
-            kprintf("\n ");
+
+	platform_cache_idle_enter();
+	cpu_idle_wfi((boolean_t) wfi_fast);
+	platform_cache_idle_exit();
+
+	ClearIdlePop(TRUE);
+	cpu_idle_exit();
+}
+
+/*
+ *	Routine:	cpu_idle_exit
+ *	Function:
+ */
+void
+cpu_idle_exit(void)
+{
+	uint64_t	new_idle_timeout_ticks = 0x0ULL;
+	cpu_data_t     *cpu_data_ptr = getCpuDatap();
+
+#if KPC
+	kpc_idle_exit();
 #endif
-            break;
-        default:
-            break;
-        }
-    }
 
-    print_enadis(ctrl & CPU_CONTROL_WBUF_ENABLE, "WB");
-    if (ctrl & CPU_CONTROL_LABT_ENABLE)
-        kprintf(" LABT");
-    else
-        kprintf(" EABT");
 
-    print_enadis(ctrl & CPU_CONTROL_BPRD_ENABLE, "branch prediction");
-    kprintf("\n");
+	pmap_set_pmap(cpu_data_ptr->cpu_active_thread->map->pmap, current_thread());
 
-    if (arm_cache_level) {
-        kprintf("LoUU:%d LoC:%d LoUIS:%d \n", CPU_CLIDR_LOUU(arm_cache_level) + 1,
-               arm_cache_loc, CPU_CLIDR_LOUIS(arm_cache_level) + 1);
-        i = 0;
-        while (((type = CPU_CLIDR_CTYPE(arm_cache_level, i)) != 0) && i < 7) {
-            kprintf("Cache level %d: \n", i + 1);
-            if (type == CACHE_DCACHE || type == CACHE_UNI_CACHE ||
-                type == CACHE_SEP_CACHE) {
-                reg = arm_cache_type[2 * i];
-                ways = CPUV7_CT_xSIZE_ASSOC(reg) + 1;
-                sets = CPUV7_CT_xSIZE_SET(reg) + 1;
-                linesize = 1 << (CPUV7_CT_xSIZE_LEN(reg) + 4);
-                size = (ways * sets * linesize) / 1024;
+	if (cpu_data_ptr->cpu_idle_notify)
+		((processor_idle_t) cpu_data_ptr->cpu_idle_notify) (cpu_data_ptr->cpu_id, FALSE, &new_idle_timeout_ticks);
 
-                arm_processor_id.cache_levels[i].linesize = linesize;
-                arm_processor_id.cache_levels[i].ways = ways;
-                arm_processor_id.cache_levels[i].size = (ways * sets * linesize);
+	if (cpu_data_ptr->idle_timer_notify != 0) {
+		if (new_idle_timeout_ticks == 0x0ULL) {
+			/* turn off the idle timer */
+			cpu_data_ptr->idle_timer_deadline = 0x0ULL;
+		} else {
+			/* set the new idle timeout */
+			clock_absolutetime_interval_to_deadline(new_idle_timeout_ticks, &cpu_data_ptr->idle_timer_deadline);
+		}
+		timer_resync_deadlines();
+	}
 
-                if (type == CACHE_UNI_CACHE)
-                    kprintf(" %dKB/%dB %d-way unified cache", size, linesize, ways);
-                else
-                    kprintf(" %dKB/%dB %d-way data cache", size, linesize, ways);
-                if (reg & CPUV7_CT_CTYPE_WT)
-                    kprintf(" WT");
-                if (reg & CPUV7_CT_CTYPE_WB)
-                    kprintf(" WB");
-                if (reg & CPUV7_CT_CTYPE_RA)
-                    kprintf(" Read-Alloc");
-                if (reg & CPUV7_CT_CTYPE_WA)
-                    kprintf(" Write-Alloc");
-                kprintf("\n");
-            }
-
-            if (type == CACHE_ICACHE || type == CACHE_SEP_CACHE) {
-                reg = arm_cache_type[(2 * i) + 1];
-
-                ways = CPUV7_CT_xSIZE_ASSOC(reg) + 1;
-                sets = CPUV7_CT_xSIZE_SET(reg) + 1;
-                linesize = 1 << (CPUV7_CT_xSIZE_LEN(reg) + 4);
-                size = (ways * sets * linesize) / 1024;
-
-                kprintf(" %dKB/%dB %d-way instruction cache", size, linesize, ways);
-                if (reg & CPUV7_CT_CTYPE_WT)
-                    kprintf(" WT");
-                if (reg & CPUV7_CT_CTYPE_WB)
-                    kprintf(" WB");
-                if (reg & CPUV7_CT_CTYPE_RA)
-                    kprintf(" Read-Alloc");
-                if (reg & CPUV7_CT_CTYPE_WA)
-                    kprintf(" Write-Alloc");
-                kprintf("\n");
-            }
-            i++;
-        }
-    } else {
-        /*
-         * Print cache info. 
-         */
-        if (arm_picache_line_size == 0 && arm_pdcache_line_size == 0)
-            return;
-
-        if (arm_pcache_unified) {
-            kprintf("  %dKB/%dB %d-way %s unified cache\n",
-                   arm_pdcache_size / 1024,
-                   arm_pdcache_line_size, arm_pdcache_ways, wtnames[arm_pcache_type]);
-        } else {
-            kprintf("  %dKB/%dB %d-way instruction cache\n",
-                   arm_picache_size / 1024, arm_picache_line_size, arm_picache_ways);
-            kprintf("  %dKB/%dB %d-way %s data cache\n",
-                   arm_pdcache_size / 1024,
-                   arm_pdcache_line_size, arm_pdcache_ways, wtnames[arm_pcache_type]);
-        }
-    }
+	Idle_load_context();
 }
 
-/**
- * cpu_bootstrap
- *
- * Initialize core processor data for CPU #0 during initialization.
- */
-void cpu_bootstrap(void)
+void
+cpu_init(void)
 {
-    cpu_data_ptr[0] = &cpu_data_master;
+	cpu_data_t     *cdp = getCpuDatap();
+	arm_cpu_info_t *cpu_info_p;
 
-    cpu_data_master.cpu_this = &cpu_data_master;
-    cpu_data_master.cpu_processor = &BootProcessor;
-    cpu_data_master.cpu_int_stack_top = (vm_offset_t)intstack_top;
+	if (cdp->cpu_type != CPU_TYPE_ARM) {
+
+		cdp->cpu_type = CPU_TYPE_ARM;
+
+		timer_call_queue_init(&cdp->rtclock_timer.queue);
+		cdp->rtclock_timer.deadline = EndOfAllTime;
+
+		if (cdp == &BootCpuData) {
+			do_cpuid();
+			do_cacheid();
+			do_mvfpid();
+		} else {
+			/*
+			 * We initialize non-boot CPUs here; the boot CPU is
+			 * dealt with as part of pmap_bootstrap.
+			 */
+			pmap_cpu_data_init();
+		}
+		/* ARM_SMP: Assuming identical cpu */
+		do_debugid();
+
+		cpu_info_p = cpuid_info();
+
+		/* switch based on CPU's reported architecture */
+		switch (cpu_info_p->arm_info.arm_arch) {
+		case CPU_ARCH_ARMv4T:
+		case CPU_ARCH_ARMv5T:
+			cdp->cpu_subtype = CPU_SUBTYPE_ARM_V4T;
+			break;
+		case CPU_ARCH_ARMv5TE:
+		case CPU_ARCH_ARMv5TEJ:
+			if (cpu_info_p->arm_info.arm_implementor == CPU_VID_INTEL)
+				cdp->cpu_subtype = CPU_SUBTYPE_ARM_XSCALE;
+			else
+				cdp->cpu_subtype = CPU_SUBTYPE_ARM_V5TEJ;
+			break;
+		case CPU_ARCH_ARMv6:
+			cdp->cpu_subtype = CPU_SUBTYPE_ARM_V6;
+			break;
+		case CPU_ARCH_ARMv7:
+			cdp->cpu_subtype = CPU_SUBTYPE_ARM_V7;
+			break;
+		case CPU_ARCH_ARMv7f:
+			cdp->cpu_subtype = CPU_SUBTYPE_ARM_V7F;
+			break;
+		case CPU_ARCH_ARMv7s:
+			cdp->cpu_subtype = CPU_SUBTYPE_ARM_V7S;
+			break;
+		case CPU_ARCH_ARMv7k:
+			cdp->cpu_subtype = CPU_SUBTYPE_ARM_V7K;
+			break;
+		default:
+			cdp->cpu_subtype = CPU_SUBTYPE_ARM_ALL;
+			break;
+		}
+
+		cdp->cpu_threadtype = CPU_THREADTYPE_NONE;
+	}
+	cdp->cpu_stat.irq_ex_cnt_wake = 0;
+	cdp->cpu_stat.ipi_cnt_wake = 0;
+	cdp->cpu_stat.timer_cnt_wake = 0;
+	cdp->cpu_running = TRUE;
+	cdp->cpu_sleep_token_last = cdp->cpu_sleep_token;
+	cdp->cpu_sleep_token = 0x0UL;
+
 }
 
-/**
- * cpu_init
- *
- * Initialize more core processor data for CPU #0 during initialization.
- */
-
-/* Stub definitions. */
-extern void fleh_reset(void);
-extern void fleh_swi(void);
-extern void fleh_undef(void);
-extern void fleh_prefabt(void);
-extern void fleh_dataabt(void);
-extern void fleh_dataexc(void);
-extern void fleh_irq(void);
-
-void cpu_init(void)
+cpu_data_t *
+cpu_data_alloc(boolean_t is_boot_cpu)
 {
-    cpu_data_t *cdp = current_cpu_datap();
+	cpu_data_t		*cpu_data_ptr = NULL;
 
-    timer_call_initialize_queue(&cdp->rt_timer.queue);
-    cdp->rt_timer.deadline = EndOfAllTime;
+	if (is_boot_cpu)
+		cpu_data_ptr = &BootCpuData;
+	else {
+		void	*irq_stack = NULL;
+		void	*fiq_stack = NULL;
 
-    cdp->cpu_type = CPU_TYPE_ARM;
-#if defined(_ARM_ARCH_7)
-    cdp->cpu_subtype = CPU_SUBTYPE_ARM_V7;
-#elif defined(_ARM_ARCH_V6)
-    cdp->cpu_subtype = CPU_SUBTYPE_ARM_V6;
+		if ((kmem_alloc(kernel_map, (vm_offset_t *)&cpu_data_ptr, sizeof(cpu_data_t), VM_KERN_MEMORY_CPU)) != KERN_SUCCESS)
+			goto cpu_data_alloc_error;
+
+		bzero((void *)cpu_data_ptr, sizeof(cpu_data_t));
+
+		if ((irq_stack = kalloc(INTSTACK_SIZE)) == 0) 
+			goto cpu_data_alloc_error;
+#if __BIGGEST_ALIGNMENT__
+		/* force 16-byte alignment */
+		if ((uint32_t)irq_stack & 0x0F)
+			irq_stack = (void *)((uint32_t)irq_stack + (0x10 - ((uint32_t)irq_stack & 0x0F)));
+#endif
+		cpu_data_ptr->intstack_top = (vm_offset_t)irq_stack + INTSTACK_SIZE ;
+		cpu_data_ptr->istackptr = cpu_data_ptr->intstack_top;
+
+		if ((fiq_stack = kalloc(PAGE_SIZE)) == 0) 
+			goto cpu_data_alloc_error;
+#if __BIGGEST_ALIGNMENT__
+		/* force 16-byte alignment */
+		if ((uint32_t)fiq_stack & 0x0F)
+			fiq_stack = (void *)((uint32_t)fiq_stack + (0x10 - ((uint32_t)fiq_stack & 0x0F)));
+#endif
+		cpu_data_ptr->fiqstack_top = (vm_offset_t)fiq_stack + PAGE_SIZE ;
+		cpu_data_ptr->fiqstackptr = cpu_data_ptr->fiqstack_top;
+	}
+
+	cpu_data_ptr->cpu_processor = cpu_processor_alloc(is_boot_cpu);
+	if (cpu_data_ptr->cpu_processor == (struct processor *)NULL)
+		goto cpu_data_alloc_error;
+
+	return cpu_data_ptr;
+
+cpu_data_alloc_error:
+	panic("cpu_data_alloc() failed\n");
+	return (cpu_data_t *)NULL;
+}
+
+
+void
+cpu_data_free(cpu_data_t *cpu_data_ptr)
+{
+        if (cpu_data_ptr == &BootCpuData)
+                return;
+
+	cpu_processor_free( cpu_data_ptr->cpu_processor);
+	kfree( (void *)(cpu_data_ptr->intstack_top - INTSTACK_SIZE), INTSTACK_SIZE);
+	kfree( (void *)(cpu_data_ptr->fiqstack_top - PAGE_SIZE), PAGE_SIZE);
+	kmem_free(kernel_map, (vm_offset_t)cpu_data_ptr, sizeof(cpu_data_t));
+}
+
+void
+cpu_data_init(cpu_data_t *cpu_data_ptr)
+{
+	uint32_t i = 0;
+
+	cpu_data_ptr->cpu_flags = 0;
+#if	__arm__
+	cpu_data_ptr->cpu_exc_vectors = (vm_offset_t)&ExceptionVectorsTable;
+#endif
+	cpu_data_ptr->interrupts_enabled = 0;
+	cpu_data_ptr->cpu_int_state = 0;
+	cpu_data_ptr->cpu_pending_ast = AST_NONE;
+	cpu_data_ptr->cpu_cache_dispatch = (void *) 0;
+	cpu_data_ptr->rtcPop = EndOfAllTime;
+	cpu_data_ptr->rtclock_datap = &RTClockData;
+	cpu_data_ptr->cpu_user_debug = NULL;
+	cpu_data_ptr->cpu_base_timebase_low = 0;
+	cpu_data_ptr->cpu_base_timebase_high = 0;
+	cpu_data_ptr->cpu_idle_notify = (void *) 0;
+	cpu_data_ptr->cpu_idle_latency = 0x0ULL;
+	cpu_data_ptr->cpu_idle_pop = 0x0ULL;
+	cpu_data_ptr->cpu_reset_type = 0x0UL;
+	cpu_data_ptr->cpu_reset_handler = 0x0UL;
+	cpu_data_ptr->cpu_reset_assist = 0x0UL;
+	cpu_data_ptr->cpu_regmap_paddr = 0x0ULL;
+	cpu_data_ptr->cpu_phys_id = 0x0UL;
+	cpu_data_ptr->cpu_l2_access_penalty = 0;
+	cpu_data_ptr->cpu_cluster_type = CLUSTER_TYPE_SMP;
+	cpu_data_ptr->cpu_cluster_id = 0;
+	cpu_data_ptr->cpu_l2_id = 0;
+	cpu_data_ptr->cpu_l2_size = 0;
+	cpu_data_ptr->cpu_l3_id = 0;
+	cpu_data_ptr->cpu_l3_size = 0;
+
+	cpu_data_ptr->cpu_signal = SIGPdisabled;
+
+#if DEBUG || DEVELOPMENT
+	cpu_data_ptr->failed_xcall = NULL;
+	cpu_data_ptr->failed_signal = 0;
+	cpu_data_ptr->failed_signal_count = 0;
+#endif
+
+	cpu_data_ptr->cpu_get_fiq_handler = NULL;
+	cpu_data_ptr->cpu_tbd_hardware_addr = NULL;
+	cpu_data_ptr->cpu_tbd_hardware_val = NULL;
+	cpu_data_ptr->cpu_get_decrementer_func = NULL;
+	cpu_data_ptr->cpu_set_decrementer_func = NULL;
+	cpu_data_ptr->cpu_sleep_token = ARM_CPU_ON_SLEEP_PATH;
+	cpu_data_ptr->cpu_sleep_token_last = 0x00000000UL;
+	cpu_data_ptr->cpu_xcall_p0 = NULL;
+	cpu_data_ptr->cpu_xcall_p1 = NULL;
+
+#if	__ARM_SMP__ && defined(ARMA7)
+	cpu_data_ptr->cpu_CLWFlush_req = 0x0ULL;
+	cpu_data_ptr->cpu_CLWFlush_last = 0x0ULL;
+	cpu_data_ptr->cpu_CLWClean_req = 0x0ULL;
+	cpu_data_ptr->cpu_CLWClean_last = 0x0ULL;
+	cpu_data_ptr->cpu_CLW_active = 0x1UL;
+#endif
+
+	pmap_cpu_data_t * pmap_cpu_data_ptr = &cpu_data_ptr->cpu_pmap_cpu_data;
+
+	pmap_cpu_data_ptr->cpu_user_pmap = (struct pmap *) NULL;
+	pmap_cpu_data_ptr->cpu_user_pmap_stamp = 0;
+	pmap_cpu_data_ptr->cpu_number = PMAP_INVALID_CPU_NUM;
+
+	for (i = 0; i < (sizeof(pmap_cpu_data_ptr->cpu_asid_high_bits) / sizeof(*pmap_cpu_data_ptr->cpu_asid_high_bits)); i++) {
+		pmap_cpu_data_ptr->cpu_asid_high_bits[i] = 0;
+	}
+	cpu_data_ptr->halt_status = CPU_NOT_HALTED;
+}
+
+kern_return_t
+cpu_data_register(cpu_data_t *cpu_data_ptr)
+{
+	int cpu;
+
+	cpu = OSIncrementAtomic((SInt32*)&real_ncpus);
+	if (real_ncpus > MAX_CPUS) {
+		return KERN_FAILURE;
+	}
+
+	cpu_data_ptr->cpu_number = cpu;
+	CpuDataEntries[cpu].cpu_data_vaddr = cpu_data_ptr;
+	CpuDataEntries[cpu].cpu_data_paddr = (void *)ml_vtophys( (vm_offset_t)cpu_data_ptr);
+	return KERN_SUCCESS;
+}
+
+kern_return_t
+cpu_start(int cpu)
+{
+	kprintf("cpu_start() cpu: %d\n", cpu);
+	if (cpu == cpu_number()) {
+		cpu_machine_init();
+		return KERN_SUCCESS;
+	} else {
+#if     __ARM_SMP__
+		cpu_data_t	*cpu_data_ptr;
+		thread_t	first_thread;
+
+		cpu_data_ptr = CpuDataEntries[cpu].cpu_data_vaddr;
+		cpu_data_ptr->cpu_reset_handler = (vm_offset_t) start_cpu_paddr;
+
+		cpu_data_ptr->cpu_pmap_cpu_data.cpu_user_pmap = NULL;
+
+		if (cpu_data_ptr->cpu_processor->next_thread != THREAD_NULL)
+			first_thread = cpu_data_ptr->cpu_processor->next_thread;
+		else
+			first_thread = cpu_data_ptr->cpu_processor->idle_thread;
+		cpu_data_ptr->cpu_active_thread = first_thread;
+		first_thread->machine.CpuDatap = cpu_data_ptr;
+
+		flush_dcache((vm_offset_t)&CpuDataEntries[cpu], sizeof(cpu_data_entry_t), FALSE);
+		flush_dcache((vm_offset_t)cpu_data_ptr, sizeof(cpu_data_t), FALSE);
+		(void) PE_cpu_start(cpu_data_ptr->cpu_id, (vm_offset_t)NULL, (vm_offset_t)NULL);
+		return KERN_SUCCESS;
 #else
-    cdp->cpu_subtype = CPU_SUBTYPE_ARM_ALL;
+		return KERN_FAILURE;
 #endif
-
-    cdp->fleh_reset = (uint32_t)&fleh_reset;
-    cdp->fleh_swi = (uint32_t)&fleh_swi;
-    cdp->fleh_undef = (uint32_t)&fleh_undef;
-    cdp->fleh_prefabt = (uint32_t)&fleh_prefabt;
-    cdp->fleh_dataabt = (uint32_t)&fleh_dataabt;
-    cdp->fleh_dataexc = (uint32_t)&fleh_dataexc;
-    cdp->fleh_irq = (uint32_t)&fleh_irq;
+	}
 }
 
-/**
- * get_cpu_number
- * 
- * Return the current processor number from the PCB. (Right now since we have
- * no SMP support, we have only 1 processor.
- *
- * When SMP becomes of real importance, we can get the current MPCore number
- * by reading some registers in the CP15 coprocessor.
- */
-int get_cpu_number(void)
+void
+cpu_timebase_init(boolean_t from_boot __unused)
 {
-    return 0;
+	cpu_data_t *cdp = getCpuDatap();
+
+	if (cdp->cpu_get_fiq_handler == NULL) {
+		cdp->cpu_get_fiq_handler = rtclock_timebase_func.tbd_fiq_handler;
+		cdp->cpu_get_decrementer_func = rtclock_timebase_func.tbd_get_decrementer;
+		cdp->cpu_set_decrementer_func = rtclock_timebase_func.tbd_set_decrementer;
+		cdp->cpu_tbd_hardware_addr = (void *)rtclock_timebase_addr;
+		cdp->cpu_tbd_hardware_val = (void *)rtclock_timebase_val;
+	}
+	cdp->cpu_decrementer = 0x7FFFFFFFUL;
+	cdp->cpu_timebase_low = 0x0UL;
+	cdp->cpu_timebase_high = 0x0UL;
+
+#if __arm__ && (__BIGGEST_ALIGNMENT__ > 4)
+	/* For the newer ARMv7k ABI where 64-bit types are 64-bit aligned, but pointers
+	 * are 32-bit. */
+	cdp->cpu_base_timebase_low = rtclock_base_abstime_low;
+	cdp->cpu_base_timebase_high = rtclock_base_abstime_high;
+#else
+	*((uint64_t *) & cdp->cpu_base_timebase_low) = rtclock_base_abstime;
+#endif
 }
 
-/**
- * current_cpu_datap
- * 
- * Return the current processor PCB.
- */
-cpu_data_t *current_cpu_datap(void)
+
+__attribute__((noreturn))
+void
+ml_arm_sleep(void)
 {
-    int smp_number = get_cpu_number();
-    cpu_data_t *current_cpu_data;
+	cpu_data_t     *cpu_data_ptr = getCpuDatap();
 
-    if (smp_number == 0)
-        return &cpu_data_master;
+	if (cpu_data_ptr == &BootCpuData) {
+		cpu_data_t	*target_cdp;
+		unsigned int	cpu;
 
-    current_cpu_data = cpu_datap(smp_number);
-    if (!current_cpu_data) {
-        panic("cpu_data for slot %d is not available yet\n", smp_number);
-    }
+		for (cpu=0; cpu < MAX_CPUS; cpu++) {
+			target_cdp = (cpu_data_t *)CpuDataEntries[cpu].cpu_data_vaddr;
+			if(target_cdp == (cpu_data_t *)NULL)
+				break;
 
-    return current_cpu_data;
+			if (target_cdp == cpu_data_ptr)
+				continue;
+
+			while (target_cdp->cpu_sleep_token != ARM_CPU_ON_SLEEP_PATH);
+		}
+
+		/* Now that the other cores have entered the sleep path, set
+		 * the abstime fixup we'll use when we resume.*/
+		rtclock_base_abstime = ml_get_timebase();
+		wake_abstime = rtclock_base_abstime;
+
+	} else {
+		platform_cache_disable();
+		CleanPoU_Dcache();
+	}
+	cpu_data_ptr->cpu_sleep_token = ARM_CPU_ON_SLEEP_PATH;
+#if	__ARM_SMP__ && defined(ARMA7)
+	cpu_data_ptr->cpu_CLWFlush_req = 0;
+	cpu_data_ptr->cpu_CLWClean_req = 0;
+	__builtin_arm_dmb(DMB_ISH);
+	cpu_data_ptr->cpu_CLW_active = 0;
+#endif
+	if (cpu_data_ptr == &BootCpuData) {
+		platform_cache_disable();
+		platform_cache_shutdown();
+		bcopy((const void *)suspend_signature, (void *)(IOS_STATE), IOS_STATE_SIZE);
+	} else
+		CleanPoC_DcacheRegion((vm_offset_t) cpu_data_ptr, sizeof(cpu_data_t));
+
+	__builtin_arm_dsb(DSB_SY);
+	while (TRUE) {
+#if     __ARM_ENABLE_WFE_
+		__builtin_arm_wfe();
+#endif
+	} /* Spin */
 }
 
-/**
- * cpu_processor_alloc
- *
- * Allocate a processor_t data structure for the specified processor.
- * The boot processor will always use internal data, since vm won't be
- * initialized to allocate data.
- */
-processor_t cpu_processor_alloc(boolean_t is_boot_cpu)
+void
+cpu_machine_idle_init(boolean_t from_boot)
 {
-    int ret;
-    processor_t proc;
+	static const unsigned int	*BootArgs_paddr = (unsigned int *)NULL;
+	static const unsigned int	*CpuDataEntries_paddr = (unsigned int *)NULL;
+	static unsigned int		resume_idle_cpu_paddr = (unsigned int )NULL;
+	cpu_data_t			*cpu_data_ptr = getCpuDatap();
 
-    if (is_boot_cpu) {
-        return &BootProcessor;
-    }
+	if (from_boot) {
+		unsigned int    jtag = 0;
+		unsigned int    wfi;
 
-    /*
-     * Allocate a new processor. 
-     */
-    ret = kmem_alloc(kernel_map, (vm_offset_t *) & proc, sizeof(*proc));
-    if (ret != KERN_SUCCESS)
-        return NULL;
 
-    bzero((void *) proc, sizeof(*proc));
-    return proc;
+		if (PE_parse_boot_argn("jtag", &jtag, sizeof (jtag))) {
+			if (jtag != 0)
+				idle_enable = FALSE;
+			else
+				idle_enable = TRUE;
+		} else
+			idle_enable = TRUE;
+
+		if (!PE_parse_boot_argn("wfi", &wfi, sizeof (wfi)))
+			wfi = 1;
+
+		if (wfi == 0)
+			bcopy_phys((addr64_t)ml_static_vtop((vm_offset_t)&patch_to_nop),
+				           (addr64_t)ml_static_vtop((vm_offset_t)&wfi_inst), sizeof(unsigned));
+		if (wfi == 2)
+			wfi_fast = 0;
+
+		LowExceptionVectorsAddr = (void *)ml_io_map(ml_vtophys((vm_offset_t)gPhysBase), PAGE_SIZE);
+
+		/* Copy Exception Vectors low, but don't touch the sleep token */
+		bcopy((void *)&ExceptionLowVectorsBase, (void *)LowExceptionVectorsAddr, 0x90);
+		bcopy(((void *)(((vm_offset_t)&ExceptionLowVectorsBase) + 0xA0)), ((void *)(((vm_offset_t)LowExceptionVectorsAddr) + 0xA0)), ARM_PGBYTES - 0xA0);
+
+		start_cpu_paddr = ml_static_vtop((vm_offset_t)&start_cpu);
+
+		BootArgs_paddr = (unsigned int *)ml_static_vtop((vm_offset_t)BootArgs);
+		bcopy_phys((addr64_t)ml_static_vtop((vm_offset_t)&BootArgs_paddr),
+		           (addr64_t)((unsigned int)(gPhysBase) +
+		                     ((unsigned int)&(ResetHandlerData.boot_args) - (unsigned int)&ExceptionLowVectorsBase)),
+		           4);
+
+		CpuDataEntries_paddr = (unsigned int *)ml_static_vtop((vm_offset_t)CpuDataEntries);
+		bcopy_phys((addr64_t)ml_static_vtop((vm_offset_t)&CpuDataEntries_paddr),
+		           (addr64_t)((unsigned int)(gPhysBase) +
+		                     ((unsigned int)&(ResetHandlerData.cpu_data_entries) - (unsigned int)&ExceptionLowVectorsBase)),
+		           4);
+
+		CleanPoC_DcacheRegion((vm_offset_t) phystokv((char *) (gPhysBase)), PAGE_SIZE);
+
+		resume_idle_cpu_paddr = (unsigned int)ml_static_vtop((vm_offset_t)&resume_idle_cpu);
+
+	}
+
+	if (cpu_data_ptr == &BootCpuData) {
+		bcopy(((const void *)running_signature), (void *)(IOS_STATE), IOS_STATE_SIZE);
+	};
+
+	cpu_data_ptr->cpu_reset_handler = resume_idle_cpu_paddr;
+	clean_dcache((vm_offset_t)cpu_data_ptr, sizeof(cpu_data_t), FALSE);
 }
 
-/**
- * current_processor
- *
- * Return the processor_t to the for the current processor.
- */
-processor_t current_processor(void)
+void
+machine_track_platform_idle(boolean_t entry)
 {
-    return current_cpu_datap()->cpu_processor;
+	if (entry)
+		(void)__c11_atomic_fetch_add(&cpu_idle_count, 1, __ATOMIC_RELAXED);
+	else
+		(void)__c11_atomic_fetch_sub(&cpu_idle_count, 1, __ATOMIC_RELAXED);
 }
 
-/**
- * cpu_to_processor
- *
- * Return the procesor_t for a specified processor. Please don't
- * do bad things. 
- *
- * This function needs validation to ensure that the cpu data accessed
- * isn't null/exceeding buffer boundaries. 
- */
-processor_t cpu_to_processor(int cpu)
-{
-    assert(cpu_datap(cpu) != NULL);
-    return cpu_datap(cpu)->cpu_processor;
-}
-
-/*
- * For sysctl().
- */
-cpu_type_t cpu_type(void)
-{
-    return current_cpu_datap()->cpu_type;
-}
-
-/**
- * slot_type
- *
- * Return the current cpu type for a specified processor.
- */
-cpu_type_t slot_type(int slot_num)
-{
-    return (cpu_datap(slot_num)->cpu_type);
-}
-
-/**
- * slot_subtype
- *
- * Return the current cpu subtype for a specified processor.
- */
-cpu_subtype_t slot_subtype(int slot_num)
-{
-    return (cpu_datap(slot_num)->cpu_subtype);
-}
-
-/**
- * slot_threadtype
- *
- * Return the current SMT type for a specified processor.
- */
-cpu_threadtype_t slot_threadtype(int slot_num)
-{
-    return CPU_THREADTYPE_NONE;
-}
-
-/**
- * cpu_subtype
- *
- * Return the current cpu type for the current processor.
- */
-cpu_subtype_t cpu_subtype(void)
-{
-    return current_cpu_datap()->cpu_subtype;
-}
-
-/**
- * cpu_threadtype
- *
- * Return the current SMT type for the current processor.
- */
-cpu_threadtype_t cpu_threadtype(void)
-{
-    return CPU_THREADTYPE_NONE;
-}
-
-/**
- * ast_pending
- *
- * Returns the current pending Asynchronous System Trap.
- */
-ast_t *ast_pending(void)
-{
-    return ((ast_t *)&current_cpu_datap()->cpu_pending_ast);
-}
-
- /*ARGSUSED*/
-kern_return_t cpu_control(int slot_num, processor_info_t info, unsigned int count)
-{
-    kprintf("cpu_control(%d,%p,%d) not implemented\n", slot_num, info, count);
-    return (KERN_FAILURE);
-}
-
-kern_return_t cpu_info(processor_flavor_t flavor, int slot_num, processor_info_t info,
-                       unsigned int *count)
-{
-    kprintf("cpu_info(%d,%d,%p,%p) not implemented\n", flavor, slot_num, info, count);
-    return (KERN_FAILURE);
-}
-
-void cpu_machine_init(void)
-{
-    cpu_data_t *cdp = current_cpu_datap();
-
-    PE_cpu_machine_init(cdp->cpu_id, FALSE);
-    cdp->cpu_running = TRUE;
-    ml_init_interrupt();
-}
-
-kern_return_t cpu_start(int cpu)
-{
-    kern_return_t ret;
-
-    if (cpu == cpu_number()) {
-        cpu_machine_init();
-        return KERN_SUCCESS;
-    }
-
-    return KERN_SUCCESS;
-}
-
-kern_return_t cpu_info_count(processor_flavor_t flavor, unsigned int *count)
-{
-    *count = 0;
-    return KERN_FAILURE;
-}

@@ -69,6 +69,7 @@
 
 #include <sys/appleapiopts.h>
 #include <sys/cdefs.h>
+#include <sys/types.h> /* u_int32_t */
 #ifdef KERNEL_PRIVATE
 #include <kern/locks.h>
 #endif
@@ -340,7 +341,6 @@ struct dquot {
 #define	CHOWN	0x02	/* (advisory) change initiated by chown */
 
 
-#ifdef XNU_KERNEL_PRIVATE
 /*
  * Functions that manage the in-core dquot and the
  * on-disk dqblk data structures.
@@ -367,7 +367,6 @@ void	qf_put(struct quotafile *, int type);
 
 __private_extern__ void  munge_dqblk(struct dqblk *dqblkp, struct user_dqblk *user_dqblkp, boolean_t to64);
 __END_DECLS
-#endif /* XNU_KERNEL_PRIVATE */
 
 #endif /* KERNEL_PRIVATE */
 

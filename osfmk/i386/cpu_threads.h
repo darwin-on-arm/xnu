@@ -62,16 +62,16 @@
 #define cpu_is_same_package(cpu1,cpu2)	(cpu_to_package(cpu1) == cpu_to_package(cpu2))
 #define cpus_share_cache(cpu1,cpu2,_cl) (cpu_to_lcpu(cpu1)->caches[_cl] == cpu_to_lcpu(cpu2)->caches[_cl])
 
+/* always take the x86_topo_lock with mp_safe_spin_lock */
+boolean_t	mp_safe_spin_lock(usimple_lock_t lock);
 extern decl_simple_lock_data(, x86_topo_lock);
 
 extern void *cpu_thread_alloc(int);
 extern void cpu_thread_init(void);
 extern void cpu_thread_halt(void);
 
-extern void x86_set_lcpu_numbers(x86_lcpu_t *lcpu);
-extern void x86_set_core_numbers(x86_core_t *core, x86_lcpu_t *lcpu);
-extern void x86_set_die_numbers(x86_die_t *die, x86_lcpu_t *lcpu);
-extern void x86_set_pkg_numbers(x86_pkg_t *pkg, x86_lcpu_t *lcpu);
+extern void x86_set_logical_topology(x86_lcpu_t *lcpu, int pnum, int lnum);
+extern void x86_validate_topology(void);
 
 extern x86_topology_parameters_t	topoParms;
 
@@ -81,7 +81,5 @@ extern boolean_t	topo_dbg;
 		if (topo_dbg)		\
 			kprintf(x);	\
 	} while (0)			\
-
-extern void validate_topology(void);
 
 #endif /* _I386_CPU_THREADS_H_ */

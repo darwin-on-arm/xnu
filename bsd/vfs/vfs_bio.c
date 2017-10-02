@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2012 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2016 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -91,9 +91,11 @@
 #endif /* DIAGNOSTIC */
 #include <kern/task.h>
 #include <kern/zalloc.h>
-#include <kern/lock.h>
+#include <kern/locks.h>
+#include <kern/thread.h>
 
 #include <sys/fslog.h>		/* fslog_io_error() */
+#include <sys/disk.h>		/* dk_error_description_t */
 
 #include <mach/mach_types.h>
 #include <mach/memory_object_types.h>
@@ -109,13 +111,6 @@
 #include <sys/ubc_internal.h>
 
 #include <sys/sdt.h>
-#include <sys/cprotect.h>
-
-
-#if BALANCE_QUEUES
-static __inline__ void bufqinc(int q);
-static __inline__ void bufqdec(int q);
-#endif
 
 int	bcleanbuf(buf_t bp, boolean_t discard);
 static int	brecover_data(buf_t bp);
@@ -135,11 +130,13 @@ static buf_t	buf_create_shadow_internal(buf_t bp, boolean_t force_copy,
 					   uintptr_t external_storage, void (*iodone)(buf_t, void *), void *arg, int priv);
 
 
-__private_extern__ int  bdwrite_internal(buf_t, int);
+int  bdwrite_internal(buf_t, int);
+
+extern void disk_conditioner_delay(buf_t, int, int, uint64_t);
 
 /* zone allocated buffer headers */
-static void	bufzoneinit(void) __attribute__((section("__TEXT, initcode")));
-static void	bcleanbuf_thread_init(void) __attribute__((section("__TEXT, initcode")));
+static void	bufzoneinit(void);
+static void	bcleanbuf_thread_init(void);
 static void	bcleanbuf_thread(void);
 
 static zone_t	buf_hdr_zone;
@@ -176,8 +173,17 @@ static lck_attr_t	*buf_mtx_attr;
 static lck_grp_attr_t   *buf_mtx_grp_attr;
 static lck_mtx_t	*iobuffer_mtxp;
 static lck_mtx_t	*buf_mtxp;
+static lck_mtx_t	*buf_gc_callout;
 
 static int buf_busycount;
+
+#define FS_BUFFER_CACHE_GC_CALLOUTS_MAX_SIZE 16
+typedef struct {
+	void (* callout)(int, void *);
+	void *context;
+} fs_buffer_cache_gc_callout_t;
+
+fs_buffer_cache_gc_callout_t fs_callouts[FS_BUFFER_CACHE_GC_CALLOUTS_MAX_SIZE] = { {NULL, NULL} };
 
 static __inline__ int
 buf_timestamp(void)
@@ -190,17 +196,6 @@ buf_timestamp(void)
 /*
  * Insq/Remq for the buffer free lists.
  */
-#if BALANCE_QUEUES
-#define	binsheadfree(bp, dp, whichq)	do { \
-				    TAILQ_INSERT_HEAD(dp, bp, b_freelist); \
-					bufqinc((whichq));	\
-				} while (0)
-
-#define	binstailfree(bp, dp, whichq)	do { \
-				    TAILQ_INSERT_TAIL(dp, bp, b_freelist); \
-					bufqinc((whichq));	\
-				} while (0)
-#else
 #define	binsheadfree(bp, dp, whichq)	do { \
 				    TAILQ_INSERT_HEAD(dp, bp, b_freelist); \
 				} while (0)
@@ -208,8 +203,6 @@ buf_timestamp(void)
 #define	binstailfree(bp, dp, whichq)	do { \
 				    TAILQ_INSERT_TAIL(dp, bp, b_freelist); \
 				} while (0)
-#endif
-
 
 #define BHASHENTCHECK(bp)	\
 	if ((bp)->b_hash.le_prev != (struct buf **)0xdeadbeef)	\
@@ -384,9 +377,14 @@ buf_markfua(buf_t bp) {
 }
 
 #if CONFIG_PROTECT
-void
-buf_setcpaddr(buf_t bp, struct cprotect *entry) {
-	bp->b_attr.ba_cpentry = entry;
+cpx_t bufattr_cpx(bufattr_t bap)
+{
+	return bap->ba_cpx;
+}
+
+void bufattr_setcpx(bufattr_t bap, cpx_t cpx)
+{
+	bap->ba_cpx = cpx;
 }
 
 void
@@ -394,31 +392,17 @@ buf_setcpoff (buf_t bp, uint64_t foffset) {
 	bp->b_attr.ba_cp_file_off = foffset;
 }
 
-void *
-bufattr_cpaddr(bufattr_t bap) {
-	return (bap->ba_cpentry);
-}
-
 uint64_t
 bufattr_cpoff(bufattr_t bap) {
-	return (bap->ba_cp_file_off);
-}
-
-void
-bufattr_setcpaddr(bufattr_t bap, void *cp_entry_addr) {
-        bap->ba_cpentry = cp_entry_addr;
+	return bap->ba_cp_file_off;
 }
 
 void
 bufattr_setcpoff(bufattr_t bap, uint64_t foffset) {
-        bap->ba_cp_file_off = foffset;
+	bap->ba_cp_file_off = foffset;
 }
 
-#else
-void *
-bufattr_cpaddr(bufattr_t bap __unused) {
-        return NULL;
-}
+#else // !CONTECT_PROTECT
 
 uint64_t
 bufattr_cpoff(bufattr_t bap __unused) {
@@ -426,14 +410,20 @@ bufattr_cpoff(bufattr_t bap __unused) {
 }
 
 void
-bufattr_setcpaddr(bufattr_t bap __unused, void *cp_entry_addr __unused) {
-}
-
-void
 bufattr_setcpoff(__unused bufattr_t bap, __unused uint64_t foffset) {
 	return;
 }
-#endif /* CONFIG_PROTECT */
+
+struct cpx *bufattr_cpx(__unused bufattr_t bap)
+{
+	return NULL;
+}
+
+void bufattr_setcpx(__unused bufattr_t bap, __unused struct cpx *cpx)
+{
+}
+
+#endif /* !CONFIG_PROTECT */
 
 bufattr_t
 bufattr_alloc() {
@@ -452,6 +442,18 @@ bufattr_free(bufattr_t bap) {
 		FREE(bap, M_TEMP);
 }
 
+bufattr_t
+bufattr_dup(bufattr_t bap) {
+	bufattr_t new_bufattr;
+	MALLOC(new_bufattr, bufattr_t, sizeof(struct bufattr), M_TEMP, M_WAITOK);
+	if (new_bufattr == NULL)
+		return NULL;
+
+	/* Copy the provided one into the new copy */
+	memcpy (new_bufattr, bap, sizeof(struct bufattr));
+	return new_bufattr;
+}
+
 int
 bufattr_rawencrypted(bufattr_t bap) {
 	if ( (bap->ba_flags & BA_RAW_ENCRYPTED_IO) )
@@ -461,7 +463,12 @@ bufattr_rawencrypted(bufattr_t bap) {
 
 int
 bufattr_throttled(bufattr_t bap) {
-	if ( (bap->ba_flags & BA_THROTTLED_IO) )
+	return (GET_BUFATTR_IO_TIER(bap));
+}
+
+int
+bufattr_passive(bufattr_t bap) {
+	if ( (bap->ba_flags & BA_PASSIVE) )
 		return 1;
 	return 0;
 }
@@ -478,6 +485,11 @@ bufattr_meta(bufattr_t bap) {
 	if ( (bap->ba_flags & BA_META) )
 		return 1;
 	return 0;
+}
+
+void
+bufattr_markmeta(bufattr_t bap) {
+	SET(bap->ba_flags,  BA_META);
 }
 
 int
@@ -507,6 +519,42 @@ buf_markstatic(buf_t bp __unused) {
 int
 buf_static(buf_t bp) {
     if ( (bp->b_flags & B_STATICCONTENT) )
+        return 1;
+    return 0;
+}
+
+void 
+bufattr_markgreedymode(bufattr_t bap) {
+	SET(bap->ba_flags, BA_GREEDY_MODE);
+}
+
+int
+bufattr_greedymode(bufattr_t bap) {
+    if ( (bap->ba_flags & BA_GREEDY_MODE) )
+        return 1;
+    return 0;
+}
+
+void 
+bufattr_markisochronous(bufattr_t bap) {
+	SET(bap->ba_flags, BA_ISOCHRONOUS);
+}
+
+int
+bufattr_isochronous(bufattr_t bap) {
+    if ( (bap->ba_flags & BA_ISOCHRONOUS) )
+        return 1;
+    return 0;
+}
+
+void 
+bufattr_markquickcomplete(bufattr_t bap) {
+	SET(bap->ba_flags, BA_QUICK_COMPLETE);
+}
+
+int
+bufattr_quickcomplete(bufattr_t bap) {
+    if ( (bap->ba_flags & BA_QUICK_COMPLETE) )
         return 1;
     return 0;
 }
@@ -651,6 +699,8 @@ buf_callback(buf_t bp)
 errno_t
 buf_setcallback(buf_t bp, void (*callback)(buf_t, void *), void *transaction)
 {
+	assert(!ISSET(bp->b_flags, B_FILTER) && ISSET(bp->b_lflags, BL_BUSY));
+
 	if (callback)
 	        bp->b_flags |= (B_CALL | B_ASYNC);
 	else
@@ -886,6 +936,8 @@ void
 buf_setfilter(buf_t bp, void (*filter)(buf_t, void *), void *transaction,
 			  void (**old_iodone)(buf_t, void *), void **old_transaction)
 {
+	assert(ISSET(bp->b_lflags, BL_BUSY));
+
 	if (old_iodone)
 		*old_iodone = bp->b_iodone;
 	if (old_transaction)
@@ -1196,7 +1248,7 @@ buf_strategy(vnode_t devvp, void *ap)
         errno_t error;
 #if CONFIG_DTRACE
 	int dtrace_io_start_flag = 0;	 /* We only want to trip the io:::start
-					  * probe once, with the true phisical
+					  * probe once, with the true physical
 					  * block in place (b_blkno)
 					  */
 
@@ -1283,9 +1335,10 @@ buf_strategy(vnode_t devvp, void *ap)
 	
 #if CONFIG_PROTECT
 	/* Capture f_offset in the bufattr*/
-	if (bp->b_attr.ba_cpentry != 0) {
+	cpx_t cpx = bufattr_cpx(buf_attr(bp));
+	if (cpx) {
 		/* No need to go here for older EAs */
-		if(bp->b_attr.ba_cpentry->cp_flags & CP_OFF_IV_ENABLED) {
+		if(cpx_use_offset_for_iv(cpx) && !cpx_synthetic_offset_for_iv(cpx)) {
 			off_t f_offset;
 			if ((error = VNOP_BLKTOOFF(bp->b_vp, bp->b_lblkno, &f_offset)))
 				return error;
@@ -1293,7 +1346,8 @@ buf_strategy(vnode_t devvp, void *ap)
 			/* 
 			 * Attach the file offset to this buffer.  The
 			 * bufattr attributes will be passed down the stack
-			 * until they reach IOFlashStorage.  IOFlashStorage
+			 * until they reach the storage driver (whether 
+			 * IOFlashStorage, ASP, or IONVMe). The driver
 			 * will retain the offset in a local variable when it
 			 * issues its I/Os to the NAND controller.	 
 			 * 
@@ -1302,8 +1356,14 @@ buf_strategy(vnode_t devvp, void *ap)
 			 * case, LwVM will update this field when it dispatches
 			 * each I/O to IOFlashStorage.  But from our perspective
 			 * we have only issued a single I/O.
+			 *
+			 * In the case of APFS we do not bounce through another 
+			 * intermediate layer (such as CoreStorage). APFS will
+			 * issue the I/Os directly to the block device / IOMedia
+			 * via buf_strategy on the specfs node. 	 
 			 */
-			bufattr_setcpoff (&(bp->b_attr), (u_int64_t)f_offset);
+			buf_setcpoff(bp, f_offset);
+			CP_DEBUG((CPDBG_OFFSET_IO | DBG_FUNC_NONE), (uint32_t) f_offset, (uint32_t) bp->b_lblkno, (uint32_t) bp->b_blkno, (uint32_t) bp->b_bcount, 0);
 		}
 	}
 #endif
@@ -1314,9 +1374,11 @@ buf_strategy(vnode_t devvp, void *ap)
 	 * means that the I/O is properly set
 	 * up to be a multiple of the page size, or
 	 * we were able to successfully set up the
-	 * phsyical block mapping
+	 * physical block mapping
 	 */
-	return (VOCALL(devvp->v_op, VOFFSET(vnop_strategy), ap));
+	error = VOCALL(devvp->v_op, VOFFSET(vnop_strategy), ap);
+	DTRACE_FSINFO(strategy, vnode_t, vp);
+	return (error);
 }
 
 
@@ -1324,7 +1386,7 @@ buf_strategy(vnode_t devvp, void *ap)
 buf_t
 buf_alloc(vnode_t vp)
 {
-        return(alloc_io_buf(vp, 0));
+        return(alloc_io_buf(vp, is_vm_privileged()));
 }
 
 void
@@ -1801,9 +1863,6 @@ bremfree_locked(buf_t bp)
 	}
 	TAILQ_REMOVE(dp, bp, b_freelist);
 
-#if BALANCE_QUEUES
-	bufqdec(whichq);
-#endif
 	if (whichq == BQ_LAUNDRY)
 	        blaundrycnt--;
 
@@ -1955,12 +2014,16 @@ bufinit(void)
 	 */
 	buf_mtxp	= lck_mtx_alloc_init(buf_mtx_grp, buf_mtx_attr);
 	iobuffer_mtxp	= lck_mtx_alloc_init(buf_mtx_grp, buf_mtx_attr);
+	buf_gc_callout  = lck_mtx_alloc_init(buf_mtx_grp, buf_mtx_attr);
 
 	if (iobuffer_mtxp == NULL)
 	        panic("couldn't create iobuffer mutex");
 
 	if (buf_mtxp == NULL)
 	        panic("couldn't create buf mutex");
+
+	if (buf_gc_callout == NULL)
+		panic("couldn't create buf_gc_callout mutex");
 
 	/*
 	 * allocate and initialize cluster specific global locks...
@@ -1976,30 +2039,19 @@ bufinit(void)
 	/* start the bcleanbuf() thread */
 	bcleanbuf_thread_init();
 
-#ifndef __arm__
 	/* Register a callout for relieving vm pressure */
 	if (vm_set_buffer_cleanup_callout(buffer_cache_gc) != KERN_SUCCESS) {
 		panic("Couldn't register buffer cache callout for vm pressure!\n");
 	}
-#endif
 
-#if BALANCE_QUEUES
-	{
-	static void bufq_balance_thread_init(void) __attribute__((section("__TEXT, initcode")));
-	/* create a thread to do dynamic buffer queue balancing */
-	bufq_balance_thread_init();
-	}
-#endif /* notyet */
 }
-
-
 
 /*
  * Zones for the meta data buffers
  */
 
 #define MINMETA 512
-#define MAXMETA 8192
+#define MAXMETA 16384
 
 struct meta_zone_entry {
 	zone_t mz_zone;
@@ -2014,6 +2066,7 @@ struct meta_zone_entry meta_zones[] = {
 	{NULL, (MINMETA * 4),  16 * (MINMETA * 4), "buf.2048" },
 	{NULL, (MINMETA * 8), 512 * (MINMETA * 8), "buf.4096" },
 	{NULL, (MINMETA * 16), 512 * (MINMETA * 16), "buf.8192" },
+	{NULL, (MINMETA * 32), 512 * (MINMETA * 32), "buf.16384" },
 	{NULL, 0, 0, "" } /* End */
 };
 
@@ -2084,8 +2137,9 @@ bio_doread(vnode_t vp, daddr64_t blkno, int size, kauth_cred_t cred, int async, 
 		trace(TR_BREADMISS, pack(vp, size), blkno);
 
 		/* Pay for the read. */
-		if (p && p->p_stats) 
+		if (p && p->p_stats) { 
 			OSIncrementAtomicLong(&p->p_stats->p_ru.ru_inblock);		/* XXX */
+		}
 
 		if (async) {
 		        /*
@@ -2219,9 +2273,10 @@ buf_bwrite(buf_t bp)
 		 */
 		if (wasdelayed)
 			buf_reassign(bp, vp);
-		else
-		if (p && p->p_stats) 
-			OSIncrementAtomicLong(&p->p_stats->p_ru.ru_oublock);	/* XXX */
+		else 
+			if (p && p->p_stats) {
+				OSIncrementAtomicLong(&p->p_stats->p_ru.ru_oublock);	/* XXX */
+			}
 	}
 	trace(TR_BUFWRITE, pack(vp, bp->b_bcount), bp->b_lblkno);
 
@@ -2245,16 +2300,12 @@ buf_bwrite(buf_t bp)
 		if (wasdelayed)
 			buf_reassign(bp, vp);
 		else
-		if (p && p->p_stats) 
-			OSIncrementAtomicLong(&p->p_stats->p_ru.ru_oublock);	/* XXX */
+			if (p && p->p_stats) { 
+				OSIncrementAtomicLong(&p->p_stats->p_ru.ru_oublock);	/* XXX */
+			}
 
 		/* Release the buffer. */
-		// XXXdbg - only if the unused bit is set
-		if (!ISSET(bp->b_flags, B_NORELSE)) {
-		    buf_brelse(bp);
-		} else {
-		    CLR(bp->b_flags, B_NORELSE);
-		}
+		buf_brelse(bp);
 
 		return (rv);
 	} else {
@@ -2287,7 +2338,7 @@ vn_bwrite(struct vnop_bwrite_args *ap)
  * buffers faster than the disks can service. Doing a buf_bawrite() in
  * cases where we have "too many" outstanding buf_bdwrite()s avoids that.
  */
-__private_extern__ int
+int
 bdwrite_internal(buf_t bp, int return_error)
 {
 	proc_t	p  = current_proc();
@@ -2301,8 +2352,9 @@ bdwrite_internal(buf_t bp, int return_error)
 	 */
 	if (!ISSET(bp->b_flags, B_DELWRI)) {
 		SET(bp->b_flags, B_DELWRI);
-		if (p && p->p_stats) 
+		if (p && p->p_stats) { 
 			OSIncrementAtomicLong(&p->p_stats->p_ru.ru_oublock);	/* XXX */
+		}
 		OSAddAtomicLong(1, &nbdwrite);
 		buf_reassign(bp, vp);
 	}
@@ -2420,7 +2472,7 @@ buf_brelse_shadow(buf_t bp)
 
 	lck_mtx_lock_spin(buf_mtxp);
 
-	bp_head = (buf_t)bp->b_orig;
+	__IGNORE_WCASTALIGN(bp_head = (buf_t)bp->b_orig);
 
 	if (bp_head->b_whichq != -1)
 		panic("buf_brelse_shadow: bp_head on freelist %d\n", bp_head->b_whichq);
@@ -2491,10 +2543,9 @@ buf_brelse_shadow(buf_t bp)
 		}
 	}
 	lck_mtx_unlock(buf_mtxp);
-	
-	if (need_wakeup) {
+
+	if (need_wakeup)
 		wakeup(bp_head);
-	}
 
 #ifdef BUF_MAKE_PRIVATE	
 	if (bp == bp_data && data_ref == 0)
@@ -2586,12 +2637,13 @@ buf_brelse(buf_t bp)
 
 		if (upl == NULL) {
 		        if ( !ISSET(bp->b_flags, B_INVAL)) {
-				kret = ubc_create_upl(bp->b_vp, 
+				kret = ubc_create_upl_kernel(bp->b_vp,
 						      ubc_blktooff(bp->b_vp, bp->b_lblkno),
 						      bp->b_bufsize, 
 						      &upl,
 						      NULL,
-						      UPL_PRECIOUS);
+						      UPL_PRECIOUS,
+						      VM_KERN_MEMORY_FILE);
 
 				if (kret != KERN_SUCCESS)
 				        panic("brelse: Failed to create UPL");
@@ -2822,6 +2874,7 @@ incore_locked(vnode_t vp, daddr64_t blkno, struct bufhashhdr *dp)
 	return (NULL);
 }
 
+
 void
 buf_wait_for_shadow_io(vnode_t vp, daddr64_t blkno)
 {
@@ -2912,7 +2965,6 @@ start:
 					return (NULL);
 				goto start;
 				/*NOTREACHED*/
-				break;
 
 			default:
 			        /*
@@ -2923,6 +2975,8 @@ start:
 				break;
 			}		
 		} else {
+			int clear_bdone;
+
 			/*
 			 * buffer in core and not busy
 			 */
@@ -2941,8 +2995,41 @@ start:
 			if ( (bp->b_upl) )
 			        panic("buffer has UPL, but not marked BUSY: %p", bp);
 
-			if ( !ret_only_valid && bp->b_bufsize != size)
-			        allocbuf(bp, size);
+			clear_bdone = FALSE;
+			if (!ret_only_valid) {
+				/*
+				 * If the number bytes that are valid is going
+				 * to increase (even if we end up not doing a
+				 * reallocation through allocbuf) we have to read
+				 * the new size first.
+				 *
+				 * This is required in cases where we doing a read
+				 * modify write of a already valid data on disk but
+				 * in cases where the data on disk beyond (blkno + b_bcount)
+				 * is invalid, we may end up doing extra I/O.
+				 */
+				if (operation == BLK_META && bp->b_bcount < size) {
+					/*
+					 * Since we are going to read in the whole size first
+					 * we first have to ensure that any pending delayed write
+					 * is flushed to disk first.
+					 */
+					if (ISSET(bp->b_flags, B_DELWRI)) {
+						CLR(bp->b_flags, B_CACHE);
+						buf_bwrite(bp);
+						goto start;
+					}
+					/*
+					 * clear B_DONE before returning from
+					 * this function so that the caller can
+					 * can issue a read for the new size.
+					 */
+					clear_bdone = TRUE;
+				}
+
+				if (bp->b_bufsize != size)
+					allocbuf(bp, size);
+			}
 
 			upl_flags = 0;
 			switch (operation) {
@@ -2956,12 +3043,13 @@ start:
 			case BLK_READ:
 				upl_flags |= UPL_PRECIOUS;
 			        if (UBCINFOEXISTS(bp->b_vp) && bp->b_bufsize) {
-					kret = ubc_create_upl(vp,
+					kret = ubc_create_upl_kernel(vp,
 							      ubc_blktooff(vp, bp->b_lblkno), 
 							      bp->b_bufsize, 
 							      &upl, 
 							      &pl,
-							      upl_flags);
+							      upl_flags,
+							      VM_KERN_MEMORY_FILE);
 					if (kret != KERN_SUCCESS)
 					        panic("Failed to create UPL");
 
@@ -2994,6 +3082,9 @@ start:
 				/*NOTREACHED*/
 				break;
 			}
+
+			if (clear_bdone)
+				CLR(bp->b_flags, B_DONE);
 		}
 	} else { /* not incore() */
 		int queue = BQ_EMPTY; /* Start with no preference */
@@ -3077,18 +3168,38 @@ start:
 			size_t 	contig_bytes;
 			int	bmap_flags;
 
+#if DEVELOPMENT || DEBUG
+			/*
+			 * Apple implemented file systems use UBC excludively; they should
+			 * not call in here."
+			 */
+			const char* excldfs[] = {"hfs", "afpfs", "smbfs", "acfs",
+						 "exfat", "msdos", "webdav", NULL};
+
+			for (int i = 0; excldfs[i] != NULL; i++) {
+				if (vp->v_mount &&
+				    !strcmp(vp->v_mount->mnt_vfsstat.f_fstypename,
+						excldfs[i])) {
+					panic("%s %s calls buf_getblk",
+						excldfs[i],
+						operation == BLK_READ ? "BLK_READ" : "BLK_WRITE");
+				}
+			}
+#endif
+
 			if ( (bp->b_upl) )
 				panic("bp already has UPL: %p",bp);
 
 			f_offset = ubc_blktooff(vp, blkno);
 
 			upl_flags |= UPL_PRECIOUS;
-			kret = ubc_create_upl(vp,
+			kret = ubc_create_upl_kernel(vp,
 					      f_offset,
 					      bp->b_bufsize, 
 					      &upl,
 					      &pl,
-					      upl_flags);
+					      upl_flags,
+					      VM_KERN_MEMORY_FILE);
 
 			if (kret != KERN_SUCCESS)
 				panic("Failed to create UPL");
@@ -3210,6 +3321,80 @@ buf_clear_redundancy_flags(buf_t bp, uint32_t flags)
 	CLR(bp->b_redundancy_flags, flags);
 }
 
+
+
+static void *
+recycle_buf_from_pool(int nsize)
+{
+	buf_t	bp;
+	void	*ptr = NULL;
+
+	lck_mtx_lock_spin(buf_mtxp);
+
+	TAILQ_FOREACH(bp, &bufqueues[BQ_META], b_freelist) {
+		if (ISSET(bp->b_flags, B_DELWRI) || bp->b_bufsize != nsize)
+			continue;
+		ptr = (void *)bp->b_datap;
+		bp->b_bufsize = 0;
+
+		bcleanbuf(bp, TRUE);
+		break;
+	}
+	lck_mtx_unlock(buf_mtxp);
+
+	return (ptr);
+}
+
+
+
+int zalloc_nopagewait_failed = 0;
+int recycle_buf_failed = 0;
+
+static void *
+grab_memory_for_meta_buf(int nsize)
+{
+	zone_t z;
+	void *ptr;
+	boolean_t was_vmpriv;
+
+	z = getbufzone(nsize);
+
+	/*
+	 * make sure we're NOT priviliged so that
+	 * if a vm_page_grab is needed, it won't
+	 * block if we're out of free pages... if
+	 * it blocks, then we can't honor the
+	 * nopagewait request
+	 */
+	was_vmpriv = set_vm_privilege(FALSE);
+
+	ptr = zalloc_nopagewait(z);
+
+	if (was_vmpriv == TRUE)
+		set_vm_privilege(TRUE);
+
+	if (ptr == NULL) {
+
+		zalloc_nopagewait_failed++;
+
+		ptr = recycle_buf_from_pool(nsize);
+
+		if (ptr == NULL) {
+
+			recycle_buf_failed++;
+
+			if (was_vmpriv == FALSE)
+				set_vm_privilege(TRUE);
+
+			ptr = zalloc(z);
+
+			if (was_vmpriv == FALSE)
+				set_vm_privilege(FALSE);
+		}
+	}
+	return (ptr);
+}
+
 /*
  * With UBC, there is no need to expand / shrink the file data 
  * buffer. The VM uses the same pages, hence no waste.
@@ -3235,7 +3420,6 @@ allocbuf(buf_t bp, int size)
 		panic("allocbuf: buffer larger than MAXBSIZE requested");
 
 	if (ISSET(bp->b_flags, B_META)) {
-		zone_t zprev, z;
 		int    nsize = roundup(size, MINMETA);
 
 		if (bp->b_datap) {
@@ -3243,17 +3427,19 @@ allocbuf(buf_t bp, int size)
 
 			if (ISSET(bp->b_flags, B_ZALLOC)) {
 			        if (bp->b_bufsize < nsize) {
+				        zone_t zprev;
+
 				        /* reallocate to a bigger size */
 
 				        zprev = getbufzone(bp->b_bufsize);
 					if (nsize <= MAXMETA) {
 					        desired_size = nsize;
-						z = getbufzone(nsize);
+
 						/* b_datap not really a ptr */
-						*(void **)(&bp->b_datap) = zalloc(z);
+						*(void **)(&bp->b_datap) = grab_memory_for_meta_buf(nsize);
 					} else {
 					        bp->b_datap = (uintptr_t)NULL;
-					        kmem_alloc_kobject(kernel_map, (vm_offset_t *)&bp->b_datap, desired_size);
+					        kmem_alloc_kobject(kernel_map, (vm_offset_t *)&bp->b_datap, desired_size, VM_KERN_MEMORY_FILE);
 						CLR(bp->b_flags, B_ZALLOC);
 					}
 					bcopy((void *)elem, (caddr_t)bp->b_datap, bp->b_bufsize);
@@ -3266,7 +3452,7 @@ allocbuf(buf_t bp, int size)
 				if ((vm_size_t)bp->b_bufsize < desired_size) {
 					/* reallocate to a bigger size */
 				        bp->b_datap = (uintptr_t)NULL;
-					kmem_alloc_kobject(kernel_map, (vm_offset_t *)&bp->b_datap, desired_size);
+					kmem_alloc_kobject(kernel_map, (vm_offset_t *)&bp->b_datap, desired_size, VM_KERN_MEMORY_FILE);
 					bcopy((const void *)elem, (caddr_t)bp->b_datap, bp->b_bufsize);
 					kmem_free(kernel_map, elem, bp->b_bufsize); 
 				} else {
@@ -3277,12 +3463,12 @@ allocbuf(buf_t bp, int size)
 			/* new allocation */
 			if (nsize <= MAXMETA) {
 				desired_size = nsize;
-				z = getbufzone(nsize);
+
 				/* b_datap not really a ptr */
-				*(void **)(&bp->b_datap) = zalloc(z);
+				*(void **)(&bp->b_datap) = grab_memory_for_meta_buf(nsize);
 				SET(bp->b_flags, B_ZALLOC);
 			} else
-				kmem_alloc_kobject(kernel_map, (vm_offset_t *)&bp->b_datap, desired_size);
+				kmem_alloc_kobject(kernel_map, (vm_offset_t *)&bp->b_datap, desired_size, VM_KERN_MEMORY_FILE);
 		}
 
 		if (bp->b_datap == 0)
@@ -3557,7 +3743,7 @@ bcleanbuf(buf_t bp, boolean_t discard)
 	trace(TR_BRELSE, pack(bp->b_vp, bp->b_bufsize), bp->b_lblkno);
 
 	buf_release_credentials(bp);
-
+	
 	/* If discarding, just move to the empty queue */
 	if (discard) {
 		lck_mtx_lock_spin(buf_mtxp);
@@ -3572,6 +3758,7 @@ bcleanbuf(buf_t bp, boolean_t discard)
 		bp->b_bufsize = 0;
 		bp->b_datap = (uintptr_t)NULL;
 		bp->b_upl = (void *)NULL;
+		bp->b_fsprivate = (void *)NULL;
 		/*
 		 * preserve the state of whether this buffer
 		 * was allocated on the fly or not...
@@ -3584,6 +3771,7 @@ bcleanbuf(buf_t bp, boolean_t discard)
 #endif
 		bp->b_lflags = BL_BUSY;
 		bp->b_flags = (bp->b_flags & B_HDRALLOC);
+		bp->b_redundancy_flags = 0;
 		bp->b_dev = NODEV;
 		bp->b_blkno = bp->b_lblkno = 0;
 		bp->b_iodone = NULL;
@@ -3785,13 +3973,14 @@ buf_biowait(buf_t bp)
  * (for swap pager, that puts swap buffers on the free lists (!!!),
  * for the vn device, that puts malloc'd buffers on the free lists!)
  */
-extern struct timeval priority_IO_timestamp_for_root;
-extern int hard_throttle_on_root;
 
 void
 buf_biodone(buf_t bp)
 {
 	mount_t mp;
+	struct bufattr *bap;
+	struct timeval real_elapsed;
+	uint64_t real_elapsed_usec = 0;
 	
 	KERNEL_DEBUG((FSDBG_CODE(DBG_FSRW, 387)) | DBG_FUNC_START,
 		     bp, bp->b_datap, bp->b_flags, 0, 0);
@@ -3799,9 +3988,7 @@ buf_biodone(buf_t bp)
 	if (ISSET(bp->b_flags, B_DONE))
 		panic("biodone already");
 
-	if (ISSET(bp->b_flags, B_ERROR)) {
-		fslog_io_error(bp);
-	}
+	bap = &bp->b_attr;
 
 	if (bp->b_vp && bp->b_vp->v_mount) {
 		mp = bp->b_vp->v_mount;
@@ -3809,6 +3996,16 @@ buf_biodone(buf_t bp)
 		mp = NULL;
 	}
 	
+	if (ISSET(bp->b_flags, B_ERROR)) {
+		if (mp && (MNT_ROOTFS & mp->mnt_flag)) {
+			dk_error_description_t desc;
+			bzero(&desc, sizeof(desc));
+			desc.description      = panic_disk_error_description;
+			desc.description_size = panic_disk_error_description_size;
+			VNOP_IOCTL(mp->mnt_devvp, DKIOCGETERRORDESCRIPTION, (caddr_t)&desc, 0, vfs_context_kernel());
+		}
+	}
+
 	if (mp && (bp->b_flags & B_READ) == 0) {
 		update_last_io_time(mp);
 		INCR_PENDING_IO(-(pending_io_t)buf_count(bp), mp->mnt_pending_write_size);
@@ -3816,8 +4013,11 @@ buf_biodone(buf_t bp)
 		INCR_PENDING_IO(-(pending_io_t)buf_count(bp), mp->mnt_pending_read_size);
 	}
 
-        if (kdebug_enable) {
-	        int    code = DKIO_DONE;
+	throttle_info_end_io(bp);
+
+	if (kdebug_enable) {
+		int code    = DKIO_DONE;
+		int io_tier = GET_BUFATTR_IO_TIER(bap);
 
 		if (bp->b_flags & B_READ)
 		        code |= DKIO_READ;
@@ -3829,24 +4029,29 @@ buf_biodone(buf_t bp)
 		else if (bp->b_flags & B_PAGEIO)
 		        code |= DKIO_PAGING;
 
-		if (bp->b_flags & B_THROTTLED_IO)
+		if (io_tier != 0)
 			code |= DKIO_THROTTLE;
-		else if (bp->b_flags & B_PASSIVE)
+
+		code |= ((io_tier << DKIO_TIER_SHIFT) & DKIO_TIER_MASK);
+
+		if (bp->b_flags & B_PASSIVE)
 			code |= DKIO_PASSIVE;
 
-		if (bp->b_attr.ba_flags & BA_NOCACHE)
+		if (bap->ba_flags & BA_NOCACHE)
 			code |= DKIO_NOCACHE;
 
+		if (bap->ba_flags & BA_IO_TIER_UPGRADE) {
+			code |= DKIO_TIER_UPGRADE;
+		}
+
 		KERNEL_DEBUG_CONSTANT_IST(KDEBUG_COMMON, FSDBG_CODE(DBG_DKRW, code) | DBG_FUNC_NONE,
-                              bp, (uintptr_t)bp->b_vp,
-				      bp->b_resid, bp->b_error, 0);
+		                          buf_kernel_addrperm_addr(bp), (uintptr_t)VM_KERNEL_ADDRPERM(bp->b_vp), bp->b_resid, bp->b_error, 0);
         }
-	if ((bp->b_vp != NULLVP) &&
-	    ((bp->b_flags & (B_THROTTLED_IO | B_PASSIVE | B_IOSTREAMING | B_PAGEIO | B_READ | B_THROTTLED_IO | B_PASSIVE)) == (B_PAGEIO | B_READ)) &&
-	    (bp->b_vp->v_mount->mnt_kern_flag & MNTK_ROOTDEV)) {
-	        microuptime(&priority_IO_timestamp_for_root);
-	        hard_throttle_on_root = 0;
-	}
+
+	microuptime(&real_elapsed);
+	timevalsub(&real_elapsed, &bp->b_timestamp_tv);
+	real_elapsed_usec = real_elapsed.tv_sec * USEC_PER_SEC + real_elapsed.tv_usec;
+	disk_conditioner_delay(bp, 1, bp->b_bcount, real_elapsed_usec);
 
 	/*
 	 * I/O was done, so don't believe
@@ -3854,13 +4059,11 @@ buf_biodone(buf_t bp)
 	 * and we need to reset the THROTTLED/PASSIVE
 	 * indicators
 	 */
-	CLR(bp->b_flags, (B_WASDIRTY | B_THROTTLED_IO | B_PASSIVE));
-	CLR(bp->b_attr.ba_flags, (BA_META | BA_NOCACHE));
-#if !CONFIG_EMBEDDED
-	CLR(bp->b_attr.ba_flags, (BA_THROTTLED_IO | BA_DELAYIDLESLEEP));
-#else
-	CLR(bp->b_attr.ba_flags, BA_THROTTLED_IO);
-#endif /* !CONFIG_EMBEDDED */
+	CLR(bp->b_flags, (B_WASDIRTY | B_PASSIVE));
+	CLR(bap->ba_flags, (BA_META | BA_NOCACHE | BA_DELAYIDLESLEEP | BA_IO_TIER_UPGRADE));
+
+	SET_BUFATTR_IO_TIER(bap, 0);
+
 	DTRACE_IO1(done, buf_t, bp);
 
 	if (!ISSET(bp->b_flags, B_READ) && !ISSET(bp->b_flags, B_RAW))
@@ -3937,6 +4140,18 @@ biodone_done:
 }
 
 /*
+ * Obfuscate buf pointers.
+ */
+vm_offset_t
+buf_kernel_addrperm_addr(void * addr)
+{
+	if ((vm_offset_t)addr == 0)
+		return 0;
+	else
+		return ((vm_offset_t)addr + buf_kernel_addrperm);
+}
+
+/*
  * Return a count of buffers on the "locked" queue.
  */
 int
@@ -4005,26 +4220,59 @@ vfs_bufstats()
 
 #define	NRESERVEDIOBUFS	128
 
+#define MNT_VIRTUALDEV_MAX_IOBUFS 16
+#define VIRTUALDEV_MAX_IOBUFS ((40*niobuf_headers)/100)
 
 buf_t
 alloc_io_buf(vnode_t vp, int priv)
 {
 	buf_t	bp;
+	mount_t mp = NULL;
+	int alloc_for_virtualdev = FALSE;
 
 	lck_mtx_lock_spin(iobuffer_mtxp);
+
+	/*
+	 * We subject iobuf requests for diskimages to additional restrictions.
+	 *
+	 * a) A single diskimage mount cannot use up more than
+	 * MNT_VIRTUALDEV_MAX_IOBUFS. However,vm privileged (pageout) requests
+	 * are not subject to this restriction.
+	 * b) iobuf headers used by all diskimage headers by all mount
+	 * points cannot exceed  VIRTUALDEV_MAX_IOBUFS.
+	 */
+	if (vp && ((mp = vp->v_mount)) && mp != dead_mountp &&
+	    mp->mnt_kern_flag & MNTK_VIRTUALDEV) {
+		alloc_for_virtualdev = TRUE;
+		while ((!priv && mp->mnt_iobufinuse > MNT_VIRTUALDEV_MAX_IOBUFS) ||
+		    bufstats.bufs_iobufinuse_vdev > VIRTUALDEV_MAX_IOBUFS) {
+			bufstats.bufs_iobufsleeps++;
+
+			need_iobuffer = 1;
+			(void)msleep(&need_iobuffer, iobuffer_mtxp,
+			    PSPIN | (PRIBIO+1), (const char *)"alloc_io_buf (1)",
+			    NULL);
+		}
+	}
 
 	while (((niobuf_headers - NRESERVEDIOBUFS < bufstats.bufs_iobufinuse) && !priv) || 
 	       (bp = iobufqueue.tqh_first) == NULL) {
 		bufstats.bufs_iobufsleeps++;
 
 		need_iobuffer = 1;
-		(void) msleep(&need_iobuffer, iobuffer_mtxp, PSPIN | (PRIBIO+1), (const char *)"alloc_io_buf", NULL);
+		(void)msleep(&need_iobuffer, iobuffer_mtxp, PSPIN | (PRIBIO+1),
+		    (const char *)"alloc_io_buf (2)", NULL);
 	}
 	TAILQ_REMOVE(&iobufqueue, bp, b_freelist);
 
 	bufstats.bufs_iobufinuse++;
 	if (bufstats.bufs_iobufinuse > bufstats.bufs_iobufmax)
 		bufstats.bufs_iobufmax = bufstats.bufs_iobufinuse;
+
+	if (alloc_for_virtualdev) {
+		mp->mnt_iobufinuse++;
+		bufstats.bufs_iobufinuse_vdev++;
+	}
 
 	lck_mtx_unlock(iobuffer_mtxp);
 
@@ -4040,6 +4288,8 @@ alloc_io_buf(vnode_t vp, int priv)
 	bp->b_datap = 0;
 	bp->b_flags = 0;
 	bp->b_lflags = BL_BUSY | BL_IOBUF;
+	if (alloc_for_virtualdev)
+		bp->b_lflags |= BL_IOBUF_VDEV;
 	bp->b_redundancy_flags = 0;
 	bp->b_blkno = bp->b_lblkno = 0;
 #ifdef JOE_DEBUG
@@ -4052,6 +4302,7 @@ alloc_io_buf(vnode_t vp, int priv)
 	bp->b_bcount = 0;
 	bp->b_bufsize = 0;
 	bp->b_upl = NULL;
+	bp->b_fsprivate = (void *)NULL;
 	bp->b_vp = vp;
 	bzero(&bp->b_attr, sizeof(struct bufattr));
 
@@ -4067,7 +4318,16 @@ alloc_io_buf(vnode_t vp, int priv)
 void
 free_io_buf(buf_t bp)
 {
-        int need_wakeup = 0;
+	int need_wakeup = 0;
+	int free_for_virtualdev = FALSE;
+	mount_t mp = NULL;
+
+	/* Was this iobuf for a diskimage ? */
+	if (bp->b_lflags & BL_IOBUF_VDEV) {
+		free_for_virtualdev = TRUE;
+		if (bp->b_vp)
+			mp = bp->b_vp->v_mount;
+	}
 
 	/*
 	 * put buffer back on the head of the iobufqueue
@@ -4075,6 +4335,9 @@ free_io_buf(buf_t bp)
 	bp->b_vp = NULL;
 	bp->b_flags = B_INVAL;
 
+	/* Zero out the bufattr and its flags before relinquishing this iobuf */
+	bzero (&bp->b_attr, sizeof(struct bufattr));
+	
 	lck_mtx_lock_spin(iobuffer_mtxp);
 
 	binsheadfree(bp, &iobufqueue, -1);
@@ -4096,6 +4359,12 @@ free_io_buf(buf_t bp)
 		panic("free_io_buf: bp(%p) - bufstats.bufs_iobufinuse < 0", bp);
 
 	bufstats.bufs_iobufinuse--;
+
+	if (free_for_virtualdev) {
+		bufstats.bufs_iobufinuse_vdev--;
+		if (mp && mp != dead_mountp)
+			mp->mnt_iobufinuse--;
+	}
 
 	lck_mtx_unlock(iobuffer_mtxp);
 
@@ -4135,6 +4404,7 @@ bcleanbuf_thread_init(void)
 
 typedef int (*bcleanbufcontinuation)(int);
 
+__attribute__((noreturn))
 static void
 bcleanbuf_thread(void)
 {
@@ -4232,12 +4502,13 @@ brecover_data(buf_t bp)
 		upl_flags |= UPL_WILL_MODIFY;
 	}
 		
-	kret = ubc_create_upl(vp,
+	kret = ubc_create_upl_kernel(vp,
 			      ubc_blktooff(vp, bp->b_lblkno), 
 			      bp->b_bufsize, 
 			      &upl, 
 			      &pl,
-			      upl_flags);
+			      upl_flags,
+			      VM_KERN_MEMORY_FILE);
 	if (kret != KERN_SUCCESS)
 	        panic("Failed to create UPL");
 
@@ -4264,6 +4535,50 @@ dump_buffer:
 	return(0);
 }
 
+int
+fs_buffer_cache_gc_register(void (* callout)(int, void *), void *context)
+{
+	lck_mtx_lock(buf_gc_callout);
+	for (int i = 0; i < FS_BUFFER_CACHE_GC_CALLOUTS_MAX_SIZE; i++) {
+		if (fs_callouts[i].callout == NULL) {
+			fs_callouts[i].callout = callout;
+			fs_callouts[i].context = context;
+			lck_mtx_unlock(buf_gc_callout);
+			return 0;
+		}
+	}
+
+	lck_mtx_unlock(buf_gc_callout);
+	return ENOMEM;
+}
+
+int
+fs_buffer_cache_gc_unregister(void (* callout)(int, void *), void *context)
+{
+	lck_mtx_lock(buf_gc_callout);
+	for (int i = 0; i < FS_BUFFER_CACHE_GC_CALLOUTS_MAX_SIZE; i++) {
+		if (fs_callouts[i].callout == callout &&
+		    fs_callouts[i].context == context) {
+			fs_callouts[i].callout = NULL;
+			fs_callouts[i].context = NULL;
+		}
+	}
+	lck_mtx_unlock(buf_gc_callout);
+	return 0;
+}
+
+static void
+fs_buffer_cache_gc_dispatch_callouts(int all)
+{
+	lck_mtx_lock(buf_gc_callout);
+	for(int i = 0; i < FS_BUFFER_CACHE_GC_CALLOUTS_MAX_SIZE; i++) {
+		if (fs_callouts[i].callout != NULL) {
+			fs_callouts[i].callout(all, fs_callouts[i].context);
+		}
+	}
+	lck_mtx_unlock(buf_gc_callout);
+}
+
 boolean_t 
 buffer_cache_gc(int all)
 {
@@ -4281,9 +4596,10 @@ buffer_cache_gc(int all)
 	 * We only care about metadata (incore storage comes from zalloc()).
 	 * Unless "all" is set (used to evict meta data buffers in preparation
 	 * for deep sleep), we only evict up to BUF_MAX_GC_BATCH_SIZE buffers
-	 * that have not been accessed in the last 30s. This limit controls both
-	 * the hold time of the global lock "buf_mtxp" and the length of time
-	 * we spend compute bound in the GC thread which calls this function
+	 * that have not been accessed in the last BUF_STALE_THRESHOLD seconds.
+	 * BUF_MAX_GC_BATCH_SIZE controls both the hold time of the global lock
+	 * "buf_mtxp" and the length of time we spend compute bound in the GC
+	 * thread which calls this function
 	 */
 	lck_mtx_lock(buf_mtxp);
 
@@ -4392,6 +4708,8 @@ buffer_cache_gc(int all)
 
 	lck_mtx_unlock(buf_mtxp);
 
+	fs_buffer_cache_gc_dispatch_callouts(all);
+
 	return did_large_zfree;
 }
 
@@ -4483,334 +4801,3 @@ bflushq(int whichq, mount_t mp)
 	return (total_writes);
 }
 #endif
-
-
-#if BALANCE_QUEUES
-
-/* XXX move this to a separate file */
-
-/*
- * NOTE: THIS CODE HAS NOT BEEN UPDATED
- * WITH RESPECT TO THE NEW LOCKING MODEL
- */
-   
-
-/*
- * Dynamic Scaling of the Buffer Queues
- */
-
-typedef long long blsize_t;
-
-blsize_t MAXNBUF; /* initialize to (sane_size / PAGE_SIZE) */
-/* Global tunable limits */
-blsize_t nbufh;			/* number of buffer headers */
-blsize_t nbuflow;		/* minimum number of buffer headers required */
-blsize_t nbufhigh;		/* maximum number of buffer headers allowed */
-blsize_t nbuftarget;	/* preferred number of buffer headers */
-
-/*
- * assertions:
- *
- * 1.	0 < nbuflow <= nbufh <= nbufhigh
- * 2.	nbufhigh <= MAXNBUF
- * 3.	0 < nbuflow <= nbuftarget <= nbufhigh
- * 4.	nbufh can not be set by sysctl().
- */
-
-/* Per queue tunable limits */
-
-struct bufqlim {
-	blsize_t	bl_nlow;	/* minimum number of buffer headers required */
-	blsize_t	bl_num;		/* number of buffer headers on the queue */
-	blsize_t	bl_nlhigh;	/* maximum number of buffer headers allowed */
-	blsize_t	bl_target;	/* preferred number of buffer headers */
-	long	bl_stale;	/* Seconds after which a buffer is considered stale */
-} bufqlim[BQUEUES];
-
-/*
- * assertions:
- *
- * 1.	0 <= bl_nlow <= bl_num <= bl_nlhigh
- * 2.	bl_nlhigh <= MAXNBUF
- * 3.  bufqlim[BQ_META].bl_nlow != 0
- * 4.  bufqlim[BQ_META].bl_nlow > (number of possible concurrent 
- *									file system IO operations)
- * 5.	bl_num can not be set by sysctl().
- * 6.	bl_nhigh <= nbufhigh
- */
-
-/*
- * Rationale:
- * ----------
- * Defining it blsize_t as long permits 2^31 buffer headers per queue.
- * Which can describe (2^31 * PAGE_SIZE) memory per queue.
- * 
- * These limits are exported to by means of sysctl().
- * It was decided to define blsize_t as a 64 bit quantity.
- * This will make sure that we will not be required to change it
- * as long as we do not exceed 64 bit address space for the kernel.
- * 
- * low and high numbers parameters initialized at compile time
- * and boot arguments can be used to override them. sysctl() 
- * would not change the value. sysctl() can get all the values 
- * but can set only target. num is the current level.
- *
- * Advantages of having a "bufqscan" thread doing the balancing are, 
- * Keep enough bufs on BQ_EMPTY.
- *	getnewbuf() by default will always select a buffer from the BQ_EMPTY.
- *		getnewbuf() perfoms best if a buffer was found there.
- *		Also this minimizes the possibility of starting IO
- *		from getnewbuf(). That's a performance win, too.
- *
- *	Localize complex logic [balancing as well as time aging]
- *		to balancebufq().
- *
- *	Simplify getnewbuf() logic by elimination of time aging code.
- */
-
-/* 
- * Algorithm:
- * -----------
- * The goal of the dynamic scaling of the buffer queues to to keep
- * the size of the LRU close to bl_target. Buffers on a queue would
- * be time aged.
- *
- * There would be a thread which will be responsible for "balancing"
- * the buffer cache queues.
- *
- * The scan order would be:	AGE, LRU, META, EMPTY.
- */
-
-long bufqscanwait = 0;
-
-static void bufqscan_thread();
-static int balancebufq(int q);
-static int btrimempty(int n);
-static __inline__ int initbufqscan(void);
-static __inline__ int nextbufq(int q);
-static void buqlimprt(int all);
-
-
-static __inline__ void
-bufqinc(int q)
-{
-	if ((q < 0) || (q >= BQUEUES))
-		return;
-
-	bufqlim[q].bl_num++;
-	return;
-}
-
-static __inline__ void
-bufqdec(int q)
-{
-	if ((q < 0) || (q >= BQUEUES))
-		return; 
-
-	bufqlim[q].bl_num--;
-	return;
-}
-
-static void
-bufq_balance_thread_init(void)
-{
-	thread_t	thread = THREAD_NULL;
-
-	if (bufqscanwait++ == 0) {
-
-		/* Initalize globals */
-		MAXNBUF = (sane_size / PAGE_SIZE);
-		nbufh = nbuf_headers;
-		nbuflow = min(nbufh, 100);
-		nbufhigh = min(MAXNBUF, max(nbufh, 2048));
-		nbuftarget = (sane_size >> 5) / PAGE_SIZE;
-		nbuftarget = max(nbuflow, nbuftarget);
-		nbuftarget = min(nbufhigh, nbuftarget);
-
-		/*
-		 * Initialize the bufqlim 
-		 */ 
-
-		/* LOCKED queue */
-		bufqlim[BQ_LOCKED].bl_nlow = 0;
-		bufqlim[BQ_LOCKED].bl_nlhigh = 32;
-		bufqlim[BQ_LOCKED].bl_target = 0;
-		bufqlim[BQ_LOCKED].bl_stale = 30;
-
-		/* LRU queue */
-		bufqlim[BQ_LRU].bl_nlow = 0;
-		bufqlim[BQ_LRU].bl_nlhigh = nbufhigh/4;
-		bufqlim[BQ_LRU].bl_target = nbuftarget/4;
-		bufqlim[BQ_LRU].bl_stale = LRU_IS_STALE;
-
-		/* AGE queue */
-		bufqlim[BQ_AGE].bl_nlow = 0;
-		bufqlim[BQ_AGE].bl_nlhigh = nbufhigh/4;
-		bufqlim[BQ_AGE].bl_target = nbuftarget/4;
-		bufqlim[BQ_AGE].bl_stale = AGE_IS_STALE;
-
-		/* EMPTY queue */
-		bufqlim[BQ_EMPTY].bl_nlow = 0;
-		bufqlim[BQ_EMPTY].bl_nlhigh = nbufhigh/4;
-		bufqlim[BQ_EMPTY].bl_target = nbuftarget/4;
-		bufqlim[BQ_EMPTY].bl_stale = 600000;
-
-		/* META queue */
-		bufqlim[BQ_META].bl_nlow = 0;
-		bufqlim[BQ_META].bl_nlhigh = nbufhigh/4;
-		bufqlim[BQ_META].bl_target = nbuftarget/4;
-		bufqlim[BQ_META].bl_stale = META_IS_STALE;
-
-		/* LAUNDRY queue */
-		bufqlim[BQ_LOCKED].bl_nlow = 0;
-		bufqlim[BQ_LOCKED].bl_nlhigh = 32;
-		bufqlim[BQ_LOCKED].bl_target = 0;
-		bufqlim[BQ_LOCKED].bl_stale = 30;
-
-		buqlimprt(1);
-	}
-
-	/* create worker thread */
-	kernel_thread_start((thread_continue_t)bufqscan_thread, NULL, &thread);
-	thread_deallocate(thread);
-}
-
-/* The workloop for the buffer balancing thread */
-static void
-bufqscan_thread()
-{
-	int moretodo = 0;
-
-	for(;;) {
-		do {
-			int q;	/* buffer queue to process */
-		
-			q = initbufqscan();
-			for (; q; ) {
-				moretodo |= balancebufq(q);
-				q = nextbufq(q);
-			}
-		} while (moretodo);
-
-#if DIAGNOSTIC
-		vfs_bufstats();
-		buqlimprt(0);
-#endif
-		(void)tsleep((void *)&bufqscanwait, PRIBIO, "bufqscanwait", 60 * hz);
-		moretodo = 0;
-	}
-}
-
-/* Seed for the buffer queue balancing */
-static __inline__ int
-initbufqscan()
-{
-	/* Start with AGE queue */
-	return (BQ_AGE);
-}
-
-/* Pick next buffer queue to balance */
-static __inline__ int
-nextbufq(int q)
-{
-	int order[] = { BQ_AGE, BQ_LRU, BQ_META, BQ_EMPTY, 0 };
-	
-	q++;
-	q %= sizeof(order);
-	return (order[q]);
-}
-
-/* function to balance the buffer queues */
-static int
-balancebufq(int q)
-{
-	int moretodo = 0;
-	int n, t;
-	
-	/* reject invalid q */
-	if ((q < 0) || (q >= BQUEUES))
-		goto out;
-
-	/* LOCKED or LAUNDRY queue MUST not be balanced */
-	if ((q == BQ_LOCKED) || (q == BQ_LAUNDRY))
-		goto out;
-
-	n = (bufqlim[q].bl_num - bufqlim[q].bl_target);
-
-	/* If queue has less than target nothing more to do */
-	if (n < 0)
-		goto out;
-
-	if ( n > 8 ) {
-		/* Balance only a small amount (12.5%) at a time */
-		n >>= 3;
-	}
-
-	/* EMPTY queue needs special handling */
-	if (q == BQ_EMPTY) {
-		moretodo |= btrimempty(n);
-		goto out;
-	}
-
-	t = buf_timestamp():
-	
-	for (; n > 0; n--) {
-		struct buf *bp = bufqueues[q].tqh_first;
-		if (!bp)
-			break;
-		
-		/* check if it's stale */
-		if ((t - bp->b_timestamp) > bufqlim[q].bl_stale) {
-			if (bcleanbuf(bp, FALSE)) {
-				/* buf_bawrite() issued, bp not ready */
-				moretodo = 1;
-			} else {
-				/* release the cleaned buffer to BQ_EMPTY */
-				SET(bp->b_flags, B_INVAL);
-				buf_brelse(bp);
-			}
-		} else
-			break;		
-	}
-
-out:
-	return (moretodo);		
-}
-
-static int
-btrimempty(int n)
-{
-	/*
-	 * When struct buf are allocated dynamically, this would
-	 * reclaim upto 'n' struct buf from the empty queue.
-	 */
-	 
-	 return (0);
-}
-
-static void
-buqlimprt(int all)
-{
-	int i;
-    static char *bname[BQUEUES] =
-		{ "LOCKED", "LRU", "AGE", "EMPTY", "META", "LAUNDRY" };
-
-	if (all)
-		for (i = 0; i < BQUEUES; i++) {
-			printf("%s : ", bname[i]);
-			printf("min = %ld, ", (long)bufqlim[i].bl_nlow);
-			printf("cur = %ld, ", (long)bufqlim[i].bl_num);
-			printf("max = %ld, ", (long)bufqlim[i].bl_nlhigh);
-			printf("target = %ld, ", (long)bufqlim[i].bl_target);
-			printf("stale after %ld seconds\n", bufqlim[i].bl_stale);
-		}
-	else
-		for (i = 0; i < BQUEUES; i++) {
-			printf("%s : ", bname[i]);
-			printf("cur = %ld, ", (long)bufqlim[i].bl_num);
-		}
-}
-
-#endif
-
-

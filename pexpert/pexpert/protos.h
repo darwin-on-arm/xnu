@@ -52,7 +52,14 @@ extern void interrupt_disable(void);
 //from kern/misc_protos.h
 extern void    
 _doprnt(
-        register const char     *fmt,
+        const char     *fmt,
+        va_list                 *argp,
+        void                    (*putc)(char),
+        int                     radix);
+
+extern void    
+_doprnt_log(
+        const char     *fmt,
         va_list                 *argp,
         void                    (*putc)(char),
         int                     radix);
@@ -78,7 +85,7 @@ void Debugger(const char *message);
 //------------------------------------------------------------------------
 
 // from iokit/IOStartIOKit.cpp
-extern int StartIOKit( void * p1, void * p2, void * p3, void * p4);
+extern void StartIOKit( void * p1, void * p2, void * p3, void * p4);
 
 // from iokit/Families/IOFramebuffer.cpp
 extern unsigned char appleClut8[ 256 * 3 ];

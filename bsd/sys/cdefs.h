@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2009 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2016 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -82,6 +82,26 @@
 #endif
 
 /*
+ * Compatibility with compilers and environments that don't support compiler
+ * feature checking function-like macros.
+ */
+#ifndef __has_builtin
+#define __has_builtin(x) 0
+#endif
+#ifndef __has_include
+#define __has_include(x) 0
+#endif
+#ifndef __has_feature
+#define __has_feature(x) 0
+#endif
+#ifndef __has_attribute
+#define __has_attribute(x) 0
+#endif
+#ifndef __has_extension
+#define __has_extension(x) 0
+#endif
+
+/*
  * The __CONCAT macro is used to concatenate parts of symbol names, e.g.
  * with "#define OLD(foo) __CONCAT(old,foo)", OLD(foo) produces oldfoo.
  * The __CONCAT macro is a bit tricky -- make sure you don't put spaces
@@ -146,10 +166,27 @@
 #define __used		__attribute__((used))
 
 /* __deprecated causes the compiler to produce a warning when encountering
- * code using the deprecated functionality.  This may require turning on
- * such wardning with the -Wdeprecated flag.
+ * code using the deprecated functionality.
+ * __deprecated_msg() does the same, and compilers that support it will print
+ * a message along with the deprecation warning.
+ * This may require turning on such warning with the -Wdeprecated flag.
+ * __deprecated_enum_msg() should be used on enums, and compilers that support
+ * it will print the deprecation warning.
  */
 #define __deprecated	__attribute__((deprecated))
+
+#if __has_extension(attribute_deprecated_with_message) || \
+		(defined(__GNUC__) && ((__GNUC__ >= 5) || ((__GNUC__ == 4) && (__GNUC_MINOR__ >= 5))))
+	#define __deprecated_msg(_msg) __attribute__((deprecated(_msg)))
+#else
+	#define __deprecated_msg(_msg) __attribute__((deprecated))
+#endif
+
+#if __has_extension(enumerator_attributes)
+	#define __deprecated_enum_msg(_msg) __deprecated_msg(_msg)
+#else
+	#define __deprecated_enum_msg(_msg)
+#endif
 
 /* __unavailable causes the compiler to error out when encountering
  * code using the tagged function of variable.
@@ -172,6 +209,136 @@
 #define __restrict	restrict
 #endif
 
+/* Compatibility with compilers and environments that don't support the
+ * nullability feature.
+ */
+
+#if !__has_feature(nullability)
+#ifndef __nullable
+#define __nullable
+#endif
+#ifndef __nonnull
+#define __nonnull
+#endif
+#ifndef __null_unspecified
+#define __null_unspecified
+#endif
+#ifndef _Nullable
+#define _Nullable
+#endif
+#ifndef _Nonnull
+#define _Nonnull
+#endif
+#ifndef _Null_unspecified
+#define _Null_unspecified
+#endif
+#endif
+
+/*
+ * __disable_tail_calls causes the compiler to not perform tail call
+ * optimization inside the marked function.
+ */
+#if __has_attribute(disable_tail_calls)
+#define __disable_tail_calls	__attribute__((__disable_tail_calls__))
+#else
+#define __disable_tail_calls
+#endif
+
+/*
+ * __not_tail_called causes the compiler to prevent tail call optimization
+ * on statically bound calls to the function.  It has no effect on indirect
+ * calls.  Virtual functions, objective-c methods, and functions marked as
+ * "always_inline" cannot be marked as __not_tail_called.
+ */
+#if __has_attribute(not_tail_called)
+#define __not_tail_called	__attribute__((__not_tail_called__))
+#else
+#define __not_tail_called
+#endif
+
+/*
+ * __result_use_check warns callers of a function that not using the function
+ * return value is a bug, i.e. dismissing malloc() return value results in a
+ * memory leak.
+ */
+#if __has_attribute(warn_unused_result)
+#define __result_use_check __attribute__((__warn_unused_result__))
+#else
+#define __result_use_check
+#endif
+
+/*
+ * __swift_unavailable causes the compiler to mark a symbol as specifically
+ * unavailable in Swift, regardless of any other availability in C.
+ */
+#if __has_feature(attribute_availability_swift)
+#define __swift_unavailable(_msg)	__attribute__((__availability__(swift, unavailable, message=_msg)))
+#else
+#define __swift_unavailable(_msg)
+#endif
+
+/* Declaring inline functions within headers is error-prone due to differences
+ * across various versions of the C language and extensions.  __header_inline
+ * can be used to declare inline functions within system headers.  In cases
+ * where you want to force inlining instead of letting the compiler make
+ * the decision, you can use __header_always_inline.
+ *
+ * Be aware that using inline for functions which compilers may also provide
+ * builtins can behave differently under various compilers.  If you intend to
+ * provide an inline version of such a function, you may want to use a macro
+ * instead.
+ *
+ * The check for !__GNUC__ || __clang__ is because gcc doesn't correctly
+ * support c99 inline in some cases:
+ * http://gcc.gnu.org/bugzilla/show_bug.cgi?id=55965
+ */
+
+#if defined(__cplusplus) || \
+    (__STDC_VERSION__ >= 199901L && \
+     !defined(__GNUC_GNU_INLINE__) && \
+     (!defined(__GNUC__) || defined(__clang__)))
+# define __header_inline           inline
+#elif defined(__GNUC__) && defined(__GNUC_STDC_INLINE__)
+# define __header_inline           extern __inline __attribute__((__gnu_inline__))
+#elif defined(__GNUC__)
+# define __header_inline           extern __inline
+#else
+  /* If we land here, we've encountered an unsupported compiler,
+   * so hopefully it understands static __inline as a fallback.
+   */
+# define __header_inline           static __inline
+#endif
+
+#ifdef __GNUC__
+# define __header_always_inline    __header_inline __attribute__ ((__always_inline__))
+#else
+  /* Unfortunately, we're using a compiler that we don't know how to force to
+   * inline.  Oh well.
+   */
+# define __header_always_inline    __header_inline
+#endif
+
+/*
+ * Compiler-dependent macros that bracket portions of code where the
+ * "-Wunreachable-code" warning should be ignored. Please use sparingly.
+ */
+#if defined(__clang__)
+# define __unreachable_ok_push \
+         _Pragma("clang diagnostic push") \
+         _Pragma("clang diagnostic ignored \"-Wunreachable-code\"")
+# define __unreachable_ok_pop \
+         _Pragma("clang diagnostic pop")
+#elif defined(__GNUC__) && ((__GNUC__ > 4) || (__GNUC__ == 4 && __GNUC_MINOR__ >= 6))
+# define __unreachable_ok_push \
+         _Pragma("GCC diagnostic push") \
+         _Pragma("GCC diagnostic ignored \"-Wunreachable-code\"")
+# define __unreachable_ok_pop \
+         _Pragma("GCC diagnostic pop")
+#else
+# define __unreachable_ok_push
+# define __unreachable_ok_pop
+#endif
+
 /*
  * Compiler-dependent macros to declare that functions take printf-like
  * or scanf-like arguments.  They are null except for versions of gcc
@@ -182,6 +349,8 @@
  */
 #define __printflike(fmtarg, firstvararg) \
 		__attribute__((__format__ (__printf__, fmtarg, firstvararg)))
+#define __printf0like(fmtarg, firstvararg) \
+		__attribute__((__format__ (__printf0__, fmtarg, firstvararg)))
 #define __scanflike(fmtarg, firstvararg) \
 		__attribute__((__format__ (__scanf__, fmtarg, firstvararg)))
 
@@ -208,6 +377,17 @@
 #define __FBSDID(s) 
 #endif
 
+#ifndef	__DECONST
+#define	__DECONST(type, var)	__CAST_AWAY_QUALIFIER(var, const, type)
+#endif
+
+#ifndef	__DEVOLATILE
+#define	__DEVOLATILE(type, var)	__CAST_AWAY_QUALIFIER(var, volatile, type)
+#endif
+
+#ifndef	__DEQUALIFY
+#define	__DEQUALIFY(type, var)	__CAST_AWAY_QUALIFIER(var, const volatile, type)
+#endif
 
 /*
  * COMPILATION ENVIRONMENTS -- see compat(5) for additional detail
@@ -251,8 +431,12 @@
 #define __DARWIN_ONLY_64_BIT_INO_T	0
 #define __DARWIN_ONLY_UNIX_CONFORMANCE	0
 #define __DARWIN_ONLY_VERS_1050		0
-#define	__DARWIN_SUF_DARWIN10	"_darwin10"
-#define	__DARWIN10_ALIAS(sym)	__asm("_" __STRING(sym) __DARWIN_SUF_DARWIN10)
+#if defined(__x86_64__)
+#define	__DARWIN_SUF_DARWIN14	"_darwin14"
+#define	__DARWIN14_ALIAS(sym)	__asm("_" __STRING(sym) __DARWIN_SUF_DARWIN14)
+#else
+#define	__DARWIN14_ALIAS(sym)
+#endif
 #else /* !KERNEL */
 #ifdef PLATFORM_iPhoneOS
 /* Platform: iPhoneOS */
@@ -266,6 +450,60 @@
 #define __DARWIN_ONLY_UNIX_CONFORMANCE	1
 #define __DARWIN_ONLY_VERS_1050		1
 #endif /* PLATFORM_iPhoneSimulator */
+#ifdef PLATFORM_tvOS
+/* Platform: tvOS */
+#define __DARWIN_ONLY_64_BIT_INO_T	1
+#define __DARWIN_ONLY_UNIX_CONFORMANCE	1
+#define __DARWIN_ONLY_VERS_1050		1
+#endif /* PLATFORM_tvOS */
+#ifdef PLATFORM_AppleTVOS
+/* Platform: AppleTVOS */
+#define __DARWIN_ONLY_64_BIT_INO_T	1
+#define __DARWIN_ONLY_UNIX_CONFORMANCE	1
+#define __DARWIN_ONLY_VERS_1050		1
+#endif /* PLATFORM_AppleTVOS */
+#ifdef PLATFORM_tvSimulator
+/* Platform: tvSimulator */
+#define __DARWIN_ONLY_64_BIT_INO_T	1
+#define __DARWIN_ONLY_UNIX_CONFORMANCE	1
+#define __DARWIN_ONLY_VERS_1050		1
+#endif /* PLATFORM_tvSimulator */
+#ifdef PLATFORM_AppleTVSimulator
+/* Platform: AppleTVSimulator */
+#define __DARWIN_ONLY_64_BIT_INO_T	1
+#define __DARWIN_ONLY_UNIX_CONFORMANCE	1
+#define __DARWIN_ONLY_VERS_1050		1
+#endif /* PLATFORM_AppleTVSimulator */
+#ifdef PLATFORM_iPhoneOSNano
+/* Platform: iPhoneOSNano */
+#define __DARWIN_ONLY_64_BIT_INO_T	1
+#define __DARWIN_ONLY_UNIX_CONFORMANCE	1
+#define __DARWIN_ONLY_VERS_1050		1
+#endif /* PLATFORM_iPhoneOSNano */
+#ifdef PLATFORM_iPhoneNanoSimulator
+/* Platform: iPhoneNanoSimulator */
+#define __DARWIN_ONLY_64_BIT_INO_T	1
+#define __DARWIN_ONLY_UNIX_CONFORMANCE	1
+#define __DARWIN_ONLY_VERS_1050		1
+#endif /* PLATFORM_iPhoneNanoSimulator */
+#ifdef PLATFORM_WatchOS
+/* Platform: WatchOS */
+#define __DARWIN_ONLY_64_BIT_INO_T	1
+#define __DARWIN_ONLY_UNIX_CONFORMANCE	1
+#define __DARWIN_ONLY_VERS_1050		1
+#endif /* PLATFORM_WatchOS */
+#ifdef PLATFORM_WatchSimulator
+/* Platform: WatchSimulator */
+#define __DARWIN_ONLY_64_BIT_INO_T	1
+#define __DARWIN_ONLY_UNIX_CONFORMANCE	1
+#define __DARWIN_ONLY_VERS_1050		1
+#endif /* PLATFORM_WatchSimulator */
+#ifdef PLATFORM_BridgeOS
+/* Platform: BridgeOS */
+#define __DARWIN_ONLY_64_BIT_INO_T	1
+#define __DARWIN_ONLY_UNIX_CONFORMANCE	1
+#define __DARWIN_ONLY_VERS_1050		1
+#endif /* PLATFORM_BridgeOS */
 #ifdef PLATFORM_MacOSX
 /* Platform: MacOSX */
 #define __DARWIN_ONLY_64_BIT_INO_T	0
@@ -421,6 +659,7 @@
 #define __DARWIN_ALIAS(sym)		__asm("_" __STRING(sym) __DARWIN_SUF_UNIX03)
 #define __DARWIN_ALIAS_C(sym)		__asm("_" __STRING(sym) __DARWIN_SUF_NON_CANCELABLE __DARWIN_SUF_UNIX03)
 #define __DARWIN_ALIAS_I(sym)		__asm("_" __STRING(sym) __DARWIN_SUF_64_BIT_INO_T __DARWIN_SUF_UNIX03)
+#define __DARWIN_NOCANCEL(sym)  	__asm("_" __STRING(sym) __DARWIN_SUF_NON_CANCELABLE)
 #define __DARWIN_INODE64(sym)		__asm("_" __STRING(sym) __DARWIN_SUF_64_BIT_INO_T)
 
 #define __DARWIN_1050(sym)		__asm("_" __STRING(sym) __DARWIN_SUF_1050)
@@ -445,7 +684,7 @@
 #elif defined(__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__)
 #define __DARWIN_ALIAS_STARTING(_mac, _iphone, x)   __DARWIN_ALIAS_STARTING_MAC_##_mac(x)
 #else
-#define __DARWIN_ALIAS_STARTING(_mac, _iphone, x)
+#define __DARWIN_ALIAS_STARTING(_mac, _iphone, x)   x
 #endif
 #endif /* KERNEL */
 
@@ -530,6 +769,13 @@
 #define __DARWIN_C_LEVEL        __DARWIN_C_FULL
 #endif
 
+/* If the developer has neither requested a strict language mode nor a version
+ * of POSIX, turn on functionality provided by __STDC_WANT_LIB_EXT1__ as part
+ * of __DARWIN_C_FULL.
+ */
+#if !defined(__STDC_WANT_LIB_EXT1__) && !defined(__STRICT_ANSI__) && __DARWIN_C_LEVEL >= __DARWIN_C_FULL
+#define __STDC_WANT_LIB_EXT1__ 1
+#endif
 
 /*
  * long long is not supported in c89 (__STRICT_ANSI__), but g++ -ansi and
@@ -594,6 +840,35 @@
  */
 #ifndef __CAST_AWAY_QUALIFIER
 #define __CAST_AWAY_QUALIFIER(variable, qualifier, type)  (type) (long)(variable)
+#endif
+
+/*
+ * __XNU_PRIVATE_EXTERN is a linkage decoration indicating that a symbol can be
+ * used from other compilation units, but not other libraries or executables.
+ */
+#ifndef __XNU_PRIVATE_EXTERN
+#define __XNU_PRIVATE_EXTERN __attribute__((visibility("hidden")))
+#endif
+
+/*
+ * Architecture validation for current SDK
+ */
+#if !defined(__sys_cdefs_arch_unknown__) && defined(__i386__)
+#elif !defined(__sys_cdefs_arch_unknown__) && defined(__x86_64__)
+#elif !defined(__sys_cdefs_arch_unknown__) && defined(__arm__)
+#elif !defined(__sys_cdefs_arch_unknown__) && defined(__arm64__)
+#else
+#error Unsupported architecture
+#endif
+
+#ifdef XNU_KERNEL_PRIVATE
+/*
+ * Selectively ignore cast alignment warnings
+ */
+#define __IGNORE_WCASTALIGN(x) _Pragma("clang diagnostic push")                     \
+                               _Pragma("clang diagnostic ignored \"-Wcast-align\"") \
+                               x;                                                   \
+                               _Pragma("clang diagnostic pop")
 #endif
 
 #endif /* !_CDEFS_H_ */

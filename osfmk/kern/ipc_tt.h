@@ -97,6 +97,12 @@ extern void ipc_task_terminate(
 extern void ipc_thread_init(
 	thread_t	thread);
 
+extern void ipc_thread_init_exc_actions(
+	thread_t	thread);
+
+extern void ipc_thread_destroy_exc_actions(
+	thread_t	thread);
+
 /* Disable IPC access to a thread */
 extern void ipc_thread_disable(
 	thread_t	thread);
@@ -121,11 +127,26 @@ extern ipc_port_t retrieve_thread_self_fast(
 extern task_name_t convert_port_to_task_name(
 	ipc_port_t	port);
 
+/* Convert from a port to a task inspect */
+extern task_inspect_t convert_port_to_task_inspect(
+	ipc_port_t	port);
+
 /* Convert from a port to a task */
 extern task_t convert_port_to_task(
 	ipc_port_t	port);
 
+extern task_t
+convert_port_to_task_with_exec_token(
+	ipc_port_t		port,
+	uint32_t		*exec_token);
+
 extern task_t port_name_to_task(
+	mach_port_name_t name);
+
+extern task_t port_name_to_task_inspect(
+	mach_port_name_t name);
+
+extern host_t port_name_to_host(
 	mach_port_name_t name);
 
 extern boolean_t ref_task_port_locked(
@@ -133,6 +154,10 @@ extern boolean_t ref_task_port_locked(
 
 /* Convert from a port to a space */
 extern ipc_space_t convert_port_to_space(
+	ipc_port_t	port);
+
+/* Convert from a port to a space inspection right */
+extern ipc_space_inspect_t convert_port_to_space_inspect(
 	ipc_port_t	port);
 
 extern boolean_t ref_space_port_locked(
@@ -146,11 +171,18 @@ extern vm_map_t convert_port_to_map(
 extern thread_t	convert_port_to_thread(
 	ipc_port_t		port);
 
+/* Convert from a port to a thread inspect */
+extern thread_inspect_t	convert_port_to_thread_inspect(
+	ipc_port_t		port);
+
 extern thread_t	port_name_to_thread(
 	mach_port_name_t	port_name);
 
 /* Deallocate a space ref produced by convert_port_to_space */
 extern void space_deallocate(
 	ipc_space_t		space);
+
+extern void space_inspect_deallocate(
+	ipc_space_inspect_t	space);
 
 #endif	/* _KERN_IPC_TT_H_ */

@@ -21,14 +21,11 @@
  * @APPLE_LICENSE_HEADER_END@
  */
 
-#ifndef __arm__
 #define	__APPLE_API_PRIVATE
 #include <machine/cpu_capabilities.h>
 #undef	__APPLE_API_PRIVATE
 
 #if defined(__i386__) || defined(__x86_64__)
-
-/* This is in Libc on arm. */
 
 /* Initialize the "_cpu_capabilities" vector on x86 processors. */
 
@@ -41,5 +38,16 @@ _init_cpu_capabilities( void )
 	_cpu_capabilities = _get_cpu_capabilities();
 }
 
-#endif
+#elif defined(__arm__) || defined(__arm64__)
+
+extern int _get_cpu_capabilities(void);
+
+int _cpu_capabilities = 0;
+int _cpu_has_altivec = 0;		// DEPRECATED: use _cpu_capabilities instead
+
+void
+_init_cpu_capabilities( void )
+{
+}
+
 #endif

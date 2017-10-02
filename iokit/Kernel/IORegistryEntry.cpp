@@ -25,22 +25,18 @@
  * 
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
-/*
- * Copyright (c) 1998 Apple Computer, Inc.  All rights reserved. 
- *
- * HISTORY
- * 12 Nov 98 sdouglas created.
- *
- */
 
 #include <IOKit/IORegistryEntry.h>
 #include <libkern/c++/OSContainers.h>
 #include <IOKit/IOService.h>
 #include <IOKit/IOKitKeys.h>
+#include <IOKit/IOTimeStamp.h>
 
 #include <IOKit/IOLib.h>
 
 #include <IOKit/assert.h>
+
+#include "IOKitKernelInternal.h"
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
@@ -62,12 +58,21 @@ OSDefineMetaClassAndStructors(IORegistryEntry, OSObject)
 
 #define KASLR_IOREG_DEBUG 0
 
+struct IORegistryEntry::ExpansionData
+{
+    IORecursiveLock * fLock;
+    uint64_t	      fRegistryEntryID;
+    SInt32            fRegistryEntryGenerationCount;
+};
+
+
 static IORegistryEntry * gRegistryRoot;
 static OSDictionary * 	 gIORegistryPlanes;
 
 const OSSymbol * 	gIONameKey;
 const OSSymbol * 	gIOLocationKey;
 const OSSymbol * 	gIORegistryEntryIDKey;
+const OSSymbol * 	gIORegistryEntryPropertyKeysKey;
 
 enum {
     kParentSetIndex	= 0,
@@ -95,7 +100,7 @@ class IORegistryPlane : public OSObject {
     int			reserved[2];
 
 public:
-    virtual bool serialize(OSSerialize *s) const;
+    virtual bool serialize(OSSerialize *s) const APPLE_KEXT_OVERRIDE;
 };
 
 OSDefineMetaClassAndStructors(IORegistryPlane, OSObject)
@@ -110,8 +115,8 @@ static SInt32			gIORegistryGenerationCount;
 		gIORegistryGenerationCount++
 		// make atomic
 
-#define PUNLOCK	IORecursiveLockUnlock( gPropertiesLock )
-#define PLOCK	IORecursiveLockLock( gPropertiesLock )
+#define PUNLOCK	IORecursiveLockUnlock( reserved->fLock )
+#define PLOCK	IORecursiveLockLock( reserved->fLock )
 
 #define IOREGSPLITTABLES
 
@@ -162,6 +167,7 @@ IORegistryEntry * IORegistryEntry::initialize( void )
 	gIONameKey = OSSymbol::withCStringNoCopy( "IOName" );
 	gIOLocationKey = OSSymbol::withCStringNoCopy( "IOLocation" );
 	gIORegistryEntryIDKey = OSSymbol::withCStringNoCopy( kIORegistryEntryIDKey );
+        gIORegistryEntryPropertyKeysKey = OSSymbol::withCStringNoCopy( kIORegistryEntryPropertyKeysKey );
 
 	assert( ok && gIONameKey && gIOLocationKey );
 
@@ -182,6 +188,10 @@ SInt32 IORegistryEntry::getGenerationCount( void )
     return( gIORegistryGenerationCount );
 }
 
+SInt32 IORegistryEntry::getRegistryEntryGenerationCount(void) const
+{
+    return (reserved->fRegistryEntryGenerationCount);
+}
 
 const IORegistryPlane * IORegistryEntry::makePlane( const char * name )
 {
@@ -278,6 +288,8 @@ bool IORegistryEntry::init( OSDictionary * dict )
 	if (!reserved)
 	    return (false);
 	bzero(reserved, sizeof(ExpansionData));
+	reserved->fLock = IORecursiveLockAlloc();
+	if (!reserved->fLock) return (false);
     }
     if( dict) {
 	if (OSCollection::kImmutable & dict->setOptions(0, 0)) {
@@ -328,16 +340,23 @@ bool IORegistryEntry::init( IORegistryEntry * old,
     if( !super::init())
 	return( false);
 
+    if (!reserved)
+    {
+	reserved = IONew(ExpansionData, 1);
+	if (!reserved) return (false);
+	bzero(reserved, sizeof(ExpansionData));
+	reserved->fLock = IORecursiveLockAlloc();
+	if (!reserved->fLock) return (false);
+    }
+
     WLOCK;
 
-    reserved = old->reserved;
-    old->reserved = NULL;
+    reserved->fRegistryEntryID = old->reserved->fRegistryEntryID;
 
-    fPropertyTable = old->getPropertyTable();
-    fPropertyTable->retain();
+    fPropertyTable = old->dictionaryWithProperties();
 #ifdef IOREGSPLITTABLES
     fRegistryTable = old->fRegistryTable;
-    old->fRegistryTable = OSDictionary::withDictionary( fRegistryTable );
+    old->fRegistryTable = (OSDictionary *) fRegistryTable->copyCollection();
 #endif /* IOREGSPLITTABLES */
 
     old->registryTable()->removeObject( plane->keys[ kParentSetIndex ] );
@@ -384,17 +403,21 @@ void IORegistryEntry::free( void )
 #endif /* IOREGSPLITTABLES */
 
     if (reserved)
+    {
+	if (reserved->fLock) IORecursiveLockFree(reserved->fLock);
 	IODelete(reserved, ExpansionData, 1);
+    }
 
     super::free();
 }
 
 void IORegistryEntry::setPropertyTable( OSDictionary * dict )
 {
-    if( fPropertyTable)
-	fPropertyTable->release();
     if( dict)
 	dict->retain();
+    if( fPropertyTable)
+	fPropertyTable->release();
+
     fPropertyTable = dict;
 }
 
@@ -473,9 +496,20 @@ bool IORegistryEntry::serializeProperties( OSSerialize * s ) const
     OSCollection *snapshotProperties = getPropertyTable()->copyCollection();
     PUNLOCK;
 
+    if (!snapshotProperties) return (false);
+
     bool ok =  snapshotProperties->serialize( s );
     snapshotProperties->release();
     return( ok );
+}
+
+OSArray * IORegistryEntry::copyPropertyKeys(void) const
+{
+    PLOCK;
+    OSArray * keys = getPropertyTable()->copyKeys();
+    PUNLOCK;
+
+    return (keys);
 }
 
 OSDictionary * IORegistryEntry::dictionaryWithProperties( void ) const
@@ -790,6 +824,19 @@ void IORegistryEntry::setName( const OSSymbol * name,
         else
             key = gIONameKey;
 
+        if (gIOKitTrace && reserved && reserved->fRegistryEntryID)
+        {
+            uint64_t str_id = 0;
+            uint64_t __unused regID = getRegistryEntryID();
+            kernel_debug_string(IODBG_IOREGISTRY(IOREGISTRYENTRY_NAME_STRING), &str_id, name->getCStringNoCopy());
+            KERNEL_DEBUG_CONSTANT(IODBG_IOREGISTRY(IOREGISTRYENTRY_NAME),
+                (uintptr_t) regID,
+                (uintptr_t) (regID >> 32),
+                (uintptr_t) str_id,
+                (uintptr_t) (str_id >> 32),
+                0);
+        }
+
 	WLOCK;
         registryTable()->setObject( key, (OSObject *) name);
 	UNLOCK;
@@ -886,7 +933,7 @@ bool IORegistryEntry::getPath(	char * path, int * length,
     OSArray *		stack;
     IORegistryEntry *	root;
     const IORegistryEntry * entry;
-    IORegistryEntry *	parent;
+    const IORegistryEntry * parent;
     const OSSymbol *	alias;
     int			index;
     int			len, maxLength, compLen, aliasLen;
@@ -917,67 +964,62 @@ bool IORegistryEntry::getPath(	char * path, int * length,
 	return( ok );
     }
 
-    entry = this;
-    parent = entry->getParentEntry( plane );
-    if( !parent)
-	// Error if not attached in plane
-	return( false);
-
     stack = OSArray::withCapacity( getDepth( plane ));
-    if( !stack)
-	return( false);
+    if (!stack) return( false);
 
     RLOCK;
 
+    parent = entry = this;
     root = gRegistryRoot->getChildEntry( plane );
-    while( parent && (entry != root)) {
+    while (parent && (parent != root))
+    {
 	// stop below root
-	stack->setObject( (OSObject *) entry );
 	entry = parent;
 	parent = entry->getParentEntry( plane );
+	stack->setObject( (OSObject *) entry );
     }
 
-    index = stack->getCount();
-    ok = true;
+    ok = (0 != parent);
+    if (ok)
+    {
+        index = stack->getCount();
+        if( 0 == index) {
 
-    if( 0 == index) {
+            *nextComp++ = '/';
+            *nextComp = 0;
+            len++;
 
-        *nextComp++ = '/';
-        *nextComp = 0;
-        len++;
+        } else while( ok && ((--index) >= 0)) {
 
-    } else while( ok && ((--index) >= 0)) {
+            entry = (IORegistryEntry *) stack->getObject((unsigned int) index );
+            assert( entry );
 
-        entry = (IORegistryEntry *) stack->getObject((unsigned int) index );
-        assert( entry );
+            if( (alias = entry->hasAlias( plane ))) {
+                len = plane->nameKey->getLength() + 1;
+                nextComp = path + len;
 
-        if( (alias = entry->hasAlias( plane ))) {
-            len = plane->nameKey->getLength() + 1;
-            nextComp = path + len;
+                compLen = alias->getLength();
+                ok = (maxLength > (len + compLen));
+                if( ok)
+                    strlcpy( nextComp, alias->getCStringNoCopy(), compLen + 1);
+            } else {
+                compLen = maxLength - len;
+                ok = entry->getPathComponent( nextComp + 1, &compLen, plane );
 
-            compLen = alias->getLength();
-            ok = (maxLength > (len + compLen));
-            if( ok)
-                strlcpy( nextComp, alias->getCStringNoCopy(), compLen + 1);
-        } else {
-            compLen = maxLength - len;
-            ok = entry->getPathComponent( nextComp + 1, &compLen, plane );
+                if( ok && compLen) {
+                    compLen++;
+                    *nextComp = '/';
+                }
+            }
 
-            if( ok && compLen) {
-                compLen++;
-                *nextComp = '/';
+            if( ok) {
+                len += compLen;
+                nextComp += compLen;
             }
         }
-
-        if( ok) {
-            len += compLen;
-            nextComp += compLen;
-        }
+        *length = len;
     }
-    *length = len;
-
     UNLOCK;
-
     stack->release();
 
     return( ok );
@@ -1339,6 +1381,7 @@ bool IORegistryEntry::makeLink( IORegistryEntry * to,
             links->release();
 	}
     }
+    reserved->fRegistryEntryGenerationCount++;
 
     return( result);
 }
@@ -1359,6 +1402,7 @@ void IORegistryEntry::breakLink( IORegistryEntry * to,
                 registryTable()->removeObject( plane->keys[ relation ]);
 	    }
     }
+    reserved->fRegistryEntryGenerationCount++;
 }
 
 
@@ -1458,6 +1502,18 @@ OSIterator * IORegistryEntry::getChildIterator( const IORegistryPlane * plane ) 
     return( iter );
 }
 
+uint32_t IORegistryEntry::getChildCount( const IORegistryPlane * plane ) const
+{
+    OSArray * links;
+    uint32_t  count = 0;
+
+    RLOCK;
+    links = getChildSetReference( plane );
+    if (links) count = links->getCount();
+    UNLOCK;
+
+    return (count);
+}
 
 IORegistryEntry * IORegistryEntry::copyChildEntry(
 				const IORegistryPlane * plane ) const
@@ -1628,6 +1684,7 @@ bool IORegistryEntry::attachToParent( IORegistryEntry * parent,
     OSArray *	links;
     bool	ret;
     bool	needParent;
+    bool        traceName = false;
 
     if( this == parent)
 	return( false );
@@ -1635,7 +1692,10 @@ bool IORegistryEntry::attachToParent( IORegistryEntry * parent,
     WLOCK;
 
     if (!reserved->fRegistryEntryID)
+    {
 	reserved->fRegistryEntryID = ++gIORegistryLastID;
+	traceName = (0 != gIOKitTrace);
+    }
 
     ret = makeLink( parent, kParentSetIndex, plane );
 
@@ -1645,6 +1705,19 @@ bool IORegistryEntry::attachToParent( IORegistryEntry * parent,
 	needParent = true;
 
     UNLOCK;
+
+    if (traceName)
+    {
+        uint64_t str_id = 0;
+        uint64_t __unused regID = getRegistryEntryID();
+        kernel_debug_string(IODBG_IOREGISTRY(IOREGISTRYENTRY_NAME_STRING), &str_id, getName());
+        KERNEL_DEBUG_CONSTANT(IODBG_IOREGISTRY(IOREGISTRYENTRY_NAME),
+            (uintptr_t) regID,
+            (uintptr_t) (regID >> 32),
+            (uintptr_t) str_id,
+            (uintptr_t) (str_id >> 32),
+            0);
+    }
 
     PLOCK;
 
@@ -1769,8 +1842,11 @@ void IORegistryEntry::detachAbove( const IORegistryPlane * plane )
     IORegistryEntry *	parent;
 
     retain();
-    while( (parent = getParentEntry( plane )))
+    while( (parent = copyParentEntry( plane )))
+    {
 	detachFromParent( parent, plane );
+	parent->release();
+    }
     release();
 }
 

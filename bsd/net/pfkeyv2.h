@@ -65,6 +65,7 @@
 #ifndef _NET_PFKEYV2_H_
 #define _NET_PFKEYV2_H_
 #include <sys/appleapiopts.h>
+#include <net/if.h>
 
 /*
 This file defines structures and symbols for the PF_KEY Version 2
@@ -103,7 +104,10 @@ you leave this credit intact on any copies of this file.
 #define SADB_X_SPDEXPIRE  21
 #define SADB_X_SPDDELETE2 22	/* by policy id */
 #define SADB_GETSASTAT    23
-#define SADB_MAX          23
+#define SADB_X_SPDENABLE  24	/* by policy id */
+#define SADB_X_SPDDISABLE 25	/* by policy id */
+#define SADB_MIGRATE      26
+#define SADB_MAX          26
 
 struct sadb_msg {
   u_int8_t sadb_msg_version;
@@ -136,8 +140,15 @@ struct sadb_sa {
 struct sadb_sa_2 {
 	struct sadb_sa	sa;
 	u_int16_t		sadb_sa_natt_port;
-	u_int16_t		sadb_reserved0;
-	u_int32_t		sadb_reserved1;
+	union {
+		u_int16_t		sadb_reserved0;
+		u_int16_t		sadb_sa_natt_interval;
+	};
+
+	union {
+		u_int32_t		sadb_reserved1;
+		u_int16_t		sadb_sa_natt_offload_interval;
+	};
 };
 #endif /* PRIVATE */
 
@@ -248,8 +259,18 @@ struct sadb_x_sa2 {
   u_int16_t sadb_x_sa2_len;
   u_int16_t sadb_x_sa2_exttype;
   u_int8_t sadb_x_sa2_mode;
-  u_int8_t sadb_x_sa2_reserved1;
-  u_int16_t sadb_x_sa2_reserved2;
+  union {
+    u_int8_t sadb_x_sa2_reserved1;
+#ifdef PRIVATE
+    u_int8_t sadb_x_sa2_alwaysexpire;
+#endif
+  };
+  union {
+    u_int16_t sadb_x_sa2_reserved2;
+#ifdef PRIVATE
+    u_int16_t sadb_x_sa2_flags;
+#endif
+  };
   u_int32_t sadb_x_sa2_sequence;
   u_int32_t sadb_x_sa2_reqid;
 };
@@ -271,7 +292,22 @@ struct sadb_x_policy {
  * [total length of ipsec policy requests]
  *	= (sadb_x_policy_len * sizeof(uint64_t) - sizeof(struct sadb_x_policy))
  */
-
+#ifdef PRIVATE
+/* IPSec Interface Extension:
+ * IPSec interface can be specified alone, or all three
+ * of internal, outgoing, and IPSec interfaces must be
+ * specified.
+ */
+struct sadb_x_ipsecif {
+	u_int16_t sadb_x_ipsecif_len;
+	u_int16_t sadb_x_ipsecif_exttype;
+	char sadb_x_ipsecif_internal_if[IFXNAMSIZ]; /* Steal packets from this interface */
+	char sadb_x_ipsecif_outgoing_if[IFXNAMSIZ]; /* Send packets out on this interface */
+	char sadb_x_ipsecif_ipsec_if[IFXNAMSIZ];  /* Direct packets through ipsec interface */
+	u_int16_t sadb_x_ipsecif_init_disabled; /* 0 or 1, flag to ignore policy */
+	u_int16_t reserved;
+};
+#endif
 /* XXX IPsec Policy Request Extension */
 /*
  * This structure is aligned 8 bytes.
@@ -340,7 +376,15 @@ struct sadb_sastat {
 #define SADB_X_EXT_SA2                19
 #define SADB_EXT_SESSION_ID           20
 #define SADB_EXT_SASTAT               21
-#define SADB_EXT_MAX                  21
+#define SADB_X_EXT_IPSECIF            22
+#define SADB_X_EXT_ADDR_RANGE_SRC_START 23
+#define SADB_X_EXT_ADDR_RANGE_SRC_END   24
+#define SADB_X_EXT_ADDR_RANGE_DST_START 25
+#define SADB_X_EXT_ADDR_RANGE_DST_END   26
+#define SADB_EXT_MIGRATE_ADDRESS_SRC  27
+#define SADB_EXT_MIGRATE_ADDRESS_DST  28
+#define SADB_X_EXT_MIGRATE_IPSECIF    29
+#define SADB_EXT_MAX                  29
 
 #define SADB_SATYPE_UNSPEC	0
 #define SADB_SATYPE_AH		2
@@ -387,6 +431,8 @@ struct sadb_sastat {
 #define SADB_X_EALG_RIJNDAELCBC	12
 #define SADB_X_EALG_AESCBC      12
 #define SADB_X_EALG_AES		12
+#define SADB_X_EALG_AES_GCM     13
+#define SADB_X_EALG_CHACHA20POLY1305 14
 /* private allocations should use 249-255 (RFC2407) */
 
 #if 1	/*nonstandard */
@@ -425,17 +471,28 @@ struct sadb_sastat {
 #define SADB_X_EXT_PZERO	0x0200	/* zero padding for ESP */
 #define SADB_X_EXT_PMASK	0x0300	/* mask for padding flag */
 
+#define SADB_X_EXT_IIV		0x0400 /* Implicit IV */
+
 #ifdef PRIVATE
 #define SADB_X_EXT_NATT_DETECTED_PEER 0x1000
 #define SADB_X_EXT_ESP_KEEPALIVE      0x2000
 #define SADB_X_EXT_PUNT_RX_KEEPALIVE  0x4000
+#define SADB_X_EXT_NATT_KEEPALIVE_OFFLOAD  0x8000
 #endif /* PRIVATE */	
+
+#ifdef PRIVATE
+#define NATT_KEEPALIVE_OFFLOAD_INTERVAL	0x1
+#endif
 
 #if 1
 #define SADB_X_EXT_RAWCPI	0x0080	/* use well known CPI (IPComp) */
 #endif
 
-#define SADB_KEY_FLAGS_MAX	0x0fff
+#define SADB_KEY_FLAGS_MAX	0x7fff
+
+#ifdef PRIVATE
+#define SADB_X_EXT_SA2_DELETE_ON_DETACH   0x0001
+#endif
 
 /* SPI size for PF_KEYv2 */
 #define PFKEY_SPI_SIZE	sizeof(u_int32_t)

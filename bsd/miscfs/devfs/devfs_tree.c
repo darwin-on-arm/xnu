@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2007 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2014 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -328,7 +328,7 @@ dev_finddir(const char * path,
 	    while (*scan != '/' && *scan)
 		scan++;
 
-	    strlcpy(component, start, scan - start);
+	    strlcpy(component, start, (scan - start) + 1);
 	    if (*scan == '/')
 		scan++;
 
@@ -1129,6 +1129,7 @@ devfs_dntovn(devnode_t * dnp, struct vnode **vn_pp, __unused struct proc * p)
 	struct vnode_fsparam vfsp;
 	enum vtype vtype = 0;
 	int markroot = 0;
+	int nretries = 0;
 	int n_minor = DEVFS_CLONE_ALLOC; /* new minor number for clone device */
 	
 	/*
@@ -1155,7 +1156,16 @@ retry:
 
 		DEVFS_UNLOCK();
 
-	        error = vnode_getwithvid(vn_p, vid);
+		/*
+		 * We want to use the drainok variant of vnode_getwithvid
+		 * because we _don't_ want to get an iocount if the vnode is
+		 * is blocked in vnode_drain as it can cause infinite
+		 * loops in vn_open_auth. While in use vnodes are typically
+		 * only reclaimed on forced unmounts, In use devfs tty vnodes
+		 * can  be quite frequently reclaimed by revoke(2) or by the
+		 * exit of a controlling process.
+		 */
+	        error = vnode_getwithvid_drainok(vn_p, vid);
 
 	        DEVFS_LOCK();
 
@@ -1179,6 +1189,29 @@ retry:
 			 * vnode.  Therefore, ENOENT is a valid result.
 			 */
 			error = ENOENT;
+		} else if (error == ENODEV) {
+			/*
+			 * The Filesystem is getting unmounted.
+			 */
+			error = ENOENT;
+		} else if (error && (nretries < DEV_MAX_VNODE_RETRY)) {
+			/*
+			 * If we got an error from vnode_getwithvid, it means
+			 * we raced with a recycle and lost i.e. we asked for
+			 * an iocount only after vnode_drain had been entered
+			 * for the vnode and returned with an error only after
+			 * devfs_reclaim was called on the vnode.  devfs_reclaim
+			 * sets dn_vn to NULL but while we were waiting to
+			 * reacquire DEVFS_LOCK, another vnode might have gotten
+			 * associated with the dnp. In either case, we need to
+			 * retry otherwise we will end up returning an ENOENT
+			 * for this lookup but the next lookup will  succeed
+			 * because it creates a new vnode (or a racing  lookup
+			 * created a new vnode already).
+			 */
+			error = 0;
+			nretries++;
+			goto retry;
 		}
 		if ( !error)
 		        *vn_pp = vn_p;

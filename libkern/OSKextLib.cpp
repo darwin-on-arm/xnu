@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008 Apple Inc. All rights reserved.
+ * Copyright (c) 2008-2016 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -48,6 +48,7 @@ kern_return_t OSKextLoadKextWithIdentifier(const char * bundle_id)
     return OSKext::loadKextWithIdentifier(bundle_id);
 }
 
+uint32_t OSKextGetLoadTagForIdentifier(const char * kextIdentifier);
 /*********************************************************************
 *********************************************************************/
 uint32_t
@@ -339,10 +340,12 @@ finish:
         (void)vm_deallocate(kernel_map, (vm_offset_t)request, requestLengthIn);
     }
     if (response) {
-        kmem_free(kernel_map, (vm_offset_t)response, responseLength);
+        /* 11981737 - clear uninitialized data in last page */
+        kmem_free(kernel_map, (vm_offset_t)response, round_page(responseLength));
     }
     if (logData) {
-        kmem_free(kernel_map, (vm_offset_t)logData, logDataLength);
+        /* 11981737 - clear uninitialized data in last page */
+        kmem_free(kernel_map, (vm_offset_t)logData, round_page(logDataLength));
     }
 
     return result;
@@ -351,8 +354,8 @@ finish:
 /*********************************************************************
 * Gets the vm_map for the current kext
 *********************************************************************/
-extern vm_offset_t segPRELINKB;
-extern unsigned long segSizePRELINK;
+extern vm_offset_t segPRELINKTEXTB;
+extern unsigned long segSizePRELINKTEXT;
 extern int kth_started;
 extern vm_map_t g_kext_map;
 
@@ -362,8 +365,8 @@ kext_get_vm_map(kmod_info_t *info)
     vm_map_t kext_map = NULL;
 
     /* Set the vm map */
-    if ((info->address >= segPRELINKB) && 
-            (info->address < (segPRELINKB + segSizePRELINK)))
+    if ((info->address >= segPRELINKTEXTB) &&
+            (info->address < (segPRELINKTEXTB + segSizePRELINKTEXT)))
     {
         kext_map = kernel_map;
     } else {
@@ -436,37 +439,38 @@ void kext_dump_panic_lists(int (*printf_func)(const char * fmt, ...))
 void
 kmod_panic_dump(vm_offset_t * addr, unsigned int cnt)
 {
-    extern int kdb_printf(const char *format, ...) __printflike(1,2);
+    extern int paniclog_append_noflush(const char *format, ...) __printflike(1,2);
 
-    OSKext::printKextsInBacktrace(addr, cnt, &kdb_printf,
-        /* takeLock? */ false);
+    OSKext::printKextsInBacktrace(addr, cnt, &paniclog_append_noflush, 0);
+
     return;
 }
 
 /********************************************************************/
-void kmod_dump_log(vm_offset_t *addr, unsigned int cnt);
+void kmod_dump_log(vm_offset_t *addr, unsigned int cnt, boolean_t doUnslide);
 
 void
 kmod_dump_log(
     vm_offset_t * addr,
-    unsigned int cnt)
+    unsigned int cnt,
+    boolean_t doUnslide)
 {
-    OSKext::printKextsInBacktrace(addr, cnt, &printf, /* lock? */ true);
+    uint32_t flags = OSKext::kPrintKextsLock;
+    if (doUnslide) flags |= OSKext::kPrintKextsUnslide;
+    OSKext::printKextsInBacktrace(addr, cnt, &printf, flags);
 }
+
+void *
+OSKextKextForAddress(const void *addr)
+{
+    return OSKext::kextForAddress(addr);
+}
+
 
 /*********************************************************************
 * Compatibility implementation for kmod_get_info() host_priv routine.
 * Only supported on old 32-bit architectures.
 *********************************************************************/
-#if defined(__i386__) || defined(__arm__)
-kern_return_t
-kext_get_kmod_info(
-    kmod_info_array_t      * kmod_list,
-    mach_msg_type_number_t * kmodCount)
-{
-    return OSKext::getKmodInfo(kmod_list, kmodCount);
-}
-#endif /* __i386__ */
 
 #if PRAGMA_MARK
 #pragma mark Loaded Kext Summary

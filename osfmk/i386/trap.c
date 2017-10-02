@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2010 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2016 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -89,8 +89,11 @@
 #include <kern/spl.h>
 #include <kern/misc_protos.h>
 #include <kern/debug.h>
-
+#if CONFIG_TELEMETRY
+#include <kern/telemetry.h>
+#endif
 #include <sys/kdebug.h>
+#include <prng/random.h>
 
 #include <string.h>
 
@@ -113,14 +116,8 @@ extern void kprint_state(x86_saved_state64_t *saved_state);
  * Forward declarations
  */
 static void user_page_fault_continue(kern_return_t kret);
-#ifdef __i386__
-static void panic_trap(x86_saved_state32_t *saved_state);
-static void set_recovery_ip(x86_saved_state32_t *saved_state, vm_offset_t ip);
-extern void panic_64(x86_saved_state_t *, int, const char *, boolean_t);
-#else
-static void panic_trap(x86_saved_state64_t *saved_state);
+static void panic_trap(x86_saved_state64_t *saved_state, uint32_t pl, kern_return_t fault_result);
 static void set_recovery_ip(x86_saved_state64_t *saved_state, vm_offset_t ip);
-#endif
 
 volatile perfCallback perfTrapHook = NULL; /* Pointer to CHUD trap hook routine */
 
@@ -132,7 +129,9 @@ extern boolean_t dtrace_tally_fault(user_addr_t);
 #endif
 
 extern boolean_t pmap_smep_enabled;
+extern boolean_t pmap_smap_enabled;
 
+__attribute__((noreturn))
 void
 thread_syscall_return(
         kern_return_t ret)
@@ -193,7 +192,14 @@ thread_syscall_return(
 				ret);
 #endif
 	}
-	throttle_lowpri_io(TRUE);
+
+#if DEBUG || DEVELOPMENT
+	kern_allocation_name_t
+	prior __assert_only = thread_get_kernel_state(thr_act)->allocation_name;
+	assertf(prior == NULL, "thread_set_allocation_name(\"%s\") not cleared", kern_allocation_get_name(prior));
+#endif /* DEBUG || DEVELOPMENT */
+
+	throttle_lowpri_io(1);
 
 	thread_exception_return();
         /*NOTREACHED*/
@@ -260,9 +266,6 @@ kprint_state(x86_saved_state64_t	*saved_state)
 	kprintf("      r10    0x%llx\n", saved_state->r10);
 	kprintf("      r8     0x%llx\n", saved_state->r8);
 	kprintf("      r9     0x%llx\n", saved_state->r9);     
-	kprintf("      v_arg6 0x%llx\n", saved_state->v_arg6);
-	kprintf("      v_arg7 0x%llx\n", saved_state->v_arg7);
-	kprintf("      v_arg8 0x%llx\n", saved_state->v_arg8);
 
 	kprintf("      cr2    0x%llx\n", saved_state->cr2);
 	kprintf("real  cr2    0x%lx\n", get_cr2());
@@ -335,6 +338,9 @@ void interrupt_populate_latency_stats(char *buf, unsigned bufsize) {
 		snprintf(buf, bufsize, "0x%x 0x%x 0x%llx", tcpu, cpu_data_ptr[tcpu]->cpu_max_observed_int_latency_vector, cpu_data_ptr[tcpu]->cpu_max_observed_int_latency);
 }
 
+uint32_t interrupt_timer_coalescing_enabled = 1;
+uint64_t interrupt_coalesced_timers;
+
 /*
  * Handle interrupts:
  *  - local APIC interrupts (IPIs, timers, etc) are handled by the kernel,
@@ -349,39 +355,25 @@ interrupt(x86_saved_state_t *state)
 	boolean_t	user_mode = FALSE;
 	int		ipl;
 	int		cnum = cpu_number();
-	int		itype = 0;
+	cpu_data_t	*cdp = cpu_data_ptr[cnum];
+	int		itype = DBG_INTR_TYPE_UNKNOWN;
 
-	if (is_saved_state64(state) == TRUE) {
-	        x86_saved_state64_t	*state64;
-
-	        state64 = saved_state64(state);
-		rip = state64->isf.rip;
-		rsp = state64->isf.rsp;
-		interrupt_num = state64->isf.trapno;
-#ifdef __x86_64__
-		if(state64->isf.cs & 0x03)
-#endif
-			user_mode = TRUE;
-	} else {
-		x86_saved_state32_t	*state32;
-
-		state32 = saved_state32(state);
-		if (state32->cs & 0x03)
-			user_mode = TRUE;
-		rip = state32->eip;
-		rsp = state32->uesp;
-		interrupt_num = state32->trapno;
-	}
+        x86_saved_state64_t	*state64 = saved_state64(state);
+	rip = state64->isf.rip;
+	rsp = state64->isf.rsp;
+	interrupt_num = state64->isf.trapno;
+	if(state64->isf.cs & 0x03)
+		user_mode = TRUE;
 
 	if (cpu_data_ptr[cnum]->lcpu.package->num_idle == topoParms.nLThreadsPerPackage)
 		cpu_data_ptr[cnum]->cpu_hwIntpexits[interrupt_num]++;
 
 	if (interrupt_num == (LAPIC_DEFAULT_INTERRUPT_BASE + LAPIC_INTERPROCESSOR_INTERRUPT))
-		itype = 1;
+		itype = DBG_INTR_TYPE_IPI;
 	else if (interrupt_num == (LAPIC_DEFAULT_INTERRUPT_BASE + LAPIC_TIMER_INTERRUPT))
-		itype = 2;
+		itype = DBG_INTR_TYPE_TIMER;
 	else
-		itype = 3;
+		itype = DBG_INTR_TYPE_OTHER;
 
 	KERNEL_DEBUG_CONSTANT_IST(KDEBUG_TRACE, 
 		MACHDBG_CODE(DBG_MACH_EXCP_INTR, 0) | DBG_FUNC_START,
@@ -391,35 +383,61 @@ interrupt(x86_saved_state_t *state)
 
 	SCHED_STATS_INTERRUPT(current_processor());
 
+#if CONFIG_TELEMETRY
+	if (telemetry_needs_record) {
+		telemetry_mark_curthread(user_mode);
+	}
+#endif
+
 	ipl = get_preemption_level();
 	
 	/*
 	 * Handle local APIC interrupts
 	 * else call platform expert for devices.
 	 */
-	if (!lapic_interrupt(interrupt_num, state))
+	if (!lapic_interrupt(interrupt_num, state)) {
 		PE_incoming_interrupt(interrupt_num);
+	}
 
 	if (__improbable(get_preemption_level() != ipl)) {
 		panic("Preemption level altered by interrupt vector 0x%x: initial 0x%x, final: 0x%x\n", interrupt_num, ipl, get_preemption_level());
 	}
 
 
-	KERNEL_DEBUG_CONSTANT_IST(KDEBUG_TRACE, 
-		MACHDBG_CODE(DBG_MACH_EXCP_INTR, 0) | DBG_FUNC_END,
-		interrupt_num, 0, 0, 0, 0);
-
- 	if (cpu_data_ptr[cnum]->cpu_nested_istack) {
- 		cpu_data_ptr[cnum]->cpu_nested_istack_events++;
+ 	if (__improbable(cdp->cpu_nested_istack)) {
+ 		cdp->cpu_nested_istack_events++;
  	}
  	else  {
-		uint64_t int_latency = mach_absolute_time() - cpu_data_ptr[cnum]->cpu_int_event_time;
-		if (ilat_assert && (int_latency > interrupt_latency_cap) && !machine_timeout_suspended()) {
-			panic("Interrupt vector 0x%x exceeded interrupt latency threshold, 0x%llx absolute time delta, prior signals: 0x%x, current signals: 0x%x", interrupt_num, int_latency, cpu_data_ptr[cnum]->cpu_prior_signals, cpu_data_ptr[cnum]->cpu_signals);
+		uint64_t ctime = mach_absolute_time();
+		uint64_t int_latency = ctime - cdp->cpu_int_event_time;
+		uint64_t esdeadline, ehdeadline;
+		/* Attempt to process deferred timers in the context of
+		 * this interrupt, unless interrupt time has already exceeded
+		 * TCOAL_ILAT_THRESHOLD.
+		 */
+#define TCOAL_ILAT_THRESHOLD (30000ULL)
+
+		if ((int_latency < TCOAL_ILAT_THRESHOLD) &&
+		    interrupt_timer_coalescing_enabled) {
+			esdeadline = cdp->rtclock_timer.queue.earliest_soft_deadline;
+			ehdeadline = cdp->rtclock_timer.deadline;
+			if ((ctime >= esdeadline) && (ctime < ehdeadline)) {
+				interrupt_coalesced_timers++;
+				TCOAL_DEBUG(0x88880000 | DBG_FUNC_START, ctime, esdeadline, ehdeadline, interrupt_coalesced_timers, 0);
+				rtclock_intr(state);
+				TCOAL_DEBUG(0x88880000 | DBG_FUNC_END, ctime, esdeadline, interrupt_coalesced_timers, 0, 0);
+			} else {
+				TCOAL_DEBUG(0x77770000, ctime, cdp->rtclock_timer.queue.earliest_soft_deadline, cdp->rtclock_timer.deadline, interrupt_coalesced_timers, 0);
+			}
 		}
-		if (int_latency > cpu_data_ptr[cnum]->cpu_max_observed_int_latency) {
-			cpu_data_ptr[cnum]->cpu_max_observed_int_latency = int_latency;
-			cpu_data_ptr[cnum]->cpu_max_observed_int_latency_vector = interrupt_num;
+
+		if (__improbable(ilat_assert && (int_latency > interrupt_latency_cap) && !machine_timeout_suspended())) {
+			panic("Interrupt vector 0x%x exceeded interrupt latency threshold, 0x%llx absolute time delta, prior signals: 0x%x, current signals: 0x%x", interrupt_num, int_latency, cdp->cpu_prior_signals, cdp->cpu_signals);
+		}
+
+		if (__improbable(int_latency > cdp->cpu_max_observed_int_latency)) {
+			cdp->cpu_max_observed_int_latency = int_latency;
+			cdp->cpu_max_observed_int_latency_vector = interrupt_num;
 		}
 	}
 
@@ -427,17 +445,26 @@ interrupt(x86_saved_state_t *state)
 	 * Having serviced the interrupt first, look at the interrupted stack depth.
 	 */
 	if (!user_mode) {
-		uint64_t depth = cpu_data_ptr[cnum]->cpu_kernel_stack
-				 + sizeof(struct x86_kernel_state)
+		uint64_t depth = cdp->cpu_kernel_stack
+				 + sizeof(struct thread_kernel_state)
 				 + sizeof(struct i386_exception_link *)
 				 - rsp;
-		if (depth > kernel_stack_depth_max) {
+		if (__improbable(depth > kernel_stack_depth_max)) {
 			kernel_stack_depth_max = (vm_offset_t)depth;
 			KERNEL_DEBUG_CONSTANT(
 				MACHDBG_CODE(DBG_MACH_SCHED, MACH_STACK_DEPTH),
 				(long) depth, (long) VM_KERNEL_UNSLIDE(rip), 0, 0, 0);
 		}
 	}
+	
+	if (cnum == master_cpu)
+		ml_entropy_collect();
+
+	KERNEL_DEBUG_CONSTANT_IST(KDEBUG_TRACE, 
+		MACHDBG_CODE(DBG_MACH_EXCP_INTR, 0) | DBG_FUNC_END,
+		interrupt_num, 0, 0, 0, 0);
+
+	assert(ml_get_interrupts_enabled() == FALSE);
 }
 
 static inline void
@@ -463,16 +490,13 @@ kernel_trap(
 	x86_saved_state_t	*state,
 	uintptr_t *lo_spp)
 {
-#ifdef __i386__
-	x86_saved_state32_t	*saved_state;
-#else
 	x86_saved_state64_t	*saved_state;
-#endif
 	int			code;
 	user_addr_t		vaddr;
 	int			type;
 	vm_map_t		map = 0;	/* protected by T_PAGE_FAULT */
 	kern_return_t		result = KERN_FAILURE;
+	kern_return_t		fault_result = KERN_SUCCESS;
 	thread_t		thread;
 	ast_t			*myast;
 	boolean_t               intr;
@@ -482,26 +506,11 @@ kernel_trap(
 #if NCOPY_WINDOWS > 0
 	int			fault_in_copy_window = -1;
 #endif
-	int			is_user = 0;
-	
+	int			is_user;
+	int			trap_pl = get_preemption_level();
+
 	thread = current_thread();
 
-#ifdef __i386__
-	if (__improbable(is_saved_state64(state))) {
-		panic_64(state, 0, "Kernel trap with 64-bit state", FALSE);
-	}
-
-	saved_state = saved_state32(state);
-
-	/* Record cpu where state was captured (trampolines don't set this) */
-	saved_state->cpu = cpu_number();
-
-	vaddr = (user_addr_t)saved_state->cr2;
-	type  = saved_state->trapno;
-	code  = saved_state->err & 0xffff;
-	intr  = (saved_state->efl & EFL_IF) != 0;	/* state of ints at trap */
-	kern_ip = (vm_offset_t)saved_state->eip;
-#else
 	if (__improbable(is_saved_state32(state)))
 		panic("kernel_trap(%p) with 32-bit state", state);
 	saved_state = saved_state64(state);
@@ -514,9 +523,10 @@ kernel_trap(
 	code  = (int)(saved_state->isf.err & 0xffff);
 	intr  = (saved_state->isf.rflags & EFL_IF) != 0;	/* state of ints at trap */
 	kern_ip = (vm_offset_t)saved_state->isf.rip;
-#endif
 
 	myast = ast_pending();
+
+	is_user = (vaddr < VM_MAX_USER_PAGE_ADDRESS);
 
 	perfASTCallback astfn = perfASTHook;
 	if (__improbable(astfn != NULL)) {
@@ -525,20 +535,11 @@ kernel_trap(
 	} else
 		*myast &= ~AST_CHUD_ALL;
 
-	/*
-	 * Is there a hook?
-	 */
-	perfCallback fn = perfTrapHook;
-	if (__improbable(fn != NULL)) {
-	        if (fn(type, NULL, 0, 0) == KERN_SUCCESS) {
-		        /*
-			 * If it succeeds, we are done...
-			 */
-			return;
-		}
-	}
 
 #if CONFIG_DTRACE
+	/*
+	 * Is there a DTrace hook?
+	 */	
 	if (__improbable(tempDTraceTrapHook != NULL)) {
 		if (tempDTraceTrapHook(type, state, lo_spp, 0) == KERN_SUCCESS) {
 			/*
@@ -555,14 +556,21 @@ kernel_trap(
 	 * as soon we possibly can to hold latency down
 	 */
 	if (__improbable(T_PREEMPT == type)) {
-	        ast_taken(AST_PREEMPTION, FALSE);
+		ast_taken_kernel();
 
 		KERNEL_DEBUG_CONSTANT_IST(KDEBUG_TRACE, 
 			(MACHDBG_CODE(DBG_MACH_EXCP_KTRAP_x86, type)) | DBG_FUNC_NONE,
 			0, 0, 0, VM_KERNEL_UNSLIDE(kern_ip), 0);
 		return;
 	}
-	
+
+	user_addr_t	kd_vaddr = is_user ? vaddr : VM_KERNEL_UNSLIDE(vaddr);
+	KERNEL_DEBUG_CONSTANT_IST(KDEBUG_TRACE,
+		(MACHDBG_CODE(DBG_MACH_EXCP_KTRAP_x86, type)) | DBG_FUNC_NONE,
+		(unsigned)(kd_vaddr >> 32), (unsigned)kd_vaddr, is_user,
+		VM_KERNEL_UNSLIDE(kern_ip), 0);
+
+
 	if (T_PAGE_FAULT == type) {
 		/*
 		 * assume we're faulting in the kernel map
@@ -597,13 +605,11 @@ kernel_trap(
 					map = thread->map;
 					fault_in_copy_window = window_index;
 				}
-				is_user = -1;
 			}
 #else
 			if (__probable(vaddr < VM_MAX_USER_PAGE_ADDRESS)) {
 				/* fault occurred in userspace */
 				map = thread->map;
-				is_user = -1;
 
 				/* Intercept a potential Supervisor Mode Execute
 				 * Protection fault. These criteria identify
@@ -612,7 +618,19 @@ kernel_trap(
 				 * (The VM could just redrive a SMEP fault, hence
 				 * the intercept).
 				 */
-				if (__improbable((code == (T_PF_PROT | T_PF_EXECUTE)) && (pmap_smep_enabled) && (saved_state->isf.rip == vaddr))) {
+				if (__improbable((code == (T_PF_PROT | T_PF_EXECUTE)) &&
+					(pmap_smep_enabled) && (saved_state->isf.rip == vaddr))) {
+					goto debugger_entry;
+				}
+
+				/*
+				 * Additionally check for SMAP faults...
+				 * which are characterized by page-present and
+				 * the AC bit unset (i.e. not from copyin/out path).
+				 */
+				if (__improbable(code & T_PF_PROT &&
+						 pmap_smap_enabled &&
+						 (saved_state->isf.rflags & EFL_AC) == 0)) {
 					goto debugger_entry;
 				}
 
@@ -628,16 +646,14 @@ kernel_trap(
 					set_cr3_raw(map->pmap->pm_cr3);
 					return;
 				}
+				if (__improbable(vaddr < PAGE_SIZE) &&
+				    ((thread->machine.specFlags & CopyIOActive) == 0)) {
+					goto debugger_entry;
+				}
 			}
 #endif
 		}
 	}
-	user_addr_t	kd_vaddr = is_user ? vaddr : VM_KERNEL_UNSLIDE(vaddr);	
-	KERNEL_DEBUG_CONSTANT_IST(KDEBUG_TRACE, 
-		(MACHDBG_CODE(DBG_MACH_EXCP_KTRAP_x86, type)) | DBG_FUNC_NONE,
-		(unsigned)(kd_vaddr >> 32), (unsigned)kd_vaddr, is_user,
-		VM_KERNEL_UNSLIDE(kern_ip), 0);
-
 
 	(void) ml_set_interrupts_enabled(intr);
 
@@ -659,11 +675,7 @@ kernel_trap(
 	        fpSSEexterrflt();
 		return;
  	    case T_DEBUG:
-#ifdef __i386__
-		    if ((saved_state->efl & EFL_TF) == 0 && NO_WATCHPOINTS)
-#else
 		    if ((saved_state->isf.rflags & EFL_TF) == 0 && NO_WATCHPOINTS)
-#endif
 		    {
 			    /* We've somehow encountered a debug
 			     * register match that does not belong
@@ -697,15 +709,13 @@ kernel_trap(
 
 		if (code & T_PF_WRITE)
 		        prot |= VM_PROT_WRITE;
-#if     PAE
 		if (code & T_PF_EXECUTE)
 		        prot |= VM_PROT_EXECUTE;
-#endif
 
-		result = vm_fault(map,
-				  vm_map_trunc_page(vaddr),
+		fault_result = result = vm_fault(map,
+				  vaddr,
 				  prot,
-				  FALSE, 
+				  FALSE, VM_KERN_MEMORY_NONE,
 				  THREAD_UNINT, NULL, 0);
 
 		if (result == KERN_SUCCESS) {
@@ -769,84 +779,31 @@ debugger_entry:
 		 */
 		sync_iss_to_iks(state);
 #if  MACH_KDP
-		if (current_debugger != KDB_CUR_DB) {
-			if (kdp_i386_trap(type, saved_state, result, (vm_offset_t)vaddr))
-				return;
-		}
+		if (kdp_i386_trap(type, saved_state, result, (vm_offset_t)vaddr))
+			return;
 #endif
 	}
 	pal_cli();
-	panic_trap(saved_state);
+	panic_trap(saved_state, trap_pl, fault_result);
 	/*
 	 * NO RETURN
 	 */
 }
 
 
-#ifdef __i386__
-static void
-set_recovery_ip(x86_saved_state32_t  *saved_state, vm_offset_t ip)
-{
-        saved_state->eip = ip;
-}
-#else
 static void
 set_recovery_ip(x86_saved_state64_t  *saved_state, vm_offset_t ip)
 {
         saved_state->isf.rip = ip;
 }
-#endif
-
-
-#ifdef __i386__
-static void
-panic_trap(x86_saved_state32_t *regs)
-{
-	const char *trapname = "Unknown";
-	pal_cr_t	cr0, cr2, cr3, cr4;
-
-	pal_get_control_registers( &cr0, &cr2, &cr3, &cr4 );
-
-	/*
-	 * Issue an I/O port read if one has been requested - this is an
-	 * event logic analyzers can use as a trigger point.
-	 */
-	panic_io_port_read();
-
-	kprintf("panic trap number 0x%x, eip 0x%x\n", regs->trapno, regs->eip);
-	kprintf("cr0 0x%08x cr2 0x%08x cr3 0x%08x cr4 0x%08x\n",
-		cr0, cr2, cr3, cr4);
-
-	if (regs->trapno < TRAP_TYPES)
-	        trapname = trap_type[regs->trapno];
-#undef panic
-	panic("Kernel trap at 0x%08x, type %d=%s, registers:\n"
-	      "CR0: 0x%08x, CR2: 0x%08x, CR3: 0x%08x, CR4: 0x%08x\n"
-	      "EAX: 0x%08x, EBX: 0x%08x, ECX: 0x%08x, EDX: 0x%08x\n"
-	      "CR2: 0x%08x, EBP: 0x%08x, ESI: 0x%08x, EDI: 0x%08x\n"
-	      "EFL: 0x%08x, EIP: 0x%08x, CS:  0x%08x, DS:  0x%08x\n"
-	      "Error code: 0x%08x%s\n",
-	      regs->eip, regs->trapno, trapname, cr0, cr2, cr3, cr4,
-	      regs->eax,regs->ebx,regs->ecx,regs->edx,
-	      regs->cr2,regs->ebp,regs->esi,regs->edi,
-	      regs->efl,regs->eip,regs->cs & 0xFFFF, regs->ds & 0xFFFF, regs->err,
-	      virtualized ? " VMM" : "");
-	/*
-	 * This next statement is not executed,
-	 * but it's needed to stop the compiler using tail call optimization
-	 * for the panic call - which confuses the subsequent backtrace.
-	 */
-	cr0 = 0;
-}
-#else
-
 
 static void
-panic_trap(x86_saved_state64_t *regs)
+panic_trap(x86_saved_state64_t *regs, uint32_t pl, kern_return_t fault_result)
 {
 	const char	*trapname = "Unknown";
 	pal_cr_t	cr0, cr2, cr3, cr4;
 	boolean_t	potential_smep_fault = FALSE, potential_kernel_NX_fault = FALSE;
+	boolean_t	potential_smap_fault = FALSE;
 
 	pal_get_control_registers( &cr0, &cr2, &cr3, &cr4 );
 	assert(ml_get_interrupts_enabled() == FALSE);
@@ -871,6 +828,12 @@ panic_trap(x86_saved_state64_t *regs)
 		} else if (regs->isf.rip >= VM_MIN_KERNEL_AND_KEXT_ADDRESS) {
 			potential_kernel_NX_fault = TRUE;
 		}
+	} else if (pmap_smap_enabled &&
+		   regs->isf.trapno == T_PAGE_FAULT &&
+		   regs->isf.err & T_PF_PROT &&
+		   regs->cr2 < VM_MAX_USER_PAGE_ADDRESS &&
+		   regs->isf.rip >= VM_MIN_KERNEL_AND_KEXT_ADDRESS) {
+		potential_smap_fault = TRUE;
 	}
 
 #undef panic
@@ -881,7 +844,7 @@ panic_trap(x86_saved_state64_t *regs)
 	      "R8:  0x%016llx, R9:  0x%016llx, R10: 0x%016llx, R11: 0x%016llx\n"
 	      "R12: 0x%016llx, R13: 0x%016llx, R14: 0x%016llx, R15: 0x%016llx\n"
 	      "RFL: 0x%016llx, RIP: 0x%016llx, CS:  0x%016llx, SS:  0x%016llx\n"
-	      "Fault CR2: 0x%016llx, Error code: 0x%016llx, Fault CPU: 0x%x%s%s%s\n",
+	      "Fault CR2: 0x%016llx, Error code: 0x%016llx, Fault CPU: 0x%x%s%s%s%s, PL: %d, VF: %d\n",
 	      regs->isf.rip, regs->isf.trapno, trapname,
 	      cr0, cr2, cr3, cr4,
 	      regs->rax, regs->rbx, regs->rcx, regs->rdx,
@@ -892,7 +855,10 @@ panic_trap(x86_saved_state64_t *regs)
 	      regs->isf.ss & 0xFFFF,regs->cr2, regs->isf.err, regs->isf.cpu,
 	      virtualized ? " VMM" : "",
 	      potential_kernel_NX_fault ? " Kernel NX fault" : "",
-	      potential_smep_fault ? " SMEP/User NX fault" : "");
+	      potential_smep_fault ? " SMEP/User NX fault" : "",
+	      potential_smap_fault ? " SMAP fault" : "",
+	      pl,
+	      fault_result);
 	/*
 	 * This next statement is not executed,
 	 * but it's needed to stop the compiler using tail call optimization
@@ -900,7 +866,6 @@ panic_trap(x86_saved_state64_t *regs)
 	 */
 	cr0 = 0;
 }
-#endif
 
 #if CONFIG_DTRACE
 extern kern_return_t dtrace_user_probe(x86_saved_state_t *);
@@ -995,11 +960,14 @@ user_trap(
 			return;	/* If it succeeds, we are done... */
 	}
 
+#if CONFIG_DTRACE
 	/*
 	 * DTrace does not consume all user traps, only INT_3's for now.
 	 * Avoid needlessly calling tempDTraceTrapHook here, and let the
 	 * INT_3 case handle them.
 	 */
+#endif
+	
 	DEBUG_KPRINT_SYSCALL_MASK(1,
 		"user_trap: type=0x%x(%s) err=0x%x cr2=%p rip=%p\n",
 		type, trap_type[type], err, (void *)(long) vaddr, (void *)(long) rip);
@@ -1058,6 +1026,9 @@ user_trap(
 		break;
 
 	    case T_INVALID_OPCODE:
+#if !defined(RC_HIDE_XNU_J137)
+		fpUDflt(rip);	/* May return from exception directly */
+#endif
 		exc = EXC_BAD_INSTRUCTION;
 		code = EXC_I386_INVOP;
 		break;
@@ -1110,21 +1081,20 @@ user_trap(
 
 	    case T_PAGE_FAULT:
 	    {
-		prot = VM_PROT_READ;
+		    prot = VM_PROT_READ;
 
 		if (err & T_PF_WRITE)
 		        prot |= VM_PROT_WRITE;
-#if     PAE
 		if (__improbable(err & T_PF_EXECUTE))
 		        prot |= VM_PROT_EXECUTE;
-#endif
-		kret = vm_fault(thread->map, vm_map_trunc_page(vaddr),
-				 prot, FALSE,
-				 THREAD_ABORTSAFE, NULL, 0);
+		kret = vm_fault(thread->map,
+				vaddr,
+				prot, FALSE, VM_KERN_MEMORY_NONE,
+				THREAD_ABORTSAFE, NULL, 0);
 
 		if (__probable((kret == KERN_SUCCESS) || (kret == KERN_ABORTED))) {
 			thread_exception_return();
-		/* NOTREACHED */
+			/*NOTREACHED*/
 		}
 
 	        user_page_fault_continue(kret);
@@ -1164,29 +1134,6 @@ user_trap(
 	/* NOTREACHED */
 }
 
-
-/*
- * Handle AST traps for i386.
- */
-
-extern void     log_thread_action (thread_t, char *);
-
-void
-i386_astintr(int preemption)
-{
-	ast_t		mask = AST_ALL;
-	spl_t		s;
-
-	if (preemption)
-	        mask = AST_PREEMPTION;
-
-	s = splsched();
-
-	ast_taken(mask, s);
-
-	splx(s);
-}
-
 /*
  * Handle exceptions for i386.
  *
@@ -1214,46 +1161,33 @@ i386_exception(
 }
 
 
-/* Synchronize a thread's i386_kernel_state (if any) with the given
- * i386_saved_state_t obtained from the trap/IPI handler; called in
+/* Synchronize a thread's x86_kernel_state (if any) with the given
+ * x86_saved_state_t obtained from the trap/IPI handler; called in
  * kernel_trap() prior to entering the debugger, and when receiving
- * an "MP_KDP" IPI.
+ * an "MP_KDP" IPI. Called with null saved_state if an incoming IPI
+ * was detected from the kernel while spinning with interrupts masked.
  */
   
 void
 sync_iss_to_iks(x86_saved_state_t *saved_state)
 {
-	struct x86_kernel_state *iks;
+	struct x86_kernel_state *iks = NULL;
 	vm_offset_t kstack;
 	boolean_t record_active_regs = FALSE;
 
 	/* The PAL may have a special way to sync registers */
-	if( saved_state->flavor == THREAD_STATE_NONE )
+	if (saved_state && saved_state->flavor == THREAD_STATE_NONE)
 		pal_get_kern_regs( saved_state );
 
-	if ((kstack = current_thread()->kernel_stack) != 0) {
-#ifdef __i386__
-		x86_saved_state32_t	*regs = saved_state32(saved_state);
-#else
+	if (current_thread() != NULL && 
+	    (kstack = current_thread()->kernel_stack) != 0) {
 		x86_saved_state64_t	*regs = saved_state64(saved_state);
-#endif
 
 		iks = STACK_IKS(kstack);
 
 		/* Did we take the trap/interrupt in kernel mode? */
-#ifdef __i386__
-		if (regs == USER_REGS32(current_thread()))
-		        record_active_regs = TRUE;
-		else {
-		        iks->k_ebx = regs->ebx;
-			iks->k_esp = (int)regs;
-			iks->k_ebp = regs->ebp;
-			iks->k_edi = regs->edi;
-			iks->k_esi = regs->esi;
-			iks->k_eip = regs->eip;
-		}
-#else
-		if (regs == USER_REGS64(current_thread()))
+		if (saved_state == NULL || /* NULL => polling in kernel */
+		    regs == USER_REGS64(current_thread()))
 		        record_active_regs = TRUE;
 		else {
 			iks->k_rbx = regs->rbx;
@@ -1265,20 +1199,9 @@ sync_iss_to_iks(x86_saved_state_t *saved_state)
 			iks->k_r15 = regs->r15;
 			iks->k_rip = regs->isf.rip;
 		}
-#endif
 	}
 
 	if (record_active_regs == TRUE) {
-#ifdef __i386__
-		/* Show the trap handler path */
-		__asm__ volatile("movl %%ebx, %0" : "=m" (iks->k_ebx));
-		__asm__ volatile("movl %%esp, %0" : "=m" (iks->k_esp));
-		__asm__ volatile("movl %%ebp, %0" : "=m" (iks->k_ebp));
-		__asm__ volatile("movl %%edi, %0" : "=m" (iks->k_edi));
-		__asm__ volatile("movl %%esi, %0" : "=m" (iks->k_esi));
-		/* "Current" instruction pointer */
-		__asm__ volatile("movl $1f, %0\n1:" : "=m" (iks->k_eip));
-#else
 		/* Show the trap handler path */
 		__asm__ volatile("movq %%rbx, %0" : "=m" (iks->k_rbx));
 		__asm__ volatile("movq %%rsp, %0" : "=m" (iks->k_rsp));
@@ -1292,7 +1215,6 @@ sync_iss_to_iks(x86_saved_state_t *saved_state)
 				 : "=m" (iks->k_rip)
 				 :
 				 : "rax");
-#endif
 	}
 }
 
@@ -1309,16 +1231,6 @@ sync_iss_to_iks_unconditionally(__unused x86_saved_state_t *saved_state) {
 
 	if ((kstack = current_thread()->kernel_stack) != 0) {
 		iks = STACK_IKS(kstack);
-#ifdef __i386__
-		/* Display the trap handler path */
-		__asm__ volatile("movl %%ebx, %0" : "=m" (iks->k_ebx));
-		__asm__ volatile("movl %%esp, %0" : "=m" (iks->k_esp));
-		__asm__ volatile("movl %%ebp, %0" : "=m" (iks->k_ebp));
-		__asm__ volatile("movl %%edi, %0" : "=m" (iks->k_edi));
-		__asm__ volatile("movl %%esi, %0" : "=m" (iks->k_esi));
-		/* "Current" instruction pointer */
-		__asm__ volatile("movl $1f, %0\n1:" : "=m" (iks->k_eip));
-#else
 		/* Display the trap handler path */
 		__asm__ volatile("movq %%rbx, %0" : "=m" (iks->k_rbx));
 		__asm__ volatile("movq %%rsp, %0" : "=m" (iks->k_rsp));
@@ -1329,6 +1241,29 @@ sync_iss_to_iks_unconditionally(__unused x86_saved_state_t *saved_state) {
 		__asm__ volatile("movq %%r15, %0" : "=m" (iks->k_r15));
 		/* "Current" instruction pointer */
 		__asm__ volatile("leaq 1f(%%rip), %%rax; mov %%rax, %0\n1:" : "=m" (iks->k_rip)::"rax");
-#endif
 	}
 }
+
+#if DEBUG
+extern void	thread_exception_return_internal(void) __dead2;
+
+void thread_exception_return(void) {
+	thread_t thread = current_thread();
+	ml_set_interrupts_enabled(FALSE);
+	if (thread_is_64bit(thread) != task_has_64BitAddr(thread->task)) {
+		panic("Task/thread bitness mismatch %p %p, task: %d, thread: %d", thread, thread->task, thread_is_64bit(thread),  task_has_64BitAddr(thread->task));
+	}
+
+	if (thread_is_64bit(thread)) {
+		if ((gdt_desc_p(USER64_CS)->access & ACC_PL_U) == 0) {
+			panic("64-GDT mismatch %p, descriptor: %p", thread, gdt_desc_p(USER64_CS));
+		}
+	} else {
+			if ((gdt_desc_p(USER_CS)->access & ACC_PL_U) == 0) {
+				panic("32-GDT mismatch %p, descriptor: %p", thread, gdt_desc_p(USER_CS));
+
+		}
+	}
+	thread_exception_return_internal();
+}
+#endif

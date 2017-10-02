@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998-2000 Apple Computer, Inc. All rights reserved.
+ * Copyright (c) 1998-2016 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -30,7 +30,8 @@
 
 #include <IOKit/IOService.h>
 #include <IOKit/pwr_mgt/IOPM.h>
-#include <IOKit/IOBufferMemoryDescriptor.h> 
+#include <IOKit/IOBufferMemoryDescriptor.h>
+#include <sys/vnode.h>
 
 #ifdef XNU_KERNEL_PRIVATE
 struct AggressivesRecord;
@@ -38,30 +39,31 @@ struct IOPMMessageFilterContext;
 struct IOPMActions;
 struct IOPMSystemSleepParameters;
 class PMSettingObject;
-class IOPMTimeline;
-class PMEventDetails;
 class PMTraceWorker;
 class IOPMPowerStateQueue;
 class RootDomainUserClient;
 class PMAssertionsTracker;
+
+#define OBFUSCATE(x) (void *)VM_KERNEL_UNSLIDE_OR_PERM(x)
+
 #endif
 
 /*!
  * Types for PM Assertions
  * For creating, releasing, and getting PM assertion levels.
  */
- 
+
 /*! IOPMDriverAssertionType
  * A bitfield describing a set of assertions. May be used to specify which assertions
- * to set with <link>IOPMrootDomain::createPMAssertion</link>; or to query which 
+ * to set with <link>IOPMrootDomain::createPMAssertion</link>; or to query which
  * assertions are set with <link>IOPMrootDomain::releasePMAssertion</link>.
  */
 typedef uint64_t IOPMDriverAssertionType;
 
 /* IOPMDriverAssertionID
  * Drivers may create PM assertions to request system behavior (keep the system awake,
- *  or keep the display awake). When a driver creates an assertion via 
- *  <link>IOPMrootDomain::createPMAssertion</link>, PM returns a handle to 
+ *  or keep the display awake). When a driver creates an assertion via
+ *  <link>IOPMrootDomain::createPMAssertion</link>, PM returns a handle to
  *  the assertion of type IOPMDriverAssertionID.
  */
 typedef uint64_t IOPMDriverAssertionID;
@@ -79,13 +81,13 @@ typedef uint32_t IOPMDriverAssertionLevel;
  * Flags for get/setSleepSupported()
  */
 enum {
-    kRootDomainSleepNotSupported	= 0x00000000,
-    kRootDomainSleepSupported 		= 0x00000001,
-    kFrameBufferDeepSleepSupported	= 0x00000002,
+    kRootDomainSleepNotSupported    = 0x00000000,
+    kRootDomainSleepSupported         = 0x00000001,
+    kFrameBufferDeepSleepSupported    = 0x00000002,
     kPCICantSleep                   = 0x00000004
 };
 
-/* 
+/*
  *IOPMrootDomain registry property keys
  */
 #define kRootDomainSupportedFeatures        "Supported Features"
@@ -129,9 +131,9 @@ typedef IOReturn (*IOPMSettingControllerCallback)
 __BEGIN_DECLS
 IONotifier *    registerSleepWakeInterest(
                     IOServiceInterestHandler, void *, void * = 0);
-               
+
 IONotifier *    registerPrioritySleepWakeInterest(
-                    IOServiceInterestHandler handler, 
+                    IOServiceInterestHandler handler,
                     void * self, void * ref = 0);
 
 IOReturn        acknowledgeSleepWakeNotification(void * );
@@ -139,7 +141,7 @@ IOReturn        acknowledgeSleepWakeNotification(void * );
 IOReturn        vetoSleepWakeNotification(void * PMrefcon);
 __END_DECLS
 
-#define IOPM_ROOTDOMAIN_REV		2
+#define IOPM_ROOTDOMAIN_REV        2
 
 class IOPMrootDomain: public IOService
 {
@@ -148,34 +150,100 @@ class IOPMrootDomain: public IOService
 public:
     static IOPMrootDomain * construct( void );
 
-    virtual bool        start( IOService * provider );
-    virtual IOReturn    setAggressiveness( unsigned long, unsigned long );
-    virtual IOReturn    getAggressiveness( unsigned long, unsigned long * );
+    virtual bool        start( IOService * provider ) APPLE_KEXT_OVERRIDE;
+    virtual IOReturn    setAggressiveness( unsigned long, unsigned long ) APPLE_KEXT_OVERRIDE;
+    virtual IOReturn    getAggressiveness( unsigned long, unsigned long * ) APPLE_KEXT_OVERRIDE;
 
     virtual IOReturn    sleepSystem( void );
     IOReturn            sleepSystemOptions( OSDictionary *options );
 
-    virtual IOReturn    setProperties( OSObject * );
-    virtual bool        serializeProperties( OSSerialize * s ) const;
+    virtual IOReturn    setProperties( OSObject * ) APPLE_KEXT_OVERRIDE;
+    virtual bool        serializeProperties( OSSerialize * s ) const APPLE_KEXT_OVERRIDE;
+    virtual OSObject *  copyProperty( const char * aKey ) const APPLE_KEXT_OVERRIDE;
 
 /*! @function systemPowerEventOccurred
     @abstract Other drivers may inform IOPMrootDomain of system PM events
     @discussion systemPowerEventOccurred is a richer alternative to receivePowerNotification()
         Only Apple-owned kexts should have reason to call systemPowerEventOccurred.
     @param event An OSSymbol describing the type of power event.
-    @param value A 32-bit integer value associated with the event.
-    @param shouldUpdate indicates whether the root domain should send a notification
-        to interested parties. Pass false if you're calling systemPowerEventOccurred
-        several times in succession; and pass true only on the last invocatino.
+    @param intValue A 32-bit integer value associated with the event.
     @result kIOReturnSuccess on success */
 
     IOReturn            systemPowerEventOccurred(
-                                    const OSSymbol *event, 
+                                    const OSSymbol *event,
                                     uint32_t intValue );
 
     IOReturn            systemPowerEventOccurred(
-                                    const OSSymbol *event, 
+                                    const OSSymbol *event,
                                     OSObject *value );
+
+#ifdef XNU_KERNEL_PRIVATE   // Hide doc from public headers
+/*! @function claimSystemWakeEvent
+    @abstract   Apple-internal SPI to describe system wake events.
+    @discussion IOKit drivers may call claimSystemWakeEvent() during system wakeup to
+                provide human readable debug information describing the event(s) that
+                caused the system to wake.
+
+                - Drivers should call claimSystemWakeEvent before completing
+                  their setPowerState() acknowledgement. IOPMrootDomain stops
+                  collecting wake events when driver wake is complete.
+
+                - It is only appropriate to claim a wake event when the driver
+                  can positively identify its hardware has generated an event
+                  that can wake the system.
+
+                - This call tracks wake events from a non-S0 state (S0i, S3, S4) into S0.
+                - This call does not track wake events from DarkWake(S0) to FullWake(S0).
+
+	Examples:
+		(reason  = "WiFi.TCPData",
+         details = "TCPKeepAlive packet arrived from IP 16.2.1.1")
+		(reason  = "WiFi.ScanOffload",
+         details = "WiFi station 'AppleWiFi' signal dropped below threshold")
+		(reason  = "Enet.LinkToggle",
+         details = "Ethernet attached")
+
+    @param device   The device/nub that is associated with the wake event.
+
+    @param flags    Pass kIOPMWakeEventSource if the device is the source
+                    of the wake event. Pass zero if the device is forwarding or
+                    aggregating wake events from multiple sources, e.g. an USB or
+                    Thunderbolt host controller.
+
+    @param reason   Caller should pass a human readable C string describing the
+                    wake reason. Please use a string from the list below, or create
+                    your own string matching this format:
+                              [Hardware].[Event]
+                              WiFi.MagicPacket
+                              WiFi.ScanOffload
+                              WiFi.mDNSConflict
+                              WiFi.mDNSService
+                              WiFi.TCPData
+                              WiFi.TCPTimeout
+                              WiFi.FirmwareCrash
+                              Enet.MagicPacket
+                              Enet.mDNSConflict
+                              Enet.mDNSService
+                              Enet.TCPData
+                              Enet.TCPTimeout
+                              Enet.Service
+                              Enet.LinkToggle
+                              Enet.ConflictResolution
+                              Enet.PatternMatch
+                              Enet.Timer
+                              Enet.LinkUpTimeout
+                              Enet.LinkDown
+                              USB.DeviceAttach
+                              USB.DeviceDetach
+
+     @param details Optional details further describing the wake event.
+                    Please pass an OSString defining the event.
+     */
+#endif
+    void 				claimSystemWakeEvent( IOService     *device,
+                                              IOOptionBits  flags,
+                                              const char    *reason,
+                                              OSObject      *details = 0 );
 
     virtual IOReturn    receivePowerNotification( UInt32 msg );
 
@@ -188,18 +256,18 @@ public:
     // KEXT driver announces support of power management feature
 
     void                publishFeature( const char *feature );
-    
+
     // KEXT driver announces support of power management feature
     // And specifies power sources with kIOPMSupportedOn{AC/Batt/UPS} bitfield.
     // Returns a unique uint32_t identifier for later removing support for this
-    // feature. 
+    // feature.
     // NULL is acceptable for uniqueFeatureID for kexts without plans to unload.
 
-    void                publishFeature( const char *feature, 
+    void                publishFeature( const char *feature,
                                         uint32_t supportedWhere,
                                         uint32_t *uniqueFeatureID);
 
-    // KEXT driver announces removal of a previously published power management 
+    // KEXT driver announces removal of a previously published power management
     // feature. Pass 'uniqueFeatureID' returned from publishFeature()
 
     IOReturn            removePublishedFeature( uint32_t removeFeatureID );
@@ -214,8 +282,8 @@ public:
 
 /*! @function registerPMSettingController
     @abstract Register for callbacks on changes to certain PM settings.
-    @param settings NULL terminated array of C strings, each string for a PM 
-        setting that the caller is interested in and wants to get callbacks for. 
+    @param settings NULL terminated array of C strings, each string for a PM
+        setting that the caller is interested in and wants to get callbacks for.
     @param callout C function ptr or member function cast as such.
     @param target The target of the callback, usually 'this'
     @param refcon Will be passed to caller in callback; for caller's use.
@@ -233,8 +301,8 @@ public:
 
 /*! @function registerPMSettingController
     @abstract Register for callbacks on changes to certain PM settings.
-    @param settings NULL terminated array of C strings, each string for a PM 
-        setting that the caller is interested in and wants to get callbacks for. 
+    @param settings NULL terminated array of C strings, each string for a PM
+        setting that the caller is interested in and wants to get callbacks for.
     @param supportedPowerSources bitfield indicating which power sources these
         settings are supported for (kIOPMSupportedOnAC, etc.)
     @param callout C function ptr or member function cast as such.
@@ -256,17 +324,17 @@ public:
     virtual IONotifier * registerInterest(
                                 const OSSymbol * typeOfInterest,
                                 IOServiceInterestHandler handler,
-                                void * target, void * ref = 0 );
+                                void * target, void * ref = 0 ) APPLE_KEXT_OVERRIDE;
 
     virtual IOReturn    callPlatformFunction(
                                 const OSSymbol *functionName,
                                 bool waitForFunction,
                                 void *param1, void *param2,
-                                void *param3, void *param4 );
+                                void *param3, void *param4 ) APPLE_KEXT_OVERRIDE;
 
 /*! @function createPMAssertion
     @abstract Creates an assertion to influence system power behavior.
-    @param whichAssertionBits A bitfield specify the assertion that the caller requests.
+    @param whichAssertionsBits A bitfield specify the assertion that the caller requests.
     @param assertionLevel An integer detailing the initial assertion level, kIOPMDriverAssertionLevelOn
         or kIOPMDriverAssertionLevelOff.
     @param ownerService A pointer to the caller's IOService class, for tracking.
@@ -281,7 +349,7 @@ public:
 
 /* @function setPMAssertionLevel
    @abstract Modify the level of a pre-existing assertion.
-   @discussion Change the value of a PM assertion to influence system behavior, 
+   @discussion Change the value of a PM assertion to influence system behavior,
     without undergoing the work required to create or destroy an assertion. Suggested
     for clients who will assert and de-assert needs for PM behavior several times over
     their lifespan.
@@ -293,13 +361,13 @@ public:
 
 /*! @function getPMAssertionLevel
     @absract Returns the active level of the specified assertion(s).
-    @discussion Returns <link>kIOPMDriverAssertionLevelOff</link> or 
+    @discussion Returns <link>kIOPMDriverAssertionLevelOff</link> or
         <link>kIOPMDriverAssertionLevelOn</link>. If multiple assertions are specified
         in the bitfield, only returns <link>kIOPMDriverAssertionLevelOn</link>
         if all assertions are active.
     @param whichAssertionBits Bits defining the assertion or assertions the caller is interested in
         the level of. If in doubt, pass <link>kIOPMDriverAssertionCPUBit</link> as the argument.
-    @result Returns <link>kIOPMDriverAssertionLevelOff</link> or 
+    @result Returns <link>kIOPMDriverAssertionLevelOff</link> or
         <link>kIOPMDriverAssertionLevelOn</link> indicating the specified assertion's levels, if available.
         If the assertions aren't supported on this machine, or aren't recognized by the OS, the
         result is undefined.
@@ -311,16 +379,38 @@ public:
     @result On success, returns a new assertion of type IOPMDriverAssertionID *
 */
     IOReturn releasePMAssertion(IOPMDriverAssertionID releaseAssertion);
-        
+
+/*! @function restartWithStackshot
+    @abstract Take a stackshot of the system and restart the system.
+    @result Return kIOReturnSuccess if it work, kIOReturnError if the service is not available.
+*/
+    IOReturn restartWithStackshot();
+
 private:
-    virtual IOReturn    changePowerStateTo( unsigned long ordinal );
+    virtual IOReturn    changePowerStateTo( unsigned long ordinal ) APPLE_KEXT_COMPATIBILITY_OVERRIDE;
     virtual IOReturn    changePowerStateToPriv( unsigned long ordinal );
-    virtual IOReturn    requestPowerDomainState( IOPMPowerFlags, IOPowerConnection *, unsigned long );
-    virtual void        powerChangeDone( unsigned long );
-    virtual bool        tellChangeDown( unsigned long );
-    virtual bool        askChangeDown( unsigned long );
-    virtual void        tellChangeUp( unsigned long );
-    virtual void        tellNoChangeDown( unsigned long );
+    virtual IOReturn    requestPowerDomainState( IOPMPowerFlags, IOPowerConnection *, unsigned long ) APPLE_KEXT_OVERRIDE;
+    virtual void        powerChangeDone( unsigned long ) APPLE_KEXT_OVERRIDE;
+    virtual bool        tellChangeDown( unsigned long ) APPLE_KEXT_OVERRIDE;
+    virtual bool        askChangeDown( unsigned long ) APPLE_KEXT_OVERRIDE;
+    virtual void        tellChangeUp( unsigned long ) APPLE_KEXT_OVERRIDE;
+    virtual void        tellNoChangeDown( unsigned long ) APPLE_KEXT_OVERRIDE;
+    virtual IOReturn configureReport(IOReportChannelList   *channels,
+                                    IOReportConfigureAction action,
+                                    void                    *result,
+                                    void                    *destination) APPLE_KEXT_OVERRIDE;
+    virtual IOReturn updateReport(IOReportChannelList      *channels,
+                                  IOReportUpdateAction     action,
+                                  void                     *result,
+                                  void                     *destination) APPLE_KEXT_OVERRIDE;
+
+    void             configureReportGated(uint64_t channel_id,
+                                          uint64_t action,
+                                          void     *result);
+    IOReturn         updateReportGated(uint64_t ch_id, 
+                                       void *result, 
+                                       IOBufferMemoryDescriptor *dest);
+
 #ifdef XNU_KERNEL_PRIVATE
     /* Root Domain internals */
 public:
@@ -329,47 +419,57 @@ public:
                     IOPMActions *   actions );
 
     void        overrideOurPowerChange(
-                    IOService *     service,
-                    IOPMActions *   actions,
-                    unsigned long * inOutPowerState,
-                    uint32_t *      inOutChangeFlags );
+                    IOService *             service,
+                    IOPMActions *           actions,
+                    IOPMPowerStateIndex *   inOutPowerState,
+                    IOPMPowerChangeFlags *  inOutChangeFlags,
+                    IOPMRequestTag          requestTag );
 
     void        handleOurPowerChangeStart(
-                    IOService *     service,
-                    IOPMActions *   actions,
-                    uint32_t        powerState,
-                    uint32_t *      inOutChangeFlags );
+                    IOService *             service,
+                    IOPMActions *           actions,
+                    IOPMPowerStateIndex     powerState,
+                    IOPMPowerChangeFlags *  inOutChangeFlags,
+                    IOPMRequestTag          requestTag );
 
     void        handleOurPowerChangeDone(
-                    IOService *     service,
-                    IOPMActions *   actions,
-                    uint32_t        powerState,
-                    uint32_t        changeFlags );
+                    IOService *             service,
+                    IOPMActions *           actions,
+                    IOPMPowerStateIndex     powerState,
+                    IOPMPowerChangeFlags    changeFlags,
+                    IOPMRequestTag          requestTag );
 
     void        overridePowerChangeForUIService(
-                    IOService *     service,
-                    IOPMActions *   actions,
-                    unsigned long * inOutPowerState,
-                    uint32_t *      inOutChangeFlags );
+                    IOService *             service,
+                    IOPMActions *           actions,
+                    IOPMPowerStateIndex *   inOutPowerState,
+                    IOPMPowerChangeFlags *  inOutChangeFlags );
 
     void        handleActivityTickleForDisplayWrangler(
-                    IOService *     service,
-                    IOPMActions *   actions );
+                    IOService *             service,
+                    IOPMActions *           actions );
+
+    void        handleUpdatePowerClientForDisplayWrangler(
+                    IOService *             service,
+                    IOPMActions *           actions,
+                    const OSSymbol *        powerClient,
+                    IOPMPowerStateIndex     oldPowerState,
+                    IOPMPowerStateIndex     newPowerState );
 
     bool        shouldDelayChildNotification(
-                    IOService * service );
+                    IOService *     service );
 
     void        handlePowerChangeStartForPCIDevice(
-                    IOService *     service,
-                    IOPMActions *   actions, 
-                    uint32_t        powerState,
-                    uint32_t *      inOutChangeFlags );
+                    IOService *             service,
+                    IOPMActions *           actions,
+                    IOPMPowerStateIndex     powerState,
+                    IOPMPowerChangeFlags *  inOutChangeFlags );
 
     void        handlePowerChangeDoneForPCIDevice(
-                    IOService *     service,
-                    IOPMActions *   actions, 
-                    uint32_t        powerState,
-                    uint32_t        changeFlags );
+                    IOService *             service,
+                    IOPMActions *           actions,
+                    IOPMPowerStateIndex     powerState,
+                    IOPMPowerChangeFlags    changeFlags );
 
     void        askChangeDownDone(
                     IOPMPowerChangeFlags * inOutChangeFlags,
@@ -381,19 +481,20 @@ public:
     void        handleQueueSleepWakeUUID(
                     OSObject *obj);
 
-    void        handleSuspendPMNotificationClient(
-                    uint32_t pid, bool doSuspend);
+    void        handleDisplayPowerOn( );
+
+    void        willNotifyPowerChildren( IOPMPowerStateIndex newPowerState );
 
     IOReturn    setMaintenanceWakeCalendar(
                     const IOPMCalendarStruct * calendar );
 
-    IOReturn    getSystemSleepType( uint32_t * sleepType );
+    IOReturn    getSystemSleepType(uint32_t * sleepType, uint32_t * standbyTimer);
 
     // Handle callbacks from IOService::systemWillShutdown()
-	void        acknowledgeSystemWillShutdown( IOService * from );
+    void        acknowledgeSystemWillShutdown( IOService * from );
 
     // Handle platform halt and restart notifications
-	void        handlePlatformHaltRestart( UInt32 pe_type );
+    void        handlePlatformHaltRestart( UInt32 pe_type );
 
     IOReturn    shutdownSystem( void );
     IOReturn    restartSystem( void );
@@ -401,18 +502,24 @@ public:
 
     bool        activitySinceSleep(void);
     bool        abortHibernation(void);
+    void        updateConsoleUsers(void);
 
     IOReturn    joinAggressiveness( IOService * service );
     void        handleAggressivesRequests( void );
 
-    void        tracePoint( uint8_t point );
-    void        tracePoint( uint8_t point, uint8_t data );
-    void        traceDetail( uint32_t data32 );
+    void        kdebugTrace(uint32_t event, uint64_t regId,
+                            uintptr_t param1, uintptr_t param2, uintptr_t param3 = 0);
+    void        tracePoint(uint8_t point);
+    void        traceDetail(uint32_t msgType, uint32_t msgIndex, uint32_t delay);
+    void        traceDetail(OSObject *notifier);
+    void        traceAckDelay(OSObject *notifier, uint32_t response, uint32_t delay_ms);
+
+    void        startSpinDump(uint32_t spindumpKind);
 
     bool        systemMessageFilter(
                     void * object, void * arg1, void * arg2, void * arg3 );
 
-    void        updatePreventIdleSleepList(
+    bool        updatePreventIdleSleepList(
                     IOService * service, bool addNotRemove );
     void        updatePreventSystemSleepList(
                     IOService * service, bool addNotRemove );
@@ -420,49 +527,36 @@ public:
     void        publishPMSetting(
                     const OSSymbol * feature, uint32_t where, uint32_t * featureID );
 
-/*! @function recordPMEvent
-    @abstract Logs IOService PM event timing.
-    @discussion Should only be called from IOServicePM. Should not be exported.
-    @result kIOReturn on success.
-*/
-    IOReturn    recordPMEvent( PMEventDetails *details );
-    IOReturn    recordAndReleasePMEvent( PMEventDetails *details );
-    IOReturn    recordPMEventGated( PMEventDetails *details );
-    IOReturn    recordAndReleasePMEventGated( PMEventDetails *details );
-
     void        pmStatsRecordEvent(
                                 int             eventIndex,
                                 AbsoluteTime    timestamp);
 
     void        pmStatsRecordApplicationResponse(
-                                const OSSymbol		*response,
-                                const char 		    *name,
+                                const OSSymbol      *response,
+                                const char          *name,
                                 int                 messageType,
-                                uint32_t			delay_ms,
-                                int     			app_pid);
+                                uint32_t            delay_ms,
+                                uint64_t            id,
+                                OSObject            *object,
+                                IOPMPowerStateIndex ps=0);
 
-
-/*! @function   suspendPMNotificationsForPID
-    @abstract   kernel process management calls this to disable sleep/wake notifications
-                when a process is suspended.
-    @param      pid the process ID
-    @param      doSuspend true suspends the notifications; false enables them
-*/
-    void        suspendPMNotificationsForPID( uint32_t pid, bool doSuspend);
-
-/*! @function   pmNotificationIsSuspended
-    @abstract   returns true if PM notifications have been suspended
-    @param      pid the process ID
-    @result     true if the process has been suspended
-*/
-    bool        pmNotificationIsSuspended( uint32_t pid );
+    void        copyWakeReasonString( char * outBuf, size_t bufSize );
 
 #if HIBERNATION
     bool        getHibernateSettings(
                     uint32_t *  hibernateMode,
                     uint32_t *  hibernateFreeRatio,
                     uint32_t *  hibernateFreeTime );
+    bool        mustHibernate( void );
 #endif
+    void        takeStackshot(bool restart, bool isOSXWatchdog, bool isSpinDump);
+    void        sleepWakeDebugTrig(bool restart);
+    void        sleepWakeDebugEnableWdog();
+    bool        sleepWakeDebugIsWdogEnabled();
+    static void saveTimeoutAppStackShot(void *p0, void *p1);
+    void        sleepWakeDebugSaveSpinDumpFile();
+    void        swdDebugSetup();
+    void        swdDebugTeardown();
 
 private:
     friend class PMSettingObject;
@@ -485,13 +579,23 @@ private:
                                     IOService * newService,
                                     IONotifier * notifier);
 
+    static bool IONVRAMMatchPublished( void * target, void * refCon,
+                                    IOService * newService,
+                                    IONotifier * notifier);
+
     static bool batteryPublished( void * target, void * refCon,
                                     IOService * resourceService,
                                     IONotifier * notifier);
 
+    void initializeBootSessionUUID( void );
+
+    void fullWakeDelayedWork( void );
+
     IOService *             wrangler;
+    OSDictionary *          wranglerIdleSettings;
 
     IOLock                  *featuresDictLock;  // guards supportedFeatures
+    IOLock                  *wakeEventLock;
     IOPMPowerStateQueue     *pmPowerStateQueue;
 
     OSArray                 *allowedPMSettings;
@@ -500,7 +604,7 @@ private:
     PMAssertionsTracker     *pmAssertions;
 
     // Settings controller info
-    IOLock                  *settingsCtrlLock;  
+    IOLock                  *settingsCtrlLock;
     OSDictionary            *settingsCallbacks;
     OSDictionary            *fPMSettingsDict;
 
@@ -513,33 +617,44 @@ private:
     const OSSymbol          *_statsTimeMSKey;
     const OSSymbol          *_statsResponseTypeKey;
     const OSSymbol          *_statsMessageTypeKey;
-    
+    const OSSymbol          *_statsPowerCapsKey;
+    uint32_t                sleepCnt;
+    uint32_t                darkWakeCnt;
+    uint32_t                displayWakeCnt;
+
     OSString                *queuedSleepWakeUUIDString;
     OSArray                 *pmStatsAppResponses;
+    IOLock                  *pmStatsLock;   // guards pmStatsAppResponses
+
+    void                    *sleepDelaysReport;     // report to track time taken to go to sleep
+    uint32_t                sleepDelaysClientCnt;   // Number of interested clients in sleepDelaysReport
+    uint64_t                ts_sleepStart;
+    uint64_t                wake2DarkwakeDelay;      // Time taken to change from full wake -> Dark wake
+
+
+    void                    *assertOnWakeReport;    // report to track time spent without any assertions held after wake
+    uint32_t                assertOnWakeClientCnt;  // Number of clients interested in assertOnWakeReport
+    clock_sec_t             assertOnWakeSecs;       // Num of secs after wake for first assertion
 
     bool                    uuidPublished;
 
     // Pref: idle time before idle sleep
-    unsigned long           sleepSlider;		
+    bool                    idleSleepEnabled;
+    unsigned long           sleepSlider;
     unsigned long           idleSeconds;
     uint64_t                autoWakeStart;
     uint64_t                autoWakeEnd;
 
     // Difference between sleepSlider and longestNonSleepSlider
-    unsigned long           extraSleepDelay;		
+    unsigned long           extraSleepDelay;
 
     // Used to wait between say display idle and system idle
     thread_call_t           extraSleepTimer;
     thread_call_t           diskSyncCalloutEntry;
-
-    // IOPMActions parameter encoding
-    enum {
-        kPMActionsFlagIsDisplayWrangler = 0x00000001,
-        kPMActionsFlagIsGraphicsDevice  = 0x00000002,
-        kPMActionsFlagIsAudioDevice     = 0x00000004,
-        kPMActionsFlagLimitPower        = 0x00000008,
-        kPMActionsPCIBitNumberMask      = 0x000000ff  
-    };
+    thread_call_t           fullWakeThreadCall;
+    thread_call_t           swdDebugSetupEntry;
+    thread_call_t           swdDebugTearDownEntry;
+    thread_call_t           updateConsoleUsersEntry;
 
     // Track system capabilities.
     uint32_t                _desiredCapability;
@@ -551,9 +666,8 @@ private:
 
     // Type of clients that can receive system messages.
     enum {
-        kSystemMessageClientConfigd   = 0x01,
-        kSystemMessageClientApp       = 0x02,
-        kSystemMessageClientUser      = 0x03,
+        kSystemMessageClientPowerd    = 0x01,
+        kSystemMessageClientLegacyApp = 0x02,
         kSystemMessageClientKernel    = 0x04,
         kSystemMessageClientAll       = 0x07
     };
@@ -576,40 +690,59 @@ private:
     unsigned int            clamshellDisabled       :1;
     unsigned int            desktopMode             :1;
     unsigned int            acAdaptorConnected      :1;
-    unsigned int            clamshellSleepDisabled  :1;
 
+    unsigned int            clamshellSleepDisabled  :1;
     unsigned int            idleSleepTimerPending   :1;
     unsigned int            userDisabledAllSleep    :1;
     unsigned int            ignoreTellChangeDown    :1;
     unsigned int            wranglerAsleep          :1;
     unsigned int            wranglerTickled         :1;
-    unsigned int            wranglerSleepIgnored    :1;
+    unsigned int            _preventUserActive      :1;
     unsigned int            graphicsSuppressed      :1;
-    unsigned int            darkWakeThermalAlarm    :1;
 
     unsigned int            capabilityLoss          :1;
     unsigned int            pciCantSleepFlag        :1;
     unsigned int            pciCantSleepValid       :1;
-    unsigned int            logWranglerTickle       :1;
     unsigned int            logGraphicsClamp        :1;
     unsigned int            darkWakeToSleepASAP     :1;
     unsigned int            darkWakeMaintenance     :1;
     unsigned int            darkWakeSleepService    :1;
-
     unsigned int            darkWakePostTickle      :1;
-    unsigned int            sleepTimerMaintenance   :1;
-    unsigned int            lowBatteryCondition     :1;
-    unsigned int            darkWakeThermalEmergency:1;
-    unsigned int            hibernateDisabled       :1;
-    unsigned int            hibernateNoDefeat       :1;
-    unsigned int            rejectWranglerTickle    :1;
-    unsigned int            wranglerTickleLatched   :1;
 
+    unsigned int            sleepTimerMaintenance   :1;
+    unsigned int            sleepToStandby          :1;
+    unsigned int            lowBatteryCondition     :1;
+    unsigned int            hibernateDisabled       :1;
+    unsigned int            hibernateRetry          :1;
+    unsigned int            wranglerTickleLatched   :1;
+    unsigned int            userIsActive            :1;
+    unsigned int            userWasActive           :1;
+
+    unsigned int            displayIdleForDemandSleep :1;
+    unsigned int            darkWakeHibernateError  :1;
+    unsigned int            thermalWarningState:1;
+    unsigned int            toldPowerdCapWillChange :1;
+    unsigned int            displayPowerOnRequested:1;
+
+    uint8_t                 tasksSuspended;
     uint32_t                hibernateMode;
+    AbsoluteTime            userActivityTime;
+    AbsoluteTime            userActivityTime_prev;
     uint32_t                userActivityCount;
     uint32_t                userActivityAtSleep;
     uint32_t                lastSleepReason;
+    uint32_t                fullToDarkReason;
     uint32_t                hibernateAborted;
+    uint8_t                 standbyNixed;
+    uint8_t                 resetTimers;
+
+    enum FullWakeReason {
+        kFullWakeReasonNone = 0,
+        kFullWakeReasonLocalUser = 1,
+        kFullWakeReasonDisplayOn = 2,
+        fFullWakeReasonDisplayOnAndLocalUser = 3
+    };
+    uint32_t                fullWakeReason;
 
     // Info for communicating system state changes to PMCPU
     int32_t                 idxPMCPUClamshell;
@@ -623,8 +756,7 @@ private:
     thread_call_t           aggressivesThreadCall;
     OSData *                aggressivesData;
 
-    AbsoluteTime            wranglerSleepTime;
-    AbsoluteTime            systemWakeTime;
+    AbsoluteTime            userBecameInactiveTime;
 
     // PCI top-level PM trace
     IOService *             pciHostBridgeDevice;
@@ -632,14 +764,12 @@ private:
 
     IONotifier *            systemCapabilityNotifier;
 
-    IOPMTimeline            *timeline;
-
     typedef struct {
         uint32_t            pid;
         uint32_t            refcount;
     } PMNotifySuspendedStruct;
-    
-    uint32_t                pmSuspendedCapacity;    
+
+    uint32_t                pmSuspendedCapacity;
     uint32_t                pmSuspendedSize;
     PMNotifySuspendedStruct *pmSuspendedPIDS;
 
@@ -652,14 +782,30 @@ private:
 #if HIBERNATION
     clock_sec_t             _standbyTimerResetSeconds;
 #endif
+    volatile uint32_t   swd_lock;    /* Lock to access swd_buffer & and its header */
+    void  *             swd_buffer;  /* Memory allocated for dumping sleep/wake logs */
+    uint32_t            swd_flags;   /* Flags defined in IOPMPrivate.h */
+    uint8_t             swd_DebugImageSetup;
+    void  *             swd_spindump_buffer;
+
+    IOBufferMemoryDescriptor    *swd_memDesc;
+
+    IOMemoryMap  *      swd_logBufMap; /* Memory with sleep/wake logs from previous boot */
+
+    // Wake Event Reporting
+    OSArray *               _systemWakeEventsArray;
+    bool                    _acceptSystemWakeEvents;
 
     int         findSuspendedPID(uint32_t pid, uint32_t *outRefCount);
 
-	// IOPMrootDomain internal sleep call
+    // IOPMrootDomain internal sleep call
     IOReturn    privateSleepSystem( uint32_t sleepReason );
     void        reportUserInput( void );
     void        setDisableClamShellSleep( bool );
-    bool        checkSystemCanSleep( IOOptionBits options = 0 );
+    bool        checkSystemSleepAllowed( IOOptionBits options,
+                                         uint32_t sleepReason );
+    bool        checkSystemSleepEnabled( void );
+    bool        checkSystemCanSleep( uint32_t sleepReason );
     bool        checkSystemCanSustainFullWake( void );
 
     void        adjustPowerState( bool sleepASAP = false );
@@ -679,6 +825,7 @@ private:
 
     void        startIdleSleepTimer( uint32_t inSeconds );
     void        cancelIdleSleepTimer( void );
+    uint32_t    getTimeToIdleSleep( void );
 
     IOReturn    setAggressiveness(
                         unsigned long type,
@@ -694,19 +841,35 @@ private:
                         const AggressivesRecord * array,
                         int count );
 
-    // getPMTraceMemoryDescriptor should only be called by our friend RootDomainUserClient
-    IOMemoryDescriptor *getPMTraceMemoryDescriptor(void);
-
     IOReturn    setPMAssertionUserLevels(IOPMDriverAssertionType);
 
     void        publishSleepWakeUUID( bool shouldPublish );
 
     void        evaluatePolicy( int stimulus, uint32_t arg = 0 );
+    void        requestFullWake( FullWakeReason reason );
+    void        willEnterFullWake( void );
 
-    void evaluateAssertions(IOPMDriverAssertionType newAssertions, 
-                                IOPMDriverAssertionType oldAssertions);
+    void        evaluateAssertions(IOPMDriverAssertionType newAssertions,
+                                   IOPMDriverAssertionType oldAssertions);
 
     void        deregisterPMSettingObject( PMSettingObject * pmso );
+
+    uint32_t    checkForValidDebugData(const char *fname, vfs_context_t *ctx, 
+                                            void *tmpBuf, struct vnode **vp);
+    void        sleepWakeDebugMemAlloc( );
+    void        sleepWakeDebugSpinDumpMemAlloc( );
+    void        sleepWakeDebugDumpFromMem(IOMemoryMap *logBufMap);
+    void        sleepWakeDebugDumpFromFile( );
+    IOMemoryMap *sleepWakeDebugRetrieve();
+    errno_t     sleepWakeDebugSaveFile(const char *name, char *buf, int len);
+    errno_t     sleepWakeDebugCopyFile( struct vnode *srcVp,
+                               vfs_context_t srcCtx,
+                               char *tmpBuf, uint64_t tmpBufSize,
+                               uint64_t srcOffset, 
+                               const char *dstFname, 
+                               uint64_t numBytes,
+                               uint32_t crc);
+
 
 #if HIBERNATION
     bool        getSleepOption( const char * key, uint32_t * option );
@@ -717,6 +880,13 @@ private:
 #endif /* HIBERNATION */
 
     bool        latchDisplayWranglerTickle( bool latch );
+    void        setDisplayPowerOn( uint32_t options );
+
+    void        acceptSystemWakeEvents( bool accept );
+    void        systemDidNotSleep( void );
+    void        preventTransitionToUserActive( bool prevent );
+    void        setThermalState(OSObject *value);
+    void        copySleepPreventersList(OSArray  **idleSleepList, OSArray  **systemSleepList);
 #endif /* XNU_KERNEL_PRIVATE */
 };
 
@@ -727,8 +897,8 @@ class IORootParent: public IOService
 
 public:
     static void initialize( void );
-    virtual OSObject * copyProperty( const char * aKey ) const;
-    bool start( IOService * nub );
+    virtual OSObject * copyProperty( const char * aKey ) const APPLE_KEXT_OVERRIDE;
+    bool start( IOService * nub ) APPLE_KEXT_OVERRIDE;
     void shutDownSystem( void );
     void restartSystem( void );
     void sleepSystem( void );

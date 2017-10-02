@@ -48,6 +48,7 @@ extern const OSSymbol *		gIODTPHandleKey;
 extern const OSSymbol *		gIODTCompatibleKey;
 extern const OSSymbol * 	gIODTTypeKey;
 extern const OSSymbol * 	gIODTModelKey;
+extern const OSSymbol * 	gIODTTargetTypeKey;
 
 extern const OSSymbol *		gIODTAAPLInterruptsKey;
 extern const OSSymbol *		gIODTDefaultInterruptController;
@@ -70,11 +71,13 @@ enum {
 OSCollectionIterator * IODTFindMatchingEntries( IORegistryEntry * from,
 			IOOptionBits options, const char * keys );
 
+#if !defined(__arm64__)
 typedef SInt32 (*IODTCompareAddressCellFunc)
 	(UInt32 cellCount, UInt32 left[], UInt32 right[]);
-
-typedef SInt64 (*IODTCompareAddressCell64Func)
+#else
+typedef SInt64 (*IODTCompareAddressCellFunc)
 	(UInt32 cellCount, UInt32 left[], UInt32 right[]);
+#endif
 
 typedef void (*IODTNVLocationFunc)
 	(IORegistryEntry * entry,
@@ -83,6 +86,9 @@ typedef void (*IODTNVLocationFunc)
 void IODTSetResolving( IORegistryEntry * 	regEntry,
 		IODTCompareAddressCellFunc	compareFunc,
 		IODTNVLocationFunc		locationFunc );
+
+void IODTGetCellCounts( IORegistryEntry * regEntry,
+		                            UInt32 * sizeCount, UInt32 * addressCount);
 
 bool IODTResolveAddressCell( IORegistryEntry * regEntry,
                              UInt32 cellsIn[],

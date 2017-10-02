@@ -69,8 +69,6 @@
  * HISTORY
  */
 
-#include <machine/spl.h>
-
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/time.h>
@@ -141,7 +139,34 @@ timeout(
 }
 
 /*
+ *	Set a timeout with leeway.
+ *
+ *	fcn:		function to call
+ *	param:		parameter to pass to function
+ *	interval:	timeout interval, in hz.
+ *	leeway_interval:	leeway interval, in hz.
+ */
+void
+timeout_with_leeway(
+	timeout_fcn_t			fcn,
+	void					*param,
+	int						interval,
+	int						leeway_interval)
+{
+	uint64_t		deadline;
+	uint64_t		leeway;
+
+	clock_interval_to_deadline(interval, NSEC_PER_SEC / hz, &deadline);
+
+	clock_interval_to_absolutetime_interval(leeway_interval, NSEC_PER_SEC / hz, &leeway);
+
+	thread_call_func_delayed_with_leeway((thread_call_func_t)fcn, param, deadline, leeway, THREAD_CALL_DELAY_LEEWAY);
+}
+
+/*
  * Cancel a timeout.
+ * Deprecated because it's very inefficient.
+ * Switch to an allocated thread call instead.
  */
 void
 untimeout(
@@ -176,6 +201,8 @@ bsd_timeout(
 
 /*
  * Cancel a timeout.
+ * Deprecated because it's very inefficient.
+ * Switch to an allocated thread call instead.
  */
 void
 bsd_untimeout(
@@ -228,15 +255,14 @@ static int
 sysctl_clockrate
 (__unused struct sysctl_oid *oidp, __unused void *arg1, __unused int arg2, __unused struct sysctl_req *req)
 {
-	struct clockinfo clkinfo;
+	struct clockinfo clkinfo = {
+		.hz         = hz,
+		.tick       = tick,
+		.tickadj    = 0,
+		.stathz     = hz,
+		.profhz     = hz,
+	};
 
-	/*
-	 * Construct clockinfo structure.
-	 */
-	clkinfo.hz = hz;
-	clkinfo.tick = tick;
-	clkinfo.profhz = hz;
-	clkinfo.stathz = hz;
 	return sysctl_io_opaque(req, &clkinfo, sizeof(clkinfo), NULL);
 }
 

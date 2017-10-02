@@ -73,14 +73,13 @@
 
 #include <kern/assert.h>
 #include <sys/kdebug.h>
-#include <machine/spl.h>
-
 #include <nfs/rpcv2.h>
 #include <nfs/nfsproto.h>
 #include <nfs/nfs.h>
 
 #include <vm/vm_protos.h>
 
+#include <vfs/vfs_disk_conditioner.h>
 
 void
 vnode_pager_throttle()
@@ -90,18 +89,42 @@ vnode_pager_throttle()
 	ut = get_bsdthread_info(current_thread());
 
 	if (ut->uu_lowpri_window)
-		throttle_lowpri_io(TRUE);
+		throttle_lowpri_io(1);
 }
-
 
 boolean_t
 vnode_pager_isSSD(vnode_t vp)
 {
-	if (vp->v_mount->mnt_kern_flag & MNTK_SSD)
-		return (TRUE);
-	return (FALSE);
+	return disk_conditioner_mount_is_ssd(vp->v_mount);
 }
 
+#if CONFIG_IOSCHED
+void
+vnode_pager_issue_reprioritize_io(struct vnode *devvp, uint64_t blkno, uint32_t len, int priority)
+{
+	u_int32_t blocksize = 0;
+	dk_extent_t extent;
+        dk_set_tier_t set_tier;
+	int error = 0;
+
+	error = VNOP_IOCTL(devvp, DKIOCGETBLOCKSIZE, (caddr_t)&blocksize, 0, vfs_context_kernel());
+	if (error)
+		return;
+
+	memset(&extent, 0, sizeof(dk_extent_t));
+	memset(&set_tier, 0, sizeof(dk_set_tier_t));
+	
+	extent.offset = blkno * (u_int64_t) blocksize;
+	extent.length = len;
+
+	set_tier.extents = &extent; 
+	set_tier.extentsCount = 1;
+	set_tier.tier = priority;
+		
+	error = VNOP_IOCTL(devvp, DKIOCSETTIER, (caddr_t)&set_tier, 0, vfs_context_kernel());
+	return;
+}
+#endif
 
 uint32_t
 vnode_pager_isinuse(struct vnode *vp)
@@ -112,41 +135,57 @@ vnode_pager_isinuse(struct vnode *vp)
 }
 
 uint32_t
-vnode_pager_return_hard_throttle_limit(struct vnode *vp, uint32_t *limit, uint32_t hard_throttle)
+vnode_pager_return_throttle_io_limit(struct vnode *vp, uint32_t *limit)
 {
-	return(cluster_hard_throttle_limit(vp, limit, hard_throttle));
+	return(cluster_throttle_io_limit(vp, limit));
 }
 
 vm_object_offset_t
 vnode_pager_get_filesize(struct vnode *vp)
 {
-
 	return (vm_object_offset_t) ubc_getsize(vp);
 }
 
+extern int safe_getpath(struct vnode *dvp, char *leafname, char *path, int _len, int *truncated_path);
+
 kern_return_t
-vnode_pager_get_pathname(
+vnode_pager_get_name(
 	struct vnode	*vp,
 	char		*pathname,
-	vm_size_t	*length_p)
+	vm_size_t	pathname_len,
+	char 		*filename,
+	vm_size_t	filename_len,
+	boolean_t	*truncated_path_p)
 {
-	int	error, len;
-
-	len = (int) *length_p;
-	error = vn_getpath(vp, pathname, &len);
-	if (error != 0) {
-		return KERN_FAILURE;
+	*truncated_path_p = FALSE;
+	if (pathname != NULL) {
+		/* get the path name */
+		safe_getpath(vp, NULL,
+			     pathname, (int) pathname_len,
+			     truncated_path_p);
 	}
-	*length_p = (vm_size_t) len;
+	if ((pathname == NULL || *truncated_path_p) &&
+	    filename != NULL) {
+		/* get the file name */
+		const char *name;
+
+		name = vnode_getname_printable(vp);
+		strlcpy(filename, name, (size_t) filename_len);
+		vnode_putname_printable(name);
+	}
 	return KERN_SUCCESS;
 }
 
 kern_return_t
-vnode_pager_get_filename(
+vnode_pager_get_mtime(
 	struct vnode	*vp,
-	const char	**filename)
+	struct timespec	*current_mtime,
+	struct timespec	*cs_mtime)
 {
-	*filename = vp->v_name;
+	vnode_mtime(vp, current_mtime, vfs_context_current());
+	if (cs_mtime != NULL) {
+		ubc_get_cs_mtime(vp, cs_mtime);
+	}
 	return KERN_SUCCESS;
 }
 
@@ -208,7 +247,7 @@ u_int32_t vnode_trim (
 		 * in each call to ensure that the entire range is covered.
 		 */
 		error = VNOP_BLOCKMAP (vp, current_offset, remaining_length, 
-				&io_blockno, &io_bytecount, NULL, VNODE_READ, NULL);
+				&io_blockno, &io_bytecount, NULL, VNODE_READ | VNODE_BLOCKMAP_NO_TRACK, NULL);
 
 		if (error) {
 			goto trim_exit;
@@ -324,7 +363,7 @@ vnode_pageout(struct vnode *vp,
 		else
 			request_flags = UPL_UBC_PAGEOUT | UPL_RET_ONLY_DIRTY;
 		
-	        if (ubc_create_upl(vp, f_offset, size, &upl, &pl, request_flags) != KERN_SUCCESS) {
+	        if (ubc_create_upl_kernel(vp, f_offset, size, &upl, &pl, request_flags, VM_KERN_MEMORY_FILE) != KERN_SUCCESS) {
 			result    = PAGER_ERROR;
 			error_ret = EINVAL;
 			goto out;
@@ -334,12 +373,37 @@ vnode_pageout(struct vnode *vp,
 		pl = ubc_upl_pageinfo(upl);
 
 	/*
+	 * Ignore any non-present pages at the end of the
+	 * UPL so that we aren't looking at a upl that 
+	 * may already have been freed by the preceeding
+	 * aborts/completions.
+	 */
+	base_index = upl_offset / PAGE_SIZE;
+
+	for (pg_index = (upl_offset + isize) / PAGE_SIZE; pg_index > base_index;) {
+	        if (upl_page_present(pl, --pg_index))
+		        break;
+		if (pg_index == base_index) {
+		        /*
+			 * no pages were returned, so release
+			 * our hold on the upl and leave
+			 */
+		        if ( !(flags & UPL_NOCOMMIT))
+			        ubc_upl_abort_range(upl, upl_offset, isize, UPL_ABORT_FREE_ON_EMPTY);
+
+			goto out;
+		}
+	}
+	isize = ((pg_index + 1) - base_index) * PAGE_SIZE;
+
+	/*
 	 * we come here for pageouts to 'real' files and
 	 * for msyncs...  the upl may not contain any
 	 * dirty pages.. it's our responsibility to sort
 	 * through it and find the 'runs' of dirty pages
 	 * to call VNOP_PAGEOUT on...
 	 */
+
 	if (ubc_getsize(vp) == 0) {
 	        /*
 		 * if the file has been effectively deleted, then
@@ -372,29 +436,6 @@ vnode_pageout(struct vnode *vp,
 		}
 		goto out;
 	}
-	/*
-	 * Ignore any non-present pages at the end of the
-	 * UPL so that we aren't looking at a upl that 
-	 * may already have been freed by the preceeding
-	 * aborts/completions.
-	 */
-	base_index = upl_offset / PAGE_SIZE;
-
-	for (pg_index = (upl_offset + isize) / PAGE_SIZE; pg_index > base_index;) {
-	        if (upl_page_present(pl, --pg_index))
-		        break;
-		if (pg_index == base_index) {
-		        /*
-			 * no pages were returned, so release
-			 * our hold on the upl and leave
-			 */
-		        if ( !(flags & UPL_NOCOMMIT))
-			        ubc_upl_abort_range(upl, upl_offset, isize, UPL_ABORT_FREE_ON_EMPTY);
-
-			goto out;
-		}
-	}
-	isize = ((pg_index + 1) - base_index) * PAGE_SIZE;
 
 	offset = upl_offset;
 	pg_index = base_index;
@@ -511,9 +552,13 @@ vnode_pagein(
 	int             first_pg;
         int             xsize;
 	int		must_commit = 1;
+	int		ignore_valid_page_check = 0;
 
 	if (flags & UPL_NOCOMMIT)
 	        must_commit = 0;
+
+	if (flags & UPL_IGNORE_VALID_PAGE_CHECK)
+		ignore_valid_page_check = 1;
 
 	if (UBCINFOEXISTS(vp) == 0) {
 		result = PAGER_ERROR;
@@ -527,7 +572,7 @@ vnode_pagein(
 	if (upl == (upl_t)NULL) {
 		flags &= ~UPL_NOCOMMIT;
 
-	        if (size > (MAX_UPL_SIZE * PAGE_SIZE)) {
+	        if (size > MAX_UPL_SIZE_BYTES) {
 		        result = PAGER_ERROR;
 			error  = PAGER_ERROR;
 			goto out;
@@ -552,7 +597,7 @@ vnode_pagein(
 			}
 			goto out;
 		}
-	        ubc_create_upl(vp, f_offset, size, &upl, &pl, UPL_UBC_PAGEIN | UPL_RET_ONLY_ABSENT);
+	        ubc_create_upl_kernel(vp, f_offset, size, &upl, &pl, UPL_UBC_PAGEIN | UPL_RET_ONLY_ABSENT, VM_KERN_MEMORY_FILE);
 
 		if (upl == (upl_t)NULL) {
 		        result =  PAGER_ABSENT;
@@ -605,13 +650,19 @@ vnode_pagein(
 		        if (upl_page_present(pl, last_pg))
 			        break;
 		}
-	        /*
-		 * skip over 'valid' pages... we don't want to issue I/O for these
-		 */
-	        for (start_pg = last_pg; last_pg < pages_in_upl; last_pg++) {
-		        if (!upl_valid_page(pl, last_pg))
-			        break;
+
+		if (ignore_valid_page_check == 1) {
+			start_pg = last_pg;
+		} else {
+	        	/*
+			 * skip over 'valid' pages... we don't want to issue I/O for these
+			 */
+	        	for (start_pg = last_pg; last_pg < pages_in_upl; last_pg++) {
+		        	if (!upl_valid_page(pl, last_pg))
+			        	break;
+			}
 		}
+
 		if (last_pg > start_pg) {
 		        /*
 			 * we've found a range of valid pages
@@ -648,7 +699,7 @@ vnode_pagein(
 		 * 'cluster_io'
 		 */
 		for (start_pg = last_pg; last_pg < pages_in_upl; last_pg++) {
-		        if (upl_valid_page(pl, last_pg) || !upl_page_present(pl, last_pg))
+		        if (( !ignore_valid_page_check && upl_valid_page(pl, last_pg)) || !upl_page_present(pl, last_pg))
 			        break;
 		}
 		if (last_pg > start_pg) {
@@ -673,11 +724,9 @@ vnode_pagein(
 					if(error == EAGAIN) {
 			        		ubc_upl_abort_range(upl, (upl_offset_t) xoff, xsize, UPL_ABORT_FREE_ON_EMPTY | UPL_ABORT_RESTART);
 					}
-#if CONFIG_PROTECT
 					if(error == EPERM) {
 			        		ubc_upl_abort_range(upl, (upl_offset_t) xoff, xsize, UPL_ABORT_FREE_ON_EMPTY | UPL_ABORT_ERROR);
 					}
-#endif
 				}
 				result = PAGER_ERROR;
 				error  = PAGER_ERROR;
@@ -691,24 +740,6 @@ out:
 
 	return (error);
 }
-
-void
-vnode_pager_shutdown(void)
-{
-	int i;
-	vnode_t vp;
-
-	for(i = 0; i < MAX_BACKING_STORE; i++) {
-		vp = (vnode_t)(bs_port_table[i]).vp;
-		if (vp) {
-			(bs_port_table[i]).vp = 0;
-
-			/* get rid of macx_swapon() reference */
-			vnode_rele(vp);
-		}
-	}
-}
-
 
 void *
 upl_get_internal_page_list(upl_t upl)

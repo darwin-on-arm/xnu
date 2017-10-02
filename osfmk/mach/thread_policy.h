@@ -225,10 +225,209 @@ struct thread_background_policy {
 	integer_t	priority;
 };
 
+#define THREAD_BACKGROUND_POLICY_DARWIN_BG 0x1000
+
 typedef struct thread_background_policy		thread_background_policy_data_t;
 typedef struct thread_background_policy 	*thread_background_policy_t;
 
 #define THREAD_BACKGROUND_POLICY_COUNT	((mach_msg_type_number_t) \
 	(sizeof (thread_background_policy_data_t) / sizeof (integer_t)))
+
+
+#define THREAD_LATENCY_QOS_POLICY	7
+typedef integer_t	thread_latency_qos_t;
+
+struct thread_latency_qos_policy {
+	thread_latency_qos_t thread_latency_qos_tier;
+};
+
+typedef struct thread_latency_qos_policy	thread_latency_qos_policy_data_t;
+typedef struct thread_latency_qos_policy 	*thread_latency_qos_policy_t;
+
+#define THREAD_LATENCY_QOS_POLICY_COUNT	((mach_msg_type_number_t)	\
+	    (sizeof (thread_latency_qos_policy_data_t) / sizeof (integer_t)))
+
+#define THREAD_THROUGHPUT_QOS_POLICY	8
+typedef integer_t	thread_throughput_qos_t;
+
+struct thread_throughput_qos_policy {
+	thread_throughput_qos_t thread_throughput_qos_tier;
+};
+
+typedef struct thread_throughput_qos_policy	thread_throughput_qos_policy_data_t;
+typedef struct thread_throughput_qos_policy 	*thread_throughput_qos_policy_t;
+
+#define THREAD_THROUGHPUT_QOS_POLICY_COUNT	((mach_msg_type_number_t) \
+	    (sizeof (thread_throughput_qos_policy_data_t) / sizeof (integer_t)))
+
+#ifdef PRIVATE
+
+/*
+ * THREAD_POLICY_STATE:
+ */
+#define THREAD_POLICY_STATE		6
+
+#define THREAD_POLICY_STATE_FLAG_STATIC_PARAM   0x1
+
+struct thread_policy_state {
+	integer_t requested;
+	integer_t effective;
+	integer_t pending;
+	integer_t flags;
+	uint64_t thps_requested_policy;
+	uint64_t thps_effective_policy;
+	uint32_t thps_user_promotions;
+	uint32_t thps_user_promotion_basepri;
+	uint32_t thps_ipc_overrides;
+	uint32_t reserved32;
+	uint64_t reserved[2];
+};
+
+typedef struct thread_policy_state		thread_policy_state_data_t;
+typedef struct thread_policy_state		*thread_policy_state_t;
+
+#define THREAD_POLICY_STATE_COUNT	((mach_msg_type_number_t) \
+	(sizeof (thread_policy_state_data_t) / sizeof (integer_t)))
+
+/*
+ * THREAD_QOS_POLICY:
+ */
+#define THREAD_QOS_POLICY               9
+#define THREAD_QOS_POLICY_OVERRIDE      10
+
+#define THREAD_QOS_UNSPECIFIED          0
+#define THREAD_QOS_DEFAULT              THREAD_QOS_UNSPECIFIED  /* Temporary rename */
+#define THREAD_QOS_MAINTENANCE          1
+#define THREAD_QOS_BACKGROUND           2
+#define THREAD_QOS_UTILITY              3
+#define THREAD_QOS_LEGACY               4       /* i.e. default workq threads */
+#define THREAD_QOS_USER_INITIATED       5
+#define THREAD_QOS_USER_INTERACTIVE     6
+
+#define THREAD_QOS_LAST                 7
+
+#define THREAD_QOS_MIN_TIER_IMPORTANCE	(-15)
+
+/*
+ * Overrides are inputs to the task/thread policy engine that
+ * temporarily elevate the effective QoS of a thread without changing
+ * its steady-state (and round-trip-able) requested QoS. The
+ * interfaces into the kernel allow the caller to associate a resource
+ * and type that describe the reason/lifecycle of the override. For
+ * instance, a contended pthread_mutex_t held by a UTILITY thread
+ * might get an override to USER_INTERACTIVE, with the resource
+ * being the userspace address of the pthread_mutex_t. When the
+ * owning thread releases that resource, it can call into the
+ * task policy subsystem to drop the override because of that resource,
+ * although if more contended locks are held by the thread, the
+ * effective QoS may remain overridden for longer.
+ *
+ * THREAD_QOS_OVERRIDE_TYPE_PTHREAD_MUTEX is used for contended
+ * pthread_mutex_t's via the pthread kext. The holder gets an override
+ * with resource=&mutex and a count of 1 by the initial contender.
+ * Subsequent contenders raise the QoS value, until the holder
+ * decrements the count to 0 and the override is released.
+ *
+ * THREAD_QOS_OVERRIDE_TYPE_PTHREAD_RWLOCK is unimplemented and has no
+ * specified semantics.
+ *
+ * THREAD_QOS_OVERRIDE_TYPE_PTHREAD_EXPLICIT_OVERRIDE are explicitly
+ * paired start/end overrides on a target thread. The resource can
+ * either be a memory allocation in userspace, or the pthread_t of the
+ * overrider if no allocation was used.
+ *
+ * THREAD_QOS_OVERRIDE_TYPE_DISPATCH_ASYNCHRONOUS_OVERRIDE are used to
+ * override the QoS of a thread currently draining a serial dispatch
+ * queue, so that it can get to a block of higher QoS than its
+ * predecessors. The override is applied by a thread enqueueing work
+ * with resource=&queue, and reset by the thread that was overriden
+ * once it has drained the queue. Since the ++ and reset are
+ * asynchronous, there is the possibility of a ++ after the target
+ * thread has issued a reset, in which case the workqueue thread may
+ * issue a reset-all in its outermost scope before deciding whether it
+ * should return to dequeueing work from the global concurrent queues,
+ * or return to the kernel.
+ *
+ * THREAD_QOS_OVERRIDE_TYPE_WILDCARD is a catch-all which will reset every
+ * resource matching the resource value.  Passing
+ * THREAD_QOS_OVERRIDE_RESOURCE_WILDCARD as well will reset everything.
+ */
+
+#define THREAD_QOS_OVERRIDE_TYPE_UNKNOWN                        (0)
+#define THREAD_QOS_OVERRIDE_TYPE_PTHREAD_MUTEX                  (1)
+#define THREAD_QOS_OVERRIDE_TYPE_PTHREAD_RWLOCK                 (2)
+#define THREAD_QOS_OVERRIDE_TYPE_PTHREAD_EXPLICIT_OVERRIDE      (3)
+#define THREAD_QOS_OVERRIDE_TYPE_DISPATCH_ASYNCHRONOUS_OVERRIDE (4)
+#define THREAD_QOS_OVERRIDE_TYPE_WILDCARD                       (5)
+
+/* A special resource value to indicate a resource wildcard */
+#define THREAD_QOS_OVERRIDE_RESOURCE_WILDCARD (~((user_addr_t)0))
+
+struct thread_qos_policy {
+	integer_t qos_tier;
+	integer_t tier_importance;
+};
+
+typedef struct thread_qos_policy       thread_qos_policy_data_t;
+typedef struct thread_qos_policy      *thread_qos_policy_t;
+
+#define THREAD_QOS_POLICY_COUNT    ((mach_msg_type_number_t) \
+        (sizeof (thread_qos_policy_data_t) / sizeof (integer_t)))
+
+#endif /* PRIVATE */
+
+#ifdef PRIVATE
+
+/*
+ * Internal bitfields are privately exported for revlocked tracing tools like msa to decode tracepoints.
+ *
+ * These struct definitions *will* change in the future.
+ * When they do, we will update THREAD_POLICY_INTERNAL_STRUCT_VERSION.
+ */
+
+#define THREAD_POLICY_INTERNAL_STRUCT_VERSION 4
+
+struct thread_requested_policy {
+	uint64_t        thrp_int_darwinbg       :1,     /* marked as darwinbg via setpriority */
+	                thrp_ext_darwinbg       :1,
+	                thrp_int_iotier         :2,     /* IO throttle tier */
+	                thrp_ext_iotier         :2,
+	                thrp_int_iopassive      :1,     /* should IOs cause lower tiers to be throttled */
+	                thrp_ext_iopassive      :1,
+	                thrp_latency_qos        :3,     /* Timer latency QoS */
+	                thrp_through_qos        :3,     /* Computation throughput QoS */
+
+	                thrp_pidbind_bg         :1,     /* task i'm bound to is marked 'watchbg' */
+	                thrp_qos                :3,     /* thread qos class */
+	                thrp_qos_relprio        :4,     /* thread qos relative priority (store as inverse, -10 -> 0xA) */
+	                thrp_qos_override       :3,     /* thread qos class override */
+	                thrp_qos_promote        :3,     /* thread qos class from promotion */
+	                thrp_qos_ipc_override   :3,     /* thread qos class from ipc override */
+	                thrp_terminated         :1,     /* heading for termination */
+	                thrp_qos_sync_ipc_override:3,   /* thread qos class from sync ipc override */
+
+	                thrp_reserved           :29;
+};
+
+struct thread_effective_policy {
+	uint64_t        thep_darwinbg           :1,     /* marked as 'background', and sockets are marked bg when created */
+	                thep_io_tier            :2,     /* effective throttle tier */
+	                thep_io_passive         :1,     /* should IOs cause lower tiers to be throttled */
+	                thep_all_sockets_bg     :1,     /* All existing sockets in process are marked as bg (thread: all created by thread) */
+	                thep_new_sockets_bg     :1,     /* Newly created sockets should be marked as bg */
+	                thep_terminated         :1,     /* all throttles have been removed for quick exit or SIGTERM handling */
+	                thep_qos_ui_is_urgent   :1,     /* bump UI-Interactive QoS up to the urgent preemption band */
+	                thep_latency_qos        :3,     /* Timer latency QoS level */
+	                thep_through_qos        :3,     /* Computation throughput QoS level */
+
+	                thep_qos                :3,     /* thread qos class */
+	                thep_qos_relprio        :4,     /* thread qos relative priority (store as inverse, -10 -> 0xA) */
+	                thep_qos_promote        :3,     /* thread qos class used for promotion */
+
+	                thep_reserved           :40;
+};
+
+#endif /* PRIVATE */
+
 
 #endif	/* _MACH_THREAD_POLICY_H_ */

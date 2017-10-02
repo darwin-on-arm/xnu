@@ -42,9 +42,7 @@ extern const char *sdt_prefix;
 
 typedef struct sdt_probedesc {
 	char			*sdpd_name;	/* name of this probe */
-#if defined(__APPLE__)
-	char			*sdpd_func;	
-#endif /* __APPLE__ */
+	char			*sdpd_func;	/* APPLE NOTE: function name */
 	unsigned long		sdpd_offset;	/* offset of call in text */
 	struct sdt_probedesc	*sdpd_next;	/* next static probe */
 } sdt_probedesc_t;
@@ -61,22 +59,13 @@ extern "C" {
 
 #include <sys/dtrace.h>
 
-#if !defined(__APPLE__)
-#if defined(__i386) || defined(__amd64)
-typedef uint8_t sdt_instr_t;
-#else
-typedef uint32_t sdt_instr_t;
-#endif
-#else
 struct module {
 	int sdt_nprobes;
 	sdt_probedesc_t *sdt_probes;
 };
 
 extern int sdt_invop(uintptr_t, uintptr_t *, uintptr_t);
-#if defined (__APPLE__)
 extern uint64_t sdt_getarg(void *, dtrace_id_t, void *, int, int);
-#endif /* __APPLE__ */    
 
 void sdt_provide_module(void *, struct modctl *);
 void sdt_init(void);
@@ -86,12 +75,15 @@ extern int          sdt_probetab_mask;
 #define SDT_ADDR2NDX(addr)  ((((uintptr_t)(addr)) >> 4) & sdt_probetab_mask)
 
 
-#if defined(__i386__) || defined(__x86_64__)
+#if defined(__x86_64__)
 typedef uint8_t sdt_instr_t;
+#elif defined(__arm__)
+typedef uint16_t sdt_instr_t;
+#elif defined(__arm64__)
+typedef uint32_t sdt_instr_t;
 #else
 #error Unknown implementation
 #endif
-#endif /* __APPLE__ */
 
 typedef struct sdt_provider {
 	const char			*sdtp_name;	/* name of provider */

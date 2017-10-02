@@ -30,16 +30,18 @@
 
 #if defined(__x86_64__)
 
-__SYSCALL(___thread_selfid, thread_selfid, 1)
+__SYSCALL(___thread_selfid, thread_selfid, 0)
 
 #elif defined(__i386__)
 
-__SYSCALL_INT(___thread_selfid, thread_selfid, 1)
+__SYSCALL_INT(___thread_selfid, thread_selfid, 0)
 
 #elif defined(__arm__)
 
-__SYSCALL(__thread_selfid, thread_selfid, 1)
+__SYSCALL(___thread_selfid, thread_selfid, 0)
 
-#else
-#error Unsupported architecture
+#elif defined(__arm64__)
+
+__SYSCALL(___thread_selfid, thread_selfid, 0)
+
 #endif

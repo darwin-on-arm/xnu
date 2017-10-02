@@ -29,7 +29,6 @@
  * @OSF_COPYRIGHT@
  */
 
-#include <platforms.h>
 
 #include <mach/mach_types.h>
 
@@ -49,7 +48,7 @@
 #include <i386/tsc.h>
 #include <i386/rtclock_protos.h>
 #include <i386/pal_routines.h>
-#include <kern/etimer.h>
+#include <kern/timer_queue.h>
 
 static uint64_t	rtc_decrementer_min;
 static uint64_t	rtc_decrementer_max;
@@ -95,6 +94,13 @@ rtc_lapic_set_timer(uint64_t deadline, uint64_t now)
 	} else {
 		lapic_set_timer(FALSE, one_shot, divide_by_1, 0);
 	}
+
+	KERNEL_DEBUG_CONSTANT(
+		DECR_SET_APIC_DEADLINE | DBG_FUNC_NONE,
+		now, deadline,
+		set, LAPIC_READ(TIMER_CURRENT_COUNT),
+		0);
+
 	return set;
 }
 

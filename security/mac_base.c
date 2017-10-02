@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2007 Apple Inc. All rights reserved.
+ * Copyright (c) 2007-2016 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -105,6 +105,9 @@
 #include <security/mac_mach_internal.h>
 #endif
 
+#if CONFIG_EMBEDDED
+#include <libkern/section_keywords.h>
+#endif
 
 /* 
  * define MB_DEBUG to display run-time debugging information
@@ -123,12 +126,6 @@ SYSCTL_NODE(, OID_AUTO, security, CTLFLAG_RW|CTLFLAG_LOCKED, 0,
     "Security Controls");
 SYSCTL_NODE(_security, OID_AUTO, mac, CTLFLAG_RW|CTLFLAG_LOCKED, 0,
     "TrustedBSD MAC policy controls");
-
-#if DEBUG
-#define SECURITY_MAC_CTLFLAGS CTLFLAG_RW | CTLFLAG_LOCKED
-#else
-#define SECURITY_MAC_CTLFLAGS CTLFLAG_RD | CTLFLAG_LOCKED
-#endif
 
 /*
  * Declare that the kernel provides MAC support, version 1.  This permits
@@ -187,17 +184,6 @@ SYSCTL_UINT(_security_mac, OID_AUTO, label_mbufs, SECURITY_MAC_CTLFLAGS,
 unsigned int	mac_label_vnodes = 0;
 SYSCTL_UINT(_security_mac, OID_AUTO, labelvnodes, SECURITY_MAC_CTLFLAGS,
     &mac_label_vnodes, 0, "Label all vnodes");
-
-
-unsigned int	mac_mmap_revocation = 0;
-SYSCTL_UINT(_security_mac, OID_AUTO, mmap_revocation, SECURITY_MAC_CTLFLAGS,
-    &mac_mmap_revocation, 0, "Revoke mmap access to files on subject "
-    "relabel");
-
-unsigned int	mac_mmap_revocation_via_cow = 0;
-SYSCTL_UINT(_security_mac, OID_AUTO, mmap_revocation_via_cow, SECURITY_MAC_CTLFLAGS,
-    &mac_mmap_revocation_via_cow, 0, "Revoke mmap access to files via "
-    "copy-on-write semantics, or by removing all write access");
 
 unsigned int mac_device_enforce = 1;
 SYSCTL_UINT(_security_mac, OID_AUTO, device_enforce, SECURITY_MAC_CTLFLAGS,
@@ -282,7 +268,12 @@ static lck_mtx_t *mac_policy_mtx;
 
 static int mac_policy_busy;
 
+#if CONFIG_EMBEDDED
+SECURITY_READ_ONLY_LATE(mac_policy_list_t) mac_policy_list;
+SECURITY_READ_ONLY_LATE(static struct mac_policy_list_element) mac_policy_static_entries[MAC_POLICY_LIST_CHUNKSIZE];
+#else
 mac_policy_list_t mac_policy_list;
+#endif
 
 /*
  * mac_label_element_list holds the master list of label namespaces for
@@ -294,120 +285,6 @@ mac_policy_list_t mac_policy_list;
 struct mac_label_element_list_t mac_label_element_list;
 struct mac_label_element_list_t mac_static_label_element_list;
 
-/*
- * Journal of label operations that occur before policies are loaded.
- */
-struct mac_label_journal_list_t mac_label_journal_list;
-
-int
-mac_label_journal_add (struct label *l, int type)
-{
-	struct mac_label_journal *mlj;
-
-	if (mac_label_journal_find(l))
-		return (0);
-
-	MALLOC(mlj, struct mac_label_journal *,
-		sizeof(struct mac_label_journal), M_MACTEMP, M_WAITOK);
-	mlj->l = l;
-	mlj->type = type;
-	TAILQ_INSERT_TAIL(&mac_label_journal_list, mlj, link);
-
-	return (0);
-}
-
-int
-mac_label_journal_remove (struct label *l)
-{
-	struct mac_label_journal *mlj;
-
-	mlj = mac_label_journal_find(l);
-	if (mlj == NULL)
-		return (-1);
-
-	TAILQ_REMOVE(&mac_label_journal_list, mlj, link);
-	FREE(mlj, M_MACTEMP);
-	return (0);
-}
-
-struct mac_label_journal *
-mac_label_journal_find (struct label *l)
-{
-	struct mac_label_journal *mlj;
-
-	TAILQ_FOREACH(mlj, &mac_label_journal_list, link) {
-		if (l == mlj->l)
-			return (mlj);
-	}
-
-	return (NULL);
-}
-
-int
-mac_label_journal (struct label *l, int op, ...)
-{
-	struct mac_label_journal *mlj;
-	va_list ap;
-
-	mlj = mac_label_journal_find(l);
-	if (mlj == NULL) {
-		printf("%s(): Label not in list!\n", __func__);
-		return (-1);
-	}
-
-	if (op == MLJ_PORT_OP_UPDATE) {
-		va_start(ap, op);
-		mlj->kotype = va_arg(ap, int);
-		va_end(ap);
-	}
-
-	mlj->ops |= op;
-	return (0);
-}
-
-/*
- * The assumption during replay is that the system is totally
- * serialized and no additional tasks/ports will be created.
- */
-void
-mac_label_journal_replay (void)
-{
-	struct mac_label_journal *mlj;
-
-	TAILQ_FOREACH(mlj, &mac_label_journal_list, link) {
-		switch (mlj->type) {
-		case MLJ_TYPE_PORT:
-			if (mlj->ops & MLJ_PORT_OP_INIT)
-				MAC_PERFORM(port_label_init, mlj->l);
-			if (mlj->ops & MLJ_PORT_OP_CREATE_K)
-				MAC_PERFORM(port_label_associate_kernel, mlj->l, 0);
-			if (mlj->ops & MLJ_PORT_OP_UPDATE)
-				MAC_PERFORM(port_label_update_kobject, mlj->l,
-						mlj->kotype);
-			break;
-		case MLJ_TYPE_TASK:
-			if (mlj->ops & MLJ_TASK_OP_INIT)
-				MAC_PERFORM(task_label_init, mlj->l);
-#if 0
-			/* Not enough context to replay. */
-			if (mlj->ops & MLJ_TASK_OP_CREATE_K)
-				;
-#endif
-			break;
-		default:
-			break;
-		}
-	}
-
-	/* Free list */
-	while (!TAILQ_EMPTY(&mac_label_journal_list)) {
-		mlj = TAILQ_FIRST(&mac_label_journal_list);
-		TAILQ_REMOVE(&mac_label_journal_list, mlj, link);
-		FREE(mlj, M_MACTEMP);
-	}
-	return;
-}
-
 static __inline void
 mac_policy_grab_exclusive(void)
 {
@@ -417,14 +294,6 @@ mac_policy_grab_exclusive(void)
 			      (event_t)&mac_policy_busy, THREAD_UNINT);
 		lck_mtx_lock(mac_policy_mtx);
 	}
-}
-
-static __inline void
-mac_policy_assert_exclusive(void)
-{
-	lck_mtx_assert(mac_policy_mtx, LCK_MTX_ASSERT_OWNED);
-	KASSERT(mac_policy_busy == 0,
-	    ("mac_policy_assert_exclusive(): not exclusive"));
 }
 
 static __inline void
@@ -491,12 +360,16 @@ mac_policy_init(void)
 	mac_policy_list.freehint = 0;
 	mac_policy_list.chunks = 1;
 
+#if CONFIG_EMBEDDED
+	mac_policy_list.entries = mac_policy_static_entries;
+#else
 	mac_policy_list.entries = kalloc(sizeof(struct mac_policy_list_element) * MAC_POLICY_LIST_CHUNKSIZE);
+#endif
+
 	bzero(mac_policy_list.entries, sizeof(struct mac_policy_list_element) * MAC_POLICY_LIST_CHUNKSIZE); 
 
 	LIST_INIT(&mac_label_element_list);
 	LIST_INIT(&mac_static_label_element_list);
-	TAILQ_INIT(&mac_label_journal_list);
 
 	mac_lck_grp_attr = lck_grp_attr_alloc_init();
 	lck_grp_attr_setstat(mac_lck_grp_attr);
@@ -536,9 +409,6 @@ mac_policy_initmach(void)
 		load_security_extensions_function();
 	}
 	mac_late = 1;
-#if CONFIG_MACF_MACH
-	mac_label_journal_replay();
-#endif
 }
 
 /*
@@ -771,7 +641,9 @@ int
 mac_policy_register(struct mac_policy_conf *mpc, mac_policy_handle_t *handlep,
     void *xd)
 {
+#if !CONFIG_EMBEDDED
 	struct mac_policy_list_element *tmac_policy_list_element;
+#endif
 	int error, slot, static_entry = 0;
 	u_int i;
 
@@ -803,6 +675,7 @@ mac_policy_register(struct mac_policy_conf *mpc, mac_policy_handle_t *handlep,
 	}
 
 	if (mac_policy_list.numloaded >= mac_policy_list.max) {
+#if !CONFIG_EMBEDDED
 		/* allocate new policy list array, zero new chunk */
 		tmac_policy_list_element =
 		    kalloc((sizeof(struct mac_policy_list_element) *
@@ -826,6 +699,10 @@ mac_policy_register(struct mac_policy_conf *mpc, mac_policy_handle_t *handlep,
 		/* Update maximums, etc */
 		mac_policy_list.max += MAC_POLICY_LIST_CHUNKSIZE;
 		mac_policy_list.chunks++;
+#else
+		printf("out of space in mac_policy_list.\n");
+		return (ENOMEM);
+#endif /* CONFIG_EMBEDDED */
 	}
 
 	/* Check for policy with same name already loaded */
@@ -1051,26 +928,6 @@ mac_label_destroy(struct label *label)
 }
 
 int
-mac_port_check_service (struct label *subj, struct label *obj,
-    const char *s, const char *p)
-{
-	int error;
-
-	MAC_CHECK(port_check_service, subj, obj, s, p);
-	return (error);
-}
-
-int
-mac_port_label_compute(struct label *subj, struct label *obj,
-    const char *s, struct label *out)
-{
-	int error;
-
-	MAC_CHECK(port_label_compute, subj, obj, s, out);
-	return error;
-}
-
-int
 mac_check_structmac_consistent(struct user_mac *mac)
 {
 
@@ -1121,8 +978,8 @@ element_loop:
 			mpc = mac_policy_list.entries[mll->mll_handle].mpc;
 			if (mpc == NULL)
 				continue;
-			mpo_externalize = *(typeof(mpo_externalize) *)
-			    ((char *)mpc->mpc_ops + mpo_externalize_off);
+			mpo_externalize = *(const typeof(mpo_externalize) *)
+			    ((const char *)mpc->mpc_ops + mpo_externalize_off);
 			if (mpo_externalize == NULL)
 				continue;
 			error = sbuf_printf(sb, "%s/", name);
@@ -1250,8 +1107,8 @@ element_loop:
 			mpc = mac_policy_list.entries[mll->mll_handle].mpc;
 			if (mpc == NULL)
 				continue;
-			mpo_internalize = *(typeof(mpo_internalize) *)
-			    ((char *)mpc->mpc_ops + mpo_internalize_off);
+			mpo_internalize = *(const typeof(mpo_internalize) *)
+			    ((const char *)mpc->mpc_ops + mpo_internalize_off);
 			if (mpo_internalize == NULL)
 				continue;
 			error = mpo_internalize(label, element_name,
@@ -1405,7 +1262,6 @@ __mac_get_proc(proc_t p, struct __mac_get_proc_args *uap, int *ret __unused)
 int
 __mac_set_proc(proc_t p, struct __mac_set_proc_args *uap, int *ret __unused)
 {
-	kauth_cred_t newcred;
 	struct label *intlabel;
 	struct user_mac mac;
 	char *buffer;
@@ -1453,247 +1309,10 @@ __mac_set_proc(proc_t p, struct __mac_set_proc_args *uap, int *ret __unused)
 	if (error)
 		goto out;
 
-	newcred = kauth_cred_proc_ref(p);
-	mac_task_label_update_cred(newcred, p->task);
-
-#if 0
-	if (mac_vm_enforce) {
-		mutex_lock(Giant);			/* XXX FUNNEL? */
-		mac_cred_mmapped_drop_perms(p, newcred);
-		mutex_unlock(Giant);			/* XXX FUNNEL? */
-	}
-#endif
-
-	kauth_cred_unref(&newcred);
 out:
 	mac_cred_label_free(intlabel);
 	return (error);
 }
-
-#if CONFIG_LCTX
-/*
- * __mac_get_lcid: 
- *	Get login context ID.  A login context associates a BSD process 
- *	with an instance of a user.  For more information see getlcid(2) man page.
- *
- * Parameters:    p                        Process requesting the get
- *                uap                      User argument descriptor (see below)
- *                ret                      (ignored)
- *
- * Indirect:      uap->lcid                login context ID to search
- *                uap->mac_p.m_buflen      MAC info buffer size
- *                uap->mac_p.m_string      MAC info user address
- *
- * Returns:        0                       Success
- *                !0                       Not success
- */
-int
-__mac_get_lcid(proc_t p, struct __mac_get_lcid_args *uap, int *ret __unused)
-{
-	char *elements, *buffer;
-	struct user_mac mac;
-	struct lctx *l;
-	int error;
-	size_t ulen;
-
-	AUDIT_ARG(value32, uap->lcid);
-	if (IS_64BIT_PROCESS(p)) {
-		struct user64_mac mac64;
-		error = copyin(uap->mac_p, &mac64, sizeof(mac64));
-		mac.m_buflen = mac64.m_buflen;
-		mac.m_string = mac64.m_string;
-	} else {
-		struct user32_mac mac32;
-		error = copyin(uap->mac_p, &mac32, sizeof(mac32));
-		mac.m_buflen = mac32.m_buflen;
-		mac.m_string = mac32.m_string;
-	}
-
-	if (error)
-		return (error);
-
-	error = mac_check_structmac_consistent(&mac);
-	if (error)
-		return (error);
-
-	l = lcfind(uap->lcid);
-	if (l == NULL)
-		return (ESRCH);
-
-	MALLOC(elements, char *, mac.m_buflen, M_MACTEMP, M_WAITOK);
-	error = copyinstr(mac.m_string, elements, mac.m_buflen, &ulen);
-	if (error) {
-		LCTX_UNLOCK(l);
-		FREE(elements, M_MACTEMP);
-		return (error);
-	}
-	AUDIT_ARG(mac_string, elements);
-	MALLOC(buffer, char *, mac.m_buflen, M_MACTEMP, M_WAITOK);
-	error = mac_lctx_label_externalize(l->lc_label, elements,
-					   buffer, mac.m_buflen);
-	if (error == 0)
-		error = copyout(buffer, mac.m_string, strlen(buffer)+1);
-
-	LCTX_UNLOCK(l);
-	FREE(buffer, M_MACTEMP);
-	FREE(elements, M_MACTEMP);
-	return (error);
-}
-
-/*
- * __mac_get_lctx:
- *	Get login context label.  A login context associates a BSD process
- *	associated with an instance of a user.
- *
- * Parameters:    p                        Process requesting the get
- *                uap                      User argument descriptor (see below)
- *                ret                      (ignored)
- *
- * Indirect:      uap->lcid                login context ID to search
- *                uap->mac_p               MAC info 
- *
- * Returns:        0                       Success
- *                !0                       Not success
- *
- */
-int
-__mac_get_lctx(proc_t p, struct __mac_get_lctx_args *uap, int *ret __unused)
-{
-	char *elements, *buffer;
-	struct user_mac mac;
-	int error;
-	size_t ulen;
-
-	if (IS_64BIT_PROCESS(p)) {
-		struct user64_mac mac64;
-		error = copyin(uap->mac_p, &mac64, sizeof(mac64));
-		mac.m_buflen = mac64.m_buflen;
-		mac.m_string = mac64.m_string;
-	} else {
-		struct user32_mac mac32;
-		error = copyin(uap->mac_p, &mac32, sizeof(mac32));
-		mac.m_buflen = mac32.m_buflen;
-		mac.m_string = mac32.m_string;
-	}
-
-	if (error)
-		return (error);
-
-	error = mac_check_structmac_consistent(&mac);
-	if (error)
-		return (error);
-
-	MALLOC(elements, char *, mac.m_buflen, M_MACTEMP, M_WAITOK);
-	error = copyinstr(mac.m_string, elements, mac.m_buflen, &ulen);
-	if (error) {
-		FREE(elements, M_MACTEMP);
-		return (error);
-	}
-	AUDIT_ARG(mac_string, elements);
-	MALLOC(buffer, char *, mac.m_buflen, M_MACTEMP, M_WAITOK);
-
-	proc_lock(p);
-	if (p->p_lctx == NULL) {
-		proc_unlock(p);
-		error = ENOENT;
-		goto out;
-	}
-
-	error = mac_lctx_label_externalize(p->p_lctx->lc_label,
-					   elements, buffer, mac.m_buflen);
-	proc_unlock(p);
-	if (error == 0)
-		error = copyout(buffer, mac.m_string, strlen(buffer)+1);
-
-out:
-	FREE(buffer, M_MACTEMP);
-	FREE(elements, M_MACTEMP);
-	return (error);
-}
-
-int
-__mac_set_lctx(proc_t p, struct __mac_set_lctx_args *uap, int *ret __unused)
-{
-	struct user_mac mac;
-	struct label *intlabel;
-	char *buffer;
-	int error;
-	size_t ulen;
-
-	if (IS_64BIT_PROCESS(p)) {
-		struct user64_mac mac64;
-		error = copyin(uap->mac_p, &mac64, sizeof(mac64));
-		mac.m_buflen = mac64.m_buflen;
-		mac.m_string = mac64.m_string;
-	} else {
-		struct user32_mac mac32;
-		error = copyin(uap->mac_p, &mac32, sizeof(mac32));
-		mac.m_buflen = mac32.m_buflen;
-		mac.m_string = mac32.m_string;
-	}
-	if (error)
-		return (error);
-
-	error = mac_check_structmac_consistent(&mac);
-	if (error)
-		return (error);
-
-	MALLOC(buffer, char *, mac.m_buflen, M_MACTEMP, M_WAITOK);
-	error = copyinstr(mac.m_string, buffer, mac.m_buflen, &ulen);
-	if (error) {
-		FREE(buffer, M_MACTEMP);
-		return (error);
-	}
-	AUDIT_ARG(mac_string, buffer);
-
-	intlabel = mac_lctx_label_alloc();
-	error = mac_lctx_label_internalize(intlabel, buffer);
-	FREE(buffer, M_MACTEMP);
-	if (error)
-		goto out;
-
-	proc_lock(p);
-	if (p->p_lctx == NULL) {
-		proc_unlock(p);
-		error = ENOENT;
-		goto out;
-	}
-
-	error = mac_lctx_check_label_update(p->p_lctx, intlabel);
-	if (error) {
-		proc_unlock(p);
-		goto out;
-	}
-	mac_lctx_label_update(p->p_lctx, intlabel);
-	proc_unlock(p);
-out:
-	mac_lctx_label_free(intlabel);
-	return (error);
-}
-
-#else	/* LCTX */
-
-int
-__mac_get_lcid(proc_t p __unused, struct __mac_get_lcid_args *uap __unused, int *ret __unused)
-{
-
-	return (ENOSYS);
-}
-
-int
-__mac_get_lctx(proc_t p __unused, struct __mac_get_lctx_args *uap __unused, int *ret __unused)
-{
-
-	return (ENOSYS);
-}
-
-int
-__mac_set_lctx(proc_t p __unused, struct __mac_set_lctx_args *uap __unused, int *ret __unused)
-{
-
-	return (ENOSYS);
-}
-#endif	/* !LCTX */
 
 int
 __mac_get_fd(proc_t p, struct __mac_get_fd_args *uap, int *ret __unused)
@@ -1757,7 +1376,7 @@ __mac_get_fd(proc_t p, struct __mac_get_fd_args *uap, int *ret __unused)
 		return (error);
 	}
 	
-	switch (fp->f_fglob->fg_type) {
+	switch (FILEGLOB_DTYPE(fp->f_fglob)) {
 		case DTYPE_VNODE:
 			intlabel = mac_vnode_label_alloc();
 			if (intlabel == NULL) {
@@ -1791,6 +1410,8 @@ __mac_get_fd(proc_t p, struct __mac_get_fd_args *uap, int *ret __unused)
 		case DTYPE_PIPE:
 		case DTYPE_KQUEUE:
 		case DTYPE_FSEVENTS:
+		case DTYPE_ATALK:
+		case DTYPE_NETPOLICY:
 		default:
 			error = ENOSYS;   // only sockets/vnodes so far
 			break;
@@ -1952,7 +1573,7 @@ __mac_set_fd(proc_t p, struct __mac_set_fd_args *uap, int *ret __unused)
 		return (error);
 	}
 	
-	switch (fp->f_fglob->fg_type) {
+	switch (FILEGLOB_DTYPE(fp->f_fglob)) {
 
 		case DTYPE_VNODE:
 			if (mac_label_vnodes == 0) {
@@ -1997,6 +1618,8 @@ __mac_set_fd(proc_t p, struct __mac_set_fd_args *uap, int *ret __unused)
 		case DTYPE_PIPE:
 		case DTYPE_KQUEUE:
 		case DTYPE_FSEVENTS:
+		case DTYPE_ATALK:
+		case DTYPE_NETPOLICY:
 		default:
 			error = ENOSYS;  // only sockets/vnodes so far
 			break;
@@ -2011,7 +1634,7 @@ static int
 mac_set_filelink(proc_t p, user_addr_t mac_p, user_addr_t path_p,
 		 int follow)
 {
-	register struct vnode *vp;
+	struct vnode *vp;
 	struct vfs_context *ctx = vfs_context_current();
 	struct label *intlabel;
 	struct nameidata nd;
@@ -2235,6 +1858,7 @@ __mac_get_mount(proc_t p __unused, struct __mac_get_mount_args *uap,
 		return (error);
 	}
 	mp = nd.ni_vp->v_mount;
+	vnode_put(nd.ni_vp);
 	nameidone(&nd);
 
 	return mac_mount_label_get(mp, uap->mac_p);
@@ -2297,6 +1921,10 @@ mac_do_machexc(int64_t code, int64_t subcode, uint32_t flags)
 
 #else /* MAC */
 
+void (*load_security_extensions_function)(void) = 0;
+
+struct sysctl_oid_list sysctl__security_mac_children;
+
 int
 mac_policy_register(struct mac_policy_conf *mpc __unused, 
 	mac_policy_handle_t *handlep __unused, void *xd __unused)
@@ -2317,12 +1945,6 @@ mac_audit_text(char *text __unused, mac_policy_handle_t handle __unused)
 {
 
 	return (0);
-}
-
-int
-mac_mount_label_get(struct mount *mp __unused, user_addr_t mac_p __unused)
-{
-	return (ENOSYS);
 }
 
 int
@@ -2348,115 +1970,60 @@ mac_vnop_removexattr(struct vnode *vp __unused, const char *name __unused)
 }
 
 int
-__mac_get_pid(proc_t p __unused, struct __mac_get_pid_args *uap __unused, int *ret __unused)
+mac_file_setxattr(struct fileglob *fg __unused, const char *name __unused, char *buf __unused, size_t len __unused)
 {
 
-	return (ENOSYS);
+	return (ENOENT);
 }
 
 int
-__mac_get_proc(proc_t p __unused, struct __mac_get_proc_args *uap __unused, int *ret __unused)
+mac_file_getxattr(struct fileglob *fg __unused, const char *name __unused,
+	char *buf __unused, size_t len __unused, size_t *attrlen __unused)
 {
 
-	return (ENOSYS);
+	return (ENOENT);
 }
 
 int
-__mac_set_proc(proc_t p __unused, struct __mac_set_proc_args *uap __unused, int *ret __unused)
+mac_file_removexattr(struct fileglob *fg __unused, const char *name __unused)
 {
 
-	return (ENOSYS);
+	return (ENOENT);
 }
 
-int
-__mac_get_file(proc_t p __unused, struct __mac_get_file_args *uap __unused, int *ret __unused)
+intptr_t mac_label_get(struct label *l __unused, int slot __unused)
 {
-
-	return (ENOSYS);
+        return 0;
 }
 
-int
-__mac_get_link(proc_t p __unused, struct __mac_get_link_args *uap __unused, int *ret __unused)
+void mac_label_set(struct label *l __unused, int slot __unused, intptr_t v __unused)
 {
-
-	return (ENOSYS);
+		return;
 }
 
-int
-__mac_set_file(proc_t p __unused, struct __mac_set_file_args *uap __unused, int *ret __unused)
+int mac_iokit_check_hid_control(kauth_cred_t cred __unused);
+int mac_iokit_check_hid_control(kauth_cred_t cred __unused)
 {
-
-	return (ENOSYS);
+        return 0;
 }
 
-int
-__mac_set_link(proc_t p __unused, struct __mac_set_link_args *uap __unused, int *ret __unused)
+
+int mac_iokit_check_nvram_delete(kauth_cred_t cred __unused, const char *name __unused);
+int mac_iokit_check_nvram_delete(kauth_cred_t cred __unused, const char *name __unused)
 {
-
-	return (ENOSYS);
+	return 0;
 }
 
-int
-__mac_get_fd(proc_t p __unused, struct __mac_get_fd_args *uap __unused, int *ret __unused)
+int mac_iokit_check_nvram_get(kauth_cred_t cred __unused, const char *name __unused);
+int mac_iokit_check_nvram_get(kauth_cred_t cred __unused, const char *name __unused)
 {
-
-	return (ENOSYS);
+	return 0;
 }
 
-int
-__mac_set_fd(proc_t p __unused, struct __mac_set_fd_args *uap __unused, int *ret __unused)
+int mac_iokit_check_nvram_set(kauth_cred_t cred __unused, const char *name __unused, io_object_t value __unused);
+int mac_iokit_check_nvram_set(kauth_cred_t cred __unused, const char *name __unused, io_object_t value __unused)
 {
-
-	return (ENOSYS);
+	return 0;
 }
 
-int
-__mac_syscall(proc_t p __unused, struct __mac_syscall_args *uap __unused, int *ret __unused)
-{
-
-	return (ENOSYS);
-}
-
-int
-__mac_get_lcid(proc_t p __unused, struct __mac_get_lcid_args *uap __unused, int *ret __unused)
-{
-
-	return (ENOSYS);
-}
-
-int
-__mac_get_lctx(proc_t p __unused, struct __mac_get_lctx_args *uap __unused, int *ret __unused)
-{
-
-	return (ENOSYS);
-}
-
-int
-__mac_set_lctx(proc_t p __unused, struct __mac_set_lctx_args *uap __unused, int *ret __unused)
-{
-
-	return (ENOSYS);
-}
-
-int
-__mac_get_mount(proc_t p __unused,
-    struct __mac_get_mount_args *uap __unused, int *ret __unused)
-{
-
-	return (ENOSYS);
-}
-
-int
-mac_schedule_userret(void)
-{
-
-	return (1);
-}
-
-int
-mac_do_machexc(int64_t code __unused, int64_t subcode __unused, uint32_t flags __unused)
-{
-
-	return (1);
-}
 #endif /* !MAC */

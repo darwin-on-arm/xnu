@@ -93,6 +93,24 @@ mac_iokit_check_set_properties(kauth_cred_t cred, io_object_t registry_entry, io
 }
 
 int
+mac_iokit_check_filter_properties(kauth_cred_t cred, io_object_t registry_entry)
+{
+	int error;
+
+	MAC_CHECK(iokit_check_filter_properties, cred, registry_entry);
+	return (error);
+}
+
+int
+mac_iokit_check_get_property(kauth_cred_t cred, io_object_t registry_entry, const char *name)
+{
+	int error;
+
+	MAC_CHECK(iokit_check_get_property, cred, registry_entry, name);
+	return (error);
+}
+
+int
 mac_iokit_check_hid_control(kauth_cred_t cred)
 {
 	int error;
@@ -100,3 +118,32 @@ mac_iokit_check_hid_control(kauth_cred_t cred)
 	MAC_CHECK(iokit_check_hid_control, cred);
 	return (error);
 }
+
+int
+mac_iokit_check_nvram_delete(kauth_cred_t cred, const char *name)
+{
+	int error;
+
+	MAC_CHECK(iokit_check_nvram_delete, cred, name);
+	return (error);
+}
+
+int
+mac_iokit_check_nvram_get(kauth_cred_t cred, const char *name)
+{
+	int error;
+
+	MAC_CHECK(iokit_check_nvram_get, cred, name);
+	return (error);
+}
+
+int
+mac_iokit_check_nvram_set(kauth_cred_t cred, const char *name, io_object_t value)
+{
+	int error;
+
+	MAC_CHECK(iokit_check_nvram_set, cred, name, value);
+	return (error);
+}
+
+

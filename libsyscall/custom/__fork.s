@@ -55,7 +55,7 @@ LEAF(___fork, 0)
 	UNIX_SYSCALL_TRAP		// do the system call
 	jnc	L1			// jump if CF==0
 
-	CALL_EXTERN(cerror)
+	CALL_EXTERN(tramp_cerror)
 	movl	$-1,%eax
 	addl	$28, %esp   // restore the stack
 	ret
@@ -81,7 +81,8 @@ LEAF(___fork, 0)
 	UNIX_SYSCALL_TRAP		// do the system call
 	jnc	L1			// jump if CF==0
 
-	CALL_EXTERN(cerror)
+	movq	%rax, %rdi
+	CALL_EXTERN(_cerror)
 	movq	$-1, %rax
 	addq	$24, %rsp   // restore the stack
 	ret
@@ -101,14 +102,15 @@ L2:
 
 #elif defined(__arm__)
 	
-	.globl	cerror
-	MI_ENTRY_POINT(_fork)
+MI_ENTRY_POINT(___fork)
 	stmfd	sp!, {r4, r7, lr}
 	add	r7, sp, #4
+
 	mov	r1, #1					// prime results
 	mov	r12, #SYS_fork
 	swi	#SWI_SYSCALL				// make the syscall
 	bcs	Lbotch					// error?
+
 	cmp	r1, #0					// parent (r1=0) or child(r1=1)
 	beq	Lparent
 
@@ -116,51 +118,40 @@ L2:
 	MI_GET_ADDRESS(r3, __current_pid)
 	mov	r0, #0
 	str	r0, [r3]		// clear cached pid in child
-
-#if 0
-#if defined(__DYNAMIC__)
-// Here on the child side of the fork we need to tell the dynamic linker that
-// we have forked.  To do this we call __dyld_fork_child in the dyanmic
-// linker.  But since we can't dynamicly bind anything until this is done we
-// do this by using the private extern __dyld_func_lookup() function to get the
-// address of __dyld_fork_child (the 'C' code equivlent):
-//
-//	_dyld_func_lookup("__dyld_fork_child", &address);
-//	address();
-//
-	.cstring
-	.align 2
-LC0:
-	.ascii "__dyld_fork_child\0"
-.text
-.align 2
-	sub	sp, sp, #4				// allocate space for the address parameter
-	mov	r1, sp					// get the address of the allocated space
-	ldr	r0, LP0					// get the name of the function to look up
-L0:	add	r0, pc, r0
-	bl	__dyld_func_lookup
-	mov	lr, pc
-	ldr	pc, [sp], #4				// call __dyld_fork_child indirectly and pop
-#endif
-	mov	r0, #0
-#endif
-        ldmfd   sp!, {r4, r7, pc}
+	ldmfd   sp!, {r4, r7, pc}
 
 Lbotch:
-	MI_CALL_EXTERNAL(cerror)			// jump here on error
+	MI_CALL_EXTERNAL(_cerror)			// jump here on error
 	mov	r0,#-1					// set the error
 	// fall thru
-	
 Lparent:	
 	ldmfd   sp!, {r4, r7, pc}			// pop and return
 
-	.align 2
-#if 0
-#if defined(__DYNAMIC__)
-LP0:
-	.long	LC0-(L0+8)
-#endif
-#endif
+#elif defined(__arm64__)
+
+#include <mach/arm64/asm.h>
+	
+MI_ENTRY_POINT(___fork)
+	PUSH_FRAME
+	// ARM moves a 1 in to r1 here, but I can't see why.
+	mov		x16, #SYS_fork				// Syscall code
+	svc		#SWI_SYSCALL				// Trap to kernel
+	b.cs	Lbotch						// Carry bit indicates failure
+	cbz		x1, Lparent					// x1 == 0 indicates that we are the parent
+
+	// Child
+	MI_GET_ADDRESS(x9, __current_pid)	// Get address of cached "current pid"
+	mov		w0, #0	
+	str		w0, [x9]					// Clear cached current pid				
+	POP_FRAME							// And done
+	ret
+
+Lbotch:
+	MI_CALL_EXTERNAL(_cerror)			// Handle error
+	mov		w0, #-1						// Return value is -1
+Lparent:
+	POP_FRAME							// Return
+	ret
 
 #else
 #error Unsupported architecture

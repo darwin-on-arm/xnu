@@ -67,8 +67,6 @@
  * Version 2.0.
  */
 
-#include <cputypes.h> 
-
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/kernel.h>
@@ -87,10 +85,13 @@
 #include <security/mac_framework.h>
 #endif
 
+int pshm_cache_purge_all(proc_t p);
+int psem_cache_purge_all(proc_t p);
+
 int
-reboot(struct proc *p, register struct reboot_args *uap, __unused int32_t *retval)
+reboot(struct proc *p, struct reboot_args *uap, __unused int32_t *retval)
 {
-	char command[64];
+	char message[128];
 	int error=0;
 	size_t dummy=0;
 #if CONFIG_MACF
@@ -99,24 +100,60 @@ reboot(struct proc *p, register struct reboot_args *uap, __unused int32_t *retva
 
 	AUDIT_ARG(cmd, uap->opt);
 
-	command[0] = '\0';
+	message[0] = '\0';
 
-	if ((error = suser(kauth_cred_get(), &p->p_acflag)))
-		return(error);	
-	
+	if ((error = suser(kauth_cred_get(), &p->p_acflag))) {
+#if (DEVELOPMENT || DEBUG)
+		/* allow non-root user to call panic on dev/debug kernels */
+		if (!(uap->opt & RB_PANIC))
+			return error;
+#else
+		return error;
+#endif
+	}
+
 	if (uap->opt & RB_COMMAND)
-		error = copyinstr(uap->command,
-					(void *)command, sizeof(command), (size_t *)&dummy);
+                return ENOSYS;
+
+        if (uap->opt & RB_PANIC) {
+		error = copyinstr(uap->command, (void *)message, sizeof(message), (size_t *)&dummy);
+        }
+
 #if CONFIG_MACF
+#if (DEVELOPMENT || DEBUG)
+        if (uap->opt & RB_PANIC) {
+		/* on dev/debug kernels: allow anyone to call panic */
+		goto skip_cred_check;
+	}
+#endif
 	if (error)
 		return (error);
 	my_cred = kauth_cred_proc_ref(p);
 	error = mac_system_check_reboot(my_cred, uap->opt);
 	kauth_cred_unref(&my_cred);
+#if (DEVELOPMENT || DEBUG)
+skip_cred_check:
+#endif
 #endif
 	if (!error) {
 		OSBitOrAtomic(P_REBOOT, &p->p_flag);  /* No more signals for this proc */
-		error = boot(RB_BOOT, uap->opt, command);
+		error = reboot_kernel(uap->opt, message);
 	}
 	return(error);
+}
+
+int
+usrctl(struct proc *p, __unused struct usrctl_args *uap, __unused int32_t *retval)
+{
+	if (p != initproc) {
+		return EPERM;
+	}
+
+	int error = 0;
+	error = pshm_cache_purge_all(p);
+	if (error)
+		return error;
+
+	error = psem_cache_purge_all(p);
+	return error;
 }

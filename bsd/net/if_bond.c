@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2004-2012 Apple Inc. All rights reserved.
+ * Copyright (c) 2004-2014 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -134,14 +134,14 @@ bond_lock_init(void)
 static __inline__ void
 bond_assert_lock_held(void)
 {
-    lck_mtx_assert(bond_lck_mtx, LCK_MTX_ASSERT_OWNED);
+    LCK_MTX_ASSERT(bond_lck_mtx, LCK_MTX_ASSERT_OWNED);
     return;
 }
 
 static __inline__ void
 bond_assert_lock_not_held(void)
 {
-    lck_mtx_assert(bond_lck_mtx, LCK_MTX_ASSERT_NOTOWNED);
+    LCK_MTX_ASSERT(bond_lck_mtx, LCK_MTX_ASSERT_NOTOWNED);
     return;
 }
 
@@ -303,26 +303,6 @@ static int bond_get_status(ifbond_ref ifb, struct if_bond_req * ibr_p,
 			   user_addr_t datap);
 
 static __inline__ int
-ifbond_flags_promisc(ifbond_ref ifb)
-{
-    return ((ifb->ifb_flags & IFBF_PROMISC) != 0);
-}
-
-static __inline__ void
-ifbond_flags_set_promisc(ifbond_ref ifb)
-{
-    ifb->ifb_flags |= IFBF_PROMISC;
-    return;
-}
-
-static __inline__ void
-ifbond_flags_clear_promisc(ifbond_ref ifb)
-{
-    ifb->ifb_flags &= ~IFBF_PROMISC;
-    return;
-}
-
-static __inline__ int
 ifbond_flags_if_detaching(ifbond_ref ifb)
 {
     return ((ifb->ifb_flags & IFBF_IF_DETACHING) != 0);
@@ -339,20 +319,6 @@ static __inline__ int
 ifbond_flags_lladdr(ifbond_ref ifb)
 {
     return ((ifb->ifb_flags & IFBF_LLADDR) != 0);
-}
-
-static __inline__ void
-ifbond_flags_set_lladdr(ifbond_ref ifb)
-{
-    ifb->ifb_flags |= IFBF_LLADDR;
-    return;
-}
-
-static __inline__ void
-ifbond_flags_clear_lladdr(ifbond_ref ifb)
-{
-    ifb->ifb_flags &= ~IFBF_LLADDR;
-    return;
 }
 
 static __inline__ int
@@ -835,6 +801,10 @@ link_speed(int active)
     case IFM_10G_SR:
     case IFM_10G_LR:
 	return (10000);
+    case IFM_2500_T:
+	return (2500);
+    case IFM_5000_T:
+	return (5000);
     }
 }
 
@@ -900,11 +870,10 @@ bond_globals_create(lacp_system_priority sys_pri,
 {
     bond_globals_ref	b;
 
-    b = _MALLOC(sizeof(*b), M_BOND, M_WAITOK);
+    b = _MALLOC(sizeof(*b), M_BOND, M_WAITOK | M_ZERO);
     if (b == NULL) {
 	return (NULL);
     }
-    bzero(b, sizeof(*b));
     TAILQ_INIT(&b->ifbond_list);
     b->system = *sys;
     b->system_priority = sys_pri;
@@ -939,7 +908,7 @@ bond_globals_init(void)
     }
     b = NULL;
     if (ifp != NULL) {
-	b = bond_globals_create(0x8000, (lacp_system_ref)ifnet_lladdr(ifp));
+	b = bond_globals_create(0x8000, (lacp_system_ref)IF_LLADDR(ifp));
     }
     bond_lock();
     if (g_bond != NULL) {
@@ -1116,18 +1085,17 @@ bond_clone_create(struct if_clone * ifc, u_int32_t unit, __unused void *params)
 	int 						error;
 	ifbond_ref					ifb;
 	ifnet_t						ifp;
-	struct ifnet_init_params	bond_init;
+	struct ifnet_init_eparams	bond_init;
 	
 	error = bond_globals_init();
 	if (error != 0) {
 		return (error);
 	}
 	
-	ifb = _MALLOC(sizeof(ifbond), M_BOND, M_WAITOK);
+	ifb = _MALLOC(sizeof(ifbond), M_BOND, M_WAITOK | M_ZERO);
 	if (ifb == NULL) {
 		return (ENOMEM);
 	}
-	bzero(ifb, sizeof(*ifb));
 	
 	ifbond_retain(ifb);
 	TAILQ_INIT(&ifb->ifb_port_list);
@@ -1142,6 +1110,9 @@ bond_clone_create(struct if_clone * ifc, u_int32_t unit, __unused void *params)
 	}
 	
 	bzero(&bond_init, sizeof(bond_init));
+	bond_init.ver = IFNET_INIT_CURRENT_VERSION;
+	bond_init.len = sizeof (bond_init);
+	bond_init.flags = IFNET_INIT_LEGACY;
 	bond_init.uniqueid = ifb->ifb_name;
 	bond_init.uniqueid_len = strlen(ifb->ifb_name);
 	bond_init.name = ifc->ifc_name;
@@ -1153,14 +1124,14 @@ bond_clone_create(struct if_clone * ifc, u_int32_t unit, __unused void *params)
 	bond_init.add_proto = ether_add_proto;
 	bond_init.del_proto = ether_del_proto;
 	bond_init.check_multi = ether_check_multi;
-	bond_init.framer = ether_frameout;
+	bond_init.framer_extended = ether_frameout_extended;
 	bond_init.ioctl = bond_ioctl;
 	bond_init.set_bpf_tap = bond_set_bpf_tap;
 	bond_init.detach = bond_if_free;
 	bond_init.broadcast_addr = etherbroadcastaddr;
 	bond_init.broadcast_len = ETHER_ADDR_LEN;
 	bond_init.softc = ifb;
-	error = ifnet_allocate(&bond_init, &ifp);
+	error = ifnet_allocate_extended(&bond_init, &ifp);
 	
 	if (error) {
 		ifbond_release(ifb);
@@ -1484,8 +1455,8 @@ bond_output(struct ifnet * ifp, struct mbuf * m)
 	m_freem(m);
 	return (0);
     }
-    if (m->m_pkthdr.socket_id != 0) {
-	h = m->m_pkthdr.socket_id;
+    if (m->m_pkthdr.pkt_flowid != 0) {
+	h = m->m_pkthdr.pkt_flowid;
     }
     else {
 	struct ether_header *	eh_p;
@@ -1743,7 +1714,7 @@ bond_input(ifnet_t port_ifp, __unused protocol_family_t protocol, mbuf_t m,
     }
     m->m_pkthdr.rcvif = ifp;
     bond_bpf_input(ifp, m, eh_p, bpf_func);
-    m->m_pkthdr.header = frame_header;
+    m->m_pkthdr.pkt_hdr = frame_header;
     dlil_input_packet_list(ifp, m);
     return 0;
 
@@ -1849,12 +1820,11 @@ bondport_create(struct ifnet * port_ifp, lacp_port_priority priority,
     lacp_actor_partner_state	s;
 
     *ret_error = 0;
-    p = _MALLOC(sizeof(*p), M_BOND, M_WAITOK);
+    p = _MALLOC(sizeof(*p), M_BOND, M_WAITOK | M_ZERO);
     if (p == NULL) {
 	*ret_error = ENOMEM;
 	return (NULL);
     }
-    bzero(p, sizeof(*p));
     multicast_list_init(&p->po_multicast);
     if ((u_int32_t)snprintf(p->po_name, sizeof(p->po_name), "%s%d",
 			 ifnet_name(port_ifp), ifnet_unit(port_ifp)) 
@@ -2071,7 +2041,7 @@ bond_add_interface(struct ifnet * ifp, struct ifnet * port_ifp)
     p->po_bond = ifb;
 
     /* remember the port's ethernet address so it can be restored */
-    ether_addr_copy(&p->po_saved_addr, ifnet_lladdr(port_ifp));
+    ether_addr_copy(&p->po_saved_addr, IF_LLADDR(port_ifp));
 
     /* add it to the list of ports */
     TAILQ_INSERT_TAIL(&ifb->ifb_port_list, p, po_port_list);
@@ -2086,7 +2056,7 @@ bond_add_interface(struct ifnet * ifp, struct ifnet * port_ifp)
 
     /* first port added to bond determines bond's ethernet address */
     if (first) {
-	ifnet_set_lladdr_and_type(ifp, ifnet_lladdr(port_ifp), ETHER_ADDR_LEN,
+	ifnet_set_lladdr_and_type(ifp, IF_LLADDR(port_ifp), ETHER_ADDR_LEN,
 				  IFT_ETHER);
     }
 
@@ -2139,7 +2109,7 @@ bond_add_interface(struct ifnet * ifp, struct ifnet * port_ifp)
 
     /* re-program the port's ethernet address */
     error = if_siflladdr(port_ifp, 
-			 (const struct ether_addr *)ifnet_lladdr(ifp));
+			 (const struct ether_addr *)IF_LLADDR(ifp));
     if (error != 0) {
 	/* port doesn't support setting the link address */
 	printf("bond_add_interface(%s, %s): if_siflladdr failed %d\n", 
@@ -2307,7 +2277,7 @@ bond_remove_interface(ifbond_ref ifb, struct ifnet * port_ifp)
 	ifnet_set_mtu(ifp, 0);
 	ifb->ifb_altmtu = 0;
     } else if (ifbond_flags_lladdr(ifb) == FALSE
-	       && bcmp(&p->po_saved_addr, ifnet_lladdr(ifp), 
+	       && bcmp(&p->po_saved_addr, IF_LLADDR(ifp), 
 		       ETHER_ADDR_LEN) == 0) {
 	new_link_address = TRUE;
     }
@@ -2350,7 +2320,7 @@ bond_remove_interface(ifbond_ref ifb, struct ifnet * port_ifp)
 	    scan_ifp = scan_port->po_ifp;
 
 	    error = if_siflladdr(scan_ifp,
-				 (const struct ether_addr *) ifnet_lladdr(ifp));
+				 (const struct ether_addr *) IF_LLADDR(ifp));
 	    if (error != 0) {
 		printf("bond_remove_interface(%s, %s): "
 		       "if_siflladdr (%s) failed %d\n", 
@@ -2536,7 +2506,7 @@ bond_get_status(ifbond_ref ifb, struct if_bond_req * ibr_p, user_addr_t datap)
 	    break;
 	}
 	bzero(&ibs, sizeof(ibs));
-	strncpy(ibs.ibs_if_name, port->po_name, sizeof(ibs.ibs_if_name));
+	strlcpy(ibs.ibs_if_name, port->po_name, sizeof(ibs.ibs_if_name));
 	ibs.ibs_port_priority = port->po_priority;
 	if (ifb->ifb_mode == IF_BOND_MODE_LACP) {
 	    ibs.ibs_state = port->po_actor_state;
@@ -3070,7 +3040,7 @@ interface_link_event(struct ifnet * ifp, u_int32_t event_code)
     event.header.event_code    = event_code;
     event.header.event_data[0] = ifnet_family(ifp);
     event.unit                 = (u_int32_t) ifnet_unit(ifp);
-    strncpy(event.if_name, ifnet_name(ifp), IFNAMSIZ);
+    strlcpy(event.if_name, ifnet_name(ifp), IFNAMSIZ);
     ifnet_event(ifp, &event.header);
     return;
 }
@@ -3151,16 +3121,6 @@ bond_family_init(void)
 				  ether_detach_inet6);
     if (error != 0) {
 	printf("bond: proto_register_plumber failed for AF_INET6 error=%d\n",
-	       error);
-	goto done;
-    }
-#endif
-#if NETAT
-    error = proto_register_plumber(PF_APPLETALK, APPLE_IF_FAM_BOND, 
-				  ether_attach_at, 
-				  ether_detach_at);
-    if (error != 0) {
-	printf("bond: proto_register_plumber failed for AppleTalk error=%d\n",
 	       error);
 	goto done;
     }

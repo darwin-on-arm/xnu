@@ -52,8 +52,8 @@ enum PMLogEnum {
     kPMLogCriticalTemp,             // 24	0x05070060
     kPMLogOverrideOn,               // 25	0x05070064
     kPMLogOverrideOff,              // 26	0x05070068
-    kPMLogEnqueueErr,               // 27	0x0507006c - NOT USED
-    kPMLogCollapseQueue,            // 28	0x05070070 - NOT USED
+    kPMLogChangeStateForRootDomain, // 27	0x0507006c
+    kPMLogCSynchronizePowerTree,    // 28	0x05070070
     kPMLogChangeDone,               // 29	0x05070074
     kPMLogCtrlDriverTardy,          // 30	0x05070078 - controlling driver didn't acknowledge
     kPMLogIntDriverTardy,           // 31	0x0507007c - interested driver didn't acknowledge
@@ -80,5 +80,14 @@ enum PMLogEnum {
     kPMLogSetPinGroup,              // 52	0x050700d0 - NOT USED
     kPMLogIdleCancel,               // 53	0x050700d4 - device unidle during change
     kPMLogSleepWakeTracePoint,      // 54   0x050700d8 - kIOPMTracePoint markers
+    kPMLogQuiescePowerTree,         // 55   0x050700dc
+    kPMLogComponentWakeProgress,    // 56   0x050700e0
+    kPMLogUserActiveState,          // 57   0x050700e4
+    kPMLogAppResponseDelay,         // 58   0x050700e8
+    kPMLogDrvResponseDelay,         // 59   0x050700ec
+    kPMLogPCIDevChangeStart,        // 60   0x050700f0
+    kPMLogPCIDevChangeDone,         // 61   0x050700f4
+    kPMLogSleepWakeMessage,         // 62   0x050700f8
+    kPMLogDrvPSChangeDelay,         // 63   0x050700fc
     kIOPMlogLastEvent
 };

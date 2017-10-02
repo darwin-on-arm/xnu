@@ -75,7 +75,8 @@ member function's parameter list.
 			       void *arg0, void *arg1,
 			       void *arg2, void *arg3);
     enum {
-	kPreciousStack = 0x00000001
+	kPreciousStack  = 0x00000001,
+	kTimeLockPanics = 0x00000002,
     };
 
 private:
@@ -142,14 +143,13 @@ protected:
     struct ExpansionData {
 	IOOptionBits options;
 	IOEventSource *passiveEventChain;
-#if DEBUG
-	void * allocationBacktrace[16];
-#endif /* DEBUG */
 #if IOKITSTATS
 	struct IOWorkLoopCounter *counter;
 #else
 	void *iokitstatsReserved;
 #endif
+        uint64_t lockInterval;
+        uint64_t lockTime;
     };
 
 /*! @var reserved
@@ -169,7 +169,7 @@ protected:
 <br><br>
 	If the client has some outstanding requests on an event they will never be informed of completion.  If an external thread is blocked on any of the event sources they will be awakened with a KERN_INTERUPTED status. 
 */
-    virtual void free();
+    virtual void free() APPLE_KEXT_OVERRIDE;
 
 /*! @function threadMain
     @discussion Work loop threads main function.  This function consists of 3
@@ -201,7 +201,7 @@ public:
     @discussion Initializes an instance of the workloop.  This method creates and initializes the signaling semaphore, the controller gate lock, and spawns the thread that will continue executing.
     @result Returns true if initialized successfully, false otherwise. 
 */
-    virtual bool init();
+    virtual bool init() APPLE_KEXT_OVERRIDE;
 
 /*! @function getThread
     @abstract Gets the workThread.
@@ -264,6 +264,7 @@ protected:
     // Internal APIs used by event sources to control the thread
     friend class IOEventSource;
     friend class IOTimerEventSource;
+    friend class IOCommandGate;
 #if IOKITSTATS
     friend class IOStatistics;
 #endif
@@ -312,9 +313,20 @@ public:
 */
     virtual bool runEventSources();
 
+/*! @function setMaximumLockTime
+    @discussion For diagnostics use in DEVELOPMENT kernels, set a time interval which if the work loop lock is held for this time or greater, IOWorkLoop will panic or log a backtrace.
+    @param interval An absolute time interval, eg. created with clock_interval_to_absolutetime_interval().
+    @param options Pass IOWorkLoop::kTimeLockPanics to panic when the time is exceeded, otherwise a log will be generated with OSReportWithBacktrace().
+*/
+    void setMaximumLockTime(uint64_t interval, uint32_t options);
+
 protected:
     // Internal APIs used by event sources to control the thread
     virtual int sleepGate(void *event, AbsoluteTime deadline, UInt32 interuptibleType);
+
+#if XNU_KERNEL_PRIVATE
+    void lockTime(void);
+#endif /* XNU_KERNEL_PRIVATE */
 
 protected:
 #if __LP64__

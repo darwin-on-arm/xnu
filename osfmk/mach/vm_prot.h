@@ -106,7 +106,7 @@ typedef int		vm_prot_t;
 #define VM_PROT_NO_CHANGE	((vm_prot_t) 0x08)
 
 /* 
- *      When a caller finds that they cannot obtain write permission on a
+ *      When a caller finds that he cannot obtain write permission on a
  *      mapped entry, the following flag can be used.  The entry will
  *      be made "needs copy" effectively copying the object (using COW),
  *      and write permission will be added to the maximum protections
@@ -144,5 +144,17 @@ typedef int		vm_prot_t;
  *	against the actual protection bits of the map entry.
  */
 #define VM_PROT_IS_MASK		((vm_prot_t) 0x40)
+
+/*
+ * Another invalid protection value to support execute-only protection.
+ * VM_PROT_STRIP_READ is a special marker that tells mprotect to not
+ * set VM_PROT_READ. We have to do it this way because existing code
+ * expects the system to set VM_PROT_READ if VM_PROT_EXECUTE is set.
+ * VM_PROT_EXECUTE_ONLY is just a convenience value to indicate that
+ * the memory should be executable and explicitly not readable. It will
+ * be ignored on platforms that do not support this type of protection.
+ */
+#define VM_PROT_STRIP_READ		((vm_prot_t) 0x80)
+#define VM_PROT_EXECUTE_ONLY	(VM_PROT_EXECUTE|VM_PROT_STRIP_READ)
 
 #endif	/* _MACH_VM_PROT_H_ */

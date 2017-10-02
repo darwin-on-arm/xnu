@@ -75,6 +75,8 @@
 #include <sys/param.h>
 
 #ifdef BSD_KERNEL_PRIVATE
+#include <stdbool.h>
+
 /* Global variables for the kernel. */
 
 /* 1.1 */
@@ -87,12 +89,12 @@ extern int domainnamelen;
 /* 1.2 */
 extern int stathz;		/* statistics clock's frequency */
 extern int profhz;		/* profiling clock's frequency */
+
+extern bool send_sigsys;
 #endif /* BSD_KERNEL_PRIVATE */
 
 
 #ifdef KERNEL_PRIVATE
-extern int lbolt;		/* once a second sleep address */
-
 extern struct timezone tz;			/* XXX */
 
 extern int tick;		/* usec per tick (1000000 / hz) */

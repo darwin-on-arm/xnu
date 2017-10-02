@@ -39,9 +39,7 @@
 /*
 **      ml_get_timebase()
 **
-**      Entry   - %rdi contains pointer to 64 bit structure.
-**
-**      Exit    - 64 bit structure filled in.
+**      Returns TSC in RAX
 **
 */
 ENTRY(ml_get_timebase)
@@ -51,7 +49,6 @@ ENTRY(ml_get_timebase)
 	lfence
         shlq	$32,%rdx 
         orq	%rdx,%rax
-	movq    %rax, (%rdi)
 			
 	ret
 
@@ -81,9 +78,14 @@ ENTRY(ml_get_timebase)
  *
  */
 ENTRY(tmrCvt)
+	cmpq	$1,%rsi				/* check for unity fastpath */
+	je	1f
 	movq	%rdi,%rax
 	mulq	%rsi				/* result is %rdx:%rax */
 	shrdq   $32,%rdx,%rax			/* %rdx:%rax >>= 32 */
+	ret
+1:
+	mov	%rdi,%rax
 	ret
 
  /*
@@ -190,45 +192,6 @@ Entry(x86_init_wrapper)
 	movq	%rsi, %rsp
 	callq	*%rdi
 
-	/*
-	* Generate a 64-bit quantity with possibly random characteristics, intended for use
-	* before the kernel entropy pool is available. The processor's RNG is used if
-	* available, and a value derived from the Time Stamp Counter is returned if not.
-	* Multiple invocations may result in well-correlated values if sourced from the TSC.
-	*/
-Entry(ml_early_random)
-	mov	%rbx, %rsi
-	mov	$1, %eax
-	cpuid
-	mov	%rsi, %rbx
-	test	$(1 << 30), %ecx
-	jz	Lnon_rdrand
-	RDRAND_RAX		/* RAX := 64 bits of DRBG entropy */
-	jnc	Lnon_rdrand
-	ret
-Lnon_rdrand:
-	rdtsc /* EDX:EAX := TSC */
-	/* Distribute low order bits */
-	mov	%eax, %ecx
-	xor	%al, %ah
-	shl	$16, %rcx
-	xor	%rcx, %rax
-	xor	%eax, %edx
-
-	/* Incorporate ASLR entropy, if any */
-	lea	(%rip), %rcx
-	shr	$21, %rcx
-	movzbl	%cl, %ecx
-	shl	$16, %ecx
-	xor	%ecx, %edx
-
-	mov	%ah, %cl
-	ror	%cl, %edx /* Right rotate EDX (TSC&0xFF ^ (TSC>>8 & 0xFF))&1F */
-	shl	$32, %rdx
-	xor	%rdx, %rax
-	mov	%cl, %al
-	ret
-	
 #if CONFIG_VMX
 
 /*
@@ -268,3 +231,14 @@ Entry(__vmxoff)
 	ret
 
 #endif /* CONFIG_VMX */
+
+/*
+ *	mfence -- Memory Barrier
+ *	Use out-of-line assembly to get
+ *	standard x86-64 ABI guarantees
+ *	about what the caller's codegen
+ *	has in registers vs. memory
+ */
+Entry(do_mfence)
+	mfence
+	ret

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2010 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2017 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -90,6 +90,7 @@ struct mld_ifinfo_u {
 
 #define MLIF_SILENT	0x00000001	/* Do not use MLD on this ifp */
 #define MLIF_USEALLOW	0x00000002	/* Use ALLOW/BLOCK for joins/leaves */
+#define	MLIF_PROCESSED	0x00000004	/* Entry has been processed and can be skipped */
 
 /*
  * MLD version tag.
@@ -99,7 +100,7 @@ struct mld_ifinfo_u {
 #define MLD_VERSION_2			2 /* Default */
 #endif /* PRIVATE */
 
-#ifdef XNU_KERNEL_PRIVATE
+#ifdef BSD_KERNEL_PRIVATE
 #include <sys/syslog.h>
 
 #define MLD_DEBUG 1
@@ -110,7 +111,7 @@ extern int mld_debug;
 #define	MLD_PRINTF(x)
 #endif
 
-#define MLD_RANDOM_DELAY(X)		(random() % (X) + 1)
+#define MLD_RANDOM_DELAY(X)		(RandomULong() % (X) + 1)
 #define MLD_MAX_STATE_CHANGES		24 /* Max pending changes per group */
 
 /*
@@ -151,7 +152,7 @@ extern int mld_debug;
 #define MLD_MAX_STATE_CHANGE_PACKETS	8 /* # of packets per state change */
 #define MLD_MAX_RESPONSE_PACKETS	16 /* # of packets for general query */
 #define MLD_MAX_RESPONSE_BURST		4 /* # of responses to send at once */
-#define MLD_RESPONSE_BURST_INTERVAL	(PR_SLOWHZ)	/* 500ms */
+#define MLD_RESPONSE_BURST_INTERVAL	1 /* 1 second */
 
 /*
  * MLD-specific mbuf flags.
@@ -193,10 +194,10 @@ struct mld_ifinfo {
 };
 
 #define	MLI_LOCK_ASSERT_HELD(_mli)					\
-	lck_mtx_assert(&(_mli)->mli_lock, LCK_MTX_ASSERT_OWNED)
+	LCK_MTX_ASSERT(&(_mli)->mli_lock, LCK_MTX_ASSERT_OWNED)
 
 #define	MLI_LOCK_ASSERT_NOTHELD(_mli)					\
-	lck_mtx_assert(&(_mli)->mli_lock, LCK_MTX_ASSERT_NOTOWNED)
+	LCK_MTX_ASSERT(&(_mli)->mli_lock, LCK_MTX_ASSERT_NOTOWNED)
 
 #define	MLI_LOCK(_mli)							\
 	lck_mtx_lock(&(_mli)->mli_lock)
@@ -226,15 +227,26 @@ struct mld_ifinfo {
  */
 #define MLD_IFINFO(ifp)	((ifp)->if_mli)
 
-extern int mld_change_state(struct in6_multi *, const int);
+/*
+ * MLD timer schedule parameters
+ */
+struct mld_tparams {
+	int	qpt;	/* querier_present_timers_running6 */
+	int	it;	/* interface_timers_running6 */
+	int	cst;	/* current_state_timers_running6 */
+	int	sct;	/* state_change_timers_running6 */
+};
+
+extern int mld_change_state(struct in6_multi *, struct mld_tparams *,
+    const int);
 extern struct mld_ifinfo *mld_domifattach(struct ifnet *, int);
 extern void mld_domifreattach(struct mld_ifinfo *);
 extern void mld_domifdetach(struct ifnet *);
 extern void mld_fasttimo(void);
 extern void mld_ifdetach(struct ifnet *);
 extern int mld_input(struct mbuf *, int, int);
-extern void mld_slowtimo(void);
 extern void mld_init(void);
+extern void mld_set_timeout(struct mld_tparams *);
 extern void mli_addref(struct mld_ifinfo *, int);
 extern void mli_remref(struct mld_ifinfo *);
 __private_extern__ void mld6_initsilent(struct ifnet *, struct mld_ifinfo *);
@@ -243,6 +255,5 @@ __private_extern__ void mld6_initsilent(struct ifnet *, struct mld_ifinfo *);
 SYSCTL_DECL(_net_inet6_mld);
 #endif
 
-#endif /* XNU_KERNEL_PRIVATE */
-
+#endif /* BSD_KERNEL_PRIVATE */
 #endif /* _NETINET6_MLD6_VAR_H_ */

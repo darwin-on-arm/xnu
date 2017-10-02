@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2007-2010 Apple Inc. All rights reserved.
+ * Copyright (c) 2007-2015 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -84,8 +84,10 @@
 #include <sys/ubc.h>
 #include <sys/malloc.h>
 #include <sys/kpi_mbuf.h>
+#include <sys/ucred.h>
 
 #include <kern/host.h>
+#include <kern/task.h>
 #include <libkern/libkern.h>
 
 #include <mach/task.h>
@@ -107,27 +109,16 @@
 #include <nfs/xdr_subs.h>
 #include <nfs/nfsm_subs.h>
 #include <nfs/nfs_gss.h>
+#include <mach_assert.h>
+#include <kern/assert.h>
 
-#include "nfs_gss_crypto.h"
+#define ASSERT(EX) assert(EX)
 
 #define NFS_GSS_MACH_MAX_RETRIES 3
 
-typedef struct {
-	int type;
-	union {
-		MD5_DESCBC_CTX m_ctx;
-		HMAC_SHA1_DES3KD_CTX h_ctx;
-	};
-} GSS_DIGEST_CTX;
+#define NFS_GSS_DBG(...) NFS_DBG(NFS_FAC_GSS, 7, ## __VA_ARGS__)
+#define NFS_GSS_ISDBG  (NFS_DEBUG_FACILITY &  NFS_FAC_GSS)
 
-#define MAX_DIGEST SHA_DIGEST_LENGTH
-#ifdef NFS_KERNEL_DEBUG
-#define HASHLEN(ki)  (((ki)->hash_len > MAX_DIGEST) ? \
-		(panic("nfs_gss.c:%d ki->hash_len is invalid = %d\n", __LINE__, (ki)->hash_len), MAX_DIGEST) : (ki)->hash_len)
-#else
-#define HASHLEN(ki)  (((ki)->hash_len > MAX_DIGEST) ? \
-		(printf("nfs_gss.c:%d ki->hash_len is invalid = %d\n", __LINE__, (ki)->hash_len), MAX_DIGEST) : (ki)->hash_len)
-#endif	
 
 #if NFSSERVER
 u_long nfs_gss_svc_ctx_hash;
@@ -140,55 +131,24 @@ uint32_t nfsrv_gss_context_ttl = GSS_CTX_EXPIRE;
 
 #if NFSCLIENT
 lck_grp_t *nfs_gss_clnt_grp;
-int nfs_single_des;
 #endif /* NFSCLIENT */
 
-/*
- * These octet strings are used to encode/decode ASN.1 tokens
- * in the RPCSEC_GSS verifiers.
- */
-static u_char krb5_tokhead[] __attribute__((unused)) = { 0x60, 0x23 };
-       u_char krb5_mech[11] = { 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x12, 0x01, 0x02, 0x02 };
-static u_char krb5_mic[]  = { 0x01, 0x01, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff };
-static u_char krb5_mic3[]  = { 0x01, 0x01, 0x04, 0x00, 0xff, 0xff, 0xff, 0xff };
-static u_char krb5_wrap[] = { 0x02, 0x01, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff };
-static u_char krb5_wrap3[] = { 0x02, 0x01, 0x04, 0x00, 0x02, 0x00, 0xff, 0xff };
-static u_char iv0[] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 }; // DES MAC Initialization Vector
-
-#define ALG_MIC(ki) (((ki)->type == NFS_GSS_1DES) ? krb5_mic : krb5_mic3)
-#define ALG_WRAP(ki) (((ki)->type == NFS_GSS_1DES) ? krb5_wrap : krb5_wrap3)
-
-/*
- * The size of the Kerberos v5 ASN.1 token
- * in the verifier.
- *
- * Note that the second octet of the krb5_tokhead (0x23) is a
- * DER-encoded size field that has variable length.  If the size
- * is 128 bytes or greater, then it uses two bytes, three bytes
- * if 65536 or greater, and so on.  Since the MIC tokens are
- * separate from the data, the size is always the same: 35 bytes (0x23).
- * However, the wrap token is different. Its size field includes the
- * size of the token + the encrypted data that follows. So the size
- * field may be two, three or four bytes.
- */
-#define KRB5_SZ_TOKHEAD sizeof(krb5_tokhead)
-#define KRB5_SZ_MECH	sizeof(krb5_mech)
-#define KRB5_SZ_ALG	sizeof(krb5_mic) // 8 - same as krb5_wrap
-#define KRB5_SZ_SEQ	8
-#define KRB5_SZ_EXTRA	3  // a wrap token may be longer by up to this many octets
-#define KRB5_SZ_TOKEN_NOSUM	(KRB5_SZ_TOKHEAD + KRB5_SZ_MECH + KRB5_SZ_ALG + KRB5_SZ_SEQ)
-#define KRB5_SZ_TOKEN(cksumlen)		((cksumlen) + KRB5_SZ_TOKEN_NOSUM)
-#define KRB5_SZ_TOKMAX(cksumlen)	(KRB5_SZ_TOKEN(cksumlen) + KRB5_SZ_EXTRA)
+#define KRB5_MAX_MIC_SIZE 128
+uint8_t krb5_mech_oid[11] = { 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x12, 0x01, 0x02, 0x02 };
+static uint8_t xdrpad[] = { 0x00, 0x00, 0x00, 0x00};
 
 #if NFSCLIENT
 static int	nfs_gss_clnt_ctx_find(struct nfsreq *);
-static int	nfs_gss_clnt_ctx_failover(struct nfsreq *);
 static int	nfs_gss_clnt_ctx_init(struct nfsreq *, struct nfs_gss_clnt_ctx *);
 static int	nfs_gss_clnt_ctx_init_retry(struct nfsreq *, struct nfs_gss_clnt_ctx *);
 static int	nfs_gss_clnt_ctx_callserver(struct nfsreq *, struct nfs_gss_clnt_ctx *);
-static char	*nfs_gss_clnt_svcname(struct nfsmount *);
-static int	nfs_gss_clnt_gssd_upcall(struct nfsreq *, struct nfs_gss_clnt_ctx *);
-static void	nfs_gss_clnt_ctx_remove(struct nfsmount *, struct nfs_gss_clnt_ctx *);
+static uint8_t	*nfs_gss_clnt_svcname(struct nfsmount *, gssd_nametype *, uint32_t *);
+static int	nfs_gss_clnt_gssd_upcall(struct nfsreq *, struct nfs_gss_clnt_ctx *, uint32_t);
+void		nfs_gss_clnt_ctx_neg_cache_reap(struct nfsmount *);
+static void	nfs_gss_clnt_ctx_clean(struct nfs_gss_clnt_ctx *);
+static int	nfs_gss_clnt_ctx_copy(struct nfs_gss_clnt_ctx *, struct nfs_gss_clnt_ctx **);
+static void	nfs_gss_clnt_ctx_destroy(struct nfs_gss_clnt_ctx *);
+static void	nfs_gss_clnt_log_error(struct nfsreq *, struct nfs_gss_clnt_ctx *, uint32_t, uint32_t);
 #endif /* NFSCLIENT */
 
 #if NFSSERVER
@@ -203,26 +163,10 @@ static void	host_release_special_port(mach_port_t);
 static mach_port_t host_copy_special_port(mach_port_t);
 static void	nfs_gss_mach_alloc_buffer(u_char *, uint32_t, vm_map_copy_t *);
 static int	nfs_gss_mach_vmcopyout(vm_map_copy_t, uint32_t, u_char *);
-static int	nfs_gss_token_get(gss_key_info *ki, u_char *, u_char *, int, uint32_t *, u_char *);
-static int	nfs_gss_token_put(gss_key_info *ki, u_char *, u_char *, int, int, u_char *);
-static int	nfs_gss_der_length_size(int);
-static void	nfs_gss_der_length_put(u_char **, int);
-static int	nfs_gss_der_length_get(u_char **);
+
 static int	nfs_gss_mchain_length(mbuf_t);
 static int	nfs_gss_append_chain(struct nfsm_chain *, mbuf_t);
 static void	nfs_gss_nfsm_chain(struct nfsm_chain *, mbuf_t);
-static void	nfs_gss_cksum_mchain(gss_key_info *, mbuf_t, u_char *, int, int, u_char *);
-static void	nfs_gss_cksum_chain(gss_key_info *, struct nfsm_chain *, u_char *, int, int, u_char *);
-static void	nfs_gss_cksum_rep(gss_key_info *, uint32_t, u_char *);
-static void	nfs_gss_encrypt_mchain(gss_key_info *, mbuf_t, int, int, int);
-static void	nfs_gss_encrypt_chain(gss_key_info *, struct nfsm_chain *, int, int, int);
-
-static void	gss_digest_Init(GSS_DIGEST_CTX *, gss_key_info *);
-static void	gss_digest_Update(GSS_DIGEST_CTX *, void *, size_t);
-static void	gss_digest_Final(GSS_DIGEST_CTX *, void *);
-static void	gss_des_crypt(gss_key_info *, des_cblock *, des_cblock *,
-				int32_t, des_cblock *, des_cblock *, int, int);
-static int	gss_key_init(gss_key_info *, uint32_t);
 
 #if NFSSERVER
 thread_call_t nfs_gss_svc_ctx_timer_call;
@@ -251,24 +195,288 @@ nfs_gss_init(void)
 #endif /* NFSSERVER */
 }
 
+/*
+ * Common RPCSEC_GSS support routines
+ */
+
+static errno_t
+rpc_gss_prepend_32(mbuf_t *mb, uint32_t value)
+{
+	int error;
+	uint32_t *data;
+
+#if 0
+	data = mbuf_data(*mb);
+	/*
+	 * If a wap token comes back and is not aligned
+	 * get a new buffer (which should be aligned) to put the
+	 * length in.
+	 */
+	if ((uintptr_t)data & 0x3) {
+		mbuf_t nmb;
+
+		error = mbuf_get(MBUF_WAITOK, MBUF_TYPE_DATA, &nmb);
+		if (error)
+			return (error);
+		mbuf_setnext(nmb, *mb);
+		*mb = nmb;
+	}
+#endif
+	error = mbuf_prepend(mb, sizeof(uint32_t), MBUF_WAITOK);
+	if (error)
+		return (error);
+
+	data = mbuf_data(*mb);
+	*data = txdr_unsigned(value);
+
+	return (0);
+}
+
+/*
+ * Prepend the sequence number to the xdr encode argumen or result
+ * Sequence number is prepended in its own mbuf.
+ *
+ * On successful return mbp_head will point to the old mbuf chain
+ * prepended  with a new mbuf that has the sequence number.
+ */
+
+static errno_t
+rpc_gss_data_create(mbuf_t *mbp_head, uint32_t seqnum)
+{
+	int error;
+	mbuf_t mb;
+	struct nfsm_chain nmc;
+	struct nfsm_chain *nmcp = &nmc;
+	uint8_t *data;
+
+	error = mbuf_get(MBUF_WAITOK, MBUF_TYPE_DATA, &mb);
+	if (error)
+		return (error);
+	data = mbuf_data(mb);
+#if 0
+	/* Reserve space for prepending */
+	len = mbuf_maxlen(mb);
+	len = (len & ~0x3) - NFSX_UNSIGNED;
+	printf("%s: data = %p, len = %d\n", __func__, data, (int)len);
+	error = mbuf_setdata(mb, data + len, 0);
+	if (error || mbuf_trailingspace(mb))
+		printf("%s: data = %p trailingspace = %d error = %d\n", __func__, mbuf_data(mb), (int)mbuf_trailingspace(mb), error);
+#endif
+	/* Reserve 16 words for prepending */
+	error = mbuf_setdata(mb, data + 16*sizeof(uint32_t), 0);
+	nfsm_chain_init(nmcp, mb);
+	nfsm_chain_add_32(error, nmcp, seqnum);
+	nfsm_chain_build_done(error, nmcp);
+	if (error)
+		return (EINVAL);
+	mbuf_setnext(nmcp->nmc_mcur, *mbp_head);
+	*mbp_head = nmcp->nmc_mhead;
+
+	return (0);
+}
+
+/*
+ * Create an rpc_gss_integ_data_t given an argument or result in mb_head.
+ * On successful return mb_head will point to the rpc_gss_integ_data_t of length len.
+ * 	Note mb_head will now point to a 4 byte sequence number. len does not include
+ *	any extra xdr padding.
+ * Returns 0 on success, else an errno_t
+ */
+
+static errno_t
+rpc_gss_integ_data_create(gss_ctx_id_t ctx, mbuf_t *mb_head, uint32_t seqnum, uint32_t *len)
+{
+	uint32_t error;
+	uint32_t major;
+	uint32_t length;
+	gss_buffer_desc mic;
+	struct nfsm_chain nmc;
+
+	/* Length of the argument or result */
+	length = nfs_gss_mchain_length(*mb_head);
+	if (len)
+		*len = length;
+	error = rpc_gss_data_create(mb_head, seqnum);
+	if (error)
+		return (error);
+
+	/*
+	 * length is the length of the rpc_gss_data
+	 */
+	length += NFSX_UNSIGNED;  /* Add the sequence number to the length */
+	major = gss_krb5_get_mic_mbuf(&error, ctx, 0, *mb_head, 0, length, &mic);
+	if (major != GSS_S_COMPLETE) {
+		printf("gss_krb5_get_mic_mbuf failed %d\n", error);
+		return (error);
+	}
+
+	error = rpc_gss_prepend_32(mb_head, length);
+	if (error)
+		return (error);
+
+	nfsm_chain_dissect_init(error, &nmc, *mb_head);
+	/* Append GSS mic token by advancing rpc_gss_data_t length + NFSX_UNSIGNED (size of the length field) */
+	nfsm_chain_adv(error, &nmc, length + NFSX_UNSIGNED);
+	nfsm_chain_finish_mbuf(error, &nmc); // Force the mic into its own sub chain.
+	nfsm_chain_add_32(error, &nmc, mic.length);
+	nfsm_chain_add_opaque(error, &nmc, mic.value, mic.length);
+	nfsm_chain_build_done(error, &nmc);
+	gss_release_buffer(NULL, &mic);
+
+//	printmbuf("rpc_gss_integ_data_create done", *mb_head, 0, 0);
+	assert(nmc.nmc_mhead == *mb_head);
+
+	return (error);
+}
+
+/*
+ * Create an rpc_gss_priv_data_t out of the supplied raw arguments or results in mb_head.
+ * On successful return mb_head will point to a wrap token of lenght len.
+ *	Note len does not include any xdr padding
+ * Returns 0 on success, else an errno_t
+ */
+static errno_t
+rpc_gss_priv_data_create(gss_ctx_id_t ctx, mbuf_t *mb_head, uint32_t seqnum, uint32_t *len)
+{
+	uint32_t error;
+	uint32_t major;
+	struct nfsm_chain nmc;
+	uint32_t pad;
+	uint32_t length;
+
+	error = rpc_gss_data_create(mb_head, seqnum);
+	if (error)
+		return (error);
+
+	length = nfs_gss_mchain_length(*mb_head);
+	major = gss_krb5_wrap_mbuf(&error, ctx, 1, 0, mb_head, 0, length, NULL);
+	if (major != GSS_S_COMPLETE)
+		return (error);
+
+	length = nfs_gss_mchain_length(*mb_head);
+	if (len)
+		*len = length;
+	pad = nfsm_pad(length);
+
+	/* Prepend the opaque length of rep rpc_gss_priv_data */
+	error = rpc_gss_prepend_32(mb_head, length);
+
+	if (error)
+		return (error);
+	if (pad) {
+		nfsm_chain_dissect_init(error, &nmc, *mb_head);
+		/* Advance the opauque size of length and length data */
+		nfsm_chain_adv(error, &nmc, NFSX_UNSIGNED + length);
+		nfsm_chain_finish_mbuf(error, &nmc);
+		nfsm_chain_add_opaque_nopad(error, &nmc, xdrpad, pad);
+		nfsm_chain_build_done(error, &nmc);
+	}
+
+	return (error);
+}
+
 #if NFSCLIENT
 
 /*
- * Is it OK to fall back to using AUTH_SYS?
+ * Restore the argument or result from an rpc_gss_integ_data mbuf chain
+ * We have a four byte seqence number, len arguments, and an opaque
+ * encoded mic, possibly followed by some pad bytes. The mic and possible
+ * pad bytes are on their own sub mbuf chains.
+ *
+ * On successful return mb_head is the chain of the xdr args or results sans
+ * the sequence number and mic and return 0. Otherwise return an errno.
+ *
  */
-static int
-nfs_gss_sysok(struct nfsreq *req)
+static errno_t
+rpc_gss_integ_data_restore(gss_ctx_id_t ctx __unused, mbuf_t *mb_head, size_t len)
 {
-	struct nfsmount *nmp = req->r_nmp;
-	int i;
+	mbuf_t mb = *mb_head;
+	mbuf_t tail = NULL, next;
 
-	if (req->r_wrongsec) /* Not OK if we're trying to handle a wrongsec error */
-		return (0);
-	if (!nmp->nm_sec.count) /* assume it's OK if we don't have a set of flavors */
-		return (1);
-	for (i=0; i < nmp->nm_sec.count; i++)
-		if (nmp->nm_sec.flavors[i] == RPCAUTH_SYS)
-			return (1);
+	/* Chop of the opaque length and seq number */
+	mbuf_adj(mb, 2 * NFSX_UNSIGNED);
+
+	/* should only be one, ... but */
+	for (; mb; mb = next) {
+		next = mbuf_next(mb);
+		if (mbuf_len(mb) == 0)
+			mbuf_free(mb);
+		else
+			break;
+	}
+	*mb_head = mb;
+
+	for (; mb && len; mb = mbuf_next(mb)) {
+		tail = mb;
+		if (mbuf_len(mb) <= len)
+			len -= mbuf_len(mb);
+		else
+			return (EBADRPC);
+	}
+	/* drop the mic */
+	if (tail) {
+	      mbuf_setnext(tail, NULL);
+	      mbuf_freem(mb);
+	}
+
+	return (0);
+}
+
+/*
+ * Restore the argument or result rfom an rpc_gss_priv_data mbuf chain
+ * mb_head points to the wrap token of length len.
+ *
+ * On successful return mb_head is our original xdr arg or result an
+ * the return value is 0. Otherise return an errno
+ */
+static errno_t
+rpc_gss_priv_data_restore(gss_ctx_id_t ctx, mbuf_t *mb_head, size_t len)
+{
+	uint32_t major, error;
+	mbuf_t mb = *mb_head, next;
+	uint32_t plen;
+	size_t length;
+	gss_qop_t qop = GSS_C_QOP_REVERSE;
+
+	/* Chop of the opaque length */
+	mbuf_adj(mb, NFSX_UNSIGNED);
+	/* If we have padding, drop it */
+	plen = nfsm_pad(len);
+	if (plen) {
+		mbuf_t tail = NULL;
+
+		for(length = 0; length < len && mb; mb = mbuf_next(mb)) {
+			tail = mb;
+			length += mbuf_len(mb);
+		}
+		if ((length != len) || (mb == NULL) || (tail == NULL))
+			return (EBADRPC);
+
+		mbuf_freem(mb);
+		mbuf_setnext(tail, NULL);
+	}
+
+	major = gss_krb5_unwrap_mbuf(&error, ctx, mb_head, 0, len, NULL, &qop);
+	if (major != GSS_S_COMPLETE) {
+		printf("gss_krb5_unwrap_mbuf failed. major = %d minor = %d\n", (int)major, error);
+		return (error);
+	}
+	mb = *mb_head;
+
+	/* Drop the seqence number */
+	mbuf_adj(mb, NFSX_UNSIGNED);
+	assert(mbuf_len(mb) == 0);
+
+	/* Chop of any empty mbufs */
+	for (mb = *mb_head; mb; mb = next) {
+		next = mbuf_next(mb);
+		if (mbuf_len(mb) == 0)
+			mbuf_free(mb);
+		else
+			break;
+	}
+	*mb_head = mb;
+
 	return (0);
 }
 
@@ -280,27 +488,247 @@ nfs_gss_sysok(struct nfsreq *req)
  *
  * Note that the code allows superuser (uid == 0)
  * to adopt the context of another user.
+ *
+ * We'll match on the audit session ids, since those
+ * processes will have acccess to the same credential cache.
  */
+
+#define kauth_cred_getasid(cred) ((cred)->cr_audit.as_aia_p->ai_asid)
+#define kauth_cred_getauid(cred) ((cred)->cr_audit.as_aia_p->ai_auid)
+
+#define SAFE_CAST_INTTYPE( type, intval ) \
+	( (type)(intval)/(sizeof(type) < sizeof(intval) ? 0 : 1) )
+
+uid_t
+nfs_cred_getasid2uid(kauth_cred_t cred)
+{
+	uid_t result = SAFE_CAST_INTTYPE(uid_t, kauth_cred_getasid(cred));
+	return (result);
+}
+
+/*
+ * Debugging
+ */
+static void
+nfs_gss_clnt_ctx_dump(struct nfsmount *nmp)
+{
+	struct nfs_gss_clnt_ctx *cp;
+
+	lck_mtx_lock(&nmp->nm_lock);
+	NFS_GSS_DBG("Enter\n");
+	TAILQ_FOREACH(cp, &nmp->nm_gsscl, gss_clnt_entries) {
+		lck_mtx_lock(cp->gss_clnt_mtx);
+		printf("context %d/%d: refcnt = %d, flags = %x\n",
+		       kauth_cred_getasid(cp->gss_clnt_cred),
+		       kauth_cred_getauid(cp->gss_clnt_cred),
+		       cp->gss_clnt_refcnt, cp->gss_clnt_flags);
+		lck_mtx_unlock(cp->gss_clnt_mtx);
+	}
+	NFS_GSS_DBG("Exit\n");
+	lck_mtx_unlock(&nmp->nm_lock);
+}
+
+static char *
+nfs_gss_clnt_ctx_name(struct nfsmount *nmp, struct nfs_gss_clnt_ctx *cp, char *buf, int len)
+{
+	char *np;
+	int nlen;
+	const char *server = "";
+
+	if (nmp && nmp->nm_mountp)
+		server = vfs_statfs(nmp->nm_mountp)->f_mntfromname;
+
+	if (cp == NULL) {
+		snprintf(buf, len, "[%s] NULL context", server);
+		return (buf);
+	}
+
+	if (cp->gss_clnt_principal && !cp->gss_clnt_display) {
+		np = (char *)cp->gss_clnt_principal;
+		nlen = cp->gss_clnt_prinlen;
+	} else {
+		np = cp->gss_clnt_display;
+		nlen = np ? strlen(cp->gss_clnt_display) : 0;
+	}
+	if (nlen)
+		snprintf(buf, len, "[%s] %.*s %d/%d %s", server, nlen, np,
+			 kauth_cred_getasid(cp->gss_clnt_cred),
+			 kauth_cred_getuid(cp->gss_clnt_cred),
+			 cp->gss_clnt_principal ? "" : "[from default cred] ");
+	else
+		snprintf(buf, len, "[%s] using default %d/%d ", server,
+			 kauth_cred_getasid(cp->gss_clnt_cred),
+			 kauth_cred_getuid(cp->gss_clnt_cred));
+	return (buf);
+}
+
+#define NFS_CTXBUFSZ 80
+#define NFS_GSS_CTX(req, cp) nfs_gss_clnt_ctx_name((req)->r_nmp, cp ? cp : (req)->r_gss_ctx, CTXBUF, sizeof(CTXBUF))
+
+#define NFS_GSS_CLNT_CTX_DUMP(nmp)		\
+	do {		      \
+		if (NFS_GSS_ISDBG && (NFS_DEBUG_FLAGS & 0x2))	\
+			nfs_gss_clnt_ctx_dump((nmp));	\
+	} while (0)
+
 static int
-nfs_gss_clnt_ctx_find(struct nfsreq *req)
+nfs_gss_clnt_ctx_cred_match(kauth_cred_t cred1, kauth_cred_t cred2)
+{
+	if (kauth_cred_getasid(cred1) == kauth_cred_getasid(cred2))
+		return (1);
+	return (0);
+}
+
+/*
+ * Busy the mount for each principal set on the mount
+ * so that the automounter will not unmount the file
+ * system underneath us. With out this, if an unmount
+ * occurs the principal that is set for an audit session
+ * will be lost and we may end up with a different identity.
+ *
+ * Note setting principals on the mount is a bad idea. This
+ * really should be handle by KIM (Kerberos Identity Management)
+ * so that defaults can be set by service identities.
+ */
+
+static void
+nfs_gss_clnt_mnt_ref(struct nfsmount *nmp)
+{
+	int error;
+	vnode_t rvp;
+
+	if (nmp == NULL ||
+	    !(vfs_flags(nmp->nm_mountp) & MNT_AUTOMOUNTED))
+		return;
+
+	error = VFS_ROOT(nmp->nm_mountp, &rvp, NULL);
+	if (!error) {
+		vnode_ref(rvp);
+		vnode_put(rvp);
+	}
+}
+
+/*
+ * Unbusy the mout. See above comment,
+ */
+
+static void
+nfs_gss_clnt_mnt_rele(struct nfsmount *nmp)
+{
+	int error;
+	vnode_t rvp;
+
+	if (nmp == NULL ||
+	    !(vfs_flags(nmp->nm_mountp) & MNT_AUTOMOUNTED))
+		return;
+
+	error = VFS_ROOT(nmp->nm_mountp, &rvp, NULL);
+	if (!error) {
+		vnode_rele(rvp);
+		vnode_put(rvp);
+	}
+}
+
+int nfs_root_steals_ctx = 0;
+
+static int
+nfs_gss_clnt_ctx_find_principal(struct nfsreq *req, uint8_t *principal, uint32_t plen, uint32_t nt)
 {
 	struct nfsmount *nmp = req->r_nmp;
 	struct nfs_gss_clnt_ctx *cp;
-	uid_t uid = kauth_cred_getuid(req->r_cred);
+	struct nfsreq treq;
 	int error = 0;
+	struct timeval now;
+	char CTXBUF[NFS_CTXBUFSZ];
 
+	bzero(&treq, sizeof (struct nfsreq));
+	treq.r_nmp = nmp;
+
+	microuptime(&now);
 	lck_mtx_lock(&nmp->nm_lock);
 	TAILQ_FOREACH(cp, &nmp->nm_gsscl, gss_clnt_entries) {
-		if (cp->gss_clnt_uid == uid) {
-			if (cp->gss_clnt_flags & GSS_CTX_INVAL)
-				continue;
-			nfs_gss_clnt_ctx_ref(req, cp);
+		lck_mtx_lock(cp->gss_clnt_mtx);
+		if (cp->gss_clnt_flags & GSS_CTX_DESTROY) {
+			NFS_GSS_DBG("Found destroyed context %s refcnt = %d continuing\n",
+				    NFS_GSS_CTX(req, cp),
+				    cp->gss_clnt_refcnt);
+			lck_mtx_unlock(cp->gss_clnt_mtx);
+			continue;
+		}
+		if (nfs_gss_clnt_ctx_cred_match(cp->gss_clnt_cred, req->r_cred)) {
+			if (nmp->nm_gsscl.tqh_first != cp) {
+				TAILQ_REMOVE(&nmp->nm_gsscl, cp, gss_clnt_entries);
+				TAILQ_INSERT_HEAD(&nmp->nm_gsscl, cp, gss_clnt_entries);
+			}
+			if (principal) {
+				/*
+				 * If we have a principal, but it does not match the current cred
+				 * mark it for removal
+				 */
+				if (cp->gss_clnt_prinlen != plen || cp->gss_clnt_prinnt != nt ||
+				    bcmp(cp->gss_clnt_principal, principal, plen) != 0) {
+					cp->gss_clnt_flags |= (GSS_CTX_INVAL | GSS_CTX_DESTROY);
+					cp->gss_clnt_refcnt++;
+					lck_mtx_unlock(cp->gss_clnt_mtx);
+					NFS_GSS_DBG("Marking %s for deletion because %s does not match\n",
+						    NFS_GSS_CTX(req, cp), principal);
+					NFS_GSS_DBG("len = (%d,%d), nt = (%d,%d)\n", cp->gss_clnt_prinlen, plen,
+						    cp->gss_clnt_prinnt, nt);
+					treq.r_gss_ctx  = cp;
+					cp = NULL;
+					break;
+				}
+			}
+			if (cp->gss_clnt_flags & GSS_CTX_INVAL) {
+				/*
+				 * If we're still being used and we're not expired
+				 * just return and don't bother gssd again. Note if
+				 * gss_clnt_nctime is zero it is about to be set to now.
+				 */
+				if (cp->gss_clnt_nctime + GSS_NEG_CACHE_TO >= now.tv_sec || cp->gss_clnt_nctime == 0) {
+					NFS_GSS_DBG("Context %s (refcnt = %d) not expired returning EAUTH nctime = %ld now = %ld\n",
+						    NFS_GSS_CTX(req, cp), cp->gss_clnt_refcnt, cp->gss_clnt_nctime, now.tv_sec);
+					lck_mtx_unlock(cp->gss_clnt_mtx);
+					lck_mtx_unlock(&nmp->nm_lock);
+					return (NFSERR_EAUTH);
+				}
+				if (cp->gss_clnt_refcnt) {
+					struct nfs_gss_clnt_ctx *ncp;
+					/*
+					 * If this context has references, we can't use it so we mark if for
+					 * destruction and create a new context based on this one in the
+					 * same manner as renewing one.
+					 */
+					cp->gss_clnt_flags |= GSS_CTX_DESTROY;
+					NFS_GSS_DBG("Context %s has expired but we still have %d references\n",
+						    NFS_GSS_CTX(req, cp), cp->gss_clnt_refcnt);
+					error = nfs_gss_clnt_ctx_copy(cp, &ncp);
+					lck_mtx_unlock(cp->gss_clnt_mtx);
+					if (error) {
+						lck_mtx_unlock(&nmp->nm_lock);
+						return (error);
+					}
+					cp = ncp;
+					break;
+				} else {
+					if (cp->gss_clnt_nctime)
+						nmp->nm_ncentries--;
+					lck_mtx_unlock(cp->gss_clnt_mtx);
+					TAILQ_REMOVE(&nmp->nm_gsscl, cp, gss_clnt_entries);
+					break;
+				}
+			}
+			/* Found a valid context to return */
+			cp->gss_clnt_refcnt++;
+			req->r_gss_ctx = cp;
+			lck_mtx_unlock(cp->gss_clnt_mtx);
 			lck_mtx_unlock(&nmp->nm_lock);
 			return (0);
 		}
+		lck_mtx_unlock(cp->gss_clnt_mtx);
 	}
 
-	if (uid == 0) {
+	if (!cp && nfs_root_steals_ctx && principal == NULL && kauth_cred_getuid(req->r_cred) == 0) {
 		/*
 		 * If superuser is trying to get access, then co-opt
 		 * the first valid context in the list.
@@ -309,100 +737,82 @@ nfs_gss_clnt_ctx_find(struct nfsreq *req)
 		 * in case one is set up for it.
 		 */
 		TAILQ_FOREACH(cp, &nmp->nm_gsscl, gss_clnt_entries) {
-			if (!(cp->gss_clnt_flags & GSS_CTX_INVAL)) {
+			if (!(cp->gss_clnt_flags & (GSS_CTX_INVAL|GSS_CTX_DESTROY))) {
 				nfs_gss_clnt_ctx_ref(req, cp);
 				lck_mtx_unlock(&nmp->nm_lock);
+				NFS_GSS_DBG("Root stole context %s\n", NFS_GSS_CTX(req, NULL));
 				return (0);
 			}
 		}
 	}
 
+	NFS_GSS_DBG("Context %s%sfound in Neg Cache @  %ld\n",
+		    NFS_GSS_CTX(req, cp),
+		    cp == NULL ? " not " : "",
+		    cp == NULL ? 0L : cp->gss_clnt_nctime);
+
 	/*
 	 * Not found - create a new context
 	 */
 
-	/*
-	 * If the thread is async, then it cannot get
-	 * kerberos creds and set up a proper context.
-	 * If no sec= mount option is given, attempt
-	 * to failover to sec=sys.
-	 */
-	if (req->r_thread == NULL) {
-		if (nfs_gss_sysok(req)) {
-			error = nfs_gss_clnt_ctx_failover(req);
-		} else {
-			printf("nfs_gss_clnt_ctx_find: no context for async\n");
-			error = NFSERR_EAUTH;
-		}
-
-		lck_mtx_unlock(&nmp->nm_lock);
-		return (error);
-	}
-
-	MALLOC(cp, struct nfs_gss_clnt_ctx *, sizeof(*cp), M_TEMP, M_WAITOK|M_ZERO);
 	if (cp == NULL) {
-		lck_mtx_unlock(&nmp->nm_lock);
-		return (ENOMEM);
+		MALLOC(cp, struct nfs_gss_clnt_ctx *, sizeof(*cp), M_TEMP, M_WAITOK|M_ZERO);
+		if (cp == NULL) {
+			lck_mtx_unlock(&nmp->nm_lock);
+			return (ENOMEM);
+		}
+		cp->gss_clnt_cred = req->r_cred;
+		kauth_cred_ref(cp->gss_clnt_cred);
+		cp->gss_clnt_mtx = lck_mtx_alloc_init(nfs_gss_clnt_grp, LCK_ATTR_NULL);
+		cp->gss_clnt_ptime = now.tv_sec - GSS_PRINT_DELAY;
+		if (principal) {
+			MALLOC(cp->gss_clnt_principal, uint8_t *, plen+1, M_TEMP, M_WAITOK|M_ZERO);
+			memcpy(cp->gss_clnt_principal, principal, plen);
+			cp->gss_clnt_prinlen = plen;
+			cp->gss_clnt_prinnt = nt;
+			cp->gss_clnt_flags |= GSS_CTX_STICKY;
+			nfs_gss_clnt_mnt_ref(nmp);
+		}
+	} else {
+		nfs_gss_clnt_ctx_clean(cp);
+		if (principal) {
+			/*
+			 * If we have a principal and we found a matching audit
+			 * session, then to get here, the principal had to match.
+			 * In walking the context list if it has a principal
+			 * or the principal is not set then we mark the context
+			 * for destruction and set cp to NULL and we fall to the
+			 * if clause above. If the context still has references
+			 * again we copy the context which will preserve the principal
+			 * and we end up here with the correct principal set.
+			 * If we don't have references the the principal must have
+			 * match and we will fall through here.
+			 */
+			cp->gss_clnt_flags |= GSS_CTX_STICKY;
+		}
 	}
 
-	cp->gss_clnt_uid = uid;
-	cp->gss_clnt_mtx = lck_mtx_alloc_init(nfs_gss_clnt_grp, LCK_ATTR_NULL);
 	cp->gss_clnt_thread = current_thread();
 	nfs_gss_clnt_ctx_ref(req, cp);
-	TAILQ_INSERT_TAIL(&nmp->nm_gsscl, cp, gss_clnt_entries);
+	TAILQ_INSERT_HEAD(&nmp->nm_gsscl, cp, gss_clnt_entries);
 	lck_mtx_unlock(&nmp->nm_lock);
 
 	error = nfs_gss_clnt_ctx_init_retry(req, cp); // Initialize new context
-	if (error)
+	if (error) {
+		NFS_GSS_DBG("nfs_gss_clnt_ctx_init_retry returned %d for %s\n", error, NFS_GSS_CTX(req, cp));
 		nfs_gss_clnt_ctx_unref(req);
-
-	/*
-	 * If we failed to set up a Kerberos context for this
-	 * user and no sec= mount option was given, but the
-	 * server indicated that it could support AUTH_SYS, then set
-	 * up a dummy context that allows this user to attempt
-	 * sec=sys calls.
-	 */
-	if (error && nfs_gss_sysok(req) &&
-	    (error != ENXIO) && (error != ETIMEDOUT)) {
-		lck_mtx_lock(&nmp->nm_lock);
-		error = nfs_gss_clnt_ctx_failover(req);
-		lck_mtx_unlock(&nmp->nm_lock);
 	}
+
+	/* Remove any old matching contex that had a different principal */
+	nfs_gss_clnt_ctx_unref(&treq);
 
 	return (error);
 }
 
-/*
- * Set up a dummy context to allow the use of sec=sys
- * for this user, if the server allows sec=sys.
- * The context is valid for GSS_CLNT_SYS_VALID seconds,
- * so that the user will periodically attempt to fail back
- * and get a real credential.
- *
- * Assumes context list (nm_lock) is locked
- */
 static int
-nfs_gss_clnt_ctx_failover(struct nfsreq *req)
+nfs_gss_clnt_ctx_find(struct nfsreq *req)
 {
-	struct nfsmount *nmp = req->r_nmp;
-	struct nfs_gss_clnt_ctx *cp;
-	uid_t uid = kauth_cred_getuid(req->r_cred);
-	struct timeval now;
-
-	MALLOC(cp, struct nfs_gss_clnt_ctx *, sizeof(*cp), M_TEMP, M_WAITOK|M_ZERO);
-	if (cp == NULL)
-		return (ENOMEM);
-
-	cp->gss_clnt_service = RPCSEC_GSS_SVC_SYS;
-	cp->gss_clnt_uid = uid;
-	cp->gss_clnt_mtx = lck_mtx_alloc_init(nfs_gss_clnt_grp, LCK_ATTR_NULL);
-	microuptime(&now);
-	cp->gss_clnt_ctime = now.tv_sec;	// time stamp
-	nfs_gss_clnt_ctx_ref(req, cp);
-	TAILQ_INSERT_TAIL(&nmp->nm_gsscl, cp, gss_clnt_entries);
-
-	return (0);
+	return (nfs_gss_clnt_ctx_find_principal(req, NULL, 0, 0));
 }
 
 /*
@@ -411,27 +821,24 @@ nfs_gss_clnt_ctx_failover(struct nfsreq *req)
  * to build the verifier which contains a signed checksum
  * of the RPC header.
  */
+
 int
 nfs_gss_clnt_cred_put(struct nfsreq *req, struct nfsm_chain *nmc, mbuf_t args)
 {
 	struct nfs_gss_clnt_ctx *cp;
 	uint32_t seqnum = 0;
-	int error = 0;
-	int slpflag, recordmark = 0;
-	int start, len, offset = 0;
-	int pad, toklen;
-	struct nfsm_chain nmc_tmp;
+	uint32_t major;
+	uint32_t error = 0;
+	int slpflag, recordmark = 0, offset;
 	struct gss_seq *gsp;
-	u_char tokbuf[KRB5_SZ_TOKMAX(MAX_DIGEST)];
-	u_char cksum[MAX_DIGEST];
-	struct timeval now;
-	gss_key_info *ki;
-	
+	gss_buffer_desc mic;
+
 	slpflag = (PZERO-1);
 	if (req->r_nmp) {
 		slpflag |= (NMFLAG(req->r_nmp, INTR) && req->r_thread && !(req->r_flags & R_NOINTR)) ? PCATCH : 0;
 		recordmark = (req->r_nmp->nm_sotype == SOCK_STREAM);
 	}
+
 retry:
 	if (req->r_gss_ctx == NULL) {
 		/*
@@ -444,30 +851,6 @@ retry:
 			return (error);
 	}
 	cp = req->r_gss_ctx;
-
-	/*
-	 * If it's a dummy context for a user that's using
-	 * a fallback to sec=sys, then just return an error
-	 * so rpchead can encode an RPCAUTH_UNIX cred.
-	 */
-	if (cp->gss_clnt_service == RPCSEC_GSS_SVC_SYS) {
-		/*
-		 * The dummy context is valid for just
-		 * GSS_CLNT_SYS_VALID seconds.  If the context
-		 * is older than this, mark it invalid and try
-		 * again to get a real one.
-		 */
-		lck_mtx_lock(cp->gss_clnt_mtx);
-		microuptime(&now);
-		if (now.tv_sec > cp->gss_clnt_ctime + GSS_CLNT_SYS_VALID) {
-			cp->gss_clnt_flags |= GSS_CTX_INVAL;
-			lck_mtx_unlock(cp->gss_clnt_mtx);
-			nfs_gss_clnt_ctx_unref(req);
-			goto retry;
-		}
-		lck_mtx_unlock(cp->gss_clnt_mtx);
-		return (ENEEDAUTH);
-	}
 
 	/*
 	 * If the context thread isn't null, then the context isn't
@@ -487,7 +870,6 @@ retry:
 	}
 	lck_mtx_unlock(cp->gss_clnt_mtx);
 
-	ki = &cp->gss_clnt_kinfo;
 	if (cp->gss_clnt_flags & GSS_CTX_COMPLETE) {
 		/*
 		 * Get a sequence number for this request.
@@ -558,12 +940,17 @@ retry:
 
 	offset = recordmark ? NFSX_UNSIGNED : 0; // record mark
 	nfsm_chain_build_done(error, nmc);
-	nfs_gss_cksum_chain(ki, nmc, ALG_MIC(ki), offset, 0, cksum);
 
-	toklen = nfs_gss_token_put(ki, ALG_MIC(ki), tokbuf, 1, 0, cksum);
+	major = gss_krb5_get_mic_mbuf((uint32_t *)&error, cp->gss_clnt_ctx_id, 0, nmc->nmc_mhead, offset, 0, &mic);
+	if (major != GSS_S_COMPLETE) {
+		printf ("gss_krb5_get_mic_buf failed %d\n", error);
+		return (error);
+	}
+
 	nfsm_chain_add_32(error, nmc, RPCSEC_GSS);	// flavor
-	nfsm_chain_add_32(error, nmc, toklen);		// length
-	nfsm_chain_add_opaque(error, nmc, tokbuf, toklen);
+	nfsm_chain_add_32(error, nmc, mic.length);		// length
+	nfsm_chain_add_opaque(error, nmc, mic.value, mic.length);
+	(void)gss_release_buffer(NULL, &mic);
 	nfsm_chain_build_done(error, nmc);
 	if (error)
 		return (error);
@@ -574,85 +961,45 @@ retry:
 	 */
 	switch (cp->gss_clnt_service) {
 	case RPCSEC_GSS_SVC_NONE:
-		nfs_gss_append_chain(nmc, args);
+		if (args)
+			nfs_gss_append_chain(nmc, args);
 		break;
 	case RPCSEC_GSS_SVC_INTEGRITY:
-		len = nfs_gss_mchain_length(args);	// Find args length
-		req->r_gss_arglen = len;		// Stash the args len
-		len += NFSX_UNSIGNED;			// Add seqnum length
-		nfsm_chain_add_32(error, nmc, len);	// and insert it
-		start = nfsm_chain_offset(nmc);
-		nfsm_chain_add_32(error, nmc, seqnum);	// Insert seqnum
-		req->r_gss_argoff = nfsm_chain_offset(nmc); // Offset to args
-		nfsm_chain_build_done(error, nmc);
+		/*
+		 * r_gss_arglen is the length of args mbuf going into the routine.
+		 * Its used to find the mic if we need to restore the args.
+		 */
+		/* Note the mbufs that were used in r_mrest are being encapsulated in the rpc_gss_integ_data_t */
+		assert(req->r_mrest == args);
+		nfsm_chain_finish_mbuf(error, nmc);
 		if (error)
 			return (error);
-		nfs_gss_append_chain(nmc, args);	// Append the args mbufs
-
-		/* Now compute a checksum over the seqnum + args */
-		nfs_gss_cksum_chain(ki, nmc, ALG_MIC(ki), start, len, cksum);
-
-		/* Insert it into a token and append to the request */
-		toklen = nfs_gss_token_put(ki, ALG_MIC(ki), tokbuf, 1, 0, cksum);
-		nfsm_chain_finish_mbuf(error, nmc);	// force checksum into new mbuf
-		nfsm_chain_add_32(error, nmc, toklen);
-		nfsm_chain_add_opaque(error, nmc, tokbuf, toklen);
-		nfsm_chain_build_done(error, nmc);
+		error = rpc_gss_integ_data_create(cp->gss_clnt_ctx_id, &args, seqnum, &req->r_gss_arglen);
+		if (error)
+			break;
+		req->r_mrest = args;
+		req->r_gss_argoff = nfsm_chain_offset(nmc);
+		nfs_gss_append_chain(nmc, args);
 		break;
 	case RPCSEC_GSS_SVC_PRIVACY:
-		/* Prepend a new mbuf with the confounder & sequence number */
-		nfsm_chain_build_alloc_init(error, &nmc_tmp, 3 * NFSX_UNSIGNED);
-		nfsm_chain_add_32(error, &nmc_tmp, random());	// confounder bytes 1-4
-		nfsm_chain_add_32(error, &nmc_tmp, random());	// confounder bytes 4-8
-		nfsm_chain_add_32(error, &nmc_tmp, seqnum);
-		nfsm_chain_build_done(error, &nmc_tmp);
-		if (error)
-			return (error);
-		nfs_gss_append_chain(&nmc_tmp, args);		// Append the args mbufs
-
-		len = nfs_gss_mchain_length(args);		// Find args length
-		len += 3 * NFSX_UNSIGNED;			// add confounder & seqnum
-		req->r_gss_arglen = len;			// Stash length
-
 		/*
-		 * Append a pad trailer - per RFC 1964 section 1.2.2.3
-		 * Since XDR data is always 32-bit aligned, it
-		 * needs to be padded either by 4 bytes or 8 bytes.
+		 * r_gss_arglen is the length of the wrap token sans any padding length.
+		 * Its used to find any XDR padding of the wrap token.
 		 */
-		nfsm_chain_finish_mbuf(error, &nmc_tmp);	// force padding into new mbuf
-		if (len % 8 > 0) {
-			nfsm_chain_add_32(error, &nmc_tmp, 0x04040404);
-			len += NFSX_UNSIGNED;
-		} else {
-			nfsm_chain_add_32(error, &nmc_tmp, 0x08080808);
-			nfsm_chain_add_32(error, &nmc_tmp, 0x08080808);
-			len +=  2 * NFSX_UNSIGNED;
-		}
-		nfsm_chain_build_done(error, &nmc_tmp);
-
-		/* Now compute a checksum over the confounder + seqnum + args */
-		nfs_gss_cksum_chain(ki, &nmc_tmp, ALG_WRAP(ki), 0, len, cksum);
-
-		/* Insert it into a token */
-		toklen = nfs_gss_token_put(ki, ALG_WRAP(ki), tokbuf, 1, len, cksum);
-		nfsm_chain_add_32(error, nmc, toklen + len);	// token + args length
-		nfsm_chain_add_opaque_nopad(error, nmc, tokbuf, toklen);
-		req->r_gss_argoff = nfsm_chain_offset(nmc);	// Stash offset
-		nfsm_chain_build_done(error, nmc);
+		/* Note the mbufs that were used in r_mrest are being encapsulated in the rpc_gss_priv_data_t */
+		assert(req->r_mrest == args);
+		nfsm_chain_finish_mbuf(error, nmc);
 		if (error)
 			return (error);
-		nfs_gss_append_chain(nmc, nmc_tmp.nmc_mhead);	// Append the args mbufs
-
-		/* Finally, encrypt the args */
-		nfs_gss_encrypt_chain(ki, &nmc_tmp, 0, len, DES_ENCRYPT);
-
-		/* Add null XDR pad if the ASN.1 token misaligned the data */
-		pad = nfsm_pad(toklen + len);
-		if (pad > 0) {
-			nfsm_chain_add_opaque_nopad(error, nmc, iv0, pad);
-			nfsm_chain_build_done(error, nmc);
-		}
+		error = rpc_gss_priv_data_create(cp->gss_clnt_ctx_id, &args, seqnum, &req->r_gss_arglen);
+		if (error)
+			break;
+		req->r_mrest = args;
+		req->r_gss_argoff = nfsm_chain_offset(nmc);
+		nfs_gss_append_chain(nmc, args);
 		break;
+	default:
+		return (EINVAL);
 	}
 
 	return (error);
@@ -674,17 +1021,18 @@ nfs_gss_clnt_verf_get(
 	uint32_t verflen,
 	uint32_t *accepted_statusp)
 {
-	u_char tokbuf[KRB5_SZ_TOKMAX(MAX_DIGEST)];
-	u_char cksum1[MAX_DIGEST], cksum2[MAX_DIGEST];
+	gss_buffer_desc cksum;
 	uint32_t seqnum = 0;
+	uint32_t major;
 	struct nfs_gss_clnt_ctx *cp = req->r_gss_ctx;
 	struct nfsm_chain nmc_tmp;
 	struct gss_seq *gsp;
-	uint32_t reslen, start, cksumlen, toklen;
+	uint32_t reslen, offset;
 	int error = 0;
-	gss_key_info *ki = &cp->gss_clnt_kinfo;
+	mbuf_t results_mbuf, prev_mbuf, pad_mbuf;
+	size_t ressize;
 
-	reslen = cksumlen = 0;
+	reslen = 0;
 	*accepted_statusp = 0;
 
 	if (cp == NULL)
@@ -699,8 +1047,7 @@ nfs_gss_clnt_verf_get(
 	if (verftype != RPCSEC_GSS) {
 		if (verftype != RPCAUTH_NULL)
 			return (NFSERR_EAUTH);
-		if (cp->gss_clnt_flags & GSS_CTX_COMPLETE &&
-			cp->gss_clnt_service != RPCSEC_GSS_SVC_SYS)
+		if (cp->gss_clnt_flags & GSS_CTX_COMPLETE)
 			return (NFSERR_EAUTH);
 		if (verflen > 0)
 			nfsm_chain_adv(error, nmc, nfsm_rndup(verflen));
@@ -722,24 +1069,25 @@ nfs_gss_clnt_verf_get(
 		MALLOC(cp->gss_clnt_verf, u_char *, verflen, M_TEMP, M_WAITOK|M_ZERO);
 		if (cp->gss_clnt_verf == NULL)
 			return (ENOMEM);
+		cp->gss_clnt_verflen = verflen;
 		nfsm_chain_get_opaque(error, nmc, verflen, cp->gss_clnt_verf);
 		nfsm_chain_get_32(error, nmc, *accepted_statusp);
 		return (error);
 	}
 
-	if (verflen != KRB5_SZ_TOKEN(ki->hash_len))
-		return (NFSERR_EAUTH);
+	if (verflen > KRB5_MAX_MIC_SIZE)
+		return (EBADRPC);
+	cksum.length = verflen;
+	MALLOC(cksum.value, void *, verflen, M_TEMP, M_WAITOK);
 
 	/*
-	 * Get the 8 octet sequence number
-	 * checksum out of the verifier token.
+	 * Get the gss mic
 	 */
-	nfsm_chain_get_opaque(error, nmc, verflen, tokbuf);
-	if (error)
+	nfsm_chain_get_opaque(error, nmc, verflen, cksum.value);
+	if (error) {
+		FREE(cksum.value, M_TEMP);
 		goto nfsmout;
-	error = nfs_gss_token_get(ki, ALG_MIC(ki), tokbuf, 0, NULL, cksum1);
-	if (error)
-		goto nfsmout;
+	}
 
 	/*
 	 * Search the request sequence numbers for this reply, starting
@@ -747,10 +1095,16 @@ nfs_gss_clnt_verf_get(
 	 * the one in the verifier returned by the server.
 	 */
 	SLIST_FOREACH(gsp, &req->r_gss_seqlist, gss_seqnext) {
-		nfs_gss_cksum_rep(ki, gsp->gss_seqnum, cksum2);
-		if (bcmp(cksum1, cksum2, HASHLEN(ki)) == 0)
+		gss_buffer_desc seqnum_buf;
+		uint32_t network_seqnum = htonl(gsp->gss_seqnum);
+
+		seqnum_buf.length = sizeof(network_seqnum);
+		seqnum_buf.value = &network_seqnum;
+		major = gss_krb5_verify_mic(NULL, cp->gss_clnt_ctx_id, &seqnum_buf, &cksum, NULL);
+		if (major == GSS_S_COMPLETE)
 			break;
 	}
+	FREE(cksum.value, M_TEMP);
 	if (gsp == NULL)
 		return (NFSERR_EAUTH);
 
@@ -771,29 +1125,49 @@ nfs_gss_clnt_verf_get(
 		break;
 	case RPCSEC_GSS_SVC_INTEGRITY:
 		/*
-		 * Here's what we expect in the integrity results:
+		 * Here's what we expect in the integrity results from RFC 2203:
 		 *
 		 * - length of seq num + results (4 bytes)
 		 * - sequence number (4 bytes)
 		 * - results (variable bytes)
-		 * - length of checksum token (37)
-		 * - checksum of seqnum + results (37 bytes)
+		 * - length of checksum token
+		 * - checksum of seqnum + results
 		 */
+
 		nfsm_chain_get_32(error, nmc, reslen);		// length of results
 		if (reslen > NFS_MAXPACKET) {
 			error = EBADRPC;
 			goto nfsmout;
 		}
 
-		/* Compute a checksum over the sequence number + results */
-		start = nfsm_chain_offset(nmc);
-		nfs_gss_cksum_chain(ki, nmc, ALG_MIC(ki), start, reslen, cksum1);
+		/* Advance and fetch the mic */
+		nmc_tmp = *nmc;
+		nfsm_chain_adv(error, &nmc_tmp, reslen);	// skip over the results
+		nfsm_chain_get_32(error, &nmc_tmp,  cksum.length);
+		MALLOC(cksum.value, void *, cksum.length, M_TEMP, M_WAITOK);
+		nfsm_chain_get_opaque(error, &nmc_tmp, cksum.length, cksum.value);
+		//XXX chop offf the cksum?
+
+		/* Call verify mic */
+		offset = nfsm_chain_offset(nmc);
+		major = gss_krb5_verify_mic_mbuf((uint32_t *)&error, cp->gss_clnt_ctx_id, nmc->nmc_mhead, offset, reslen, &cksum, NULL);
+		FREE(cksum.value, M_TEMP);
+		if (major != GSS_S_COMPLETE) {
+			printf("client results: gss_krb5_verify_mic_mbuf failed %d\n", error);
+			error = EBADRPC;
+			goto nfsmout;
+		}
 
 		/*
 		 * Get the sequence number prepended to the results
-		 * and compare it against the list in the request.
+		 * and compare it against the header.
 		 */
 		nfsm_chain_get_32(error, nmc, seqnum);
+		if (gsp->gss_seqnum != seqnum) {
+			error = EBADRPC;
+			goto nfsmout;
+		}
+#if 0
 		SLIST_FOREACH(gsp, &req->r_gss_seqlist, gss_seqnext) {
 			if (seqnum == gsp->gss_seqnum)
 				break;
@@ -802,79 +1176,60 @@ nfs_gss_clnt_verf_get(
 			error = EBADRPC;
 			goto nfsmout;
 		}
-
-		/*
-		 * Advance to the end of the results and
-		 * fetch the checksum computed by the server.
-		 */
-		nmc_tmp = *nmc;	
-		reslen -= NFSX_UNSIGNED;			// already skipped seqnum
-		nfsm_chain_adv(error, &nmc_tmp, reslen);	// skip over the results
-		nfsm_chain_get_32(error, &nmc_tmp, cksumlen);	// length of checksum
-		if (cksumlen != KRB5_SZ_TOKEN(ki->hash_len)) {
-			error = EBADRPC;
-			goto nfsmout;
-		}
-		nfsm_chain_get_opaque(error, &nmc_tmp, cksumlen, tokbuf);
-		if (error)
-			goto nfsmout;
-		error = nfs_gss_token_get(ki, ALG_MIC(ki), tokbuf, 0, NULL, cksum2);
-		if (error)
-			goto nfsmout;
-
-		/* Verify that the checksums are the same */
-		if (bcmp(cksum1, cksum2, HASHLEN(ki)) != 0) {
-			error = EBADRPC;
-			goto nfsmout;
-		}
+#endif
 		break;
 	case RPCSEC_GSS_SVC_PRIVACY:
 		/*
 		 * Here's what we expect in the privacy results:
 		 *
-		 * - length of confounder + seq num + token + results
-		 * - wrap token (37-40 bytes)
-		 * - confounder (8 bytes)
-		 * - sequence number (4 bytes)
-		 * - results (encrypted)
+		 * opaque encodeing of the wrap token
+		 * - length of wrap token
+		 * - wrap token
 		 */
+		prev_mbuf = nmc->nmc_mcur;
 		nfsm_chain_get_32(error, nmc, reslen);		// length of results
-		if (reslen > NFS_MAXPACKET) {
+		if (reslen == 0 || reslen > NFS_MAXPACKET) {
 			error = EBADRPC;
 			goto nfsmout;
 		}
 
-		/* Get the token that prepends the encrypted results */
-		nfsm_chain_get_opaque(error, nmc, KRB5_SZ_TOKMAX(ki->hash_len), tokbuf);
+		/* Get the wrap token (current mbuf in the chain starting at the current offset) */
+		offset = nmc->nmc_ptr - (caddr_t)mbuf_data(nmc->nmc_mcur);
+
+		/* split out the wrap token */
+		ressize = reslen;
+		error = gss_normalize_mbuf(nmc->nmc_mcur, offset, &ressize, &results_mbuf, &pad_mbuf, 0);
 		if (error)
 			goto nfsmout;
-		error = nfs_gss_token_get(ki, ALG_WRAP(ki), tokbuf, 0,
-			&toklen, cksum1);
-		if (error)
-			goto nfsmout;
-		nfsm_chain_reverse(nmc, nfsm_pad(toklen));
-		reslen -= toklen;				// size of confounder + seqnum + results
 
-		/* decrypt the confounder + sequence number + results */
-		start = nfsm_chain_offset(nmc);
-		nfs_gss_encrypt_chain(ki, nmc, start, reslen, DES_DECRYPT);
+		if (pad_mbuf) {
+			assert(nfsm_pad(reslen) == mbuf_len(pad_mbuf));
+			mbuf_free(pad_mbuf);
+		}
 
-		/* Compute a checksum over the confounder + sequence number + results */
-		nfs_gss_cksum_chain(ki, nmc, ALG_WRAP(ki), start, reslen, cksum2);
-
-		/* Verify that the checksums are the same */
-		if (bcmp(cksum1, cksum2, HASHLEN(ki)) != 0) {
-			error = EBADRPC;
+		major = gss_krb5_unwrap_mbuf((uint32_t *)&error, cp->gss_clnt_ctx_id, &results_mbuf, 0, ressize, NULL, NULL);
+		if (major) {
+			printf("%s unwraped failed %d\n", __func__, error);
 			goto nfsmout;
 		}
 
-		nfsm_chain_adv(error, nmc, 8);	// skip over the confounder
+		/* Now replace the wrapped arguments with the unwrapped ones */
+		mbuf_setnext(prev_mbuf, results_mbuf);
+		nmc->nmc_mcur = results_mbuf;
+		nmc->nmc_ptr = mbuf_data(results_mbuf);
+		nmc->nmc_left = mbuf_len(results_mbuf);
 
 		/*
 		 * Get the sequence number prepended to the results
-		 * and compare it against the list in the request.
+		 * and compare it against the header
 		 */
 		nfsm_chain_get_32(error, nmc, seqnum);
+		if (gsp->gss_seqnum != seqnum) {
+			printf("%s bad seqnum\n", __func__);
+			error = EBADRPC;
+			goto nfsmout;
+		}
+#if 0
 		SLIST_FOREACH(gsp, &req->r_gss_seqlist, gss_seqnext) {
 			if (seqnum == gsp->gss_seqnum)
 				break;
@@ -883,7 +1238,7 @@ nfs_gss_clnt_verf_get(
 			error = EBADRPC;
 			goto nfsmout;
 		}
-
+#endif
 		break;
 	}
 nfsmout:
@@ -894,71 +1249,46 @@ nfsmout:
  * An RPCSEC_GSS request with no integrity or privacy consists
  * of just the header mbufs followed by the arg mbufs.
  *
- * However, integrity or privacy both trailer mbufs to the args,
- * which means we have to do some work to restore the arg mbuf
- * chain to its previous state in case we need to retransmit.
+ * However, integrity or privacy the original mbufs have mbufs
+ * prepended and appended to, which means we have to do some work to
+ * restore the arg mbuf chain to its previous state in case we need to
+ * retransmit.
  *
  * The location and length of the args is marked by two fields
  * in the request structure: r_gss_argoff and r_gss_arglen,
  * which are stashed when the NFS request is built.
- */ 
+ */
 int
 nfs_gss_clnt_args_restore(struct nfsreq *req)
 {
 	struct nfs_gss_clnt_ctx *cp = req->r_gss_ctx;
 	struct nfsm_chain mchain, *nmc = &mchain;
-	int len, error = 0;
+	int error = 0, merr;
 
-	if (cp == NULL) 
+	if (cp == NULL)
 		return (NFSERR_EAUTH);
 
 	if ((cp->gss_clnt_flags & GSS_CTX_COMPLETE) == 0)
 		return (ENEEDAUTH);
+
+	/* Nothing to restore for SVC_NONE */
+	if (cp->gss_clnt_service == RPCSEC_GSS_SVC_NONE)
+		return (0);
 
 	nfsm_chain_dissect_init(error, nmc, req->r_mhead);	// start at RPC header
 	nfsm_chain_adv(error, nmc, req->r_gss_argoff);		// advance to args
 	if (error)
 		return (error);
 
-	switch (cp->gss_clnt_service) {
-	case RPCSEC_GSS_SVC_NONE:
-		/* nothing to do */
-		break;
-	case RPCSEC_GSS_SVC_INTEGRITY:
-		/*
-		 * All we have to do here is remove the appended checksum mbufs.
-		 * We know that the checksum starts in a new mbuf beyond the end
-		 * of the args.
-		 */
-		nfsm_chain_adv(error, nmc, req->r_gss_arglen);	// adv to last args mbuf
-		if (error)
-			return (error);
+	if (cp->gss_clnt_service == RPCSEC_GSS_SVC_INTEGRITY)
+		error = rpc_gss_integ_data_restore(cp->gss_clnt_ctx_id, &req->r_mrest, req->r_gss_arglen);
+	else
+		error = rpc_gss_priv_data_restore(cp->gss_clnt_ctx_id, &req->r_mrest, req->r_gss_arglen);
 
-		mbuf_freem(mbuf_next(nmc->nmc_mcur));		// free the cksum mbuf
-		error = mbuf_setnext(nmc->nmc_mcur, NULL);
-		break;
-	case RPCSEC_GSS_SVC_PRIVACY:
-		/*
-		 * The args are encrypted along with prepended confounders and seqnum.
-		 * First we decrypt, the confounder, seqnum and args then skip to the
-		 * final mbuf of the args.
-		 * The arglen includes 8 bytes of confounder and 4 bytes of seqnum.
-		 * Finally, we remove between 4 and 8 bytes of encryption padding
-		 * as well as any alignment padding in the trailing mbuf.
-		 */
-		len = req->r_gss_arglen;
-		len += len % 8 > 0 ? 4 : 8;			// add DES padding length
-		nfs_gss_encrypt_chain(&cp->gss_clnt_kinfo, nmc,
-					req->r_gss_argoff, len, DES_DECRYPT);
-		nfsm_chain_adv(error, nmc, req->r_gss_arglen);
-		if (error)
-			return (error);
-		mbuf_freem(mbuf_next(nmc->nmc_mcur));		// free the pad mbuf
-		error = mbuf_setnext(nmc->nmc_mcur, NULL);
-		break;
-	}
+	merr = mbuf_setnext(nmc->nmc_mcur, req->r_mrest);  /* Should always succeed */
+	assert (merr == 0);
 
-	return (error);
+	return (error ? error : merr);
 }
 
 /*
@@ -975,19 +1305,22 @@ static int
 nfs_gss_clnt_ctx_init(struct nfsreq *req, struct nfs_gss_clnt_ctx *cp)
 {
 	struct nfsmount *nmp = req->r_nmp;
+	gss_buffer_desc cksum, window;
+	uint32_t network_seqnum;
 	int client_complete = 0;
 	int server_complete = 0;
-	u_char cksum1[MAX_DIGEST], cksum2[MAX_DIGEST];
 	int error = 0;
-	struct timeval now;
-	gss_key_info *ki = &cp->gss_clnt_kinfo;
+	int retrycnt = 0;
+	uint32_t major;
 
 	/* Initialize a new client context */
 
-	cp->gss_clnt_svcname = nfs_gss_clnt_svcname(nmp);
 	if (cp->gss_clnt_svcname == NULL) {
-		error = NFSERR_EAUTH;
-		goto nfsmout;
+		cp->gss_clnt_svcname = nfs_gss_clnt_svcname(nmp, &cp->gss_clnt_svcnt, &cp->gss_clnt_svcnamlen);
+		if (cp->gss_clnt_svcname == NULL) {
+			error = NFSERR_EAUTH;
+			goto nfsmout;
+		}
 	}
 
 	cp->gss_clnt_proc = RPCSEC_GSS_INIT;
@@ -997,27 +1330,36 @@ nfs_gss_clnt_ctx_init(struct nfsreq *req, struct nfs_gss_clnt_ctx *cp)
 		req->r_auth == RPCAUTH_KRB5I ? RPCSEC_GSS_SVC_INTEGRITY :
 		req->r_auth == RPCAUTH_KRB5P ? RPCSEC_GSS_SVC_PRIVACY : 0;
 
-	cp->gss_clnt_gssd_flags = (nfs_single_des ? GSSD_NFS_1DES : 0);
 	/*
 	 * Now loop around alternating gss_init_sec_context and
 	 * gss_accept_sec_context upcalls to the gssd on the client
 	 * and server side until the context is complete - or fails.
 	 */
 	for (;;) {
-
 retry:
 		/* Upcall to the gss_init_sec_context in the gssd */
-		error = nfs_gss_clnt_gssd_upcall(req, cp);
+		error = nfs_gss_clnt_gssd_upcall(req, cp, retrycnt);
 		if (error)
 			goto nfsmout;
 
 		if (cp->gss_clnt_major == GSS_S_COMPLETE) {
 			client_complete = 1;
+			NFS_GSS_DBG("Client complete\n");
 			if (server_complete)
 				break;
 		} else if (cp->gss_clnt_major != GSS_S_CONTINUE_NEEDED) {
-			error = NFSERR_EAUTH;
-			goto nfsmout;
+			/*
+			 * We may have gotten here because the accept sec context
+			 * from the server failed and sent back a GSS token that
+			 * encapsulates a kerberos error token per RFC 1964/4121
+			 * with a status of GSS_S_CONTINUE_NEEDED. That caused us
+			 * to loop to the above up call and received the now
+			 * decoded errors.
+			 */
+			retrycnt++;
+			cp->gss_clnt_gssd_flags |= GSSD_RESTART;
+			NFS_GSS_DBG("Retrying major = %x minor = %d\n", cp->gss_clnt_major, (int)cp->gss_clnt_minor);
+			goto retry;
 		}
 
 		/*
@@ -1025,29 +1367,38 @@ retry:
 		 */
 		error = nfs_gss_clnt_ctx_callserver(req, cp);
 		if (error) {
-			if (cp->gss_clnt_proc == RPCSEC_GSS_INIT &&
-				(cp->gss_clnt_gssd_flags & (GSSD_RESTART | GSSD_NFS_1DES)) == 0) {
-				cp->gss_clnt_gssd_flags = (GSSD_RESTART | GSSD_NFS_1DES);
-				if (cp->gss_clnt_token)
-					FREE(cp->gss_clnt_token, M_TEMP);
-				cp->gss_clnt_token = NULL;
-				cp->gss_clnt_tokenlen = 0;
+			if (error == ENEEDAUTH &&
+			    (cp->gss_clnt_proc == RPCSEC_GSS_INIT ||
+			     cp->gss_clnt_proc == RPCSEC_GSS_CONTINUE_INIT)) {
+				/*
+				 * We got here because the server had a problem
+				 * trying to establish a context and sent that there
+				 * was a context problem at the rpc sec layer. Perhaps
+				 * gss_accept_sec_context succeeded  in user space,
+				 * but the kernel could not handle the etype
+				 * to generate the mic for the verifier of the rpc_sec
+				 * window size.
+				 */
+				retrycnt++;
+				cp->gss_clnt_gssd_flags |= GSSD_RESTART;
+				NFS_GSS_DBG("Retrying major = %x minor = %d\n", cp->gss_clnt_major, (int)cp->gss_clnt_minor);
 				goto retry;
 			}
-			// Reset flags, if error = ENEEDAUTH we will try 3des again
-			cp->gss_clnt_gssd_flags = 0; 
 			goto nfsmout;
 		}
 		if (cp->gss_clnt_major == GSS_S_COMPLETE) {
+			NFS_GSS_DBG("Server complete\n");
 			server_complete = 1;
 			if (client_complete)
 				break;
-		} else if (cp->gss_clnt_major != GSS_S_CONTINUE_NEEDED) {
-			error = NFSERR_EAUTH;
-			goto nfsmout;
+		} else if (cp->gss_clnt_major == GSS_S_CONTINUE_NEEDED) {
+			cp->gss_clnt_proc = RPCSEC_GSS_CONTINUE_INIT;
+		} else {
+			/* Server didn't like us. Try something else */
+			retrycnt++;
+			cp->gss_clnt_gssd_flags |= GSSD_RESTART;
+			NFS_GSS_DBG("Retrying major = %x minor = %d\n", cp->gss_clnt_major, (int)cp->gss_clnt_minor);
 		}
-
-		cp->gss_clnt_proc = RPCSEC_GSS_CONTINUE_INIT;
 	}
 
 	/*
@@ -1057,25 +1408,18 @@ retry:
 	cp->gss_clnt_flags |= GSS_CTX_COMPLETE;
 	lck_mtx_unlock(cp->gss_clnt_mtx);
 	cp->gss_clnt_proc = RPCSEC_GSS_DATA;
-	microuptime(&now);
-	cp->gss_clnt_ctime = now.tv_sec;	// time stamp
 
-
-	/*
-	 * Compute checksum of the server's window
-	 */
-	nfs_gss_cksum_rep(ki, cp->gss_clnt_seqwin, cksum1);
-
-	/*
-	 * and see if it matches the one in the
-	 * verifier the server returned.
-	 */
-	error = nfs_gss_token_get(ki, ALG_MIC(ki), cp->gss_clnt_verf, 0,
-		NULL, cksum2);
+	network_seqnum = htonl(cp->gss_clnt_seqwin);
+	window.length = sizeof (cp->gss_clnt_seqwin);
+	window.value = &network_seqnum;
+	cksum.value = cp->gss_clnt_verf;
+	cksum.length = cp->gss_clnt_verflen;
+	major = gss_krb5_verify_mic((uint32_t *)&error, cp->gss_clnt_ctx_id, &window, &cksum, NULL);
+	cp->gss_clnt_verflen = 0;
 	FREE(cp->gss_clnt_verf, M_TEMP);
 	cp->gss_clnt_verf = NULL;
-
-	if (error || bcmp(cksum1, cksum2, HASHLEN(ki)) != 0) {
+	if (major != GSS_S_COMPLETE) {
+		printf("%s: could not verify window\n", __func__);
 		error = NFSERR_EAUTH;
 		goto nfsmout;
 	}
@@ -1096,14 +1440,17 @@ retry:
 		nfsm_rndup((cp->gss_clnt_seqwin + 7) / 8), M_TEMP, M_WAITOK|M_ZERO);
 	if (cp->gss_clnt_seqbits == NULL)
 		error = NFSERR_EAUTH;
+
 nfsmout:
- 	/*
+	/*
 	 * If the error is ENEEDAUTH we're not done, so no need
 	 * to wake up other threads again. This thread will retry in
 	 * the find or renew routines.
 	 */
-	if (error == ENEEDAUTH) 
+	if (error == ENEEDAUTH) {
+		NFS_GSS_DBG("Returning ENEEDAUTH\n");
 		return (error);
+	}
 
 	/*
 	 * If there's an error, just mark it as invalid.
@@ -1124,6 +1471,7 @@ nfsmout:
 	}
 	lck_mtx_unlock(cp->gss_clnt_mtx);
 
+	NFS_GSS_DBG("Returning error = %d\n", error);
 	return (error);
 }
 
@@ -1145,7 +1493,7 @@ nfs_gss_clnt_ctx_init_retry(struct nfsreq *req, struct nfs_gss_clnt_ctx *cp)
 	int retries = 0;
 	int timeo = NFS_TRYLATERDEL;
 
-	if (nmp == NULL) {
+	if (nfs_mount_gone(nmp)) {
 		error = ENXIO;
 		goto bad;
 	}
@@ -1157,7 +1505,7 @@ nfs_gss_clnt_ctx_init_retry(struct nfsreq *req, struct nfs_gss_clnt_ctx *cp)
 		microuptime(&now);
 		waituntil = now.tv_sec + timeo;
 		while (now.tv_sec < waituntil) {
-			tsleep(&lbolt, PSOCK | slpflag, "nfs_gss_clnt_ctx_init_retry", 0);
+			tsleep(NULL, PSOCK | slpflag, "nfs_gss_clnt_ctx_init_retry", hz);
 			slpflag = 0;
 			error = nfs_sigintr(req->r_nmp, req, current_thread(), 0);
 			if (error)
@@ -1167,7 +1515,7 @@ nfs_gss_clnt_ctx_init_retry(struct nfsreq *req, struct nfs_gss_clnt_ctx *cp)
 
 		retries++;
 		/* If it's a soft mount just give up after a while */
-		if (NMFLAG(nmp, SOFT) && (retries > nmp->nm_retry)) {
+		if ((NMFLAG(nmp, SOFT) || (req->r_flags & R_SOFT)) && (retries > nmp->nm_retry)) {
 			error = ETIMEDOUT;
 			goto bad;
 		}
@@ -1209,9 +1557,10 @@ nfs_gss_clnt_ctx_callserver(struct nfsreq *req, struct nfs_gss_clnt_ctx *cp)
 {
 	struct nfsm_chain nmreq, nmrep;
 	int error = 0, status;
+	uint32_t major = cp->gss_clnt_major, minor = cp->gss_clnt_minor;
 	int sz;
 
-	if (!req->r_nmp)
+	if (nfs_mount_gone(req->r_nmp))
 		return (ENXIO);
 	nfsm_chain_null(&nmreq);
 	nfsm_chain_null(&nmrep);
@@ -1271,17 +1620,10 @@ nfs_gss_clnt_ctx_callserver(struct nfsreq *req, struct nfs_gss_clnt_ctx *cp)
 	 */
 	if (cp->gss_clnt_major != GSS_S_COMPLETE &&
 	    cp->gss_clnt_major != GSS_S_CONTINUE_NEEDED) {
-		char who[] = "server";
-		char unknown[] = "<unknown>";
 
-		(void) mach_gss_log_error(
-			cp->gss_clnt_mport,
-			!req->r_nmp ? unknown :
-			vfs_statfs(req->r_nmp->nm_mountp)->f_mntfromname,
-			cp->gss_clnt_uid,
-			who,
-			cp->gss_clnt_major,
-			cp->gss_clnt_minor);
+		printf("nfs_gss_clnt_ctx_callserver: gss_clnt_major = %d\n", cp->gss_clnt_major);
+		nfs_gss_clnt_log_error(req, cp, major, minor);
+		
 	}
 
 nfsmout:
@@ -1292,32 +1634,59 @@ nfsmout:
 }
 
 /*
- * Ugly hack to get the service principal from the f_mntfromname field in 
- * the statfs struct. We assume a format of server:path. We don't currently
- * support url's or other bizarre formats like path@server. A better solution
- * here might be to allow passing the service principal down in the mount args.
- * For kerberos we just use the default realm. 
+ * We construct the service principal as a gss hostbased service principal of
+ * the form nfs@<server>, unless the servers principal was passed down in the
+ * mount arguments. If the arguments don't specify the service principal, the
+ * server name is extracted the location passed in the mount argument if
+ * available.  Otherwise assume a format of <server>:<path> in the
+ * mntfromname. We don't currently support url's or other bizarre formats like
+ * path@server. Mount_url will convert the nfs url into <server>:<path> when
+ * calling mount, so this works out well in practice.
+ *
  */
-static char *
-nfs_gss_clnt_svcname(struct nfsmount *nmp)
+
+static uint8_t *
+nfs_gss_clnt_svcname(struct nfsmount *nmp, gssd_nametype *nt, uint32_t *len)
 {
-	char *svcname, *d, *mntfromhere;
-	int len;
+	char *svcname, *d, *server;
+	int lindx, sindx;
 
-	if (!nmp)
+	if (nfs_mount_gone(nmp))
 		return (NULL);
-	mntfromhere = &vfs_statfs(nmp->nm_mountp)->f_mntfromname[0];
-	len = strlen(mntfromhere) + 5; /* "nfs/" plus null */
-	MALLOC(svcname, char *, len, M_TEMP, M_NOWAIT);
-	if (svcname == NULL)
-		return (NULL);
-	strlcpy(svcname, "nfs/", len);
-	strlcat(svcname, mntfromhere, len);
-	d = strchr(svcname, ':');
-	if (d)
-		*d = '\0';
 
-	return (svcname);
+	if (nmp->nm_sprinc) {
+		*len = strlen(nmp->nm_sprinc) + 1;
+		MALLOC(svcname, char *, *len, M_TEMP, M_WAITOK);
+		*nt = GSSD_HOSTBASED;
+		if (svcname == NULL)
+			return (NULL);
+		strlcpy(svcname, nmp->nm_sprinc, *len);
+
+		return ((uint8_t *)svcname);
+	}
+
+	*nt = GSSD_HOSTBASED;
+	if (nmp->nm_locations.nl_numlocs && !(NFS_GSS_ISDBG && (NFS_DEBUG_FLAGS & 0x1))) {
+		lindx = nmp->nm_locations.nl_current.nli_loc;
+		sindx = nmp->nm_locations.nl_current.nli_serv;
+		server = nmp->nm_locations.nl_locations[lindx]->nl_servers[sindx]->ns_name;
+		*len = (uint32_t)strlen(server);
+	} else {
+		/* Older binaries using older mount args end up here */
+		server = vfs_statfs(nmp->nm_mountp)->f_mntfromname;
+		NFS_GSS_DBG("nfs getting gss svcname from %s\n", server);
+		d = strchr(server, ':');
+		*len = (uint32_t)(d ? (d - server) : strlen(server));
+	}
+	
+	*len +=  5; /* "nfs@" plus null */
+	MALLOC(svcname, char *, *len, M_TEMP, M_WAITOK);
+	strlcpy(svcname, "nfs", *len);
+	strlcat(svcname, "@", *len);
+	strlcat(svcname, server, *len);
+	NFS_GSS_DBG("nfs svcname = %s\n", svcname);
+
+	return ((uint8_t *)svcname);
 }
 
 /*
@@ -1326,8 +1695,6 @@ nfs_gss_clnt_svcname(struct nfsmount *nmp)
  * to get a send right to talk to a new gssd instance that launchd has launched
  * based on the cred's uid and audit session id.
  */
-#define kauth_cred_getasid(cred) ((cred)->cr_audit.as_aia_p->ai_asid)
-#define kauth_cred_getauid(cred) ((cred)->cr_audit.as_aia_p->ai_auid)
 
 static mach_port_t
 nfs_gss_clnt_get_upcall_port(kauth_cred_t credp)
@@ -1354,8 +1721,77 @@ nfs_gss_clnt_get_upcall_port(kauth_cred_t credp)
 	kr = mach_gss_lookup(gssd_host_port, uid, asid, &uc_port);
 	if (kr != KERN_SUCCESS)
 		printf("nfs_gss_clnt_get_upcall_port: mach_gssd_lookup failed: status %x (%d)\n", kr, kr);
+	host_release_special_port(gssd_host_port);
 
 	return (uc_port);
+}
+
+
+static void
+nfs_gss_clnt_log_error(struct nfsreq *req, struct nfs_gss_clnt_ctx *cp, uint32_t major, uint32_t minor)
+{
+#define GETMAJERROR(x) (((x) >> GSS_C_ROUTINE_ERROR_OFFSET) & GSS_C_ROUTINE_ERROR_MASK)	
+	struct nfsmount *nmp = req->r_nmp;
+	char who[] = "client";
+	uint32_t gss_error = GETMAJERROR(cp->gss_clnt_major);
+	const char *procn = "unkown";
+	proc_t proc;
+	pid_t pid = -1;
+	struct timeval now;
+
+	if (req->r_thread) {
+		proc = (proc_t)get_bsdthreadtask_info(req->r_thread);
+		if (proc != NULL && (proc->p_fd == NULL || (proc->p_lflag & P_LVFORK)))
+			proc = NULL;
+		if (proc) {
+			if (*proc->p_comm)
+				procn = proc->p_comm;
+			pid = proc->p_pid;
+		}
+	} else {
+		procn = "kernproc";
+		pid = 0;
+	}
+		
+	microuptime(&now);
+	if ((cp->gss_clnt_major != major || cp->gss_clnt_minor != minor ||
+	     cp->gss_clnt_ptime + GSS_PRINT_DELAY < now.tv_sec) &&
+	    (nmp->nm_state & NFSSTA_MOUNTED)) {
+		/* 
+		 * Will let gssd do some logging in hopes that it can translate
+		 * the minor code.
+		 */
+		if (cp->gss_clnt_minor && cp->gss_clnt_minor != minor) {
+			(void) mach_gss_log_error(
+				cp->gss_clnt_mport,
+				vfs_statfs(nmp->nm_mountp)->f_mntfromname,
+				kauth_cred_getuid(cp->gss_clnt_cred),
+				who,
+				cp->gss_clnt_major,
+				cp->gss_clnt_minor);
+		}
+		gss_error = gss_error ? gss_error : cp->gss_clnt_major;
+
+		/*
+		 *%%% It would be really nice to get the terminal from the proc or auditinfo_addr struct and print that here.
+		 */
+		printf("NFS: gssd auth failure by %s on audit session %d uid %d proc %s/%d for mount %s. Error: major = %d minor = %d\n",
+		       cp->gss_clnt_display ? cp->gss_clnt_display : who, kauth_cred_getasid(req->r_cred), kauth_cred_getuid(req->r_cred),
+		       procn, pid, vfs_statfs(nmp->nm_mountp)->f_mntfromname, gss_error, (int32_t)cp->gss_clnt_minor);
+		cp->gss_clnt_ptime = now.tv_sec;
+		switch (gss_error) {
+		case 7: printf("NFS: gssd does not have credentials for session %d/%d, (kinit)?\n",
+			       kauth_cred_getasid(req->r_cred), kauth_cred_getauid(req->r_cred));
+			break;
+		case 11: printf("NFS: gssd has expired credentals for session %d/%d, (kinit)?\n",
+			       kauth_cred_getasid(req->r_cred), kauth_cred_getauid(req->r_cred));
+			break;
+		}
+	} else {
+		NFS_GSS_DBG("NFS: gssd auth failure by %s on audit session %d uid %d proc %s/%d for mount %s. Error: major = %d minor = %d\n",
+			    cp->gss_clnt_display ? cp->gss_clnt_display : who, kauth_cred_getasid(req->r_cred), kauth_cred_getuid(req->r_cred),
+			    procn, pid, vfs_statfs(nmp->nm_mountp)->f_mntfromname, gss_error, (int32_t)cp->gss_clnt_minor);
+	}
 }
 
 /*
@@ -1366,61 +1802,153 @@ nfs_gss_clnt_get_upcall_port(kauth_cred_t credp)
  * must have access to the user's credential cache.
  */
 static int
-nfs_gss_clnt_gssd_upcall(struct nfsreq *req, struct nfs_gss_clnt_ctx *cp)
+nfs_gss_clnt_gssd_upcall(struct nfsreq *req, struct nfs_gss_clnt_ctx *cp, uint32_t retrycnt)
 {
 	kern_return_t kr;
-	gssd_byte_buffer okey = NULL;
-	uint32_t skeylen = 0;
+	gssd_byte_buffer octx = NULL;
+	uint32_t lucidlen = 0;
+	void *lucid_ctx_buffer;
 	int retry_cnt = 0;
 	vm_map_copy_t itoken = NULL;
 	gssd_byte_buffer otoken = NULL;
 	mach_msg_type_number_t otokenlen;
 	int error = 0;
-	char uprinc[1];
+	uint8_t *principal = NULL;
+	uint32_t plen = 0;
+	int32_t nt = GSSD_STRING_NAME;
+	vm_map_copy_t pname = NULL;
+	vm_map_copy_t svcname = NULL;
+	char display_name[MAX_DISPLAY_STR] = "";
 	uint32_t ret_flags;
+	struct nfsmount *nmp = req->r_nmp;
+	uint32_t major = cp->gss_clnt_major, minor = cp->gss_clnt_minor;
+	uint32_t selected = (uint32_t)-1;
+	struct nfs_etype etype;
+
+	if (nmp == NULL || vfs_isforce(nmp->nm_mountp) || (nmp->nm_state & (NFSSTA_FORCE | NFSSTA_DEAD)))
+		return (ENXIO);
+
+	if (cp->gss_clnt_gssd_flags & GSSD_RESTART) {
+		if (cp->gss_clnt_token)
+			FREE(cp->gss_clnt_token, M_TEMP);
+		cp->gss_clnt_token = NULL;
+		cp->gss_clnt_tokenlen = 0;
+		cp->gss_clnt_proc = RPCSEC_GSS_INIT;
+		/* Server's handle isn't valid. Don't reuse */
+		cp->gss_clnt_handle_len = 0;
+		if (cp->gss_clnt_handle != NULL) {
+			FREE(cp->gss_clnt_handle, M_TEMP);
+			cp->gss_clnt_handle = NULL;
+		}
+	}
+
+	NFS_GSS_DBG("Retrycnt = %d nm_etype.count = %d\n", retrycnt, nmp->nm_etype.count);
+	if (retrycnt >= nmp->nm_etype.count)
+		return (EACCES);
+
+	/* Copy the mount etypes to an order set of etypes to try */
+	etype = nmp->nm_etype;
+
+	/*
+	 * If we've already selected an etype, lets put that first in our
+	 * array of etypes to try, since overwhelmingly, that is likely
+	 * to be the etype we want.
+	 */
+	if (etype.selected < etype.count) {
+		etype.etypes[0] = nmp->nm_etype.etypes[etype.selected];
+		for (uint32_t i = 0; i < etype.selected; i++)
+			etype.etypes[i+1] = nmp->nm_etype.etypes[i];
+		for (uint32_t i = etype.selected + 1; i <  etype.count; i++)
+			etype.etypes[i] = nmp->nm_etype.etypes[i];
+	}
+
+	/* Remove the ones we've already have tried */
+	for (uint32_t i = retrycnt; i < etype.count; i++) 
+		etype.etypes[i - retrycnt] = etype.etypes[i];
+	etype.count = etype.count - retrycnt;
+
+	NFS_GSS_DBG("etype count = %d preferred etype = %d\n", etype.count, etype.etypes[0]);
 
 	/*
 	 * NFS currently only supports default principals or
-	 * principals based on the uid of the caller.
-	 *
-	 * N.B. Note we define a one character array for the principal
-	 * so that we can hold an empty string required by mach, since 
-	 * the kernel is being compiled with -Wwrite-strings.
+	 * principals based on the uid of the caller, unless
+	 * the principal to use for the mounting cred was specified
+	 * in the mount argmuments. If the realm to use was specified
+	 * then will send that up as the principal since the realm is
+	 * preceed by an "@" gssd that will try and select the default
+	 * principal for that realm.
 	 */
-	uprinc[0] = '\0';
+
+	if (cp->gss_clnt_principal && cp->gss_clnt_prinlen) {
+		principal = cp->gss_clnt_principal;
+		plen = cp->gss_clnt_prinlen;
+		nt = cp->gss_clnt_prinnt;
+	} else if (nmp->nm_principal && IS_VALID_CRED(nmp->nm_mcred) && req->r_cred == nmp->nm_mcred) {
+		plen = (uint32_t)strlen(nmp->nm_principal);
+		principal = (uint8_t *)nmp->nm_principal;
+		cp->gss_clnt_prinnt = nt = GSSD_USER;
+	}
+	else if (nmp->nm_realm) {
+		plen = (uint32_t)strlen(nmp->nm_realm);
+		principal = (uint8_t *)nmp->nm_realm;
+		nt = GSSD_USER;
+	}
+
 	if (!IPC_PORT_VALID(cp->gss_clnt_mport)) {
 		cp->gss_clnt_mport = nfs_gss_clnt_get_upcall_port(req->r_cred);
 		if (cp->gss_clnt_mport == IPC_PORT_NULL)
 			goto out;
 	}
 
-	if (cp->gss_clnt_tokenlen > 0)
+	if (plen)
+		nfs_gss_mach_alloc_buffer(principal, plen, &pname);
+	if (cp->gss_clnt_svcnamlen)
+		nfs_gss_mach_alloc_buffer(cp->gss_clnt_svcname, cp->gss_clnt_svcnamlen, &svcname);
+	if (cp->gss_clnt_tokenlen)
 		nfs_gss_mach_alloc_buffer(cp->gss_clnt_token, cp->gss_clnt_tokenlen, &itoken);
 
+	/* Always want to export the lucid context */
+	cp->gss_clnt_gssd_flags |= GSSD_LUCID_CONTEXT;
+
 retry:
-	kr = mach_gss_init_sec_context(
+	kr = mach_gss_init_sec_context_v3(
 		cp->gss_clnt_mport,
 		GSSD_KRB5_MECH,
 		(gssd_byte_buffer) itoken, (mach_msg_type_number_t) cp->gss_clnt_tokenlen,
-		cp->gss_clnt_uid,
-		uprinc,
-		cp->gss_clnt_svcname,
+		kauth_cred_getuid(cp->gss_clnt_cred),
+		nt,
+		(gssd_byte_buffer)pname, (mach_msg_type_number_t) plen,
+		cp->gss_clnt_svcnt,
+		(gssd_byte_buffer)svcname, (mach_msg_type_number_t) cp->gss_clnt_svcnamlen,
 		GSSD_MUTUAL_FLAG,
-		cp->gss_clnt_gssd_flags,
+		(gssd_etype_list)etype.etypes, (mach_msg_type_number_t)etype.count,
+		&cp->gss_clnt_gssd_flags,
 		&cp->gss_clnt_context,
 		&cp->gss_clnt_cred_handle,
 		&ret_flags,
-		&okey,  (mach_msg_type_number_t *) &skeylen,
+		&octx,  (mach_msg_type_number_t *) &lucidlen,
 		&otoken, &otokenlen,
+		cp->gss_clnt_display ? NULL : display_name,
 		&cp->gss_clnt_major,
 		&cp->gss_clnt_minor);
 
+	/* Clear the RESTART flag */
 	cp->gss_clnt_gssd_flags &= ~GSSD_RESTART;
-	
+	if (cp->gss_clnt_major != GSS_S_CONTINUE_NEEDED) {
+		/* We're done with the gssd handles */
+		cp->gss_clnt_context = 0;
+		cp->gss_clnt_cred_handle = 0;
+	}
+
 	if (kr != KERN_SUCCESS) {
 		printf("nfs_gss_clnt_gssd_upcall: mach_gss_init_sec_context failed: %x (%d)\n", kr, kr);
 		if (kr == MIG_SERVER_DIED && cp->gss_clnt_cred_handle == 0 &&
-			retry_cnt++ < NFS_GSS_MACH_MAX_RETRIES) {
+			retry_cnt++ < NFS_GSS_MACH_MAX_RETRIES &&
+			!vfs_isforce(nmp->nm_mountp) && (nmp->nm_state & (NFSSTA_FORCE | NFSSTA_DEAD)) == 0) {
+			if (plen)
+				nfs_gss_mach_alloc_buffer(principal, plen, &pname);
+			if (cp->gss_clnt_svcnamlen)
+				nfs_gss_mach_alloc_buffer(cp->gss_clnt_svcname, cp->gss_clnt_svcnamlen, &svcname);
 			if (cp->gss_clnt_tokenlen > 0)
 				nfs_gss_mach_alloc_buffer(cp->gss_clnt_token, cp->gss_clnt_tokenlen, &itoken);
 			goto retry;
@@ -1431,41 +1959,63 @@ retry:
 		goto out;
 	}
 
+	if (cp->gss_clnt_display == NULL && *display_name != '\0') {
+		int dlen = strnlen(display_name, MAX_DISPLAY_STR) + 1;  /* Add extra byte to include '\0' */
+
+		if (dlen < MAX_DISPLAY_STR) {
+			MALLOC(cp->gss_clnt_display, char *, dlen, M_TEMP, M_WAITOK);
+			if (cp->gss_clnt_display == NULL)
+				goto skip;
+			bcopy(display_name, cp->gss_clnt_display, dlen); 
+		} else {
+			goto skip;
+		}
+	}
+skip:
 	/*
 	 * Make sure any unusual errors are expanded and logged by gssd
+	 *
+	 * XXXX, we need to rethink this and just have gssd return a string for the major and minor codes.
 	 */
 	if (cp->gss_clnt_major != GSS_S_COMPLETE &&
 	    cp->gss_clnt_major != GSS_S_CONTINUE_NEEDED) {
-		char who[] = "client";
-		char unknown[] = "<unknown>";
-
-		(void) mach_gss_log_error(
-			cp->gss_clnt_mport,
-			!req->r_nmp ? unknown :
-			vfs_statfs(req->r_nmp->nm_mountp)->f_mntfromname,
-			cp->gss_clnt_uid,
-			who,
-			cp->gss_clnt_major,
-			cp->gss_clnt_minor);
+		NFS_GSS_DBG("Up call returned error\n");
+		nfs_gss_clnt_log_error(req, cp, major, minor);
+		/* Server's handle isn't valid. Don't reuse */
+		cp->gss_clnt_handle_len = 0;
+		if (cp->gss_clnt_handle != NULL) {
+			FREE(cp->gss_clnt_handle, M_TEMP);
+			cp->gss_clnt_handle = NULL;
+		}
 	}
 
-	if (skeylen > 0) {
-		if (skeylen != SKEYLEN && skeylen != SKEYLEN3) {
-			printf("nfs_gss_clnt_gssd_upcall: bad key length (%d)\n", skeylen);
-			vm_map_copy_discard((vm_map_copy_t) okey);
+	if (lucidlen > 0) {
+		if (lucidlen > MAX_LUCIDLEN) {
+			printf("nfs_gss_clnt_gssd_upcall: bad context length (%d)\n", lucidlen);
+			vm_map_copy_discard((vm_map_copy_t) octx);
 			vm_map_copy_discard((vm_map_copy_t) otoken);
 			goto out;
 		}
-		error = nfs_gss_mach_vmcopyout((vm_map_copy_t) okey, skeylen, 
-				cp->gss_clnt_kinfo.skey);
+		MALLOC(lucid_ctx_buffer, void *, lucidlen, M_TEMP, M_WAITOK | M_ZERO);
+		error = nfs_gss_mach_vmcopyout((vm_map_copy_t) octx, lucidlen, lucid_ctx_buffer);
 		if (error) {
 			vm_map_copy_discard((vm_map_copy_t) otoken);
 			goto out;
 		}
-		
-		error = gss_key_init(&cp->gss_clnt_kinfo, skeylen);
-		if (error)
+
+		if (cp->gss_clnt_ctx_id)
+			gss_krb5_destroy_context(cp->gss_clnt_ctx_id);
+		cp->gss_clnt_ctx_id = gss_krb5_make_context(lucid_ctx_buffer, lucidlen);
+		if (cp->gss_clnt_ctx_id == NULL) {
+			printf("Failed to make context from lucid_ctx_buffer\n");
 			goto out;
+		}
+		for (uint32_t i = 0; i < nmp->nm_etype.count; i++) {
+			if (nmp->nm_etype.etypes[i] == cp->gss_clnt_ctx_id->gss_cryptor.etype) {
+				selected = i;
+				break;
+			}
+		}
 	}
 
 	/* Free context token used as input */
@@ -1484,6 +2034,7 @@ retry:
 		}
 		error = nfs_gss_mach_vmcopyout((vm_map_copy_t) otoken, otokenlen, cp->gss_clnt_token);
 		if (error) {
+			printf("Could not copyout gss token\n");
 			FREE(cp->gss_clnt_token, M_TEMP);
 			cp->gss_clnt_token = NULL;
 			return (NFSERR_EAUTH);
@@ -1491,6 +2042,11 @@ retry:
 		cp->gss_clnt_tokenlen = otokenlen;
 	}
 
+	if (selected != (uint32_t)-1) {
+		nmp->nm_etype.selected = selected;
+		NFS_GSS_DBG("etype selected = %d\n", nmp->nm_etype.etypes[selected]);
+	}
+	NFS_GSS_DBG("Up call succeeded major = %d\n", cp->gss_clnt_major);
 	return (0);
 
 out:
@@ -1498,7 +2054,14 @@ out:
 		FREE(cp->gss_clnt_token, M_TEMP);
 	cp->gss_clnt_token = NULL;
 	cp->gss_clnt_tokenlen = 0;
+	/* Server's handle isn't valid. Don't reuse */
+	cp->gss_clnt_handle_len = 0;
+	if (cp->gss_clnt_handle != NULL) {
+		FREE(cp->gss_clnt_handle, M_TEMP);
+		cp->gss_clnt_handle = NULL;
+	}
 	
+	NFS_GSS_DBG("Up call returned NFSERR_EAUTH");
 	return (NFSERR_EAUTH);
 }
 
@@ -1581,6 +2144,11 @@ nfs_gss_clnt_ctx_unref(struct nfsreq *req)
 {
 	struct nfsmount *nmp = req->r_nmp;
 	struct nfs_gss_clnt_ctx *cp = req->r_gss_ctx;
+	int on_neg_cache = 0;
+	int neg_cache = 0;
+	int destroy = 0;
+	struct timeval now;
+	char CTXBUF[NFS_CTXBUFSZ];
 
 	if (cp == NULL)
 		return;
@@ -1588,45 +2156,243 @@ nfs_gss_clnt_ctx_unref(struct nfsreq *req)
 	req->r_gss_ctx = NULL;
 
 	lck_mtx_lock(cp->gss_clnt_mtx);
-	if (--cp->gss_clnt_refcnt == 0
-		&& cp->gss_clnt_flags & GSS_CTX_INVAL) {
-		lck_mtx_unlock(cp->gss_clnt_mtx);
+	if (--cp->gss_clnt_refcnt < 0)
+		panic("Over release of gss context!\n");
 
-		if (nmp)
-			lck_mtx_lock(&nmp->nm_lock);
-		nfs_gss_clnt_ctx_remove(nmp, cp);
-		if (nmp)
-			lck_mtx_unlock(&nmp->nm_lock);
-
-		return;
+	if (cp->gss_clnt_refcnt == 0) {
+		if ((cp->gss_clnt_flags & GSS_CTX_INVAL) &&
+		    cp->gss_clnt_ctx_id) {
+			gss_krb5_destroy_context(cp->gss_clnt_ctx_id);
+			cp->gss_clnt_ctx_id = NULL;
+		}
+		if (cp->gss_clnt_flags & GSS_CTX_DESTROY) {
+			destroy = 1;
+			if (cp->gss_clnt_flags & GSS_CTX_STICKY)
+				nfs_gss_clnt_mnt_rele(nmp);
+			if (cp->gss_clnt_nctime)
+				on_neg_cache = 1;
+		}
+	}
+	if (!destroy && cp->gss_clnt_nctime == 0 &&
+	    (cp->gss_clnt_flags & GSS_CTX_INVAL)) {
+		microuptime(&now);
+		cp->gss_clnt_nctime = now.tv_sec;
+		neg_cache = 1;
 	}
 	lck_mtx_unlock(cp->gss_clnt_mtx);
+	if (destroy) {
+		NFS_GSS_DBG("Destroying context %s\n", NFS_GSS_CTX(req, cp));
+		if (nmp) {
+			lck_mtx_lock(&nmp->nm_lock);
+			if (cp->gss_clnt_entries.tqe_next != NFSNOLIST) {
+				TAILQ_REMOVE(&nmp->nm_gsscl, cp, gss_clnt_entries);
+			}
+			if (on_neg_cache) {
+				nmp->nm_ncentries--;
+			}
+			lck_mtx_unlock(&nmp->nm_lock);
+		}
+		nfs_gss_clnt_ctx_destroy(cp);
+	} else if (neg_cache) {
+		NFS_GSS_DBG("Entering context %s into negative cache\n", NFS_GSS_CTX(req, cp));
+		if (nmp) {
+			lck_mtx_lock(&nmp->nm_lock);
+			nmp->nm_ncentries++;
+			nfs_gss_clnt_ctx_neg_cache_reap(nmp);
+			lck_mtx_unlock(&nmp->nm_lock);
+		}
+	}
+	NFS_GSS_CLNT_CTX_DUMP(nmp);
+}
+
+/*
+ * Try and reap any old negative cache entries.
+ * cache queue.
+ */
+void
+nfs_gss_clnt_ctx_neg_cache_reap(struct nfsmount *nmp)
+{
+	struct nfs_gss_clnt_ctx *cp, *tcp;
+	struct timeval now;
+	int reaped = 0;
+
+	/* Try and reap old, unreferenced, expired contexts */
+	microuptime(&now);
+
+	NFS_GSS_DBG("Reaping contexts ncentries = %d\n", nmp->nm_ncentries);
+
+	TAILQ_FOREACH_SAFE(cp, &nmp->nm_gsscl, gss_clnt_entries, tcp) {
+		int destroy = 0;
+
+		/* Don't reap STICKY contexts */
+		if ((cp->gss_clnt_flags & GSS_CTX_STICKY) ||
+		    !(cp->gss_clnt_flags & GSS_CTX_INVAL))
+			continue;
+		/* Keep up to GSS_MAX_NEG_CACHE_ENTRIES */
+		if (nmp->nm_ncentries <= GSS_MAX_NEG_CACHE_ENTRIES)
+			break;
+		/* Contexts too young */
+		if (cp->gss_clnt_nctime + GSS_NEG_CACHE_TO >= now.tv_sec)
+			continue;
+		/* Not referenced, remove it. */
+		lck_mtx_lock(cp->gss_clnt_mtx);
+		if (cp->gss_clnt_refcnt == 0) {
+			cp->gss_clnt_flags |= GSS_CTX_DESTROY;
+			destroy = 1;
+		}
+		lck_mtx_unlock(cp->gss_clnt_mtx);
+		if (destroy) {
+			TAILQ_REMOVE(&nmp->nm_gsscl, cp, gss_clnt_entries);
+			nmp->nm_ncentries++;
+			reaped++;
+			nfs_gss_clnt_ctx_destroy(cp);
+		}
+	}
+	NFS_GSS_DBG("Reaped %d contexts ncentries = %d\n", reaped, nmp->nm_ncentries);
+}
+
+/*
+ * Clean a context to be cached
+ */
+static void
+nfs_gss_clnt_ctx_clean(struct nfs_gss_clnt_ctx *cp)
+{
+	/* Preserve gss_clnt_mtx */
+	assert(cp->gss_clnt_thread == NULL);  /* Will be set to this thread */
+	/* gss_clnt_entries  we should not be on any list at this point */
+	cp->gss_clnt_flags = 0;
+	/* gss_clnt_refcnt should be zero */
+	assert(cp->gss_clnt_refcnt == 0);
+	/*
+	 * We are who we are preserve:
+	 * gss_clnt_cred
+	 * gss_clnt_principal
+	 * gss_clnt_prinlen
+	 * gss_clnt_prinnt
+	 * gss_clnt_desplay
+	 */
+	/* gss_clnt_proc will be set in nfs_gss_clnt_ctx_init */
+	cp->gss_clnt_seqnum = 0;
+	/* Preserve gss_clnt_service, we're not changing flavors */
+	if (cp->gss_clnt_handle) {
+		FREE(cp->gss_clnt_handle, M_TEMP);
+		cp->gss_clnt_handle = NULL;
+	}
+	cp->gss_clnt_handle_len = 0;
+	cp->gss_clnt_nctime = 0;
+	cp->gss_clnt_seqwin = 0;
+	if (cp->gss_clnt_seqbits) {
+		FREE(cp->gss_clnt_seqbits, M_TEMP);
+		cp->gss_clnt_seqbits = NULL;
+	}
+	/* Preserve gss_clnt_mport. Still talking to the same gssd */
+	if (cp->gss_clnt_verf) {
+		FREE(cp->gss_clnt_verf, M_TEMP);
+		cp->gss_clnt_verf = NULL;
+	}
+	/* Service name might change on failover, so reset it */
+	if (cp->gss_clnt_svcname) {
+		FREE(cp->gss_clnt_svcname, M_TEMP);
+		cp->gss_clnt_svcname = NULL;
+		cp->gss_clnt_svcnt = 0;
+	}
+	cp->gss_clnt_svcnamlen = 0;
+	cp->gss_clnt_cred_handle = 0;
+	cp->gss_clnt_context = 0;
+	if (cp->gss_clnt_token) {
+		FREE(cp->gss_clnt_token, M_TEMP);
+		cp->gss_clnt_token = NULL;
+	}
+	cp->gss_clnt_tokenlen = 0;
+	/* XXX gss_clnt_ctx_id ??? */
+	/*
+	 * Preserve:
+	 * gss_clnt_gssd_flags
+	 * gss_clnt_major
+	 * gss_clnt_minor
+	 * gss_clnt_ptime
+	 */
+}
+
+/*
+ * Copy a source context to a new context. This is used to create a new context
+ * with the identity of the old context for renewal. The old context is invalid
+ * at this point but may have reference still to it, so it is not safe to use that
+ * context.
+ */
+static int
+nfs_gss_clnt_ctx_copy(struct nfs_gss_clnt_ctx *scp, struct nfs_gss_clnt_ctx **dcpp)
+{
+	struct nfs_gss_clnt_ctx *dcp;
+
+	*dcpp = (struct nfs_gss_clnt_ctx *)NULL;
+	MALLOC(dcp, struct nfs_gss_clnt_ctx *, sizeof (struct nfs_gss_clnt_ctx), M_TEMP, M_WAITOK);
+	if (dcp == NULL)
+		return (ENOMEM);
+	bzero(dcp, sizeof (struct nfs_gss_clnt_ctx));
+	dcp->gss_clnt_mtx = lck_mtx_alloc_init(nfs_gss_clnt_grp, LCK_ATTR_NULL);
+	dcp->gss_clnt_cred = scp->gss_clnt_cred;
+	kauth_cred_ref(dcp->gss_clnt_cred);
+	dcp->gss_clnt_prinlen = scp->gss_clnt_prinlen;
+	dcp->gss_clnt_prinnt = scp->gss_clnt_prinnt;
+	if (scp->gss_clnt_principal) {
+		MALLOC(dcp->gss_clnt_principal, uint8_t *, dcp->gss_clnt_prinlen, M_TEMP, M_WAITOK | M_ZERO);
+		if (dcp->gss_clnt_principal == NULL) {
+			FREE(dcp, M_TEMP);
+			return (ENOMEM);
+		}
+		bcopy(scp->gss_clnt_principal, dcp->gss_clnt_principal, dcp->gss_clnt_prinlen);
+	}
+	/* Note we don't preserve the display name, that will be set by a successful up call */
+	dcp->gss_clnt_service = scp->gss_clnt_service;
+	dcp->gss_clnt_mport = host_copy_special_port(scp->gss_clnt_mport);
+	dcp->gss_clnt_ctx_id = NULL;   /* Will be set from successful upcall */
+	dcp->gss_clnt_gssd_flags = scp->gss_clnt_gssd_flags;
+	dcp->gss_clnt_major = scp->gss_clnt_major;
+	dcp->gss_clnt_minor = scp->gss_clnt_minor;
+	dcp->gss_clnt_ptime = scp->gss_clnt_ptime;
+
+	*dcpp = dcp;
+
+	return (0);
 }
 
 /*
  * Remove a context
  */
 static void
-nfs_gss_clnt_ctx_remove(struct nfsmount *nmp, struct nfs_gss_clnt_ctx *cp)
+nfs_gss_clnt_ctx_destroy(struct nfs_gss_clnt_ctx *cp)
 {
-	/*
-	 * If dequeueing, assume nmp->nm_lock is held
-	 */
-	if (nmp != NULL)
-		TAILQ_REMOVE(&nmp->nm_gsscl, cp, gss_clnt_entries);
+	NFS_GSS_DBG("Destroying context %d/%d\n",
+		    kauth_cred_getasid(cp->gss_clnt_cred),
+		    kauth_cred_getauid(cp->gss_clnt_cred));
 
 	host_release_special_port(cp->gss_clnt_mport);
+	cp->gss_clnt_mport = IPC_PORT_NULL;
 
-	if (cp->gss_clnt_mtx)
+	if (cp->gss_clnt_mtx) {
 		lck_mtx_destroy(cp->gss_clnt_mtx, nfs_gss_clnt_grp);
-	if (cp->gss_clnt_handle)
-		FREE(cp->gss_clnt_handle, M_TEMP);
-	if (cp->gss_clnt_seqbits)
-		FREE(cp->gss_clnt_seqbits, M_TEMP);
-	if (cp->gss_clnt_token)
-		FREE(cp->gss_clnt_token, M_TEMP);
-	if (cp->gss_clnt_svcname)
-		FREE(cp->gss_clnt_svcname, M_TEMP);
+		cp->gss_clnt_mtx = (lck_mtx_t *)NULL;
+	}
+	if (IS_VALID_CRED(cp->gss_clnt_cred))
+		kauth_cred_unref(&cp->gss_clnt_cred);
+	cp->gss_clnt_entries.tqe_next = NFSNOLIST;
+	cp->gss_clnt_entries.tqe_prev = NFSNOLIST;
+	if (cp->gss_clnt_principal) {
+		FREE(cp->gss_clnt_principal, M_TEMP);
+		cp->gss_clnt_principal = NULL;
+	}
+	if (cp->gss_clnt_display) {
+		FREE(cp->gss_clnt_display, M_TEMP);
+		cp->gss_clnt_display = NULL;
+	}
+	if (cp->gss_clnt_ctx_id) {
+		gss_krb5_destroy_context(cp->gss_clnt_ctx_id);
+		cp->gss_clnt_ctx_id = NULL;
+	}
+
+	nfs_gss_clnt_ctx_clean(cp);
+
 	FREE(cp, M_TEMP);
 }
 
@@ -1639,14 +2405,17 @@ int
 nfs_gss_clnt_ctx_renew(struct nfsreq *req)
 {
 	struct nfs_gss_clnt_ctx *cp = req->r_gss_ctx;
-	struct nfsmount *nmp = req->r_nmp;
 	struct nfs_gss_clnt_ctx *ncp;
+	struct nfsmount *nmp;
 	int error = 0;
-	uid_t saved_uid;
-	mach_port_t saved_mport;
+	char CTXBUF[NFS_CTXBUFSZ];
 
 	if (cp == NULL)
 		return (0);
+
+	if (req->r_nmp == NULL)
+		return (ENXIO);
+	nmp = req->r_nmp;
 
 	lck_mtx_lock(cp->gss_clnt_mtx);
 	if (cp->gss_clnt_flags & GSS_CTX_INVAL) {
@@ -1654,52 +2423,46 @@ nfs_gss_clnt_ctx_renew(struct nfsreq *req)
 		nfs_gss_clnt_ctx_unref(req);
 		return (0);	// already being renewed
 	}
-	saved_uid = cp->gss_clnt_uid;
-	saved_mport = host_copy_special_port(cp->gss_clnt_mport);
 
-	/* Remove the old context */
-	cp->gss_clnt_flags |= GSS_CTX_INVAL;
+	cp->gss_clnt_flags |= (GSS_CTX_INVAL | GSS_CTX_DESTROY);
 
-	/*
-	 * If there's a thread waiting
-	 * in the old context, wake it up.
-	 */
 	if (cp->gss_clnt_flags & (GSS_NEEDCTX | GSS_NEEDSEQ)) {
 		cp->gss_clnt_flags &= ~GSS_NEEDSEQ;
 		wakeup(cp);
 	}
 	lck_mtx_unlock(cp->gss_clnt_mtx);
 
+	if (cp->gss_clnt_proc == RPCSEC_GSS_DESTROY)
+		return (EACCES);  /* Destroying a context is best effort. Don't renew. */
 	/*
-	 * Create a new context
+	 * If we're setting up a context let nfs_gss_clnt_ctx_init know this is not working
+	 * and to try some other etype.
 	 */
-	MALLOC(ncp, struct nfs_gss_clnt_ctx *, sizeof(*ncp),
-		M_TEMP, M_WAITOK|M_ZERO);
-	if (ncp == NULL) {
-		error = ENOMEM;
-		goto out;
-	}
+	if (cp->gss_clnt_proc != RPCSEC_GSS_DATA)
+		return (ENEEDAUTH);
+	error =  nfs_gss_clnt_ctx_copy(cp, &ncp);
+	NFS_GSS_DBG("Renewing context %s\n", NFS_GSS_CTX(req, ncp));
+	nfs_gss_clnt_ctx_unref(req);
+	if (error)
+		return (error);
 
-	ncp->gss_clnt_uid = saved_uid;
-	ncp->gss_clnt_mport = host_copy_special_port(saved_mport); // re-use the gssd port
-	ncp->gss_clnt_mtx = lck_mtx_alloc_init(nfs_gss_clnt_grp, LCK_ATTR_NULL);
-	ncp->gss_clnt_thread = current_thread();
 	lck_mtx_lock(&nmp->nm_lock);
-	TAILQ_INSERT_TAIL(&nmp->nm_gsscl, ncp, gss_clnt_entries);
+	/*
+	 * Note we don't bother taking the new context mutex as we're
+	 * not findable at the moment.
+	 */
+	ncp->gss_clnt_thread = current_thread();
+	nfs_gss_clnt_ctx_ref(req, ncp);
+	TAILQ_INSERT_HEAD(&nmp->nm_gsscl, ncp, gss_clnt_entries);
 	lck_mtx_unlock(&nmp->nm_lock);
 
-	/* Adjust reference counts to new and old context */
-	nfs_gss_clnt_ctx_unref(req);
-	nfs_gss_clnt_ctx_ref(req, ncp);
-
 	error = nfs_gss_clnt_ctx_init_retry(req, ncp); // Initialize new context
-out:
-	host_release_special_port(saved_mport);
 	if (error)
 		nfs_gss_clnt_ctx_unref(req);
 
 	return (error);
 }
+
 
 /*
  * Destroy all the contexts associated with a mount.
@@ -1712,31 +2475,32 @@ nfs_gss_clnt_ctx_unmount(struct nfsmount *nmp)
 	struct nfsm_chain nmreq, nmrep;
 	int error, status;
 	struct nfsreq req;
-
 	req.r_nmp = nmp;
 
-	for (;;) {
-		lck_mtx_lock(&nmp->nm_lock);
-		cp = TAILQ_FIRST(&nmp->nm_gsscl);
+	if (!nmp)
+		return;
+
+
+	lck_mtx_lock(&nmp->nm_lock);
+	while((cp = TAILQ_FIRST(&nmp->nm_gsscl))) {
+		TAILQ_REMOVE(&nmp->nm_gsscl, cp, gss_clnt_entries);
+		cp->gss_clnt_entries.tqe_next = NFSNOLIST;
+		lck_mtx_lock(cp->gss_clnt_mtx);
+		if (cp->gss_clnt_flags & GSS_CTX_DESTROY) {
+			lck_mtx_unlock(cp->gss_clnt_mtx);
+			continue;
+		}
+		cp->gss_clnt_refcnt++;
+		lck_mtx_unlock(cp->gss_clnt_mtx);
+		req.r_gss_ctx = cp;
+
 		lck_mtx_unlock(&nmp->nm_lock);
-		if (cp == NULL)
-			break;
-
-		nfs_gss_clnt_ctx_ref(&req, cp);
-
 		/*
 		 * Tell the server to destroy its context.
-		 * But don't bother if it's a forced unmount
-		 * or if it's a dummy sec=sys context.
+		 * But don't bother if it's a forced unmount.
 		 */
-		if (!(nmp->nm_state & NFSSTA_FORCE) && (cp->gss_clnt_service != RPCSEC_GSS_SVC_SYS)) {
-			kauth_cred_t cred;
-			struct posix_cred temp_pcred;
-
-			bzero((caddr_t) &temp_pcred, sizeof(temp_pcred));
-			temp_pcred.cr_ngroups = 1;
-			temp_pcred.cr_uid = cp->gss_clnt_uid;
-			cred = posix_cred_create(&temp_pcred);
+		if (!nfs_mount_gone(nmp) &&
+		    (cp->gss_clnt_flags & (GSS_CTX_INVAL | GSS_CTX_DESTROY | GSS_CTX_COMPLETE)) == GSS_CTX_COMPLETE) {
 			cp->gss_clnt_proc = RPCSEC_GSS_DESTROY;
 
 			error = 0;
@@ -1746,10 +2510,9 @@ nfs_gss_clnt_ctx_unmount(struct nfsmount *nmp)
 			nfsm_chain_build_done(error, &nmreq);
 			if (!error)
 				nfs_request_gss(nmp->nm_mountp, &nmreq,
-					current_thread(), cred, 0, cp, &nmrep, &status);
+					current_thread(), cp->gss_clnt_cred, 0, cp, &nmrep, &status);
 			nfsm_chain_cleanup(&nmreq);
 			nfsm_chain_cleanup(&nmrep);
-			kauth_cred_unref(&cred);
 		}
 
 		/*
@@ -1758,12 +2521,185 @@ nfs_gss_clnt_ctx_unmount(struct nfsmount *nmp)
 		 * refcount is zero.
 		 */
 		lck_mtx_lock(cp->gss_clnt_mtx);
-		cp->gss_clnt_flags |= GSS_CTX_INVAL;
+		cp->gss_clnt_flags |= (GSS_CTX_INVAL | GSS_CTX_DESTROY);
 		lck_mtx_unlock(cp->gss_clnt_mtx);
 		nfs_gss_clnt_ctx_unref(&req);
+		lck_mtx_lock(&nmp->nm_lock);
 	}
+	lck_mtx_unlock(&nmp->nm_lock);
+	assert(TAILQ_EMPTY(&nmp->nm_gsscl));
 }
 
+
+/*
+ * Removes a mounts context for a credential
+ */
+int
+nfs_gss_clnt_ctx_remove(struct nfsmount *nmp, kauth_cred_t cred)
+{
+	struct nfs_gss_clnt_ctx *cp;
+	struct nfsreq req;
+
+	req.r_nmp = nmp;
+
+	NFS_GSS_DBG("Enter\n");
+	NFS_GSS_CLNT_CTX_DUMP(nmp);
+	lck_mtx_lock(&nmp->nm_lock);
+	TAILQ_FOREACH(cp, &nmp->nm_gsscl, gss_clnt_entries) {
+		lck_mtx_lock(cp->gss_clnt_mtx);
+		if (nfs_gss_clnt_ctx_cred_match(cp->gss_clnt_cred, cred)) {
+			if (cp->gss_clnt_flags & GSS_CTX_DESTROY) {
+				NFS_GSS_DBG("Found destroyed context %d/%d. refcnt = %d continuing\n",
+					    kauth_cred_getasid(cp->gss_clnt_cred),
+					    kauth_cred_getauid(cp->gss_clnt_cred),
+					    cp->gss_clnt_refcnt);
+				lck_mtx_unlock(cp->gss_clnt_mtx);
+				continue;
+			}
+			cp->gss_clnt_refcnt++;
+			cp->gss_clnt_flags |= (GSS_CTX_INVAL | GSS_CTX_DESTROY);
+			lck_mtx_unlock(cp->gss_clnt_mtx);
+			req.r_gss_ctx = cp;
+			lck_mtx_unlock(&nmp->nm_lock);
+			/*
+			 * Drop the reference to remove it if its
+			 * refcount is zero.
+			 */
+			NFS_GSS_DBG("Removed context %d/%d refcnt = %d\n",
+				    kauth_cred_getasid(cp->gss_clnt_cred),
+				    kauth_cred_getuid(cp->gss_clnt_cred),
+				    cp->gss_clnt_refcnt);
+			nfs_gss_clnt_ctx_unref(&req);
+			return (0);
+		}
+		lck_mtx_unlock(cp->gss_clnt_mtx);
+	}
+
+	lck_mtx_unlock(&nmp->nm_lock);
+	
+	NFS_GSS_DBG("Returning ENOENT\n");
+	return (ENOENT);
+}
+
+/*
+ * Sets a mounts principal for a session associated with cred.
+ */
+int
+nfs_gss_clnt_ctx_set_principal(struct nfsmount *nmp, vfs_context_t ctx,
+			       uint8_t *principal, uint32_t princlen, uint32_t nametype)
+
+{
+	struct nfsreq req;
+	int error;
+
+	NFS_GSS_DBG("Enter:\n");
+
+	bzero(&req, sizeof(struct nfsreq));
+	req.r_nmp = nmp;
+	req.r_gss_ctx = NULL;
+	req.r_auth = nmp->nm_auth;
+	req.r_thread = vfs_context_thread(ctx);
+	req.r_cred = vfs_context_ucred(ctx);
+
+	error = nfs_gss_clnt_ctx_find_principal(&req, principal, princlen, nametype);
+	NFS_GSS_DBG("nfs_gss_clnt_ctx_find_principal returned %d\n", error);
+	/*
+	 * We don't care about auth errors. Those would indicate that the context is in the
+	 * neagative cache and if and when the user has credentials for the principal
+	 * we should be good to go in that we will select those credentials for this principal.
+	 */
+	if (error == EACCES || error == EAUTH || error == ENEEDAUTH)
+		error = 0;
+
+	/* We're done with this request */
+	nfs_gss_clnt_ctx_unref(&req);
+
+	return (error);
+}
+
+/*
+ * Gets a mounts principal from a session associated with cred
+ */
+int
+nfs_gss_clnt_ctx_get_principal(struct nfsmount *nmp, vfs_context_t ctx,
+			       struct user_nfs_gss_principal *p)
+{
+	struct nfsreq req;
+	int error = 0;
+	struct nfs_gss_clnt_ctx *cp;
+	kauth_cred_t cred = vfs_context_ucred(ctx);
+	const char *princ = NULL;
+	char CTXBUF[NFS_CTXBUFSZ];
+
+	/* Make sure the the members of the struct user_nfs_gss_principal are initialized */
+	p->nametype = GSSD_STRING_NAME;
+	p->principal = USER_ADDR_NULL;
+	p->princlen = 0;
+	p->flags = 0;
+
+	req.r_nmp = nmp;
+	lck_mtx_lock(&nmp->nm_lock);
+	TAILQ_FOREACH(cp, &nmp->nm_gsscl, gss_clnt_entries) {
+		lck_mtx_lock(cp->gss_clnt_mtx);
+		if (cp->gss_clnt_flags & GSS_CTX_DESTROY) {
+			NFS_GSS_DBG("Found destroyed context %s refcnt = %d continuing\n",
+				    NFS_GSS_CTX(&req, cp),
+				    cp->gss_clnt_refcnt);
+			lck_mtx_unlock(cp->gss_clnt_mtx);
+			continue;
+		}
+		if (nfs_gss_clnt_ctx_cred_match(cp->gss_clnt_cred, cred)) {
+			cp->gss_clnt_refcnt++;
+			lck_mtx_unlock(cp->gss_clnt_mtx);
+			goto out;
+		}
+		lck_mtx_unlock(cp->gss_clnt_mtx);
+	}
+
+out:
+	if (cp == NULL) {
+		lck_mtx_unlock(&nmp->nm_lock);
+		p->flags |= NFS_IOC_NO_CRED_FLAG;  /* No credentials, valid or invalid on this mount */
+		NFS_GSS_DBG("No context found for session %d by uid %d\n",
+			    kauth_cred_getasid(cred), kauth_cred_getuid(cred));
+		return (0);
+	}
+
+	/* Indicate if the cred is INVALID */
+	if (cp->gss_clnt_flags & GSS_CTX_INVAL)
+		p->flags |= NFS_IOC_INVALID_CRED_FLAG;
+
+	/* We have set a principal on the mount */
+	if (cp->gss_clnt_principal) {
+		princ = (char *)cp->gss_clnt_principal;
+		p->princlen = cp->gss_clnt_prinlen;
+		p->nametype = cp->gss_clnt_prinnt;
+	} else if (cp->gss_clnt_display) {
+		/* We have a successful use the the default credential */
+		princ = cp->gss_clnt_display;
+		p->princlen = strlen(cp->gss_clnt_display);
+	}
+
+	/*
+	 * If neither of the above is true we have an invalid default credential
+	 * So from above p->principal is USER_ADDR_NULL and princ is NULL
+	 */
+
+	if (princ) {
+		char *pp;
+
+		MALLOC(pp, char *, p->princlen, M_TEMP, M_WAITOK);
+		bcopy(princ, pp, p->princlen);
+		p->principal = CAST_USER_ADDR_T(pp);
+	}
+
+	lck_mtx_unlock(&nmp->nm_lock);
+
+	req.r_gss_ctx = cp;
+	NFS_GSS_DBG("Found context %s\n", NFS_GSS_CTX(&req, NULL));
+	nfs_gss_clnt_ctx_unref(&req);
+	return (error);
+}
 #endif /* NFSCLIENT */
 
 /*************
@@ -1882,6 +2818,8 @@ nfs_gss_svc_ctx_timer(__unused void *param1, __unused void *param2)
 	lck_mtx_lock(nfs_gss_svc_ctx_mutex);
 	clock_get_uptime(&timenow);
 
+	NFS_GSS_DBG("is running\n");
+
 	/*
 	 * Scan all the hash chains
 	 */
@@ -1899,6 +2837,7 @@ nfs_gss_svc_ctx_timer(__unused void *param1, __unused void *param2)
 				 * A stale context - remove it
 				 */
 				LIST_REMOVE(cp, gss_svc_entries);
+				NFS_GSS_DBG("Removing contex for %d\n", cp->gss_svc_uid);
 				if (cp->gss_svc_seqbits)
 					FREE(cp->gss_svc_seqbits, M_TEMP);
 				lck_mtx_destroy(cp->gss_svc_mtx, nfs_gss_svc_grp);
@@ -1937,17 +2876,18 @@ nfs_gss_svc_cred_get(struct nfsrv_descript *nd, struct nfsm_chain *nmc)
 {
 	uint32_t vers, proc, seqnum, service;
 	uint32_t handle, handle_len;
+	uint32_t major;
 	struct nfs_gss_svc_ctx *cp = NULL;
-	uint32_t flavor = 0, verflen = 0;
+	uint32_t flavor = 0, header_len;
 	int error = 0;
-	uint32_t arglen, start, toklen, cksumlen;
-	u_char tokbuf[KRB5_SZ_TOKMAX(MAX_DIGEST)];
-	u_char cksum1[MAX_DIGEST], cksum2[MAX_DIGEST];
+	uint32_t arglen, start;
+	size_t argsize;
+	gss_buffer_desc cksum;
 	struct nfsm_chain nmc_tmp;
-	gss_key_info *ki;
-	
+	mbuf_t reply_mbuf, prev_mbuf, pad_mbuf;
+
 	vers = proc = seqnum = service = handle_len = 0;
-	arglen = cksumlen = 0;
+	arglen = 0;
 
 	nfsm_chain_get_32(error, nmc, vers);
 	if (vers != RPCSEC_GSS_VERS_1) {
@@ -2005,7 +2945,6 @@ nfs_gss_svc_cred_get(struct nfsrv_descript *nd, struct nfsm_chain *nmc)
 		cp->gss_svc_mtx = lck_mtx_alloc_init(nfs_gss_svc_grp, LCK_ATTR_NULL);
 		cp->gss_svc_refcnt = 1;
 	} else {
-
 		/*
 		 * Use the handle to find the context
 		 */
@@ -2024,7 +2963,6 @@ nfs_gss_svc_cred_get(struct nfsrv_descript *nd, struct nfsm_chain *nmc)
 	}
 
 	cp->gss_svc_proc = proc;
-	ki = &cp->gss_svc_kinfo;
 
 	if (proc == RPCSEC_GSS_DATA || proc == RPCSEC_GSS_DESTROY) {
 		struct posix_cred temp_pcred;
@@ -2045,9 +2983,6 @@ nfs_gss_svc_cred_get(struct nfsrv_descript *nd, struct nfsm_chain *nmc)
 			goto nfsmout;
 		}
 
-		/* Now compute the client's call header checksum */
-		nfs_gss_cksum_chain(ki, nmc, ALG_MIC(ki), 0, 0, cksum1);
-
 		/*
 		 * Validate the verifier.
 		 * The verifier contains an encrypted checksum
@@ -2056,23 +2991,23 @@ nfs_gss_svc_cred_get(struct nfsrv_descript *nd, struct nfsm_chain *nmc)
 		 * checksum and compare it with what came in
 		 * the verifier.
 		 */
+		header_len = nfsm_chain_offset(nmc);
 		nfsm_chain_get_32(error, nmc, flavor);
-		nfsm_chain_get_32(error, nmc, verflen);
+		nfsm_chain_get_32(error, nmc, cksum.length);
 		if (error)
 			goto nfsmout;
-		if (flavor != RPCSEC_GSS || verflen != KRB5_SZ_TOKEN(ki->hash_len))
+		if (flavor != RPCSEC_GSS || cksum.length > KRB5_MAX_MIC_SIZE)
 			error = NFSERR_AUTHERR | AUTH_BADVERF;
-		nfsm_chain_get_opaque(error, nmc, verflen, tokbuf);
+		MALLOC(cksum.value, void *, cksum.length, M_TEMP, M_WAITOK);
+		nfsm_chain_get_opaque(error, nmc, cksum.length, cksum.value);
 		if (error)
 			goto nfsmout;
 
-		/* Get the checksum from the token inside the verifier */
-		error = nfs_gss_token_get(ki, ALG_MIC(ki), tokbuf, 1,
-			NULL, cksum2);
-		if (error)
-			goto nfsmout;
-
-		if (bcmp(cksum1, cksum2, HASHLEN(ki)) != 0) {
+		/* Now verify the client's call header checksum */
+		major = gss_krb5_verify_mic_mbuf((uint32_t *)&error, cp->gss_svc_ctx_id, nmc->nmc_mhead, 0, header_len, &cksum, NULL);
+		(void)gss_release_buffer(NULL, &cksum);
+		if (major != GSS_S_COMPLETE) {
+			printf("Server header: gss_krb5_verify_mic_mbuf failed %d\n", error);
 			error = NFSERR_AUTHERR | RPCSEC_GSS_CTXPROBLEM;
 			goto nfsmout;
 		}
@@ -2110,8 +3045,8 @@ nfs_gss_svc_cred_get(struct nfsrv_descript *nd, struct nfsm_chain *nmc)
 			 * - length of seq num + call args (4 bytes)
 			 * - sequence number (4 bytes)
 			 * - call args (variable bytes)
-			 * - length of checksum token (37)
-			 * - checksum of seqnum + call args (37 bytes)
+			 * - length of checksum token
+			 * - checksum of seqnum + call args
 			 */
 			nfsm_chain_get_32(error, nmc, arglen);		// length of args
 			if (arglen > NFS_MAXPACKET) {
@@ -2119,10 +3054,29 @@ nfs_gss_svc_cred_get(struct nfsrv_descript *nd, struct nfsm_chain *nmc)
 				goto nfsmout;
 			}
 
-			/* Compute the checksum over the call args */
+			nmc_tmp = *nmc;
+			nfsm_chain_adv(error, &nmc_tmp, arglen);
+			nfsm_chain_get_32(error, &nmc_tmp, cksum.length);
+			MALLOC(cksum.value, void *, cksum.length, M_TEMP, M_WAITOK);
+
+			if (cksum.value == NULL) {
+				error = EBADRPC;
+				goto nfsmout;
+			}
+			nfsm_chain_get_opaque(error, &nmc_tmp, cksum.length, cksum.value);
+
+			/* Verify the checksum over the call args */
 			start = nfsm_chain_offset(nmc);
-			nfs_gss_cksum_chain(ki, nmc, ALG_MIC(ki), start, arglen, cksum1);
-	
+
+			major = gss_krb5_verify_mic_mbuf((uint32_t *)&error, cp->gss_svc_ctx_id,
+							 nmc->nmc_mhead, start, arglen, &cksum, NULL);
+			FREE(cksum.value, M_TEMP);
+			if (major != GSS_S_COMPLETE) {
+				printf("Server args: gss_krb5_verify_mic_mbuf failed %d\n", error);
+				error = EBADRPC;
+				goto nfsmout;
+			}
+
 			/*
 			 * Get the sequence number prepended to the args
 			 * and compare it against the one sent in the
@@ -2131,30 +3085,6 @@ nfs_gss_svc_cred_get(struct nfsrv_descript *nd, struct nfsm_chain *nmc)
 			nfsm_chain_get_32(error, nmc, seqnum);
 			if (seqnum != nd->nd_gss_seqnum) {
 				error = EBADRPC;			// returns as GARBAGEARGS
-				goto nfsmout;
-			}
-	
-			/*
-			 * Advance to the end of the args and
-			 * fetch the checksum computed by the client.
-			 */
-			nmc_tmp = *nmc;	
-			arglen -= NFSX_UNSIGNED;			// skipped seqnum
-			nfsm_chain_adv(error, &nmc_tmp, arglen);	// skip args
-			nfsm_chain_get_32(error, &nmc_tmp, cksumlen);	// length of checksum
-			if (cksumlen != KRB5_SZ_TOKEN(ki->hash_len)) {
-				error = EBADRPC;
-				goto nfsmout;
-			}
-			nfsm_chain_get_opaque(error, &nmc_tmp, cksumlen, tokbuf);
-			if (error)
-				goto nfsmout;
-			error = nfs_gss_token_get(ki, ALG_MIC(ki), tokbuf, 1,
-				NULL, cksum2);
-	
-			/* Verify that the checksums are the same */
-			if (error || bcmp(cksum1, cksum2, HASHLEN(ki)) != 0) {
-				error = EBADRPC;
 				goto nfsmout;
 			}
 			break;
@@ -2162,56 +3092,70 @@ nfs_gss_svc_cred_get(struct nfsrv_descript *nd, struct nfsm_chain *nmc)
 			/*
 			 * Here's what we expect in the privacy call args:
 			 *
-			 * - length of confounder + seq num + token + call args
+			 * - length of wrap token
 			 * - wrap token (37-40 bytes)
-			 * - confounder (8 bytes)
-			 * - sequence number (4 bytes)
-			 * - call args (encrypted)
 			 */
+			prev_mbuf = nmc->nmc_mcur;
 			nfsm_chain_get_32(error, nmc, arglen);		// length of args
 			if (arglen > NFS_MAXPACKET) {
 				error = EBADRPC;
 				goto nfsmout;
 			}
-	
-			/* Get the token that prepends the encrypted args */
-			nfsm_chain_get_opaque(error, nmc, KRB5_SZ_TOKMAX(ki->hash_len), tokbuf);
+
+			/* Get the wrap token (current mbuf in the chain starting at the current offset) */
+			start = nmc->nmc_ptr - (caddr_t)mbuf_data(nmc->nmc_mcur);
+
+			/* split out the wrap token */
+			argsize = arglen;
+			error = gss_normalize_mbuf(nmc->nmc_mcur, start, &argsize, &reply_mbuf, &pad_mbuf, 0);
 			if (error)
 				goto nfsmout;
-			error = nfs_gss_token_get(ki, ALG_WRAP(ki), tokbuf, 1,
-							&toklen, cksum1);
-			if (error)
-				goto nfsmout;
-			nfsm_chain_reverse(nmc, nfsm_pad(toklen));
-	
-			/* decrypt the 8 byte confounder + seqnum + args */
-			start = nfsm_chain_offset(nmc);
-			arglen -= toklen;
-			nfs_gss_encrypt_chain(ki, nmc, start, arglen, DES_DECRYPT);
-	
-			/* Compute a checksum over the sequence number + results */
-			nfs_gss_cksum_chain(ki, nmc, ALG_WRAP(ki), start, arglen, cksum2);
-	
-			/* Verify that the checksums are the same */
-			if (bcmp(cksum1, cksum2, HASHLEN(ki)) != 0) {
-				error = EBADRPC;
+
+			assert(argsize == arglen);
+			if (pad_mbuf) {
+				assert(nfsm_pad(arglen) == mbuf_len(pad_mbuf));
+				mbuf_free(pad_mbuf);
+			} else {
+				assert(nfsm_pad(arglen) == 0);
+			}
+
+			major = gss_krb5_unwrap_mbuf((uint32_t *)&error, cp->gss_svc_ctx_id, &reply_mbuf, 0, arglen, NULL, NULL);
+			if (major != GSS_S_COMPLETE) {
+				printf("%s: gss_krb5_unwrap_mbuf failes %d\n", __func__, error);
 				goto nfsmout;
 			}
+
+			/* Now replace the wrapped arguments with the unwrapped ones */
+			mbuf_setnext(prev_mbuf, reply_mbuf);
+			nmc->nmc_mcur = reply_mbuf;
+			nmc->nmc_ptr = mbuf_data(reply_mbuf);
+			nmc->nmc_left = mbuf_len(reply_mbuf);
+
+			/*
+			 * - sequence number (4 bytes)
+			 * - call args
+			 */
+
+			// nfsm_chain_reverse(nmc, nfsm_pad(toklen));
 
 			/*
 			 * Get the sequence number prepended to the args
 			 * and compare it against the one sent in the
 			 * call credential.
 			 */
-			nfsm_chain_adv(error, nmc, 8);			// skip over the confounder
 			nfsm_chain_get_32(error, nmc, seqnum);
 			if (seqnum != nd->nd_gss_seqnum) {
+				printf("%s: Sequence number mismatch seqnum = %d nd->nd_gss_seqnum = %d\n",
+				       __func__, seqnum, nd->nd_gss_seqnum);
+				printmbuf("reply_mbuf", nmc->nmc_mhead, 0, 0);
+				printf("reply_mbuf %p nmc_head %p\n", reply_mbuf, nmc->nmc_mhead);
 				error = EBADRPC;			// returns as GARBAGEARGS
 				goto nfsmout;
 			}
 			break;
 		}
 	} else {
+		uint32_t verflen;
 		/*
 		 * If the proc is RPCSEC_GSS_INIT or RPCSEC_GSS_CONTINUE_INIT
 		 * then we expect a null verifier.
@@ -2249,14 +3193,11 @@ nfs_gss_svc_verf_put(struct nfsrv_descript *nd, struct nfsm_chain *nmc)
 {
 	struct nfs_gss_svc_ctx *cp;
 	int error = 0;
-	u_char tokbuf[KRB5_SZ_TOKEN(MAX_DIGEST)];
-	int toklen;
-	u_char cksum[MAX_DIGEST];
-	gss_key_info *ki;
-
+	gss_buffer_desc cksum, seqbuf;
+	uint32_t network_seqnum;
 	cp = nd->nd_gss_context;
-	ki = &cp->gss_svc_kinfo;
-	
+	uint32_t major;
+
 	if (cp->gss_svc_major != GSS_S_COMPLETE) {
 		/*
 		 * If the context isn't yet complete
@@ -2273,19 +3214,26 @@ nfs_gss_svc_verf_put(struct nfsrv_descript *nd, struct nfsm_chain *nmc)
 	 * then return the checksum of the context
 	 * window size.
 	 */
+	seqbuf.length = NFSX_UNSIGNED;
 	if (cp->gss_svc_proc == RPCSEC_GSS_INIT ||
 	    cp->gss_svc_proc == RPCSEC_GSS_CONTINUE_INIT)
-		nfs_gss_cksum_rep(ki, cp->gss_svc_seqwin, cksum);
+		network_seqnum = htonl(cp->gss_svc_seqwin);
 	else
-		nfs_gss_cksum_rep(ki, nd->nd_gss_seqnum, cksum);
+		network_seqnum = htonl(nd->nd_gss_seqnum);
+	seqbuf.value = &network_seqnum;
+
+	major = gss_krb5_get_mic((uint32_t *)&error, cp->gss_svc_ctx_id, 0, &seqbuf, &cksum);
+	if (major != GSS_S_COMPLETE)
+		return (error);
+
 	/*
 	 * Now wrap it in a token and add
 	 * the verifier to the reply.
 	 */
-	toklen = nfs_gss_token_put(ki, ALG_MIC(ki), tokbuf, 0, 0, cksum);
 	nfsm_chain_add_32(error, nmc, RPCSEC_GSS);
-	nfsm_chain_add_32(error, nmc, toklen);
-	nfsm_chain_add_opaque(error, nmc, tokbuf, toklen);
+	nfsm_chain_add_32(error, nmc, cksum.length);
+	nfsm_chain_add_opaque(error, nmc, cksum.value, cksum.length);
+	gss_release_buffer(NULL, &cksum);
 
 	return (error);
 }
@@ -2313,16 +3261,9 @@ nfs_gss_svc_prepare_reply(struct nfsrv_descript *nd, struct nfsm_chain *nmc)
 		/* Nothing to do */
 		break;
 	case RPCAUTH_KRB5I:
-		nd->nd_gss_mb = nmc->nmc_mcur;			// record current mbuf
-		nfsm_chain_finish_mbuf(error, nmc);		// split the chain here
-		nfsm_chain_add_32(error, nmc, nd->nd_gss_seqnum); // req sequence number
-		break;
 	case RPCAUTH_KRB5P:
 		nd->nd_gss_mb = nmc->nmc_mcur;			// record current mbuf
 		nfsm_chain_finish_mbuf(error, nmc);		// split the chain here
-		nfsm_chain_add_32(error, nmc, random());	// confounder bytes 1-4
-		nfsm_chain_add_32(error, nmc, random());	// confounder bytes 5-8
-		nfsm_chain_add_32(error, nmc, nd->nd_gss_seqnum); // req sequence number
 		break;
 	}
 
@@ -2333,20 +3274,15 @@ nfs_gss_svc_prepare_reply(struct nfsrv_descript *nd, struct nfsm_chain *nmc)
  * The results are checksummed or encrypted for return to the client
  */
 int
-nfs_gss_svc_protect_reply(struct nfsrv_descript *nd, mbuf_t mrep)
+nfs_gss_svc_protect_reply(struct nfsrv_descript *nd, mbuf_t mrep __unused)
 {
 	struct nfs_gss_svc_ctx *cp = nd->nd_gss_context;
 	struct nfsm_chain nmrep_res, *nmc_res = &nmrep_res;
-	struct nfsm_chain nmrep_pre, *nmc_pre = &nmrep_pre;
 	mbuf_t mb, results;
 	uint32_t reslen;
-	u_char tokbuf[KRB5_SZ_TOKMAX(MAX_DIGEST)];
-	int pad, toklen;
-	u_char cksum[MAX_DIGEST];
 	int error = 0;
-	gss_key_info *ki = &cp->gss_svc_kinfo;
 
-	/*
+	/* XXX
 	 * Using a reference to the mbuf where we previously split the reply
 	 * mbuf chain, we split the mbuf chain argument into two mbuf chains,
 	 * one that allows us to prepend a length field or token, (nmc_pre)
@@ -2354,69 +3290,25 @@ nfs_gss_svc_protect_reply(struct nfsrv_descript *nd, mbuf_t mrep)
 	 * checksum and/or encrypt.  When we're done, we join the chains back
 	 * together.
 	 */
-	nfs_gss_nfsm_chain(nmc_res, mrep);		// set up the results chain
+
 	mb = nd->nd_gss_mb;				// the mbuf where we split
 	results = mbuf_next(mb);			// first mbuf in the results
-	reslen = nfs_gss_mchain_length(results);	// length of results
 	error = mbuf_setnext(mb, NULL);			// disconnect the chains
 	if (error)
 		return (error);
-	nfs_gss_nfsm_chain(nmc_pre, mb);		// set up the prepend chain
+	nfs_gss_nfsm_chain(nmc_res, mb);		// set up the prepend chain
+	nfsm_chain_build_done(error, nmc_res);
+	if (error)
+		return (error);
 
 	if (nd->nd_sec == RPCAUTH_KRB5I) {
-		nfsm_chain_add_32(error, nmc_pre, reslen);
-		nfsm_chain_build_done(error, nmc_pre);
-		if (error)
-			return (error);
-		nfs_gss_append_chain(nmc_pre, results);	// Append the results mbufs
-
-		/* Now compute the checksum over the results data */
-		nfs_gss_cksum_mchain(ki, results, ALG_MIC(ki), 0, reslen, cksum);
-
-		/* Put it into a token and append to the request */
-		toklen = nfs_gss_token_put(ki, ALG_MIC(ki), tokbuf, 0, 0, cksum);
-		nfsm_chain_add_32(error, nmc_res, toklen);
-		nfsm_chain_add_opaque(error, nmc_res, tokbuf, toklen);
-		nfsm_chain_build_done(error, nmc_res);
+		error = rpc_gss_integ_data_create(cp->gss_svc_ctx_id, &results, nd->nd_gss_seqnum, &reslen);
 	} else {
 		/* RPCAUTH_KRB5P */
-		/*
-		 * Append a pad trailer - per RFC 1964 section 1.2.2.3
-		 * Since XDR data is always 32-bit aligned, it
-		 * needs to be padded either by 4 bytes or 8 bytes.
-		 */
-		if (reslen % 8 > 0) {
-			nfsm_chain_add_32(error, nmc_res, 0x04040404);
-			reslen += NFSX_UNSIGNED;
-		} else {
-			nfsm_chain_add_32(error, nmc_res, 0x08080808);
-			nfsm_chain_add_32(error, nmc_res, 0x08080808);
-			reslen +=  2 * NFSX_UNSIGNED;
-		}
-		nfsm_chain_build_done(error, nmc_res);
-
-		/* Now compute the checksum over the results data */
-		nfs_gss_cksum_mchain(ki, results, ALG_WRAP(ki), 0, reslen, cksum);
-
-		/* Put it into a token and insert in the reply */
-		toklen = nfs_gss_token_put(ki, ALG_WRAP(ki), tokbuf, 0, reslen, cksum);
-		nfsm_chain_add_32(error, nmc_pre, toklen + reslen);
-		nfsm_chain_add_opaque_nopad(error, nmc_pre, tokbuf, toklen);
-		nfsm_chain_build_done(error, nmc_pre);
-		if (error)
-			return (error);
-		nfs_gss_append_chain(nmc_pre, results);	// Append the results mbufs
-
-		/* Encrypt the confounder + seqnum + results */
-		nfs_gss_encrypt_mchain(ki, results, 0, reslen, DES_ENCRYPT);
-
-		/* Add null XDR pad if the ASN.1 token misaligned the data */
-		pad = nfsm_pad(toklen + reslen);
-		if (pad > 0) {
-			nfsm_chain_add_opaque_nopad(error, nmc_pre, iv0, pad);
-			nfsm_chain_build_done(error, nmc_pre);
-		}
+		error = rpc_gss_priv_data_create(cp->gss_svc_ctx_id, &results, nd->nd_gss_seqnum, &reslen);
 	}
+	nfs_gss_append_chain(nmc_res, results);	// Append the results mbufs
+	nfsm_chain_build_done(error, nmc_res);
 
 	return (error);
 }
@@ -2580,8 +3472,9 @@ nfs_gss_svc_gssd_upcall(struct nfs_gss_svc_ctx *cp)
 	kern_return_t kr;
 	mach_port_t mp;
 	int retry_cnt = 0;
-	gssd_byte_buffer okey = NULL;
-	uint32_t skeylen = 0;
+	gssd_byte_buffer octx = NULL;
+	uint32_t lucidlen = 0;
+	void *lucid_ctx_buffer;
 	uint32_t ret_flags;
 	vm_map_copy_t itoken = NULL;
 	gssd_byte_buffer otoken = NULL;
@@ -2603,6 +3496,7 @@ nfs_gss_svc_gssd_upcall(struct nfs_gss_svc_ctx *cp)
 		nfs_gss_mach_alloc_buffer(cp->gss_svc_token, cp->gss_svc_tokenlen, &itoken);
 
 retry:
+	printf("Calling mach_gss_accept_sec_context\n");
 	kr = mach_gss_accept_sec_context(
 		mp,
 		(gssd_byte_buffer) itoken, (mach_msg_type_number_t) cp->gss_svc_tokenlen,
@@ -2614,11 +3508,12 @@ retry:
 		&cp->gss_svc_uid,
 		cp->gss_svc_gids,
 		&cp->gss_svc_ngroups,
-		&okey, (mach_msg_type_number_t *) &skeylen,
+		&octx, (mach_msg_type_number_t *) &lucidlen,
 		&otoken, &otokenlen,
 		&cp->gss_svc_major,
 		&cp->gss_svc_minor);
 
+	printf("mach_gss_accept_sec_context returned %d\n", kr);
 	if (kr != KERN_SUCCESS) { 
 		printf("nfs_gss_svc_gssd_upcall failed: %x (%d)\n", kr, kr);
 		if (kr == MIG_SERVER_DIED && cp->gss_svc_context == 0 &&
@@ -2633,22 +3528,27 @@ retry:
 
 	host_release_special_port(mp);
 
-	if (skeylen > 0) {
-		if (skeylen != SKEYLEN && skeylen != SKEYLEN3) {
-			printf("nfs_gss_svc_gssd_upcall: bad key length (%d)\n", skeylen);
-			vm_map_copy_discard((vm_map_copy_t) okey);
+	if (lucidlen > 0) {
+		if (lucidlen > MAX_LUCIDLEN) {
+			printf("nfs_gss_svc_gssd_upcall: bad context length (%d)\n", lucidlen);
+			vm_map_copy_discard((vm_map_copy_t) octx);
 			vm_map_copy_discard((vm_map_copy_t) otoken);
 			goto out;
 		}
-		error = nfs_gss_mach_vmcopyout((vm_map_copy_t) okey, skeylen, cp->gss_svc_kinfo.skey);
+		MALLOC(lucid_ctx_buffer, void *, lucidlen, M_TEMP, M_WAITOK | M_ZERO);
+		error = nfs_gss_mach_vmcopyout((vm_map_copy_t) octx, lucidlen, lucid_ctx_buffer);
 		if (error) {
 			vm_map_copy_discard((vm_map_copy_t) otoken);
+			FREE(lucid_ctx_buffer, M_TEMP);
 			goto out;
 		}
-		error = gss_key_init(&cp->gss_svc_kinfo, skeylen);
-		if (error)
+		if (cp->gss_svc_ctx_id)
+			gss_krb5_destroy_context(cp->gss_svc_ctx_id);
+		cp->gss_svc_ctx_id = gss_krb5_make_context(lucid_ctx_buffer, lucidlen);
+		if (cp->gss_svc_ctx_id == NULL) {
+			printf("Failed to make context from lucid_ctx_buffer\n");
 			goto out;
-
+		}
 	}
 
 	/* Free context token used as input */
@@ -2841,16 +3741,20 @@ nfs_gss_mach_alloc_buffer(u_char *buf, uint32_t buflen, vm_map_copy_t *addr)
 	if (buf == NULL || buflen == 0)
 		return;
 
-	tbuflen = round_page(buflen);
-	kr = vm_allocate(ipc_kernel_map, &kmem_buf, tbuflen, VM_FLAGS_ANYWHERE);
+	tbuflen = vm_map_round_page(buflen,
+				    vm_map_page_mask(ipc_kernel_map));
+	kr = vm_allocate_kernel(ipc_kernel_map, &kmem_buf, tbuflen, VM_FLAGS_ANYWHERE, VM_KERN_MEMORY_FILE);
 	if (kr != 0) {
 		printf("nfs_gss_mach_alloc_buffer: vm_allocate failed\n");
 		return;
 	}
 
-	kr = vm_map_wire(ipc_kernel_map, vm_map_trunc_page(kmem_buf),
-		vm_map_round_page(kmem_buf + tbuflen),
-		VM_PROT_READ|VM_PROT_WRITE, FALSE);
+	kr = vm_map_wire_kernel(ipc_kernel_map,
+			 vm_map_trunc_page(kmem_buf,
+					   vm_map_page_mask(ipc_kernel_map)),
+			 vm_map_round_page(kmem_buf + tbuflen,
+					   vm_map_page_mask(ipc_kernel_map)),
+		VM_PROT_READ|VM_PROT_WRITE, VM_KERN_MEMORY_FILE, FALSE);
 	if (kr != 0) {
 		printf("nfs_gss_mach_alloc_buffer: vm_map_wire failed\n");
 		return;
@@ -2860,8 +3764,12 @@ nfs_gss_mach_alloc_buffer(u_char *buf, uint32_t buflen, vm_map_copy_t *addr)
 	// Shouldn't need to bzero below since vm_allocate returns zeroed pages
 	// bzero(kmem_buf + buflen, tbuflen - buflen);
 	
-	kr = vm_map_unwire(ipc_kernel_map, vm_map_trunc_page(kmem_buf),
-		vm_map_round_page(kmem_buf + tbuflen), FALSE);
+	kr = vm_map_unwire(ipc_kernel_map,
+			   vm_map_trunc_page(kmem_buf,
+					     vm_map_page_mask(ipc_kernel_map)),
+			   vm_map_round_page(kmem_buf + tbuflen,
+					     vm_map_page_mask(ipc_kernel_map)),
+			   FALSE);
 	if (kr != 0) {
 		printf("nfs_gss_mach_alloc_buffer: vm_map_unwire failed\n");
 		return;
@@ -2895,221 +3803,6 @@ nfs_gss_mach_vmcopyout(vm_map_copy_t in, uint32_t len, u_char *out)
 	data = CAST_DOWN(vm_offset_t, map_data);
 	bcopy((void *) data, out, len);
 	vm_deallocate(ipc_kernel_map, data, len);
-
-	return (0);
-}
-
-/*
- * Encode an ASN.1 token to be wrapped in an RPCSEC_GSS verifier.
- * Returns the size of the token, since it contains a variable
- * length DER encoded size field.
- */
-static int
-nfs_gss_token_put(
-	gss_key_info *ki,
-	u_char *alg,
-	u_char *p,
-	int initiator,
-	int datalen,
-	u_char *cksum)
-{
-	static uint32_t seqnum = 0;
-	u_char *psave = p;
-	u_char plain[8];
-	int toklen, i;
-
-	/*
-	 * Fill in the token header: 2 octets.
-	 * This is 0x06 - an ASN.1 tag for APPLICATION, 0, SEQUENCE
-	 * followed by the length of the token: 35 + 0 octets for a
-	 * MIC token, or 35 + encrypted octets for a wrap token;
-	 */
-	*p++ = 0x060;
-	toklen = KRB5_SZ_MECH + KRB5_SZ_ALG + KRB5_SZ_SEQ + HASHLEN(ki);
-	nfs_gss_der_length_put(&p, toklen + datalen);
-
-	/*
-	 * Fill in the DER encoded mech OID for Kerberos v5.
-	 * This represents the Kerberos OID 1.2.840.113554.1.2.2
-	 * described in RFC 2623, section 4.2
-	 */
-	bcopy(krb5_mech, p, sizeof(krb5_mech));
-	p += sizeof(krb5_mech);
-
-	/*
-	 * Now at the token described in RFC 1964, section 1.2.1
-	 * Fill in the token ID, integrity algorithm indicator,
-	 * for DES MAC MD5, and four filler octets.
-	 * The alg string encodes the bytes to represent either
-	 * a MIC token or a WRAP token for Kerberos.
-	 */
-	bcopy(alg, p, KRB5_SZ_ALG);
-	p += KRB5_SZ_ALG;
-
-	/*
-	 * Now encode the sequence number according to
-	 * RFC 1964, section 1.2.1.2 which dictates 4 octets
-	 * of sequence number followed by 4 bytes of direction
-	 * indicator: 0x00 for initiator or 0xff for acceptor.
-	 * We DES CBC encrypt the sequence number using the first
-	 * 8 octets of the checksum field as an initialization
-	 * vector.
-	 * Note that this sequence number is not at all related
-	 * to the RPCSEC_GSS protocol sequence number.  This
-	 * number is private to the ASN.1 token.  The only
-	 * requirement is that it not be repeated in case the
-	 * server has replay detection on, which normally should
-	 * not be the case, since RFC 2203 section 5.2.3 says that
-	 * replay detection and sequence checking must be turned off.
-	 */
-	seqnum++;
-	for (i = 0; i < 4; i++)
-		plain[i] = (u_char) ((seqnum >> (i * 8)) & 0xff);
-	for (i = 4; i < 8; i++)
-		plain[i] = initiator ? 0x00 : 0xff;
-	gss_des_crypt(ki, (des_cblock *) plain, (des_cblock *) p, 8,
-			(des_cblock *) cksum, NULL, DES_ENCRYPT, KG_USAGE_SEQ);
-	p += 8;
-
-	/*
-	 * Finally, append the octets of the 
-	 * checksum of the alg + plaintext data.
-	 * The plaintext could be an RPC call header,
-	 * the window value, or a sequence number.
-	 */
-	bcopy(cksum, p, HASHLEN(ki));
-	p += HASHLEN(ki);
-
-	return (p - psave);
-}
-
-/*
- * Determine size of ASN.1 DER length
- */
-static int
-nfs_gss_der_length_size(int len)
-{
-	return
-		len < (1 <<  7) ? 1 :
-		len < (1 <<  8) ? 2 :
-		len < (1 << 16) ? 3 :
-		len < (1 << 24) ? 4 : 5;
-}
-
-/*
- * Encode an ASN.1 DER length field
- */
-static void
-nfs_gss_der_length_put(u_char **pp, int len)
-{
-	int sz = nfs_gss_der_length_size(len);
-	u_char *p = *pp;
-
-	if (sz == 1) {
-		*p++ = (u_char) len;
-	} else {
-		*p++ = (u_char) ((sz-1) | 0x80);
-		sz -= 1;
-		while (sz--)
-			*p++ = (u_char) ((len >> (sz * 8)) & 0xff);
-	}
-
-	*pp = p;
-}
-
-/*
- * Decode an ASN.1 DER length field
- */
-static int
-nfs_gss_der_length_get(u_char **pp)
-{
-	u_char *p = *pp;
-	uint32_t flen, len = 0;
-
-	flen = *p & 0x7f;
-
-	if ((*p++ & 0x80) == 0)
-		len = flen;
-	else {
-		if (flen > sizeof(uint32_t))
-			return (-1);
-		while (flen--)
-			len = (len << 8) + *p++;
-	}
-	*pp = p;
-	return (len);
-}
-
-/*
- * Decode an ASN.1 token from an RPCSEC_GSS verifier.
- */
-static int
-nfs_gss_token_get(
-	gss_key_info *ki,
-	u_char *alg,
-	u_char *p,
-	int initiator,
-	uint32_t *len,
-	u_char *cksum)
-{
-	u_char d, plain[8];
-	u_char *psave = p;
-	int seqnum, i;
-
-	/*
-	 * Check that we have a valid token header
-	 */
-	if (*p++ != 0x60)
-		return (AUTH_BADCRED);
-	(void) nfs_gss_der_length_get(&p);	// ignore the size
-
-	/*
-	 * Check that we have the DER encoded Kerberos v5 mech OID
-	 */
-	if (bcmp(p, krb5_mech, sizeof(krb5_mech) != 0))
-		return (AUTH_BADCRED);
-	p += sizeof(krb5_mech);
-
-	/*
-	 * Now check the token ID, DES MAC MD5 algorithm
-	 * indicator, and filler octets.
-	 */
-	if (bcmp(p, alg, KRB5_SZ_ALG) != 0)
-		return (AUTH_BADCRED);
-	p += KRB5_SZ_ALG;
-
-	/*
-	 * Now decrypt the sequence number.
-	 * Note that the gss decryption uses the first 8 octets
-	 * of the checksum field as an initialization vector (p + 8).
-	 * Per RFC 2203 section 5.2.2 we don't check the sequence number
-	 * in the ASN.1 token because the RPCSEC_GSS protocol has its
-	 * own sequence number described in section 5.3.3.1
-	 */
-	seqnum = 0;
-	gss_des_crypt(ki, (des_cblock *)p, (des_cblock *) plain, 8,
-			(des_cblock *) (p + 8), NULL, DES_DECRYPT, KG_USAGE_SEQ);
-	p += 8;
-	for (i = 0; i < 4; i++)
-		seqnum |= plain[i] << (i * 8);
-
-	/*
-	 * Make sure the direction
-	 * indicator octets are correct.
-	 */
-	d = initiator ? 0x00 : 0xff;
-	for (i = 4; i < 8; i++)
-		if (plain[i] != d)
-			return (AUTH_BADCRED);
-
-	/*
-	 * Finally, get the checksum
-	 */
-	bcopy(p, cksum, HASHLEN(ki));
-	p += HASHLEN(ki);
-
-	if (len != NULL)
-		*len = p - psave;
 
 	return (0);
 }
@@ -3176,306 +3869,6 @@ nfs_gss_nfsm_chain(struct nfsm_chain *nmc, mbuf_t mc)
 }
 
 
-/*
- * Compute a checksum over an mbuf chain.
- * Start building an MD5 digest at the given offset and keep
- * going until the end of data in the current mbuf is reached.
- * Then convert the 16 byte MD5 digest to an 8 byte DES CBC
- * checksum.
- */
-static void
-nfs_gss_cksum_mchain(
-	gss_key_info *ki,
-	mbuf_t mhead,
-	u_char *alg,
-	int offset,
-	int len,
-	u_char *digest)
-{
-	mbuf_t mb;
-	u_char *ptr;
-	int left, bytes;
-	GSS_DIGEST_CTX context;
-
-	gss_digest_Init(&context, ki);
-
-	/*
-	 * Logically prepend the first 8 bytes of the algorithm
-	 * field as required by RFC 1964, section 1.2.1.1
-	 */
-	gss_digest_Update(&context, alg, KRB5_SZ_ALG);
-
-	/*
-	 * Move down the mbuf chain until we reach the given
-	 * byte offset, then start MD5 on the mbuf data until
-	 * we've done len bytes.
-	 */
-
-	for (mb = mhead; mb && len > 0; mb = mbuf_next(mb)) {
-		ptr  = mbuf_data(mb);
-		left = mbuf_len(mb);
-		if (offset >= left) {
-			/* Offset not yet reached */
-			offset -= left;
-			continue;
-		}
-		/* At or beyond offset - checksum data */
-		ptr += offset;
-		left -= offset;
-		offset = 0;
-			
-		bytes = left < len ? left : len;
-		if (bytes > 0)
-			gss_digest_Update(&context, ptr, bytes);
-		len -= bytes;
-	}
-
-	gss_digest_Final(&context, digest);
-}
-
-/*
- * Compute a checksum over an NFS mbuf chain.
- * Start building an MD5 digest at the given offset and keep
- * going until the end of data in the current mbuf is reached.
- * Then convert the 16 byte MD5 digest to an 8 byte DES CBC
- * checksum.
- */
-static void
-nfs_gss_cksum_chain(
-	gss_key_info *ki,
-	struct nfsm_chain *nmc,
-	u_char *alg,
-	int offset,
-	int len,
-	u_char *cksum)
-{
-	/*
-	 * If the length parameter is zero, then we need
-	 * to use the length from the offset to the current
-	 * encode/decode offset.
-	 */
-	if (len == 0)
-		len = nfsm_chain_offset(nmc) - offset;
-
-	return (nfs_gss_cksum_mchain(ki, nmc->nmc_mhead, alg, offset, len, cksum));
-}
-
-/*
- * Compute a checksum of the sequence number (or sequence window)
- * of an RPCSEC_GSS reply.
- */
-static void
-nfs_gss_cksum_rep(gss_key_info *ki, uint32_t seqnum, u_char *cksum)
-{
-	GSS_DIGEST_CTX context;
-	uint32_t val = htonl(seqnum);
-
-	gss_digest_Init(&context, ki);
-
-	/*
-	 * Logically prepend the first 8 bytes of the MIC
-	 * token as required by RFC 1964, section 1.2.1.1
-	 */
-	gss_digest_Update(&context, ALG_MIC(ki), KRB5_SZ_ALG);
-
-	/*
-	 * Compute the digest of the seqnum in network order
-	 */
-	gss_digest_Update(&context, &val, 4);
-	gss_digest_Final(&context, cksum);
-}
-
-/*
- * Encrypt or decrypt data in an mbuf chain with des-cbc.
- */
-static void
-nfs_gss_encrypt_mchain(
-	gss_key_info *ki,
-	mbuf_t mhead,
-	int offset,
-	int len,
-	int encrypt)
-{
-	mbuf_t mb, mbn;
-	u_char *ptr, *nptr;
-	u_char tmp[8], ivec[8];
-	int left, left8, remain;
-
-
-	bzero(ivec, 8);
-
-	/*
-	 * Move down the mbuf chain until we reach the given
-	 * byte offset, then start encrypting the mbuf data until
-	 * we've done len bytes.
-	 */
-
-	for (mb = mhead; mb && len > 0; mb = mbn) {
-		mbn  = mbuf_next(mb);
-		ptr  = mbuf_data(mb);
-		left = mbuf_len(mb);
-		if (offset >= left) {
-			/* Offset not yet reached */
-			offset -= left;
-			continue;
-		}
-		/* At or beyond offset - encrypt data */
-		ptr += offset;
-		left -= offset;
-		offset = 0;
-			
-		/*
-		 * DES or DES3 CBC has to encrypt 8 bytes at a time.
-		 * If the number of bytes to be encrypted in this
-		 * mbuf isn't some multiple of 8 bytes, encrypt all
-		 * the 8 byte blocks, then combine the remaining
-		 * bytes with enough from the next mbuf to make up
-		 * an 8 byte block and encrypt that block separately,
-		 * i.e. that block is split across two mbufs.
-		 */
-		remain = left % 8;
-		left8 = left - remain;
-		left = left8 < len ? left8 : len;
-		if (left > 0) {
-			gss_des_crypt(ki, (des_cblock *) ptr, (des_cblock *) ptr,
-					left, &ivec, &ivec, encrypt, KG_USAGE_SEAL);
-			len -= left;
-		}
-
-		if (mbn && remain > 0) {
-			nptr = mbuf_data(mbn);
-			offset = 8 - remain;
-			bcopy(ptr + left, tmp, remain);		// grab from this mbuf
-			bcopy(nptr, tmp + remain, offset);	// grab from next mbuf
-			gss_des_crypt(ki, (des_cblock *) tmp, (des_cblock *) tmp, 8,
-					&ivec, &ivec, encrypt, KG_USAGE_SEAL);
-			bcopy(tmp, ptr + left, remain);		// return to this mbuf
-			bcopy(tmp + remain, nptr, offset);	// return to next mbuf
-			len -= 8;
-		}
-	}
-}
-
-/*
- * Encrypt or decrypt data in an NFS mbuf chain with des-cbc.
- */
-static void
-nfs_gss_encrypt_chain(
-	gss_key_info *ki,
-	struct nfsm_chain *nmc,
-	int offset,
-	int len,
-	int encrypt)
-{
-	/*
-	 * If the length parameter is zero, then we need
-	 * to use the length from the offset to the current
-	 * encode/decode offset.
-	 */
-	if (len == 0)
-		len = nfsm_chain_offset(nmc) - offset;
-
-	return (nfs_gss_encrypt_mchain(ki, nmc->nmc_mhead, offset, len, encrypt));
-}
-
-/*
- * The routines that follow provide abstractions for doing digests and crypto.
- */
- 
-static void
-gss_digest_Init(GSS_DIGEST_CTX *ctx, gss_key_info *ki)
-{
-	ctx->type = ki->type;
-	switch (ki->type) {
-	case NFS_GSS_1DES:	MD5_DESCBC_Init(&ctx->m_ctx, &ki->ks_u.des.gss_sched);
-				break;
-	case NFS_GSS_3DES:	HMAC_SHA1_DES3KD_Init(&ctx->h_ctx, ki->ks_u.des3.ckey, 0);
-				break;
-	default:
-			printf("gss_digest_Init: Unknown key info type %d\n", ki->type);
-	}
-}
-
-static void
-gss_digest_Update(GSS_DIGEST_CTX *ctx, void *data, size_t len)
-{
-	switch (ctx->type) {
-	case NFS_GSS_1DES:	MD5_DESCBC_Update(&ctx->m_ctx, data, len);
-				break;
-	case NFS_GSS_3DES:	HMAC_SHA1_DES3KD_Update(&ctx->h_ctx, data, len);
-				break;
-	}
-}
-
-static void
-gss_digest_Final(GSS_DIGEST_CTX *ctx, void *digest)
-{
-	switch (ctx->type) {
-	case NFS_GSS_1DES:	MD5_DESCBC_Final(digest, &ctx->m_ctx);
-				break;
-	case NFS_GSS_3DES:	HMAC_SHA1_DES3KD_Final(digest, &ctx->h_ctx);
-				break;
-	}
-}
-
-static void
-gss_des_crypt(gss_key_info *ki, des_cblock *in, des_cblock *out,
-		int32_t len, des_cblock *iv, des_cblock *retiv, int encrypt, int usage)
-{
-	switch (ki->type) {
-	case NFS_GSS_1DES:
-			{
-				des_cbc_key_schedule *sched = ((usage == KG_USAGE_SEAL) ?
-							&ki->ks_u.des.gss_sched_Ke :
-							&ki->ks_u.des.gss_sched);
-				des_cbc_encrypt(in, out, len, sched, iv, retiv, encrypt);
-			}
-			break;
-	case NFS_GSS_3DES:
-
-			des3_cbc_encrypt(in, out, len, &ki->ks_u.des3.gss_sched, iv, retiv, encrypt);
-			break;
-	}
-}
-
-static int
-gss_key_init(gss_key_info *ki, uint32_t skeylen)
-{
-	size_t i;
-	int rc;
-	des_cblock k[3];
-
-	ki->keybytes = skeylen;
-	switch (skeylen) {
-	case sizeof(des_cblock):
-				ki->type = NFS_GSS_1DES;
-				ki->hash_len = MD5_DESCBC_DIGEST_LENGTH;
-				ki->ks_u.des.key = (des_cblock *)ki->skey;
-				rc = des_cbc_key_sched(ki->ks_u.des.key, &ki->ks_u.des.gss_sched);
-				if (rc)
-					return (rc);
-				for (i = 0; i < ki->keybytes; i++)
-					k[0][i] = 0xf0 ^ (*ki->ks_u.des.key)[i];
-				rc = des_cbc_key_sched(&k[0], &ki->ks_u.des.gss_sched_Ke);
-				break;
-	case 3*sizeof(des_cblock):	
-				ki->type = NFS_GSS_3DES;
-				ki->hash_len = SHA_DIGEST_LENGTH;
-				ki->ks_u.des3.key = (des_cblock (*)[3])ki->skey;
-				des3_derive_key(*ki->ks_u.des3.key, ki->ks_u.des3.ckey,
-						KEY_USAGE_DES3_SIGN, KEY_USAGE_LEN);
-				rc = des3_cbc_key_sched(*ki->ks_u.des3.key, &ki->ks_u.des3.gss_sched);
-				if (rc)
-					return (rc);
-				break;
-	default:
-				printf("gss_key_init: Invalid key length %d\n", skeylen);
-				rc = EINVAL;
-				break;
-	}
-	
-	return (rc);
-}
 
 #if 0
 #define DISPLAYLEN 16

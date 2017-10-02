@@ -40,6 +40,10 @@
 #include <sys/fcntl.h>
 #include <miscfs/devfs/devfs.h>
 
+#if CONFIG_EMBEDDED
+#include <arm/caches_internal.h>
+#endif
+
 #include <sys/dtrace.h>
 #include <sys/dtrace_impl.h>
 
@@ -48,13 +52,25 @@
 #include <sys/sdt_impl.h>
 extern int dtrace_kernel_symbol_mode;
 
+/* #include <machine/trap.h */
 struct savearea_t; /* Used anonymously */
-typedef kern_return_t (*perfCallback)(int, struct savearea_t *, uintptr_t *, int);
 
-#if defined(__i386__) || defined(__x86_64__)
+#if defined(__arm__)
+typedef kern_return_t (*perfCallback)(int, struct savearea_t *, __unused int, __unused int);
 extern perfCallback tempDTraceTrapHook;
-extern kern_return_t fbt_perfCallback(int, struct savearea_t *, int, int);
-
+extern kern_return_t fbt_perfCallback(int, struct savearea_t *, __unused int, __unused int);
+#define	SDT_PATCHVAL	0xdefc
+#define	SDT_AFRAMES		7
+#elif defined(__arm64__)
+typedef kern_return_t (*perfCallback)(int, struct savearea_t *, __unused int, __unused int);
+extern perfCallback tempDTraceTrapHook;
+extern kern_return_t fbt_perfCallback(int, struct savearea_t *, __unused int, __unused int);
+#define	SDT_PATCHVAL    0xe7eeee7e
+#define	SDT_AFRAMES		7
+#elif defined(__x86_64__)
+typedef kern_return_t (*perfCallback)(int, struct savearea_t *, uintptr_t *, int);
+extern perfCallback tempDTraceTrapHook;
+extern kern_return_t fbt_perfCallback(int, struct savearea_t *, uintptr_t *, int);
 #define	SDT_PATCHVAL	0xf0
 #define	SDT_AFRAMES		6
 #else
@@ -153,6 +169,10 @@ __sdt_provide_module(void *arg, struct modctl *ctl)
 			mp->sdt_nprobes++;
 		}
 
+#if 0		
+		printf ("__sdt_provide_module:  sdpd=0x%p  sdp=0x%p  name=%s, id=%d\n", sdpd, sdp, nname, sdp->sdp_id);
+#endif		
+
 		sdp->sdp_hashnext =
 		    sdt_probetab[SDT_ADDR2NDX(sdpd->sdpd_offset)];
 		sdt_probetab[SDT_ADDR2NDX(sdpd->sdpd_offset)] = sdp;
@@ -170,7 +190,11 @@ sdt_destroy(void *arg, dtrace_id_t id, void *parg)
 #pragma unused(arg,id)
 	sdt_probe_t *sdp = parg, *old, *last, *hash;
 	int ndx;
+
 #if !defined(__APPLE__)
+	/*
+	 * APPLE NOTE:  sdt probes for kexts not yet implemented
+	 */
 	struct modctl *ctl = sdp->sdp_ctl;
 
 	if (ctl != NULL && ctl->mod_loadcnt == sdp->sdp_loadcnt) {
@@ -259,6 +283,14 @@ sdt_enable(void *arg, dtrace_id_t id, void *parg)
 	while (sdp != NULL) {
 		(void)ml_nofault_copy( (vm_offset_t)&sdp->sdp_patchval, (vm_offset_t)sdp->sdp_patchpoint, 
 		                       (vm_size_t)sizeof(sdp->sdp_patchval));
+
+		/*
+		 * Make the patched instruction visible via a data + instruction
+		 * cache fush on platforms that need it
+		 */
+		flush_dcache((vm_offset_t)sdp->sdp_patchpoint,(vm_size_t)sizeof(sdp->sdp_patchval), 0);
+		invalidate_icache((vm_offset_t)sdp->sdp_patchpoint,(vm_size_t)sizeof(sdp->sdp_patchval), 0);
+
 		sdp = sdp->sdp_next;
 	}
 
@@ -282,6 +314,12 @@ sdt_disable(void *arg, dtrace_id_t id, void *parg)
 	while (sdp != NULL) {
 		(void)ml_nofault_copy( (vm_offset_t)&sdp->sdp_savedval, (vm_offset_t)sdp->sdp_patchpoint, 
 		                       (vm_size_t)sizeof(sdp->sdp_savedval));
+		/*
+		 * Make the patched instruction visible via a data + instruction
+		 * cache flush on platforms that need it
+		 */
+		flush_dcache((vm_offset_t)sdp->sdp_patchpoint,(vm_size_t)sizeof(sdp->sdp_savedval), 0);
+		invalidate_icache((vm_offset_t)sdp->sdp_patchpoint,(vm_size_t)sizeof(sdp->sdp_savedval), 0);
 		sdp = sdp->sdp_next;
 	}
 
@@ -339,6 +377,9 @@ sdt_attach(dev_info_t *devi, ddi_attach_cmd_t cmd)
 	return (DDI_SUCCESS);
 }
 
+/*
+ * APPLE NOTE:  sdt_detach not implemented
+ */
 #if !defined(__APPLE__)
 /*ARGSUSED*/
 static int
@@ -371,100 +412,8 @@ sdt_detach(dev_info_t *dip, ddi_detach_cmd_t cmd)
 
 	return (DDI_SUCCESS);
 }
+#endif /* __APPLE__ */
 
-/*ARGSUSED*/
-static int
-sdt_info(dev_info_t *dip, ddi_info_cmd_t infocmd, void *arg, void **result)
-{
-	int error;
-
-	switch (infocmd) {
-	case DDI_INFO_DEVT2DEVINFO:
-		*result = (void *)sdt_devi;
-		error = DDI_SUCCESS;
-		break;
-	case DDI_INFO_DEVT2INSTANCE:
-		*result = (void *)0;
-		error = DDI_SUCCESS;
-		break;
-	default:
-		error = DDI_FAILURE;
-	}
-	return (error);
-}
-
-/*ARGSUSED*/
-static int
-sdt_open(dev_t *devp, int flag, int otyp, cred_t *cred_p)
-{
-	return (0);
-}
-
-static struct cb_ops sdt_cb_ops = {
-	sdt_open,		/* open */
-	nodev,			/* close */
-	nulldev,		/* strategy */
-	nulldev,		/* print */
-	nodev,			/* dump */
-	nodev,			/* read */
-	nodev,			/* write */
-	nodev,			/* ioctl */
-	nodev,			/* devmap */
-	nodev,			/* mmap */
-	nodev,			/* segmap */
-	nochpoll,		/* poll */
-	ddi_prop_op,		/* cb_prop_op */
-	0,			/* streamtab  */
-	D_NEW | D_MP		/* Driver compatibility flag */
-};
-
-static struct dev_ops sdt_ops = {
-	DEVO_REV,		/* devo_rev, */
-	0,			/* refcnt  */
-	sdt_info,		/* get_dev_info */
-	nulldev,		/* identify */
-	nulldev,		/* probe */
-	sdt_attach,		/* attach */
-	sdt_detach,		/* detach */
-	nodev,			/* reset */
-	&sdt_cb_ops,		/* driver operations */
-	NULL,			/* bus operations */
-	nodev			/* dev power */
-};
-
-/*
- * Module linkage information for the kernel.
- */
-static struct modldrv modldrv = {
-	&mod_driverops,		/* module type (this is a pseudo driver) */
-	"Statically Defined Tracing",	/* name of module */
-	&sdt_ops,		/* driver ops */
-};
-
-static struct modlinkage modlinkage = {
-	MODREV_1,
-	(void *)&modldrv,
-	NULL
-};
-
-int
-_init(void)
-{
-	return (mod_install(&modlinkage));
-}
-
-int
-_info(struct modinfo *modinfop)
-{
-	return (mod_info(&modlinkage, modinfop));
-}
-
-int
-_fini(void)
-{
-	return (mod_remove(&modlinkage));
-}
-#else
 d_open_t _sdt_open;
 
 int _sdt_open(dev_t dev, int flags, int devtype, struct proc *p)
@@ -513,6 +462,10 @@ void sdt_init( void )
 		if (majdevno < 0) {
 			printf("sdt_init: failed to allocate a major number!\n");
 			gSDTInited = 0;
+			return;
+		}
+
+		if (dtrace_sdt_probes_restricted()) {
 			return;
 		}
 
@@ -626,7 +579,18 @@ void sdt_init( void )
 					strncpy(sdpd->sdpd_func, prev_name, len); /* NUL termination is ensured. */
 					
 					sdpd->sdpd_offset = *(unsigned long *)sym[i].n_value;
-					
+#if defined(__arm__)
+					/* PR8353094 - mask off thumb-bit */
+					sdpd->sdpd_offset &= ~0x1U;
+#elif defined(__arm64__)
+					sdpd->sdpd_offset &= ~0x1LU;
+#endif  /* __arm__ */
+
+#if 0
+					printf("sdt_init: sdpd_offset=0x%lx, n_value=0x%lx, name=%s\n",
+					    sdpd->sdpd_offset,  *(unsigned long *)sym[i].n_value, name);
+#endif
+
 					sdpd->sdpd_next = g_sdt_mach_module.sdt_probes;
 					g_sdt_mach_module.sdt_probes = sdpd;
 				} else {
@@ -651,7 +615,7 @@ sdt_provide_module(void *arg, struct modctl *ctl)
 #pragma unused(arg)
 	ASSERT(ctl != NULL);
 	ASSERT(dtrace_kernel_symbol_mode != DTRACE_KERNEL_SYMBOLS_NEVER);
-	lck_mtx_assert(&mod_lock, LCK_MTX_ASSERT_OWNED);
+	LCK_MTX_ASSERT(&mod_lock, LCK_MTX_ASSERT_OWNED);
 	
 	if (MOD_SDT_DONE(ctl))
 		return;
@@ -669,11 +633,11 @@ sdt_provide_module(void *arg, struct modctl *ctl)
 		}
 		g_sdt_mach_module.sdt_probes = NULL;
 	} else {
-		/* FIXME -- sdt in kext not yet supported */
+		/*
+		 * APPLE NOTE:  sdt probes for kexts not yet implemented
+		 */
 	}
 	
 	/* Need to mark this module as completed */
 	ctl->mod_flags |= MODCTL_SDT_PROBES_PROVIDED;
 }
-
-#endif /* __APPLE__ */

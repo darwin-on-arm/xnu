@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2008 Apple Computer, Inc. All rights reserved.
+ * Copyright (c) 2000-2016 Apple Computer, Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -72,10 +72,8 @@
 #ifndef	_IPC_IPC_PORT_H_
 #define _IPC_IPC_PORT_H_
 
-#if MACH_KERNEL_PRIVATE
+#ifdef MACH_KERNEL_PRIVATE
 
-#include <norma_vm.h>
-#include <mach_rt.h>
 #include <mach_assert.h>
 #include <mach_debug.h>
 
@@ -84,6 +82,7 @@
 #include <mach/kern_return.h>
 #include <mach/port.h>
 
+#include <kern/assert.h>
 #include <kern/kern_types.h>
 
 #include <ipc/ipc_types.h>
@@ -126,56 +125,89 @@ struct ipc_port {
 		ipc_port_timestamp_t timestamp;
 	} data;
 
-	ipc_kobject_t ip_kobject;
+	union {
+		ipc_kobject_t kobject;
+		ipc_importance_task_t imp_task;
+		ipc_port_t sync_qos_override_port;
+	} kdata;
+		
+	struct ipc_port *ip_nsrequest;
+	struct ipc_port *ip_pdrequest;
+	struct ipc_port_request *ip_requests;
+	union {
+		struct ipc_kmsg *premsg;
+		struct {
+			sync_qos_count_t sync_qos[THREAD_QOS_LAST];
+			sync_qos_count_t special_port_qos;
+		} qos_counter;
+	} kdata2;
+
+	mach_vm_address_t ip_context;
+
+	natural_t ip_sprequests:1,	/* send-possible requests outstanding */
+		  ip_spimportant:1,	/* ... at least one is importance donating */
+		  ip_impdonation:1,	/* port supports importance donation */
+		  ip_tempowner:1,	/* dont give donations to current receiver */
+		  ip_guarded:1,         /* port guarded (use context value as guard) */
+		  ip_strict_guard:1,	/* Strict guarding; Prevents user manipulation of context values directly */
+		  ip_specialreply:1,	/* port is a special reply port */
+		  ip_link_sync_qos:1,	/* link the special reply port to destination port */
+		  ip_impcount:24;	/* number of importance donations in nested queue */
 
 	mach_port_mscount_t ip_mscount;
 	mach_port_rights_t ip_srights;
 	mach_port_rights_t ip_sorights;
 
-	struct ipc_port *ip_nsrequest;
-	struct ipc_port *ip_pdrequest;
-	struct ipc_port_request *ip_requests;
-	boolean_t ip_sprequests;
-
-	unsigned int ip_pset_count;
-	struct ipc_kmsg *ip_premsg;
-	mach_vm_address_t ip_context;
-
-#if	NORMA_VM
-	/*
-	 *	These fields are needed for the use of XMM.
-	 *	Few ports need this information; it should
-	 *	be kept in XMM instead (TBD).  XXX
-	 */
-	long		ip_norma_xmm_object_refs;
-	struct ipc_port	*ip_norma_xmm_object;
-#endif
-
 #if	MACH_ASSERT
 #define	IP_NSPARES		4
 #define	IP_CALLSTACK_MAX	16
-	queue_chain_t	ip_port_links;	/* all allocated ports */
+/*	queue_chain_t	ip_port_links;*//* all allocated ports */
 	thread_t	ip_thread;	/* who made me?  thread context */
 	unsigned long	ip_timetrack;	/* give an idea of "when" created */
-	natural_t	ip_callstack[IP_CALLSTACK_MAX]; /* stack trace */
+	uintptr_t	ip_callstack[IP_CALLSTACK_MAX]; /* stack trace */
 	unsigned long	ip_spares[IP_NSPARES]; /* for debugging */
 #endif	/* MACH_ASSERT */
-	uintptr_t		alias;
-
-#if CONFIG_MACF_MACH
-        struct label    ip_label;
-#endif
 };
 
 
 #define ip_references		ip_object.io_references
 #define ip_bits			ip_object.io_bits
 
+#define ip_receiver_name	ip_messages.imq_receiver_name
+#define	ip_in_pset		ip_messages.imq_in_pset
+
 #define	ip_receiver		data.receiver
 #define	ip_destination		data.destination
 #define	ip_timestamp		data.timestamp
 
-#define ip_receiver_name	ip_messages.imq_receiver_name
+#define ip_kobject		kdata.kobject
+#define ip_imp_task		kdata.imp_task
+#define ip_sync_qos_override_port	kdata.sync_qos_override_port
+
+#define ip_premsg		kdata2.premsg
+#define ip_sync_qos		kdata2.qos_counter.sync_qos
+#define ip_special_port_qos     kdata2.qos_counter.special_port_qos
+
+#define port_sync_qos(port, i)	(IP_PREALLOC(port) ? (port)->ip_premsg->sync_qos[(i)] : (port)->ip_sync_qos[(i)])
+#define port_special_qos(port)  (IP_PREALLOC(port) ? (port)->ip_premsg->special_port_qos : (port)->ip_special_port_qos)
+
+#define set_port_sync_qos(port, i, value)               \
+MACRO_BEGIN                                             \
+if (IP_PREALLOC(port)) {                                \
+        (port)->ip_premsg->sync_qos[(i)] = (value);     \
+} else {                                                \
+        (port)->ip_sync_qos[(i)] = (value);             \
+}                                                       \
+MACRO_END
+
+#define set_port_special_qos(port, value)               \
+MACRO_BEGIN                                             \
+if (IP_PREALLOC(port)) {                                \
+        (port)->ip_premsg->special_port_qos = (value);  \
+} else {                                                \
+        (port)->ip_special_port_qos = (value);          \
+}                                                       \
+MACRO_END
 
 #define IP_NULL			IPC_PORT_NULL
 #define IP_DEAD			IPC_PORT_DEAD
@@ -185,10 +217,20 @@ struct ipc_port {
 #define	ip_lock_init(port)	io_lock_init(&(port)->ip_object)
 #define	ip_lock(port)		io_lock(&(port)->ip_object)
 #define	ip_lock_try(port)	io_lock_try(&(port)->ip_object)
+#define ip_lock_held_kdp(port)	io_lock_held_kdp(&(port)->ip_object)
 #define	ip_unlock(port)		io_unlock(&(port)->ip_object)
 
 #define	ip_reference(port)	io_reference(&(port)->ip_object)
 #define	ip_release(port)	io_release(&(port)->ip_object)
+
+/* get an ipc_port pointer from an ipc_mqueue pointer */
+#define	ip_from_mq(mq)		((struct ipc_port *)((void *)( \
+					(char *)(mq) - \
+					__offsetof(struct ipc_port, ip_messages)) \
+				))
+
+#define	ip_reference_mq(mq)	ip_reference(ip_from_mq(mq))
+#define	ip_release_mq(mq)	ip_release(ip_from_mq(mq))
 
 #define	ip_kotype(port)		io_kotype(&(port)->ip_object)
 
@@ -258,20 +300,7 @@ extern lck_attr_t 	ipc_lck_attr;
  *	when it is taken.
  */
 
-#if 1
-decl_lck_mtx_data(extern,ipc_port_multiple_lock_data)
-extern lck_mtx_ext_t	ipc_port_multiple_lock_data_ext;
-
-#define	ipc_port_multiple_lock_init()					\
-		lck_mtx_init_ext(&ipc_port_multiple_lock_data, &ipc_port_multiple_lock_data_ext, &ipc_lck_grp, &ipc_lck_attr)
-
-#define	ipc_port_multiple_lock()					\
-		lck_mtx_lock(&ipc_port_multiple_lock_data)
-
-#define	ipc_port_multiple_unlock()					\
-		lck_mtx_unlock(&ipc_port_multiple_lock_data)
-#else
-lck_spin_t ipc_port_multiple_lock_data;
+extern lck_spin_t ipc_port_multiple_lock_data;
 
 #define	ipc_port_multiple_lock_init()					\
 		lck_spin_init(&ipc_port_multiple_lock_data, &ipc_lck_grp, &ipc_lck_attr)
@@ -281,7 +310,6 @@ lck_spin_t ipc_port_multiple_lock_data;
 
 #define	ipc_port_multiple_unlock()					\
 		lck_spin_unlock(&ipc_port_multiple_lock_data)
-#endif
 
 /*
  *	The port timestamp facility provides timestamps
@@ -314,6 +342,17 @@ extern ipc_port_timestamp_t ipc_port_timestamp(void);
 				     (ipc_object_t *) (portp))
 
 /* Allocate a notification request slot */
+#if IMPORTANCE_INHERITANCE
+extern kern_return_t
+ipc_port_request_alloc(
+	ipc_port_t			port,
+	mach_port_name_t		name,
+	ipc_port_t			soright,
+	boolean_t			send_possible,
+	boolean_t			immediate,
+	ipc_port_request_index_t	*indexp,
+	boolean_t			*importantp);
+#else
 extern kern_return_t
 ipc_port_request_alloc(
 	ipc_port_t			port,
@@ -322,6 +361,7 @@ ipc_port_request_alloc(
 	boolean_t			send_possible,
 	boolean_t			immediate,
 	ipc_port_request_index_t	*indexp);
+#endif /* IMPORTANCE_INHERITANCE */
 
 /* Grow one of a port's tables of notifcation requests */
 extern kern_return_t ipc_port_request_grow(
@@ -341,10 +381,12 @@ extern ipc_port_t ipc_port_request_cancel(
 	ipc_port_request_index_t	index);
 
 /* Arm any delayed send-possible notification */
-extern void ipc_port_request_sparm(
-	ipc_port_t			port,
-	mach_port_name_t		name,
-	ipc_port_request_index_t	index);
+extern boolean_t ipc_port_request_sparm(
+	ipc_port_t                port,
+	mach_port_name_t          name,
+	ipc_port_request_index_t  index,
+	mach_msg_option_t         option,
+	mach_msg_priority_t       override);
 
 /* Macros for manipulating a port's dead name notificaiton requests */
 #define	ipc_port_request_rename(port, index, oname, nname)		\
@@ -384,9 +426,9 @@ MACRO_BEGIN								\
 MACRO_END
 
 /* Prepare a receive right for transmission/destruction */
-extern void ipc_port_clear_receiver(
+extern boolean_t ipc_port_clear_receiver(
 	ipc_port_t		port,
-	queue_t			links);
+	boolean_t		should_destroy);
 
 /* Initialize a newly-allocated port */
 extern void ipc_port_init(
@@ -424,6 +466,78 @@ extern boolean_t
 ipc_port_check_circularity(
 	ipc_port_t	port,
 	ipc_port_t	dest);
+
+#if IMPORTANCE_INHERITANCE
+
+enum {
+	IPID_OPTION_NORMAL       = 0, /* normal boost */
+	IPID_OPTION_SENDPOSSIBLE = 1, /* send-possible induced boost */
+};
+
+/* link the destination port with special reply port */
+kern_return_t
+ipc_port_link_special_reply_port_with_qos(
+	ipc_port_t special_reply_port,
+	ipc_port_t dest_port,
+	int qos);
+
+/* link the destination port with locked special reply port */
+void ipc_port_unlink_special_reply_port_locked(
+	ipc_port_t special_reply_port,
+	struct knote *kn,
+	uint8_t flags);
+
+/* Unlink the destination port from special reply port */
+void
+ipc_port_unlink_special_reply_port(
+	ipc_port_t special_reply_port,
+	uint8_t flags);
+
+#define IPC_PORT_UNLINK_SR_NONE                      0
+#define IPC_PORT_UNLINK_SR_CLEAR_SPECIAL_REPLY       0x1
+#define IPC_PORT_UNLINK_SR_ALLOW_SYNC_QOS_LINKAGE    0x2
+
+/* Get the max sync qos override index applied to the port */
+sync_qos_count_t
+ipc_port_get_max_sync_qos_index(
+	ipc_port_t	port);
+
+/* Apply qos delta to the port */
+boolean_t
+ipc_port_sync_qos_delta(
+	ipc_port_t        port,
+	sync_qos_count_t *sync_qos_delta_add,
+	sync_qos_count_t *sync_qos_delta_sub);
+
+/* Adjust the sync qos of the port and it's destination port */
+void
+ipc_port_adjust_sync_qos(
+	ipc_port_t port,
+	sync_qos_count_t *sync_qos_delta_add,
+	sync_qos_count_t *sync_qos_delta_sub);
+
+/* apply importance delta to port only */
+extern mach_port_delta_t
+ipc_port_impcount_delta(
+	ipc_port_t 		port,
+	mach_port_delta_t	delta,
+	ipc_port_t		base);
+
+/* apply importance delta to port, and return task importance for update */
+extern boolean_t
+ipc_port_importance_delta_internal(
+	ipc_port_t 		port,
+	natural_t		options,
+	mach_port_delta_t	*deltap,
+	ipc_importance_task_t	*imp_task);
+
+/* Apply an importance delta to a port and reflect change in receiver task */
+extern boolean_t
+ipc_port_importance_delta(
+	ipc_port_t 		port,
+	natural_t		options,
+	mach_port_delta_t	delta);
+#endif /* IMPORTANCE_INHERITANCE */
 
 /* Make a send-once notify port from a receive right */
 extern ipc_port_t ipc_port_lookup_notify(
@@ -463,7 +577,7 @@ extern void ipc_port_release(
 
 #endif /* KERNEL_PRIVATE */
 
-#if MACH_KERNEL_PRIVATE
+#ifdef MACH_KERNEL_PRIVATE
 
 /* Make a naked send-once right from a locked and active receive right */
 extern ipc_port_t ipc_port_make_sonce_locked(

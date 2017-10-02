@@ -32,11 +32,15 @@
 #include <sys/sysctl.h>
 #include <i386/cpuid.h>
 #include <i386/tsc.h>
+#include <i386/rtclock_protos.h>
 #include <i386/machine_routines.h>
+#include <i386/pal_routines.h>
 #include <i386/ucode.h>
 #include <kern/clock.h>
 #include <libkern/libkern.h>
 #include <i386/lapic.h>
+#include <i386/mp.h>
+
 
 static int
 _i386_cpu_info SYSCTL_HANDLER_ARGS
@@ -282,6 +286,7 @@ misc_interrupt_latency_max(__unused struct sysctl_oid *oidp, __unused void *arg1
 	return error;
 }
 
+#if DEVELOPMENT || DEBUG
 /*
  * Triggers a machine-check exception - for a suitably configured kernel only.
  */
@@ -300,6 +305,30 @@ misc_machine_check_panic(__unused struct sysctl_oid *oidp, __unused void *arg1, 
 	}
 	return error;
 }
+
+/*
+ * Triggers a non-responsive processor timeout panic - for a suitably configured kernel only.
+ */
+static uint64_t kernel_timeout_spin = 0;
+static int
+misc_kernel_timeout_spin(__unused struct sysctl_oid *oidp, __unused void *arg1, __unused int arg2, struct sysctl_req *req)
+{
+	uint64_t	old_value;
+	uint64_t	new_value;
+	int changed = 0, error;
+	char buf[128];
+	buf[0] = '\0';
+
+	absolutetime_to_nanoseconds(kernel_timeout_spin, &old_value);
+
+	error = sysctl_io_number(req, old_value, sizeof(uint64_t), &new_value, &changed);
+	if (error == 0 && changed) {
+		nanoseconds_to_absolutetime(((uint64_t)new_value), &kernel_timeout_spin);
+		kernel_spin(kernel_timeout_spin);
+	}
+	return error;
+}
+#endif /* DEVELOPMENT || DEBUG */
 
 
 SYSCTL_NODE(_machdep, OID_AUTO, cpu, CTLFLAG_RW|CTLFLAG_LOCKED, 0,
@@ -496,9 +525,15 @@ SYSCTL_NODE(_machdep_cpu, OID_AUTO, xsave, CTLFLAG_RW|CTLFLAG_LOCKED, 0,
 
 SYSCTL_PROC(_machdep_cpu_xsave, OID_AUTO, extended_state,
 	    CTLTYPE_INT | CTLFLAG_RD | CTLFLAG_LOCKED, 
-	    (void *)offsetof(cpuid_xsave_leaf_t, extended_state),
+	    (void *) 0,
 	    sizeof(cpuid_xsave_leaf_t),
-	    cpu_xsave, "IU", "XSAVE Extended State");
+	    cpu_xsave, "IU", "XSAVE Extended State Main Leaf");
+
+SYSCTL_PROC(_machdep_cpu_xsave, OID_AUTO, extended_state1,
+	    CTLTYPE_INT | CTLFLAG_RD | CTLFLAG_LOCKED, 
+	    (void *) sizeof(cpuid_xsave_leaf_t),
+	    sizeof(cpuid_xsave_leaf_t),
+	    cpu_xsave, "IU", "XSAVE Extended State Sub-leaf 1");
 
 
 SYSCTL_NODE(_machdep_cpu, OID_AUTO, arch_perf, CTLFLAG_RW|CTLFLAG_LOCKED, 0,
@@ -679,8 +714,23 @@ SYSCTL_PROC(_machdep_cpu_flex_ratio, OID_AUTO, max,
 	    cpu_flex_ratio_max, "I", "Flex ratio max (non-turbo)");
 
 SYSCTL_PROC(_machdep_cpu, OID_AUTO, ucupdate, 
-			CTLTYPE_INT | CTLFLAG_WR | CTLFLAG_LOCKED, 0, 0,
+	    CTLTYPE_INT | CTLFLAG_WR | CTLFLAG_LOCKED, 0, 0,
             cpu_ucode_update, "S", "Microcode update interface");
+
+SYSCTL_NODE(_machdep_cpu, OID_AUTO, tsc_ccc, CTLFLAG_RW|CTLFLAG_LOCKED, 0,
+	"TSC/CCC frequency information");
+
+SYSCTL_PROC(_machdep_cpu_tsc_ccc, OID_AUTO, numerator,
+	    CTLTYPE_INT | CTLFLAG_RD | CTLFLAG_LOCKED, 
+	    (void *)offsetof(i386_cpu_info_t, cpuid_tsc_leaf.numerator),
+	    sizeof(uint32_t),
+	    i386_cpu_info, "I", "Numerator of TSC/CCC ratio");
+
+SYSCTL_PROC(_machdep_cpu_tsc_ccc, OID_AUTO, denominator,
+	    CTLTYPE_INT | CTLFLAG_RD | CTLFLAG_LOCKED, 
+	    (void *)offsetof(i386_cpu_info_t, cpuid_tsc_leaf.denominator),
+	    sizeof(uint32_t),
+	    i386_cpu_info, "I", "Denominator of TSC/CCC ratio");
 
 static const uint32_t apic_timer_vector = (LAPIC_DEFAULT_INTERRUPT_BASE + LAPIC_TIMER_INTERRUPT);
 static const uint32_t apic_IPI_vector = (LAPIC_DEFAULT_INTERRUPT_BASE + LAPIC_INTERPROCESSOR_INTERRUPT);
@@ -688,8 +738,8 @@ static const uint32_t apic_IPI_vector = (LAPIC_DEFAULT_INTERRUPT_BASE + LAPIC_IN
 SYSCTL_NODE(_machdep, OID_AUTO, vectors, CTLFLAG_RD | CTLFLAG_LOCKED, 0,
 	"Interrupt vector assignments");
 
-SYSCTL_UINT     (_machdep_vectors, OID_AUTO, timer, CTLFLAG_RD | CTLFLAG_KERN | CTLFLAG_LOCKED, (uint32_t *)&apic_timer_vector, 0, "");
-SYSCTL_UINT     (_machdep_vectors, OID_AUTO, IPI, CTLFLAG_RD | CTLFLAG_KERN | CTLFLAG_LOCKED, (uint32_t *)&apic_IPI_vector, 0, "");
+SYSCTL_UINT     (_machdep_vectors, OID_AUTO, timer, CTLFLAG_RD | CTLFLAG_KERN | CTLFLAG_LOCKED, __DECONST(uint32_t *,&apic_timer_vector), 0, "");
+SYSCTL_UINT     (_machdep_vectors, OID_AUTO, IPI, CTLFLAG_RD | CTLFLAG_KERN | CTLFLAG_LOCKED, __DECONST(uint32_t *,&apic_IPI_vector), 0, "");
 
 uint64_t pmap_pv_hashlist_walks;
 uint64_t pmap_pv_hashlist_cnts;
@@ -730,10 +780,44 @@ SYSCTL_QUAD(_machdep_memmap, OID_AUTO, Other, CTLFLAG_RD|CTLFLAG_LOCKED, &firmwa
 
 SYSCTL_NODE(_machdep, OID_AUTO, tsc, CTLFLAG_RD|CTLFLAG_LOCKED, NULL, "Timestamp counter parameters");
 
-SYSCTL_QUAD(_machdep_tsc, OID_AUTO, frequency, CTLFLAG_RD|CTLFLAG_LOCKED, &tscFreq, "");
+SYSCTL_QUAD(_machdep_tsc, OID_AUTO, frequency,
+	CTLFLAG_RD|CTLFLAG_LOCKED, &tscFreq, "");
+
+extern uint32_t deep_idle_rebase;
+SYSCTL_UINT(_machdep_tsc, OID_AUTO, deep_idle_rebase,
+	CTLFLAG_RD|CTLFLAG_LOCKED, &deep_idle_rebase, 0, "");
+SYSCTL_QUAD(_machdep_tsc, OID_AUTO, at_boot,
+	CTLFLAG_RD|CTLFLAG_LOCKED, &tsc_at_boot, "");
+SYSCTL_QUAD(_machdep_tsc, OID_AUTO, rebase_abs_time,
+	CTLFLAG_RD|CTLFLAG_LOCKED, &tsc_rebase_abs_time, "");
+
+SYSCTL_NODE(_machdep_tsc, OID_AUTO, nanotime,
+	CTLFLAG_RD|CTLFLAG_LOCKED, NULL, "TSC to ns conversion");
+SYSCTL_QUAD(_machdep_tsc_nanotime, OID_AUTO, tsc_base,
+	CTLFLAG_RD | CTLFLAG_LOCKED,
+	__DECONST(uint64_t *, &pal_rtc_nanotime_info.tsc_base), "");
+SYSCTL_QUAD(_machdep_tsc_nanotime, OID_AUTO, ns_base,
+	CTLFLAG_RD | CTLFLAG_LOCKED,
+	__DECONST(uint64_t *, &pal_rtc_nanotime_info.ns_base), "");
+SYSCTL_UINT(_machdep_tsc_nanotime, OID_AUTO, scale,
+	CTLFLAG_RD | CTLFLAG_LOCKED,
+	__DECONST(uint32_t *, &pal_rtc_nanotime_info.scale), 0, "");
+SYSCTL_UINT(_machdep_tsc_nanotime, OID_AUTO, shift,
+	CTLFLAG_RD | CTLFLAG_LOCKED,
+	__DECONST(uint32_t *, &pal_rtc_nanotime_info.shift), 0, "");
+SYSCTL_UINT(_machdep_tsc_nanotime, OID_AUTO, generation,
+	CTLFLAG_RD | CTLFLAG_LOCKED,
+	__DECONST(uint32_t *, &pal_rtc_nanotime_info.generation), 0, "");
 
 SYSCTL_NODE(_machdep, OID_AUTO, misc, CTLFLAG_RW|CTLFLAG_LOCKED, 0,
 	"Miscellaneous x86 kernel parameters");
+
+#if (DEVELOPMENT || DEBUG)
+extern uint32_t mp_interrupt_watchdog_events;
+SYSCTL_UINT(_machdep_misc, OID_AUTO, interrupt_watchdog_events,
+	CTLFLAG_RW|CTLFLAG_LOCKED, &mp_interrupt_watchdog_events, 0, "");
+#endif
+
 
 SYSCTL_PROC(_machdep_misc, OID_AUTO, panic_restart_timeout,
 	    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_LOCKED, 
@@ -745,8 +829,145 @@ SYSCTL_PROC(_machdep_misc, OID_AUTO, interrupt_latency_max,
 	    0, 0,
 	    misc_interrupt_latency_max, "A", "Maximum Interrupt latency");
 
+#if DEVELOPMENT || DEBUG
 SYSCTL_PROC(_machdep_misc, OID_AUTO, machine_check_panic,
 	    CTLTYPE_STRING | CTLFLAG_RW | CTLFLAG_LOCKED, 
 	    0, 0,
 	    misc_machine_check_panic, "A", "Machine-check exception test");
 
+SYSCTL_PROC(_machdep_misc, OID_AUTO, kernel_timeout_spin,
+	    CTLTYPE_QUAD | CTLFLAG_RW | CTLFLAG_LOCKED, 
+	    0, sizeof(kernel_timeout_spin),
+	    misc_kernel_timeout_spin, "Q", "Kernel timeout panic test");
+
+SYSCTL_QUAD(_machdep, OID_AUTO, reportphyreadabs,
+		CTLFLAG_KERN | CTLFLAG_RW | CTLFLAG_LOCKED,
+		&reportphyreaddelayabs, "");
+SYSCTL_INT(_machdep, OID_AUTO, reportphyreadosbt,
+		CTLFLAG_KERN | CTLFLAG_RW | CTLFLAG_LOCKED,
+		&reportphyreadosbt, 0, "");
+SYSCTL_INT(_machdep, OID_AUTO, phyreaddelaypanic,
+		CTLFLAG_KERN | CTLFLAG_RW | CTLFLAG_LOCKED,
+		&phyreadpanic, 0, "");
+
+extern int pmap_pagezero_mitigation;
+extern int pmap_asserts_enabled, pmap_asserts_traced;
+/* On DEV/DEBUG kernels, clear this to disable the SMAP emulation
+ * (address space disconnect) for pagezero-less processes.
+ */
+SYSCTL_INT(_machdep, OID_AUTO, pmap_pagezero_mitigation,
+    CTLFLAG_KERN | CTLFLAG_RW | CTLFLAG_LOCKED,
+    &pmap_pagezero_mitigation, 0, "");
+/* Toggle pmap assertions */
+SYSCTL_INT(_machdep, OID_AUTO, pmap_asserts,
+    CTLFLAG_KERN | CTLFLAG_RW | CTLFLAG_LOCKED,
+    &pmap_asserts_enabled, 0, "");
+/* Transform pmap assertions into kernel trace terminations */
+SYSCTL_INT(_machdep, OID_AUTO, pmap_asserts_traced,
+    CTLFLAG_KERN | CTLFLAG_RW | CTLFLAG_LOCKED,
+    &pmap_asserts_traced, 0, "");
+
+static int
+misc_svisor_read(__unused struct sysctl_oid *oidp, __unused void *arg1, __unused int arg2, struct sysctl_req *req)
+{
+	uint64_t new_value = 0, old_value = 0;
+	int changed = 0, error;
+
+	error = sysctl_io_number(req, old_value, sizeof(uint64_t), &new_value, &changed);
+	if ((error == 0) && changed) {
+		volatile uint32_t *raddr = (uint32_t *) new_value;
+		printf("Supervisor: value at 0x%llx is 0x%x\n", new_value, *raddr);
+	}
+	return error;
+}
+
+SYSCTL_PROC(_machdep_misc, OID_AUTO, misc_svisor_read,
+	    CTLTYPE_QUAD | CTLFLAG_RW | CTLFLAG_LOCKED, 
+	    0, 0,
+	    misc_svisor_read, "I", "supervisor mode read");
+
+#endif /* DEVELOPMENT || DEBUG */
+
+extern void timer_queue_trace_cpu(int);
+static int
+misc_timer_queue_trace(__unused struct sysctl_oid *oidp, __unused void *arg1, __unused int arg2, struct sysctl_req *req)
+{
+	int changed = 0, error;
+	char buf[128];
+	buf[0] = '\0';
+
+	error = sysctl_io_string(req, buf, sizeof(buf), 0, &changed);
+
+	if (error == 0 && changed) {
+		timer_queue_trace_cpu(0);
+	}
+	return error;
+}
+
+SYSCTL_PROC(_machdep_misc, OID_AUTO, timer_queue_trace,
+	    CTLTYPE_STRING | CTLFLAG_RW | CTLFLAG_LOCKED, 
+	    0, 0,
+	    misc_timer_queue_trace, "A", "Cut timer queue tracepoint");
+
+extern long NMI_count;
+extern void NMI_cpus(void);
+static int
+misc_nmis(__unused struct sysctl_oid *oidp, __unused void *arg1, __unused int arg2, struct sysctl_req *req)
+{
+	int new = 0, old = 0, changed = 0, error;
+
+	old = NMI_count;
+
+	error = sysctl_io_number(req, old, sizeof(int), &new, &changed);
+	if (error == 0 && changed) {
+		NMI_cpus();
+	}
+
+	return error;
+}
+
+SYSCTL_PROC(_machdep_misc, OID_AUTO, nmis,
+	    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_LOCKED, 
+	    0, 0,
+	    misc_nmis, "I", "Report/increment NMI count");
+
+/* Parameters related to timer coalescing tuning, to be replaced
+ * with a dedicated systemcall in the future.
+ */
+/* Enable processing pending timers in the context of any other interrupt */
+SYSCTL_INT(_kern, OID_AUTO, interrupt_timer_coalescing_enabled,
+		CTLFLAG_KERN | CTLFLAG_RW | CTLFLAG_LOCKED,
+		&interrupt_timer_coalescing_enabled, 0, "");
+/* Upon entering idle, process pending timers with HW deadlines
+ * this far in the future.
+ */
+SYSCTL_INT(_kern, OID_AUTO, timer_coalesce_idle_entry_hard_deadline_max,
+		CTLFLAG_KERN | CTLFLAG_RW | CTLFLAG_LOCKED,
+		&idle_entry_timer_processing_hdeadline_threshold, 0, "");
+
+/* Track potentially expensive eager timer evaluations on QoS tier
+ * switches.
+ */
+extern uint32_t ml_timer_eager_evaluations;
+
+SYSCTL_INT(_machdep, OID_AUTO, eager_timer_evaluations,
+		CTLFLAG_KERN | CTLFLAG_RW | CTLFLAG_LOCKED,
+		&ml_timer_eager_evaluations, 0, "");
+
+extern uint64_t ml_timer_eager_evaluation_max;
+
+SYSCTL_QUAD(_machdep, OID_AUTO, eager_timer_evaluation_max,
+		CTLFLAG_KERN | CTLFLAG_RW | CTLFLAG_LOCKED,
+		&ml_timer_eager_evaluation_max, "");
+extern uint64_t x86_isr_fp_simd_use;
+SYSCTL_QUAD(_machdep, OID_AUTO, x86_fp_simd_isr_uses,
+		CTLFLAG_KERN | CTLFLAG_RW | CTLFLAG_LOCKED,
+		&x86_isr_fp_simd_use, "");
+#if DEVELOPMENT || DEBUG
+
+extern int plctrace_enabled;
+
+SYSCTL_INT(_machdep, OID_AUTO, pltrace,
+		CTLFLAG_KERN | CTLFLAG_RW | CTLFLAG_LOCKED,
+		&plctrace_enabled, 0, "");
+#endif /* DEVELOPMENT || DEBUG */

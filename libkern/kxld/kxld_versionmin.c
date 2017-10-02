@@ -42,7 +42,7 @@ kxld_versionmin_init_from_macho(KXLDversionmin *versionmin, struct version_min_c
 {
     check(versionmin);
     check(src);
-    check((src->cmd == LC_VERSION_MIN_MACOSX) || (src->cmd == LC_VERSION_MIN_IPHONEOS));
+    check((src->cmd == LC_VERSION_MIN_MACOSX) || (src->cmd == LC_VERSION_MIN_IPHONEOS) || (src->cmd == LC_VERSION_MIN_TVOS) || (src->cmd == LC_VERSION_MIN_WATCHOS));
 
     switch (src->cmd) {
         case LC_VERSION_MIN_MACOSX:
@@ -51,9 +51,40 @@ kxld_versionmin_init_from_macho(KXLDversionmin *versionmin, struct version_min_c
         case LC_VERSION_MIN_IPHONEOS:
             versionmin->platform = kKxldVersionMiniPhoneOS;
             break;
+        case LC_VERSION_MIN_TVOS:
+            versionmin->platform = kKxldVersionMinAppleTVOS;
+            break;
+        case LC_VERSION_MIN_WATCHOS:
+            versionmin->platform = kKxldVersionMinWatchOS;
+            break;
     }
 
     versionmin->version = src->version;
+    versionmin->has_versionmin = TRUE;
+}
+
+void
+kxld_versionmin_init_from_build_cmd(KXLDversionmin *versionmin, struct build_version_command *src)
+{
+    check(versionmin);
+    check(src);
+    switch (src->platform) {
+    case PLATFORM_MACOS:
+        versionmin->platform = kKxldVersionMinMacOSX;
+        break;
+    case PLATFORM_IOS:
+        versionmin->platform = kKxldVersionMiniPhoneOS;
+        break;
+    case PLATFORM_TVOS:
+        versionmin->platform = kKxldVersionMinAppleTVOS;
+        break;
+    case PLATFORM_WATCHOS:
+        versionmin->platform = kKxldVersionMinWatchOS;
+        break;
+    default:
+        return;
+    }
+    versionmin->version = src->minos;
     versionmin->has_versionmin = TRUE;
 }
 
@@ -68,8 +99,9 @@ kxld_versionmin_clear(KXLDversionmin *versionmin)
 /*******************************************************************************
 *******************************************************************************/
 u_long
-kxld_versionmin_get_macho_header_size(void)
+kxld_versionmin_get_macho_header_size(__unused const KXLDversionmin *versionmin)
 {
+    /* TODO: eventually we can just use struct build_version_command */
     return sizeof(struct version_min_command);
 }
 
@@ -86,6 +118,7 @@ kxld_versionmin_export_macho(const KXLDversionmin *versionmin, u_char *buf,
     check(buf);
     check(header_offset);
 
+
     require_action(sizeof(*versionminhdr) <= header_size - *header_offset, finish,
         rval=KERN_FAILURE);
     versionminhdr = (struct version_min_command *) ((void *) (buf + *header_offset));
@@ -99,6 +132,14 @@ kxld_versionmin_export_macho(const KXLDversionmin *versionmin, u_char *buf,
         case kKxldVersionMiniPhoneOS:
             versionminhdr->cmd = LC_VERSION_MIN_IPHONEOS;
             break;
+        case kKxldVersionMinAppleTVOS:
+            versionminhdr->cmd = LC_VERSION_MIN_TVOS;
+            break;
+        case kKxldVersionMinWatchOS:
+            versionminhdr->cmd = LC_VERSION_MIN_WATCHOS;
+            break;
+        default:
+            goto finish;
     }
     versionminhdr->cmdsize = (uint32_t) sizeof(*versionminhdr);
     versionminhdr->version = versionmin->version;
@@ -107,6 +148,6 @@ kxld_versionmin_export_macho(const KXLDversionmin *versionmin, u_char *buf,
     rval = KERN_SUCCESS;
 
 finish:
-    return rval;
+   return rval;
 }
 

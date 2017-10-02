@@ -71,7 +71,6 @@
  */
 
 #include <mach_debug.h>
-#include <mach_rt.h>
 
 #include <mach/port.h>
 #include <mach/message.h>
@@ -79,6 +78,7 @@
 
 #include <kern/kern_types.h>
 #include <kern/kalloc.h>
+#include <kern/simple_lock.h>
 #include <kern/mach_param.h>
 #include <kern/ipc_host.h>
 #include <kern/ipc_mig.h>
@@ -100,9 +100,10 @@
 #include <ipc/ipc_hash.h>
 #include <ipc/ipc_init.h>
 #include <ipc/ipc_table.h>
+#include <ipc/ipc_voucher.h>
+#include <ipc/ipc_importance.h>
 
 #include <mach/machine/ndr_def.h>   /* NDR_record */
-#include <ipc/ipc_labelh.h>
 
 vm_map_t ipc_kernel_map;
 vm_size_t ipc_kernel_map_size = 1024 * 1024;
@@ -190,17 +191,6 @@ ipc_bootstrap(void)
 			      "ipc kmsgs");
 	zone_change(ipc_kmsg_zone, Z_CALLERACCT, FALSE);
 
-#if CONFIG_MACF_MACH
-	ipc_labelh_zone = 
-		zinit(sizeof(struct ipc_labelh),
-		      ipc_port_max * sizeof(struct ipc_labelh),
-		      sizeof(struct ipc_labelh),
-		      "label handles");
-	/* cant charge callers for label allocations (port refs passed) */
-	zone_change(ipc_labelh_zone, Z_CALLERACCT, FALSE);
-
-#endif
-
 	/* create special spaces */
 
 	kr = ipc_space_create_special(&ipc_space_kernel);
@@ -217,9 +207,13 @@ ipc_bootstrap(void)
 #endif
 	mig_init();
 	ipc_table_init();
+	ipc_voucher_init();
+
+#if IMPORTANCE_INHERITANCE
+	ipc_importance_init();
+#endif
 
 	semaphore_init();
-	lock_set_init();
 	mk_timer_init();
 	host_notify_init();
 }
@@ -227,7 +221,7 @@ ipc_bootstrap(void)
 /* 
  * XXX tunable, belongs in mach.message.h 
  */
-#define MSG_OOL_SIZE_SMALL_MAX 4096
+#define MSG_OOL_SIZE_SMALL_MAX (2*PAGE_SIZE)
 vm_size_t msg_ool_size_small;
 
 /*
@@ -243,13 +237,21 @@ ipc_init(void)
 	vm_offset_t min;
 
 	retval = kmem_suballoc(kernel_map, &min, ipc_kernel_map_size,
-			       TRUE, VM_FLAGS_ANYWHERE, &ipc_kernel_map);
+			       TRUE,
+			       (VM_FLAGS_ANYWHERE),
+			       VM_MAP_KERNEL_FLAGS_NONE,
+			       VM_KERN_MEMORY_IPC,
+			       &ipc_kernel_map);
 
 	if (retval != KERN_SUCCESS)
 		panic("ipc_init: kmem_suballoc of ipc_kernel_map failed");
 
 	retval = kmem_suballoc(kernel_map, &min, ipc_kernel_copy_map_size,
-			       TRUE, VM_FLAGS_ANYWHERE, &ipc_kernel_copy_map);
+			       TRUE,
+			       (VM_FLAGS_ANYWHERE),
+			       VM_MAP_KERNEL_FLAGS_NONE,
+			       VM_KERN_MEMORY_IPC,
+			       &ipc_kernel_copy_map);
 
 	if (retval != KERN_SUCCESS)
 		panic("ipc_init: kmem_suballoc of ipc_kernel_copy_map failed");
@@ -269,6 +271,24 @@ ipc_init(void)
 	else {
 		msg_ool_size_small = MSG_OOL_SIZE_SMALL_MAX;
 	}
+	/* account for overhead to avoid spilling over a page */
+	msg_ool_size_small -= cpy_kdata_hdr_sz;
 
 	ipc_host_init();
+
+}
+
+
+/*
+ *	Routine:	ipc_thread_call_init
+ *	Purpose:
+ *		Initialize IPC logic that needs thread call support
+ */
+
+void
+ipc_thread_call_init(void)
+{
+#if IMPORTANCE_INHERITANCE
+	ipc_importance_thread_call_init();
+#endif
 }

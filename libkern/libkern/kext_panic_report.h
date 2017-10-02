@@ -48,12 +48,11 @@ typedef struct subs_entry_t {
  * be in descending frequency order.
  */
 subs_entry_t kext_identifier_prefix_subs[] = {
-#ifndef __arm__
     { "com.apple.driver.",   '>' },
     { "com.apple.iokit.",    '|' },
     { "com.apple.security.", '$' },
     { "com.apple.",          '@' },
-#endif
+
     { (char *)0,             '\0' }
 };
 
@@ -64,7 +63,6 @@ subs_entry_t kext_identifier_prefix_subs[] = {
  * groups containing same prefix, in descending length order.
  */
 subs_entry_t kext_identifier_substring_subs[] = {
-#ifndef __arm__
     { "AppleUSB",   'U' },
     { "Apple",      'A' },
     { "Family",     'F' },
@@ -76,7 +74,7 @@ subs_entry_t kext_identifier_substring_subs[] = {
     // CHUD kexts, typically not on user installs
     { "Profile",    'P' },
     { "Action",     'a' },   // maybe K if we want to stick to all-caps
-#endif
+
     { (char *)0,    '\0' }
 };
 

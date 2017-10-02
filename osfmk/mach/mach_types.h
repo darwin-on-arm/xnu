@@ -86,8 +86,10 @@
 #include <mach/message.h>
 #include <mach/exception_types.h>
 #include <mach/port.h>
+#include <mach/mach_voucher_types.h>
 #include <mach/processor_info.h>
 #include <mach/task_info.h>
+#include <mach/task_inspect.h>
 #include <mach/task_policy.h>
 #include <mach/task_special_ports.h>
 #include <mach/thread_info.h>
@@ -106,6 +108,7 @@
 #include <mach/vm_types.h>
 #include <mach/vm_region.h>
 #include <mach/kmod.h>
+#include <mach/dyld_kernel.h>
 
 #ifdef	KERNEL
 
@@ -115,9 +118,10 @@
  * If we are in the kernel, then pick up the kernel definitions for
  * the basic mach types.
  */
-typedef struct task			*task_t, *task_name_t;
-typedef struct thread		*thread_t, *thread_act_t;
-typedef struct ipc_space		*ipc_space_t;
+typedef struct task			*task_t, *task_name_t, *task_inspect_t, *task_suspension_token_t;
+typedef struct thread		*thread_t, *thread_act_t, *thread_inspect_t;
+typedef struct ipc_space		*ipc_space_t, *ipc_space_inspect_t;
+typedef struct coalition		*coalition_t;
 typedef struct host			*host_t;
 typedef struct host			*host_priv_t;
 typedef struct host			*host_security_t;
@@ -125,11 +129,17 @@ typedef struct processor		*processor_t;
 typedef struct processor_set		*processor_set_t;
 typedef struct processor_set		*processor_set_control_t;
 typedef struct semaphore 		*semaphore_t;
-typedef struct lock_set 		*lock_set_t;
 typedef struct ledger 			*ledger_t;
 typedef	struct alarm			*alarm_t;
 typedef	struct clock			*clock_serv_t;
 typedef	struct clock			*clock_ctrl_t;
+
+
+/*
+ * OBSOLETE: lock_set interfaces are obsolete.
+ */
+typedef struct lock_set 		*lock_set_t;
+struct lock_set ;
 
 #ifndef	MACH_KERNEL_PRIVATE
 
@@ -141,7 +151,6 @@ struct host ;
 struct processor ;
 struct processor_set ;
 struct semaphore ;
-struct lock_set ;
 struct ledger ;
 struct alarm ;
 struct clock ;
@@ -158,9 +167,14 @@ __END_DECLS
  */
 typedef mach_port_t		task_t;
 typedef mach_port_t		task_name_t;
+typedef mach_port_t		task_inspect_t;
+typedef mach_port_t		task_suspension_token_t;
 typedef mach_port_t		thread_t;
 typedef	mach_port_t		thread_act_t;
+typedef mach_port_t		thread_inspect_t;
 typedef mach_port_t		ipc_space_t;
+typedef mach_port_t		ipc_space_inspect_t;
+typedef mach_port_t		coalition_t;
 typedef mach_port_t		host_t;
 typedef mach_port_t		host_priv_t;
 typedef mach_port_t		host_security_t;
@@ -244,10 +258,14 @@ typedef exception_handler_array_t exception_port_arrary_t;
 
 #define TASK_NULL		((task_t) 0)
 #define TASK_NAME_NULL		((task_name_t) 0)
+#define TASK_INSPECT_NULL		((task_inspect_t) 0)
 #define THREAD_NULL		((thread_t) 0)
+#define THREAD_INSPECT_NULL	((thread_inspect_t)0)
 #define TID_NULL		((uint64_t) 0)
 #define THR_ACT_NULL 		((thread_act_t) 0)
 #define IPC_SPACE_NULL		((ipc_space_t) 0)
+#define IPC_SPACE_INSPECT_NULL	((ipc_space_inspect_t) 0)
+#define COALITION_NULL		((coalition_t) 0)
 #define HOST_NULL		((host_t) 0)
 #define HOST_PRIV_NULL		((host_priv_t)0)
 #define HOST_SECURITY_NULL	((host_security_t)0)
@@ -265,7 +283,7 @@ typedef natural_t	ledger_item_t;
 #define LEDGER_ITEM_INFINITY	((ledger_item_t) (~0))
 
 typedef int64_t 		ledger_amount_t;
-#define LEDGER_LIMIT_INFINITY ((ledger_amount_t)(((uint64_t)1 << 63) - 1))
+#define LEDGER_LIMIT_INFINITY   ((ledger_amount_t)((1ULL << 63) - 1))
 
 typedef mach_vm_offset_t	*emulation_vector_t;
 typedef char			*user_subsystem_t;

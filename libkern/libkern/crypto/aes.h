@@ -41,7 +41,11 @@ extern "C"
 
 //Unholy HACK: this works because we know the size of the context for every
 //possible corecrypto implementation is less than this.
+#if defined(__ARM_NEON__) && !defined(__arm64__)        // for expanded keys in bit slice format
+#define AES_CBC_CTX_MAX_SIZE (ccn_sizeof_size(sizeof(void *)) + ccn_sizeof_size(AES_BLOCK_SIZE) + ccn_sizeof_size(64*4) + (14-1)*128+32 )
+#else
 #define AES_CBC_CTX_MAX_SIZE (ccn_sizeof_size(sizeof(void *)) + ccn_sizeof_size(AES_BLOCK_SIZE) + ccn_sizeof_size(64*4))
+#endif
 
 typedef struct{
 	cccbc_ctx_decl(AES_CBC_CTX_MAX_SIZE, ctx);
@@ -73,7 +77,7 @@ aes_rval aes_encrypt_key(const unsigned char *key, int key_len, aes_encrypt_ctx 
 aes_rval aes_encrypt_key128(const unsigned char *key, aes_encrypt_ctx cx[1]);
 aes_rval aes_encrypt_key256(const unsigned char *key, aes_encrypt_ctx cx[1]);
 
-#if defined (__i386__) || defined (__x86_64__)
+#if defined (__i386__) || defined (__x86_64__) || defined (__arm64__)
 aes_rval aes_encrypt(const unsigned char *in, unsigned char *out, aes_encrypt_ctx cx[1]);
 #endif
 
@@ -85,12 +89,32 @@ aes_rval aes_decrypt_key(const unsigned char *key, int key_len, aes_decrypt_ctx 
 aes_rval aes_decrypt_key128(const unsigned char *key, aes_decrypt_ctx cx[1]);
 aes_rval aes_decrypt_key256(const unsigned char *key, aes_decrypt_ctx cx[1]);
 
-#if defined (__i386__) || defined (__x86_64__)
+#if defined (__i386__) || defined (__x86_64__) || defined (__arm64__)
 aes_rval aes_decrypt(const unsigned char *in, unsigned char *out, aes_decrypt_ctx cx[1]);
 #endif
 
 aes_rval aes_decrypt_cbc(const unsigned char *in_blk, const unsigned char *in_iv, unsigned int num_blk,
 					 unsigned char *out_blk, aes_decrypt_ctx cx[1]);
+
+aes_rval aes_encrypt_key_gcm(const unsigned char *key, int key_len, ccgcm_ctx *ctx);
+aes_rval aes_encrypt_key_with_iv_gcm(const unsigned char *key, int key_len, const unsigned char *in_iv, ccgcm_ctx *ctx);
+aes_rval aes_encrypt_set_iv_gcm(const unsigned char *in_iv, unsigned int len, ccgcm_ctx *ctx);
+aes_rval aes_encrypt_reset_gcm(ccgcm_ctx *ctx);
+aes_rval aes_encrypt_inc_iv_gcm(unsigned char *out_iv, ccgcm_ctx *ctx);
+aes_rval aes_encrypt_aad_gcm(const unsigned char *aad, unsigned int aad_bytes, ccgcm_ctx *ctx);
+aes_rval aes_encrypt_gcm(const unsigned char *in_blk, unsigned int num_bytes, unsigned char *out_blk, ccgcm_ctx *ctx);
+aes_rval aes_encrypt_finalize_gcm(unsigned char *tag, unsigned int tag_bytes, ccgcm_ctx *ctx);
+unsigned aes_encrypt_get_ctx_size_gcm(void);
+
+aes_rval aes_decrypt_key_gcm(const unsigned char *key, int key_len, ccgcm_ctx *ctx);
+aes_rval aes_decrypt_key_with_iv_gcm(const unsigned char *key, int key_len, const unsigned char *in_iv, ccgcm_ctx *ctx);
+aes_rval aes_decrypt_set_iv_gcm(const unsigned char *in_iv, unsigned int len, ccgcm_ctx *ctx);
+aes_rval aes_decrypt_reset_gcm(ccgcm_ctx *ctx);
+aes_rval aes_decrypt_inc_iv_gcm(unsigned char *out_iv, ccgcm_ctx *ctx);
+aes_rval aes_decrypt_aad_gcm(const unsigned char *aad, unsigned int aad_bytes, ccgcm_ctx *ctx);
+aes_rval aes_decrypt_gcm(const unsigned char *in_blk, unsigned int num_bytes, unsigned char *out_blk, ccgcm_ctx *ctx);
+aes_rval aes_decrypt_finalize_gcm(unsigned char *tag, unsigned int tag_bytes, ccgcm_ctx *ctx);
+unsigned aes_decrypt_get_ctx_size_gcm(void);
 
 #if defined(__cplusplus)
 }

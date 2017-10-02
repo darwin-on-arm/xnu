@@ -42,14 +42,6 @@ OSMetaClassDefineReservedUnused(OSOrderedSet, 5);
 OSMetaClassDefineReservedUnused(OSOrderedSet, 6);
 OSMetaClassDefineReservedUnused(OSOrderedSet, 7);
 
-#if OSALLOCDEBUG
-extern "C" {
-    extern int debug_container_malloc_size;
-};
-#define ACCUMSIZE(s) do { debug_container_malloc_size += (s); } while(0)
-#else
-#define ACCUMSIZE(s)
-#endif
 
 struct _Element {
     const OSMetaClassBase *		obj;
@@ -63,13 +55,16 @@ bool OSOrderedSet::
 initWithCapacity(unsigned int inCapacity,
                  OSOrderFunction inOrdering, void *inOrderingRef)
 {
-    int size;
+    unsigned int size;
 
     if (!super::init())
         return false;
 
+    if (inCapacity > (UINT_MAX / sizeof(_Element)))
+        return false;
+
     size = sizeof(_Element) * inCapacity;
-    array = (_Element *) kalloc(size);
+    array = (_Element *) kalloc_container(size);
     if (!array)
         return false;
 
@@ -80,9 +75,9 @@ initWithCapacity(unsigned int inCapacity,
     orderingRef = inOrderingRef;
 
     bzero(array, size);
-    ACCUMSIZE(size);
+    OSCONTAINER_ACCUMSIZE(size);
 
-    return this;	
+    return true;	
 }
 
 OSOrderedSet * OSOrderedSet::
@@ -106,7 +101,7 @@ void OSOrderedSet::free()
 
     if (array) {
         kfree(array, sizeof(_Element) * capacity);
-        ACCUMSIZE( -(sizeof(_Element) * capacity) );
+        OSCONTAINER_ACCUMSIZE( -(sizeof(_Element) * capacity) );
     }
 
     super::free();
@@ -125,27 +120,35 @@ unsigned int OSOrderedSet::setCapacityIncrement(unsigned int increment)
 unsigned int OSOrderedSet::ensureCapacity(unsigned int newCapacity)
 {
     _Element *newArray;
-    int oldSize, newSize;
+    unsigned int finalCapacity;
+    vm_size_t    oldSize, newSize;
 
     if (newCapacity <= capacity)
         return capacity;
 
     // round up
-    newCapacity = (((newCapacity - 1) / capacityIncrement) + 1)
+    finalCapacity = (((newCapacity - 1) / capacityIncrement) + 1)
                 * capacityIncrement;
-    newSize = sizeof(_Element) * newCapacity;
+    if ((finalCapacity < newCapacity) ||
+        (finalCapacity > (UINT_MAX / sizeof(_Element)))) {
+        return capacity;
+    }
+    newSize = sizeof(_Element) * finalCapacity;
 
-    newArray = (_Element *) kalloc(newSize);
+    newArray = (_Element *) kallocp_container(&newSize);
     if (newArray) {
+        // use all of the actual allocation size
+        finalCapacity = newSize / sizeof(_Element);
+
         oldSize = sizeof(_Element) * capacity;
 
-        ACCUMSIZE(newSize - oldSize);
+        OSCONTAINER_ACCUMSIZE(((size_t)newSize) - ((size_t)oldSize));
 
         bcopy(array, newArray, oldSize);
         bzero(&newArray[capacity], newSize - oldSize);
         kfree(array, oldSize);
         array = newArray;
-        capacity = newCapacity;
+        capacity = finalCapacity;
     }
 
     return capacity;

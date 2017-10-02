@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011 Apple Inc. All rights reserved.
+ * Copyright (c) 2011-2013 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -38,6 +38,7 @@
 #include <netinet/in.h>
 #include <netinet/in_systm.h>
 #include <net/if.h>
+#include <net/dlil.h>
 #include <netinet/ip.h>
 #include <netinet/ip_var.h>
 #include <netinet/in_var.h>
@@ -52,7 +53,6 @@
 unsigned int lrocount = 0; /* A counter used for debugging only */
 unsigned int lro_seq_outoforder = 0; /* Counter for debugging */
 unsigned int lro_seq_mismatch = 0; /* Counter for debugging */
-unsigned int lro_eject_req = 0; /* Counter for tracking flow ejections */
 unsigned int lro_flushes = 0; /* Counter for tracking number of flushes */
 unsigned int lro_single_flushes = 0;
 unsigned int lro_double_flushes = 0;
@@ -93,10 +93,9 @@ static void	tcp_lro_flush_flows(void);
 static void	tcp_lro_sched_timer(uint64_t);
 static void	lro_proto_input(struct mbuf *);
 
-static struct mbuf *lro_tcp_xsum_validate(struct mbuf*,  struct ipovly *,
+static struct mbuf *lro_tcp_xsum_validate(struct mbuf*,  struct ip *,
 				struct tcphdr*);
-static struct mbuf *tcp_lro_process_pkt(struct mbuf*, struct ip*, struct tcphdr*,
-				int);
+static struct mbuf *tcp_lro_process_pkt(struct mbuf*, int);
 
 void
 tcp_lro_init(void)
@@ -256,7 +255,7 @@ tcp_lro_coalesce(int flow_id, struct mbuf *lro_mb, struct tcphdr *tcphdr,
 		 * This bit is re-OR'd each time a packet is added to the 
 		 * large coalesced packet.
 		 */
-		flow->lr_mhead->m_pkthdr.aux_flags |= MAUXF_SW_LRO_PKT;
+		flow->lr_mhead->m_pkthdr.pkt_flags |= PKTF_SW_LRO_PKT;
 		flow->lr_mhead->m_pkthdr.lro_npkts++; /* for tcpstat.tcps_rcvpack */
 		if (flow->lr_mhead->m_pkthdr.lro_pktlen < 
 				lro_mb->m_pkthdr.lro_pktlen) {
@@ -292,7 +291,7 @@ tcp_lro_coalesce(int flow_id, struct mbuf *lro_mb, struct tcphdr *tcphdr,
 	} else {
 		if (lro_mb) {
 			flow->lr_mhead = flow->lr_mtail = lro_mb;
-			flow->lr_mhead->m_pkthdr.aux_flags |= MAUXF_SW_LRO_PKT;
+			flow->lr_mhead->m_pkthdr.pkt_flags |= PKTF_SW_LRO_PKT;
 			flow->lr_tcphdr = tcphdr;
 			if ((topt) && (topt->to_flags & TOF_TS)) {
 				ASSERT(tsval != NULL);
@@ -301,6 +300,7 @@ tcp_lro_coalesce(int flow_id, struct mbuf *lro_mb, struct tcphdr *tcphdr,
 				flow->lr_tsecr = tsecr;
 			}        
 			flow->lr_len = payload_len;
+			calculate_tcp_clock();
 			flow->lr_timestamp = tcp_now;
 			tcp_lro_sched_timer(0);
 		}	
@@ -400,8 +400,7 @@ kick_flow:
 }
 
 struct mbuf*
-tcp_lro_process_pkt(struct mbuf *lro_mb, struct ip *ip_hdr, 
-				struct tcphdr *tcp_hdr, int drop_hdrlen)
+tcp_lro_process_pkt(struct mbuf *lro_mb, int drop_hdrlen)
 {
 	int flow_id = TCP_LRO_FLOW_UNINIT;
 	int hash;
@@ -417,32 +416,39 @@ tcp_lro_process_pkt(struct mbuf *lro_mb, struct ip *ip_hdr,
 	int ret_response = TCP_LRO_CONSUMED;
 	int coalesced = 0, tcpflags = 0, unknown_tcpopts = 0;
 	u_int8_t ecn;
+	struct ip *ip_hdr;
+	struct tcphdr *tcp_hdr;
 	
-	if (lro_mb->m_len < (int32_t)sizeof (struct tcpiphdr)) {
-		if ((lro_mb = m_pullup(lro_mb, sizeof(struct tcpiphdr))) == 0) {
+	if (lro_mb->m_len < drop_hdrlen) {
+		if ((lro_mb = m_pullup(lro_mb, drop_hdrlen)) == NULL) {
 			tcpstat.tcps_rcvshort++;
 			m_freem(lro_mb); 
 			if (lrodebug) {
 				printf("tcp_lro_process_pkt:mbuf too short.\n");
 			}
-			return NULL;
+			return (NULL);
 		}
 	}
+	
+	ip_hdr = mtod(lro_mb, struct ip*);
+	tcp_hdr = (struct tcphdr *)((caddr_t)ip_hdr + sizeof(struct ip));
+	
+	/* Just in case */
+	lro_mb->m_pkthdr.pkt_flags &= ~PKTF_SW_LRO_DID_CSUM;
 
-	if ((lro_mb = lro_tcp_xsum_validate(lro_mb, 
-				(struct ipovly*)ip_hdr, tcp_hdr)) == NULL) {
+	if ((lro_mb = lro_tcp_xsum_validate(lro_mb, ip_hdr, tcp_hdr)) == NULL) {
 		if (lrodebug) {
 			printf("tcp_lro_process_pkt: TCP xsum failed.\n");
 		}
-		return NULL; 
+		return (NULL); 
 	}
 
 	/* Update stats */
 	lro_pkt_count++;
 
 	/* Avoids checksumming in tcp_input */
-	lro_mb->m_pkthdr.aux_flags |= MAUXF_SW_LRO_DID_CSUM;	
-	
+	lro_mb->m_pkthdr.pkt_flags |= PKTF_SW_LRO_DID_CSUM;
+
 	off = tcp_hdr->th_off << 2;
 	optlen = off - sizeof (struct tcphdr);
 	payload_len = ip_hdr->ip_len - off;
@@ -454,6 +460,7 @@ tcp_lro_process_pkt(struct mbuf *lro_mb, struct ip *ip_hdr,
 	 * quickly get the values now and not bother calling
 	 * tcp_dooptions(), etc.
 	 */
+	bzero(&to, sizeof(to));
 	if ((optlen == TCPOLEN_TSTAMP_APPA ||
 			(optlen > TCPOLEN_TSTAMP_APPA &&
 			optp[TCPOLEN_TSTAMP_APPA] == TCPOPT_EOL)) &&
@@ -535,8 +542,11 @@ tcp_lro_process_pkt(struct mbuf *lro_mb, struct ip *ip_hdr,
 			mb = tcp_lro_eject_coalesced_pkt(flow_id);
 			lro_flow_list[flow_id].lr_seq = ntohl(tcp_hdr->th_seq) +
 								payload_len;
+			calculate_tcp_clock();					
+			u_int8_t timestamp = tcp_now - lro_flow_list[flow_id].lr_timestamp;					
 			lck_mtx_unlock(&tcp_lro_lock);
 			if (mb) {
+				mb->m_pkthdr.lro_elapsed = timestamp;
 				lro_proto_input(mb);
 			}
 			if (!coalesced) {
@@ -552,10 +562,13 @@ tcp_lro_process_pkt(struct mbuf *lro_mb, struct ip *ip_hdr,
 
 	case TCP_LRO_EJECT_FLOW:
 		mb = tcp_lro_eject_coalesced_pkt(flow_id);
+		calculate_tcp_clock();
+		u_int8_t timestamp = tcp_now - lro_flow_list[flow_id].lr_timestamp;
 		lck_mtx_unlock(&tcp_lro_lock);
 		if (mb) {
 			if (lrodebug) 
 				printf("tcp_lro_process_pkt eject_flow, len = %d\n", mb->m_pkthdr.len);
+			mb->m_pkthdr.lro_elapsed = timestamp;
 			lro_proto_input(mb);
 		}
 
@@ -576,7 +589,7 @@ tcp_lro_process_pkt(struct mbuf *lro_mb, struct ip *ip_hdr,
 	if (ret_response == TCP_LRO_FLOW_NOTFOUND) {
 		lro_proto_input(lro_mb);
 	}
-	return NULL;
+	return (NULL);
 }
 
 static void
@@ -596,8 +609,6 @@ tcp_lro_flush_flows(void)
 	int i = 0;
 	struct mbuf *mb;
 	struct lro_flow *flow;
-	int active_flows = 0;
-	int outstanding_flows = 0;
 	int tcpclock_updated = 0;
 
 	lck_mtx_lock(&tcp_lro_lock);
@@ -605,74 +616,33 @@ tcp_lro_flush_flows(void)
 	while (i < TCP_LRO_NUM_FLOWS) {
 		flow = &lro_flow_list[i];
 		if (flow->lr_mhead != NULL) {
-			active_flows++;
+			
 			if (!tcpclock_updated) {
 				calculate_tcp_clock();
 				tcpclock_updated = 1;
 			}
-			if (((tcp_now - flow->lr_timestamp) >= coalesc_time) || 
-				(flow->lr_mhead->m_pkthdr.lro_npkts >= 
-					coalesc_sz)) {
 
-				if (lrodebug >= 2) 
-					printf("tcp_lro_flush_flows: len =%d n_pkts = %d %d %d \n",
+			if (lrodebug >= 2) 
+				printf("tcp_lro_flush_flows: len =%d n_pkts = %d %d %d \n",
 					flow->lr_len, 
 					flow->lr_mhead->m_pkthdr.lro_npkts, 
 					flow->lr_timestamp, tcp_now);
 
-				mb = tcp_lro_eject_flow(i);
+			u_int8_t timestamp = tcp_now - flow->lr_timestamp;
 
-				if (mb) {
-					lck_mtx_unlock(&tcp_lro_lock);
-					lro_update_flush_stats(mb);
-					lro_proto_input(mb);
-					lck_mtx_lock(&tcp_lro_lock);
-				}
-
-			} else {
-				tcp_lro_sched_timer(0);
-				outstanding_flows++;
-				if (lrodebug >= 2) {
-					printf("tcp_lro_flush_flows: did not flush flow of len =%d deadline = %x timestamp = %x \n", 
-						flow->lr_len, tcp_now, flow->lr_timestamp);
-				}
-			}
-		}
-		if (flow->lr_flags & LRO_EJECT_REQ) {
 			mb = tcp_lro_eject_flow(i);
+
 			if (mb) {
+				mb->m_pkthdr.lro_elapsed = timestamp;
 				lck_mtx_unlock(&tcp_lro_lock);
+				lro_update_flush_stats(mb);
 				lro_proto_input(mb);
-				lro_eject_req++;
 				lck_mtx_lock(&tcp_lro_lock);
 			}
 		}
 		i++;
 	}
 	lck_mtx_unlock(&tcp_lro_lock);
-#if 0
-	if (lrocount == 900) {
-		printf("%s: %d %d %d %d oo: %d mismatch: %d ej_req: %d coll: %d \n", 
-			__func__,
-			tcpstat.tcps_coalesced_pack,
-			tcpstat.tcps_lro_twopack,
-			tcpstat.tcps_lro_multpack, 
-			tcpstat.tcps_lro_largepack,
-			lro_seq_outoforder,
-			lro_seq_mismatch,
-			lro_eject_req,
-			tcpstat.tcps_flowtbl_collision);
-		printf("%s: all: %d single: %d double: %d good: %d \n",
-			__func__, lro_flushes, lro_single_flushes, 
-			lro_double_flushes, lro_good_flushes);
-		lrocount = 0;	
-	} else {
-		lrocount++;
-	}
-	if ((lrodebug >= 2) && (active_flows > 1)) {
-		printf("lro_flush_flows: active_flows = %d \n", active_flows);
-	}
-#endif	
 }
 
 /*
@@ -708,7 +678,7 @@ tcp_lro(struct mbuf *m, unsigned int hlen)
 	unsigned int off = 0;
 
 	if (kipf_count != 0) 
-		return m;
+		return (m);
 
 	/* 
 	 * Experiments on cellular show that the RTT is much higher  
@@ -718,43 +688,49 @@ tcp_lro(struct mbuf *m, unsigned int hlen)
 	 * improvement to throughput either. Loopback perf is hurt
 	 * by the 5 msec latency and it already sends large packets.
 	 */
-	if ((m->m_pkthdr.rcvif->if_type == IFT_CELLULAR) ||
+	if (IFNET_IS_CELLULAR(m->m_pkthdr.rcvif) ||
 		(m->m_pkthdr.rcvif->if_type == IFT_LOOP)) {
-		return m;
+		return (m);
 	}
 
 	ip_hdr = mtod(m, struct ip*);
 
+	/* don't deal with IP options */
+	if (hlen != sizeof (struct ip))
+		return (m);
+
 	/* only TCP is coalesced */
 	if (ip_hdr->ip_p != IPPROTO_TCP) {
-		return m;
+		return (m);
 	}
 
 	if (m->m_len < (int32_t) sizeof (struct tcpiphdr)) {
 		if (lrodebug) printf("tcp_lro m_pullup \n");
-		if ((m = m_pullup(m, sizeof (struct tcpiphdr))) == 0) {
+		if ((m = m_pullup(m, sizeof (struct tcpiphdr))) == NULL) {
 			tcpstat.tcps_rcvshort++; 
 			if (lrodebug) {
 				printf("ip_lro: rcvshort.\n");
 			}
-			return NULL;
+			return (NULL);
 		}
+		ip_hdr = mtod(m, struct ip*);
 	}
 
 	tcp_hdr = (struct tcphdr *)((caddr_t)ip_hdr + hlen);
 	tlen = ip_hdr->ip_len ; //ignore IP header bytes len
 	m->m_pkthdr.lro_pktlen = tlen; /* Used to return max pkt encountered to tcp */
 	m->m_pkthdr.lro_npkts = 1; /* Initialize a counter to hold num pkts coalesced */
+	m->m_pkthdr.lro_elapsed = 0; /* Initialize the field to carry elapsed time */
 	off = tcp_hdr->th_off << 2;
 	if (off < sizeof (struct tcphdr) || off > tlen) {
 		tcpstat.tcps_rcvbadoff++; 
 		if (lrodebug) {
 			printf("ip_lro: TCP off greater than TCP header.\n");
 		}
-		return m;
+		return (m);
 	}
 
-	return (tcp_lro_process_pkt(m, ip_hdr, tcp_hdr, hlen + off));
+	return (tcp_lro_process_pkt(m, hlen + off));
 }
 
 static void
@@ -771,74 +747,21 @@ lro_proto_input(struct mbuf *m)
 }
 
 static struct mbuf *
-lro_tcp_xsum_validate(struct mbuf *m,  struct ipovly *ipov, struct tcphdr * th)
+lro_tcp_xsum_validate(struct mbuf *m, struct ip *ip, struct tcphdr * th)
 {
-
-	struct ip* ip = (struct ip*)ipov;
-	int tlen = ip->ip_len;
-	int len;
-	struct ifnet *ifp = ((m->m_flags & M_PKTHDR) && m->m_pkthdr.rcvif != NULL) ? 
-				m->m_pkthdr.rcvif: NULL;
-
 	/* Expect 32-bit aligned data pointer on strict-align platforms */
 	MBUF_STRICT_DATA_ALIGNMENT_CHECK_32(m);
 
-	if (m->m_pkthdr.csum_flags & CSUM_DATA_VALID) {
-		if (m->m_pkthdr.csum_flags & CSUM_TCP_SUM16) {
-			u_short pseudo;
-			char b[9];
-
-			bcopy(ipov->ih_x1, b, sizeof (ipov->ih_x1));
-			bzero(ipov->ih_x1, sizeof (ipov->ih_x1));
-			ipov->ih_len = (u_short)tlen;
-#if BYTE_ORDER != BIG_ENDIAN
-			HTONS(ipov->ih_len);
-#endif
-			pseudo = in_cksum(m, sizeof (struct ip));
-			bcopy(b, ipov->ih_x1, sizeof (ipov->ih_x1));
-
-			th->th_sum = in_addword(pseudo, (m->m_pkthdr.csum_data & 0xFFFF));
-		} else {
-			if (m->m_pkthdr.csum_flags & CSUM_PSEUDO_HDR)
-				th->th_sum = m->m_pkthdr.csum_data;
-			else
-				th->th_sum = in_pseudo(ip->ip_src.s_addr,
-					ip->ip_dst.s_addr, htonl(m->m_pkthdr.csum_data +
-					ip->ip_len + IPPROTO_TCP));
-		}
-		th->th_sum ^= 0xffff;
-	} else {
-		char b[9];
-		/*
-		 * Checksum extended TCP header and data.
-		 */
-		bcopy(ipov->ih_x1, b, sizeof (ipov->ih_x1));
-		bzero(ipov->ih_x1, sizeof (ipov->ih_x1));
-		ipov->ih_len = (u_short)tlen;
-#if BYTE_ORDER != BIG_ENDIAN
-		HTONS(ipov->ih_len);
-#endif
-		len = sizeof (struct ip) + tlen;
-		th->th_sum = in_cksum(m, len);
-		bcopy(b, ipov->ih_x1, sizeof (ipov->ih_x1));
-
-		tcp_in_cksum_stats(len);
-	}
-	if (th->th_sum) {
-		tcpstat.tcps_rcvbadsum++;
-		if (ifp != NULL && ifp->if_tcp_stat != NULL) {
-			atomic_add_64(&ifp->if_tcp_stat->badformat, 1);
-		}
-		if (lrodebug) 
-			printf("lro_tcp_xsum_validate: bad xsum and drop m = %p.\n",m);
+	/* we shouldn't get here for IP with options; hence sizeof (ip) */
+	if (tcp_input_checksum(AF_INET, m, th, sizeof (*ip), ip->ip_len)) {
+		if (lrodebug)
+			printf("%s: bad xsum and drop m = 0x%llx.\n", __func__,
+			(uint64_t)VM_KERNEL_ADDRPERM(m));
 		m_freem(m);
-		return NULL;
+		return (NULL);
 	}
-	/* revert back the order as IP will look into this again. */
-#if BYTE_ORDER != BIG_ENDIAN
-	NTOHS(ipov->ih_len);
-#endif
-	return m;
+
+	return (m);
 }
 
 /*

@@ -3,37 +3,41 @@ export MakeInc_def=${SRCROOT}/makedefs/MakeInc.def
 export MakeInc_rule=${SRCROOT}/makedefs/MakeInc.rule
 export MakeInc_dir=${SRCROOT}/makedefs/MakeInc.dir
 
-
 include $(MakeInc_cmd)
 include $(MakeInc_def)
 
 INSTINC_SUBDIRS = \
 	machine
 
-INSTINC_SUBDIRS_I386 = \
-	i386
-
 INSTINC_SUBDIRS_X86_64 = \
 	x86_64
 
+INSTINC_SUBDIRS_X86_64H = \
+	x86_64
+
+INSTINC_SUBDIRS_ARM = \
+	arm
+
+INSTINC_SUBDIRS_ARM64 = \
+	arm
 
 EXPINC_SUBDIRS = \
 	machine
 
-EXPINC_SUBDIRS_I386 = \
-	i386
+EXPINC_SUBDIRS_ARM = \
+	arm
 
+EXPINC_SUBDIRS_ARM64 = \
+	arm
 
 EXPINC_SUBDIRS_X86_64 = \
 	x86_64
 
-MIG_DEFS =	\
-
-MIG_HDRS = \
+EXPINC_SUBDIRS_X86_64H = \
+	x86_64
 
 DATAFILES = \
-	profile-internal.h profile-mk.h profile-kgmon.c \
-	${MIG_DEFS}
+	profile-internal.h profile-mk.h profile-kgmon.c
 
 MIGINCLUDES = \
 
@@ -49,5 +53,3 @@ EXPORT_MI_DIR = profile
 
 include $(MakeInc_rule)
 include $(MakeInc_dir)
-
-

@@ -52,7 +52,7 @@
 .Fa void
 .Fc
 .Sh DESCRIPTION
-.Fn Setpgid
+.Fn setpgid
 sets the process group of the specified process
 .Ar pid
 to the specified
@@ -65,19 +65,14 @@ If the invoker is not the super-user, then the affected process
 must have the same effective user-id as the invoker or be a descendant
 of the invoking process.
 .Pp
-If the calling process is not already a session leader,
-.Fn setpgrp
-sets the process group ID of the calling process
-to that of the calling process.
-Any new session that this creates will have no controlling terminal.
 .Sh RETURN VALUES
-.Fn Setpgid
+.Fn setpgid
 returns 0 when the operation was successful.
 If the request failed, -1 is returned and the global variable
 .Va errno
 indicates the reason.
 .Sh ERRORS
-.Fn Setpgid
+.Fn setpgid
 will fail and the process group will not be altered if:
 .Bl -tag -width Er
 .\" ===========

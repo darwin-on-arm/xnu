@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2006-2011 Apple Inc. All rights reserved.
+ * Copyright (c) 2006-2016 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -236,7 +236,7 @@ nfs4_setclientid(struct nfsmount *nmp)
 	// SETCLIENTID
 	numops = 1;
 	nfsm_chain_build_alloc_init(error, &nmreq, 14 * NFSX_UNSIGNED + nmp->nm_longid->nci_idlen);
-	nfsm_chain_add_compound_header(error, &nmreq, "setclid", numops);
+	nfsm_chain_add_compound_header(error, &nmreq, "setclid", nmp->nm_minor_vers, numops);
 	numops--;
 	nfsm_chain_add_32(error, &nmreq, NFS_OP_SETCLIENTID);
 	/* nfs_client_id4  client; */
@@ -300,7 +300,7 @@ nfs4_setclientid(struct nfsmount *nmp)
 	// SETCLIENTID_CONFIRM
 	numops = 1;
 	nfsm_chain_build_alloc_init(error, &nmreq, 15 * NFSX_UNSIGNED);
-	nfsm_chain_add_compound_header(error, &nmreq, "setclid_conf", numops);
+	nfsm_chain_add_compound_header(error, &nmreq, "setclid_conf", nmp->nm_minor_vers, numops);
 	numops--;
 	nfsm_chain_add_32(error, &nmreq, NFS_OP_SETCLIENTID_CONFIRM);
 	nfsm_chain_add_64(error, &nmreq, nmp->nm_clientid);
@@ -325,7 +325,7 @@ nfs4_setclientid(struct nfsmount *nmp)
 	// PUTFH, GETATTR(FS)
 	numops = 2;
 	nfsm_chain_build_alloc_init(error, &nmreq, 23 * NFSX_UNSIGNED);
-	nfsm_chain_add_compound_header(error, &nmreq, "setclid_attr", numops);
+	nfsm_chain_add_compound_header(error, &nmreq, "setclid_attr", nmp->nm_minor_vers, numops);
 	numops--;
 	nfsm_chain_add_32(error, &nmreq, NFS_OP_PUTFH);
 	nfsm_chain_add_fh(error, &nmreq, nmp->nm_vers, nmp->nm_dnp->n_fhp, nmp->nm_dnp->n_fhsize);
@@ -377,7 +377,7 @@ nfs4_renew(struct nfsmount *nmp, int rpcflag)
 	// RENEW
 	numops = 1;
 	nfsm_chain_build_alloc_init(error, &nmreq, 8 * NFSX_UNSIGNED);
-	nfsm_chain_add_compound_header(error, &nmreq, "renew", numops);
+	nfsm_chain_add_compound_header(error, &nmreq, "renew", nmp->nm_minor_vers, numops);
 	numops--;
 	nfsm_chain_add_32(error, &nmreq, NFS_OP_RENEW);
 	nfsm_chain_add_64(error, &nmreq, nmp->nm_clientid);
@@ -459,7 +459,7 @@ nfs4_secinfo_rpc(struct nfsmount *nmp, struct nfsreq_secinfo_args *siap, kauth_c
 	struct nfsm_chain nmreq, nmrep;
 
 	*seccountp = 0;
-	if (!nmp)
+	if (nfs_mount_gone(nmp))
 		return (ENXIO);
 	nfsvers = nmp->nm_vers;
 	np = siap->rsia_np;
@@ -533,7 +533,7 @@ gotargs:
 	numops = 2;
 	nfsm_chain_build_alloc_init(error, &nmreq,
 		4 * NFSX_UNSIGNED + NFSX_FH(nfsvers) + nfsm_rndup(namelen));
-	nfsm_chain_add_compound_header(error, &nmreq, "secinfo", numops);
+	nfsm_chain_add_compound_header(error, &nmreq, "secinfo", nmp->nm_minor_vers, numops);
 	numops--;
 	if (fhp) {
 		nfsm_chain_add_32(error, &nmreq, NFS_OP_PUTFH);
@@ -596,14 +596,14 @@ nfsm_chain_get_secinfo(struct nfsm_chain *nmc, uint32_t *sec, int *seccountp)
 			/* we only recognize KRB5, KRB5I, KRB5P */
 			nfsm_chain_get_32(error, nmc, val); /* OID length */
 			nfsmout_if(error);
-			if (val != sizeof(krb5_mech)) {
+			if (val != sizeof(krb5_mech_oid)) {
 				nfsm_chain_adv(error, nmc, val);
 				nfsm_chain_adv(error, nmc, 2*NFSX_UNSIGNED);
 				break;
 			}
 			nfsm_chain_get_opaque(error, nmc, val, oid); /* OID bytes */
 			nfsmout_if(error);
-			if (bcmp(oid, krb5_mech, sizeof(krb5_mech))) {
+			if (bcmp(oid, krb5_mech_oid, sizeof(krb5_mech_oid))) {
 				nfsm_chain_adv(error, nmc, 2*NFSX_UNSIGNED);
 				break;
 			}
@@ -665,7 +665,7 @@ nfs4_get_fs_locations(
 	NFSREQ_SECINFO_SET(&si, NULL, fhp, fhsize, name, 0);
 	numops = 3;
 	nfsm_chain_build_alloc_init(error, &nmreq, 18 * NFSX_UNSIGNED);
-	nfsm_chain_add_compound_header(error, &nmreq, "fs_locations", numops);
+	nfsm_chain_add_compound_header(error, &nmreq, "fs_locations", nmp->nm_minor_vers, numops);
 	numops--;
 	nfsm_chain_add_32(error, &nmreq, NFS_OP_PUTFH);
 	nfsm_chain_add_fh(error, &nmreq, NFS_VER4, fhp, fhsize);
@@ -709,8 +709,8 @@ nfs4_default_attrs_for_referral_trigger(
 	struct nfs_vattr *nvap,
 	fhandle_t *fhp)
 {
-	struct timeval now;
-	microtime(&now);
+	struct timespec now;
+	nanotime(&now);
 	int len;
 
 	nvap->nva_flags = NFS_FFLAG_TRIGGER | NFS_FFLAG_TRIGGER_REFERRAL;
@@ -752,17 +752,17 @@ nfs4_default_attrs_for_referral_trigger(
 	if (!NFS_BITMAP_ISSET(nvap->nva_bitmap, NFS_FATTR_TIME_ACCESS)) {
 		NFS_BITMAP_SET(nvap->nva_bitmap, NFS_FATTR_TIME_ACCESS);
 		nvap->nva_timesec[NFSTIME_ACCESS] = now.tv_sec;
-		nvap->nva_timensec[NFSTIME_ACCESS] = now.tv_usec * 1000;
+		nvap->nva_timensec[NFSTIME_ACCESS] = now.tv_nsec;
 	}
 	if (!NFS_BITMAP_ISSET(nvap->nva_bitmap, NFS_FATTR_TIME_MODIFY)) {
 		NFS_BITMAP_SET(nvap->nva_bitmap, NFS_FATTR_TIME_MODIFY);
 		nvap->nva_timesec[NFSTIME_MODIFY] = now.tv_sec;
-		nvap->nva_timensec[NFSTIME_MODIFY] = now.tv_usec * 1000;
+		nvap->nva_timensec[NFSTIME_MODIFY] = now.tv_nsec;
 	}
 	if (!NFS_BITMAP_ISSET(nvap->nva_bitmap, NFS_FATTR_TIME_METADATA)) {
 		NFS_BITMAP_SET(nvap->nva_bitmap, NFS_FATTR_TIME_METADATA);
 		nvap->nva_timesec[NFSTIME_CHANGE] = now.tv_sec;
-		nvap->nva_timensec[NFSTIME_CHANGE] = now.tv_usec * 1000;
+		nvap->nva_timensec[NFSTIME_CHANGE] = now.tv_nsec;
 	}
 	if (!NFS_BITMAP_ISSET(nvap->nva_bitmap, NFS_FATTR_FILEID)) {
 		NFS_BITMAP_SET(nvap->nva_bitmap, NFS_FATTR_FILEID);
@@ -1013,6 +1013,158 @@ nfs4_ace_vfsrights_to_nfsmask(uint32_t vfsrights)
 }
 
 /*
+ * nfs4_wkid2sidd::
+ *	 mapid a wellknown identity to guid.
+ * Return 0 on success ENOENT if id does not map and EINVAL if the id is not a well known name.
+ */
+static int
+nfs4_wkid2sid(const char *id, ntsid_t *sp)
+{
+	size_t len = strnlen(id, MAXIDNAMELEN);
+
+	if (len == MAXIDNAMELEN || id[len-1] != '@')
+		return (EINVAL);
+
+	bzero(sp, sizeof(ntsid_t));
+	sp->sid_kind = 1;
+	sp->sid_authcount = 1;
+	if (!strcmp(id, "OWNER@")) {
+		// S-1-3-0
+		sp->sid_authority[5] = 3;
+		sp->sid_authorities[0] = 0;
+	} else if (!strcmp(id, "GROUP@")) {
+		// S-1-3-1
+		sp->sid_authority[5] = 3;
+		sp->sid_authorities[0] = 1;
+	} else if (!strcmp(id, "EVERYONE@")) {
+		// S-1-1-0
+		sp->sid_authority[5] = 1;
+		sp->sid_authorities[0] = 0;
+	} else if (!strcmp(id, "INTERACTIVE@")) {
+		// S-1-5-4
+		sp->sid_authority[5] = 5;
+		sp->sid_authorities[0] = 4;
+	} else if (!strcmp(id, "NETWORK@")) {
+		// S-1-5-2
+		sp->sid_authority[5] = 5;
+		sp->sid_authorities[0] = 2;
+	} else if (!strcmp(id, "DIALUP@")) {
+		// S-1-5-1
+		sp->sid_authority[5] = 5;
+		sp->sid_authorities[0] = 1;
+	} else if (!strcmp(id, "BATCH@")) {
+		// S-1-5-3
+		sp->sid_authority[5] = 5;
+		sp->sid_authorities[0] = 3;
+	} else if (!strcmp(id, "ANONYMOUS@")) {
+		// S-1-5-7
+		sp->sid_authority[5] = 5;
+		sp->sid_authorities[0] = 7;
+	} else if (!strcmp(id, "AUTHENTICATED@")) {
+		// S-1-5-11
+		sp->sid_authority[5] = 5;
+		sp->sid_authorities[0] = 11;
+	} else if (!strcmp(id, "SERVICE@")) {
+		// S-1-5-6
+		sp->sid_authority[5] = 5;
+		sp->sid_authorities[0] = 6;
+	} else {
+		// S-1-0-0 "NOBODY"
+		sp->sid_authority[5] = 0;
+		sp->sid_authorities[0] = 0;
+	}
+	return (0);
+}
+
+static int
+nfs4_fallback_name(const char *id, int have_at)
+{
+	if (have_at) {
+		/* must be user@domain */
+		/* try to identify some well-known IDs */
+		if (!strncmp(id, "root@", 5))
+			return (0);
+		else if (!strncmp(id, "wheel@", 6))
+			return (0);
+		else if (!strncmp(id, "nobody@", 7))
+			return (-2);
+		else if (!strncmp(id, "nfsnobody@", 10))
+			return (-2);
+	}
+	return (-2);
+}
+
+static void
+nfs4_mapid_log(int error, const char *idstr, int isgroup, guid_t *gp)
+{
+	if (error && (nfs_idmap_ctrl & NFS_IDMAP_CTRL_LOG_FAILED_MAPPINGS))
+		printf("nfs4_id2guid: idmap failed for %s %s error %d\n",  idstr, isgroup ? "G" : " ", error);
+	if (!error && (nfs_idmap_ctrl & NFS_IDMAP_CTRL_LOG_SUCCESSFUL_MAPPINGS))
+		printf("nfs4_id2guid: idmap for %s %s got guid "
+		       "%02x%02x%02x%02x_%02x%02x%02x%02x_%02x%02x%02x%02x_%02x%02x%02x%02x\n",
+		       idstr, isgroup ? "G" : " ",
+		       gp->g_guid[0], gp->g_guid[1], gp->g_guid[2], gp->g_guid[3],
+		       gp->g_guid[4], gp->g_guid[5], gp->g_guid[6], gp->g_guid[7],
+		       gp->g_guid[8], gp->g_guid[9], gp->g_guid[10], gp->g_guid[11],
+		       gp->g_guid[12], gp->g_guid[13], gp->g_guid[14], gp->g_guid[15]);
+}
+
+static char *
+nfs4_map_domain(char *id, char **atp)
+{
+	char *at = *atp;
+	char *dsnode, *otw_nfs4domain;
+	char *new_id = NULL;
+	size_t otw_domain_len;
+	size_t otw_id_2_at_len;
+	int error;
+
+	if (at == NULL)
+		at = strchr(id, '@');
+	if (at == NULL || *at != '@')
+		return (NULL);
+
+	otw_nfs4domain = at + 1;
+	otw_domain_len = strnlen(otw_nfs4domain, MAXPATHLEN);
+	otw_id_2_at_len = at - id + 1;
+
+	MALLOC_ZONE(dsnode, char*, MAXPATHLEN, M_NAMEI, M_WAITOK);
+	/* first try to map nfs4 domain to dsnode for scoped lookups */
+	error = kauth_cred_nfs4domain2dsnode(otw_nfs4domain, dsnode);
+	if (!error) {
+		/* Success! Make new id be id@dsnode */
+		size_t dsnode_len = strnlen(dsnode, MAXPATHLEN);
+		size_t new_id_len = otw_id_2_at_len + dsnode_len + 1;
+		char tmp;
+
+		MALLOC(new_id, char*, new_id_len, M_TEMP, M_WAITOK);
+		tmp = *otw_nfs4domain;
+		*otw_nfs4domain = '\0';  /* Chop of the old domain */
+		strlcpy(new_id, id, MAXPATHLEN);
+		*otw_nfs4domain = tmp;  /* Be nice and preserve callers original id */
+		strlcat(new_id, dsnode, MAXPATHLEN);
+		at = strchr(new_id, '@');
+	} else {
+		/* Bummer:-( See if default nfs4 set for unscoped lookup */
+		size_t default_domain_len = strnlen(nfs4_default_domain, MAXPATHLEN);
+
+		if ((otw_domain_len == default_domain_len) &&
+		    (strncmp(otw_nfs4domain, nfs4_default_domain, otw_domain_len) == 0)) {
+			/* Woohoo! We have matching domains, do unscoped lookups */
+			*at = '\0';
+		}
+	}
+	FREE_ZONE(dsnode, MAXPATHLEN,  M_NAMEI);
+
+	if (nfs_idmap_ctrl & NFS_IDMAP_CTRL_LOG_SUCCESSFUL_MAPPINGS) {
+		printf("nfs4_id2guid: after domain mapping id is %s\n", id);
+	}
+
+	*atp = at;
+	return (new_id);
+}
+
+/*
  * Map an NFSv4 ID string to a VFS guid.
  *
  * Try to use the ID mapping service... but we may fallback to trying to do it ourselves.
@@ -1020,16 +1172,12 @@ nfs4_ace_vfsrights_to_nfsmask(uint32_t vfsrights)
 int
 nfs4_id2guid(/*const*/ char *id, guid_t *guidp, int isgroup)
 {
-	int error1 = 0, error = 0, compare;
-	guid_t guid1, guid2, *gp;
+	int  error = 0;
 	ntsid_t sid;
-	long num, unknown;
-	const char *p, *at;
+	long num;
+	char *p, *at, *new_id = NULL;
 
 	*guidp = kauth_null_guid;
-	compare = ((nfs_idmap_ctrl & NFS_IDMAP_CTRL_USE_IDMAP_SERVICE) &&
-		   (nfs_idmap_ctrl & NFS_IDMAP_CTRL_COMPARE_RESULTS));
-	unknown = (nfs_idmap_ctrl & NFS_IDMAP_CTRL_UNKNOWN_IS_99) ? 99 : -2;
 
 	/*
 	 * First check if it is just a simple numeric ID string or a special "XXX@" name.
@@ -1046,184 +1194,236 @@ nfs4_id2guid(/*const*/ char *id, guid_t *guidp, int isgroup)
 			at = p;
 		p++;
 	}
-	if (at && !at[1] && !isgroup)
-		isgroup = 1;  /* special "XXX@" names should always be treated as groups */
+
 	if (num) {
 		/* must be numeric ID (or empty) */
-		num = *id ? strtol(id, NULL, 10) : unknown;
-		gp = guidp;
-		goto gotnumid;
+		num = *id ? strtol(id, NULL, 10) : -2;
+		if (isgroup)
+			error = kauth_cred_gid2guid((gid_t)num, guidp);
+		else
+			error = kauth_cred_uid2guid((uid_t)num, guidp);
+		nfs4_mapid_log(error, id, isgroup, guidp);
+		return (error);
 	}
 
+	/* See if this is a well known NFSv4 name */
+	error = nfs4_wkid2sid(id, &sid);
+	if (!error) {
+		error = kauth_cred_ntsid2guid(&sid, guidp);
+		nfs4_mapid_log(error, id, 1, guidp);
+		return (error);
+	}
+
+	/* Handle nfs4 domain first */
+	if (at && at[1]) {
+		new_id = nfs4_map_domain(id, &at);
+		if (new_id)
+			id = new_id;
+	}
+
+	/* Now try to do actual id mapping */
 	if (nfs_idmap_ctrl & NFS_IDMAP_CTRL_USE_IDMAP_SERVICE) {
 		/*
 		 * Ask the ID mapping service to map the ID string to a GUID.
 		 *
 		 * [sigh] this isn't a "pwnam/grnam" it's an NFS ID string!
 		 */
-		gp = compare ? &guid1 : guidp;
 		if (isgroup)
-			error = kauth_cred_grnam2guid(id, gp);
+			error = kauth_cred_grnam2guid(id, guidp);
 		else
-			error = kauth_cred_pwnam2guid(id, gp);
-		if (error && (nfs_idmap_ctrl & NFS_IDMAP_CTRL_LOG_FAILED_MAPPINGS))
-			printf("nfs4_id2guid: idmap failed for %s %s error %d\n", id, isgroup ? "G" : " ", error);
-		if (!error && (nfs_idmap_ctrl & NFS_IDMAP_CTRL_LOG_SUCCESSFUL_MAPPINGS))
-			printf("nfs4_id2guid: idmap for %s %s got guid "
-				"%02x%02x%02x%02x_%02x%02x%02x%02x_%02x%02x%02x%02x_%02x%02x%02x%02x\n",
-				id, isgroup ? "G" : " ",
-				gp->g_guid[0], gp->g_guid[1], gp->g_guid[2], gp->g_guid[3],
-				gp->g_guid[4], gp->g_guid[5], gp->g_guid[6], gp->g_guid[7],
-				gp->g_guid[8], gp->g_guid[9], gp->g_guid[10], gp->g_guid[11],
-				gp->g_guid[12], gp->g_guid[13], gp->g_guid[14], gp->g_guid[15]);
-		error1 = error;
+			error = kauth_cred_pwnam2guid(id, guidp);
+		nfs4_mapid_log(error, id, isgroup, guidp);
+	} else {
+		error = ENOTSUP;
 	}
-	if (error || compare || !(nfs_idmap_ctrl & NFS_IDMAP_CTRL_USE_IDMAP_SERVICE)) {
+
+	if (error) {
 		/*
 		 * fallback path... see if we can come up with an answer ourselves.
 		 */
-		gp = compare ? &guid2 : guidp;
-
-		if (!(nfs_idmap_ctrl & NFS_IDMAP_CTRL_FALLBACK_NO_WELLKNOWN_IDS) && at && !at[1]) {
-			/* must be a special ACE "who" ID */
-			bzero(&sid, sizeof(sid));
-			sid.sid_kind = 1;
-			sid.sid_authcount = 1;
-			if (!strcmp(id, "OWNER@")) {
-				// S-1-3-0
-				sid.sid_authority[5] = 3;
-				sid.sid_authorities[0] = 0;
-			} else if (!strcmp(id, "GROUP@")) {
-				// S-1-3-1
-				sid.sid_authority[5] = 3;
-				sid.sid_authorities[0] = 1;
-			} else if (!strcmp(id, "EVERYONE@")) {
-				// S-1-1-0
-				sid.sid_authority[5] = 1;
-				sid.sid_authorities[0] = 0;
-			} else if (!strcmp(id, "INTERACTIVE@")) {
-				// S-1-5-4
-				sid.sid_authority[5] = 5;
-				sid.sid_authorities[0] = 4;
-			} else if (!strcmp(id, "NETWORK@")) {
-				// S-1-5-2
-				sid.sid_authority[5] = 5;
-				sid.sid_authorities[0] = 2;
-			} else if (!strcmp(id, "DIALUP@")) {
-				// S-1-5-1
-				sid.sid_authority[5] = 5;
-				sid.sid_authorities[0] = 1;
-			} else if (!strcmp(id, "BATCH@")) {
-				// S-1-5-3
-				sid.sid_authority[5] = 5;
-				sid.sid_authorities[0] = 3;
-			} else if (!strcmp(id, "ANONYMOUS@")) {
-				// S-1-5-7
-				sid.sid_authority[5] = 5;
-				sid.sid_authorities[0] = 7;
-			} else if (!strcmp(id, "AUTHENTICATED@")) {
-				// S-1-5-11
-				sid.sid_authority[5] = 5;
-				sid.sid_authorities[0] = 11;
-			} else if (!strcmp(id, "SERVICE@")) {
-				// S-1-5-6
-				sid.sid_authority[5] = 5;
-				sid.sid_authorities[0] = 6;
-			} else {
-				// S-1-0-0 "NOBODY"
-				sid.sid_authority[5] = 0;
-				sid.sid_authorities[0] = 0;
-			}
-			error = kauth_cred_ntsid2guid(&sid, gp);
-		} else {
-			if (!(nfs_idmap_ctrl & NFS_IDMAP_CTRL_FALLBACK_NO_COMMON_IDS) && at) {
-				/* must be user@domain */
-				/* try to identify some well-known IDs */
-				if (!strncmp(id, "root@", 5))
-					num = 0;
-				else if (!strncmp(id, "wheel@", 6))
-					num = 0;
-				else if (!strncmp(id, "nobody@", 7))
-					num = -2;
-				else if (!strncmp(id, "nfsnobody@", 10))
-					num = -2;
-				else
-					num = unknown;
-			} else if (!(nfs_idmap_ctrl & NFS_IDMAP_CTRL_FALLBACK_NO_COMMON_IDS) && !strcmp(id, "nobody")) {
-				num = -2;
-			} else {
-				num = unknown;
-			}
-gotnumid:
-			if (isgroup)
-				error = kauth_cred_gid2guid((gid_t)num, gp);
-			else
-				error = kauth_cred_uid2guid((uid_t)num, gp);
-		}
-		if (error && (nfs_idmap_ctrl & NFS_IDMAP_CTRL_LOG_FAILED_MAPPINGS))
-			printf("nfs4_id2guid: fallback map failed for %s %s error %d\n", id, isgroup ? "G" : " ", error);
-		if (!error && (nfs_idmap_ctrl & NFS_IDMAP_CTRL_LOG_SUCCESSFUL_MAPPINGS))
-			printf("nfs4_id2guid: fallback map for %s %s got guid "
-				"%02x%02x%02x%02x_%02x%02x%02x%02x_%02x%02x%02x%02x_%02x%02x%02x%02x\n",
-				id, isgroup ? "G" : " ",
-				gp->g_guid[0], gp->g_guid[1], gp->g_guid[2], gp->g_guid[3],
-				gp->g_guid[4], gp->g_guid[5], gp->g_guid[6], gp->g_guid[7],
-				gp->g_guid[8], gp->g_guid[9], gp->g_guid[10], gp->g_guid[11],
-				gp->g_guid[12], gp->g_guid[13], gp->g_guid[14], gp->g_guid[15]);
+		num = nfs4_fallback_name(id, at != NULL);
+		if (isgroup)
+			error = kauth_cred_gid2guid((gid_t)num, guidp);
+		else
+			error = kauth_cred_uid2guid((uid_t)num, guidp);
+		nfs4_mapid_log(error, id,  isgroup, guidp);
 	}
 
-	if (compare) {
-		/* compare the results, log if different */
-		if (!error1 && !error) {
-			if (!kauth_guid_equal(&guid1, &guid2))
-				printf("nfs4_id2guid: idmap/fallback results differ for %s %s - "
-					"idmap %02x%02x%02x%02x_%02x%02x%02x%02x_%02x%02x%02x%02x_%02x%02x%02x%02x "
-					"fallback %02x%02x%02x%02x_%02x%02x%02x%02x_%02x%02x%02x%02x_%02x%02x%02x%02x\n",
-					id, isgroup ? "G" : " ",
-					guid1.g_guid[0], guid1.g_guid[1], guid1.g_guid[2], guid1.g_guid[3],
-					guid1.g_guid[4], guid1.g_guid[5], guid1.g_guid[6], guid1.g_guid[7],
-					guid1.g_guid[8], guid1.g_guid[9], guid1.g_guid[10], guid1.g_guid[11],
-					guid1.g_guid[12], guid1.g_guid[13], guid1.g_guid[14], guid1.g_guid[15],
-					guid2.g_guid[0], guid2.g_guid[1], guid2.g_guid[2], guid2.g_guid[3],
-					guid2.g_guid[4], guid2.g_guid[5], guid2.g_guid[6], guid2.g_guid[7],
-					guid2.g_guid[8], guid2.g_guid[9], guid2.g_guid[10], guid2.g_guid[11],
-					guid2.g_guid[12], guid2.g_guid[13], guid2.g_guid[14], guid2.g_guid[15]);
-			/* copy idmap result to output guid */
-			*guidp = guid1;
-		} else if (error1 && !error) {
-			printf("nfs4_id2guid: idmap/fallback results differ for %s %s - "
-				"idmap error %d "
-				"fallback %02x%02x%02x%02x_%02x%02x%02x%02x_%02x%02x%02x%02x_%02x%02x%02x%02x\n",
-				id, isgroup ? "G" : " ",
-				error1,
-				guid2.g_guid[0], guid2.g_guid[1], guid2.g_guid[2], guid2.g_guid[3],
-				guid2.g_guid[4], guid2.g_guid[5], guid2.g_guid[6], guid2.g_guid[7],
-				guid2.g_guid[8], guid2.g_guid[9], guid2.g_guid[10], guid2.g_guid[11],
-				guid2.g_guid[12], guid2.g_guid[13], guid2.g_guid[14], guid2.g_guid[15]);
-			/* copy fallback result to output guid */
-			*guidp = guid2;
-		} else if (!error1 && error) {
-			printf("nfs4_id2guid: idmap/fallback results differ for %s %s - "
-				"idmap %02x%02x%02x%02x_%02x%02x%02x%02x_%02x%02x%02x%02x_%02x%02x%02x%02x "
-				"fallback error %d\n",
-				id, isgroup ? "G" : " ",
-				guid1.g_guid[0], guid1.g_guid[1], guid1.g_guid[2], guid1.g_guid[3],
-				guid1.g_guid[4], guid1.g_guid[5], guid1.g_guid[6], guid1.g_guid[7],
-				guid1.g_guid[8], guid1.g_guid[9], guid1.g_guid[10], guid1.g_guid[11],
-				guid1.g_guid[12], guid1.g_guid[13], guid1.g_guid[14], guid1.g_guid[15],
-				error);
-			/* copy idmap result to output guid */
-			*guidp = guid1;
-			error = 0;
-		} else {
-			if (error1 != error)
-				printf("nfs4_id2guid: idmap/fallback results differ for %s %s - "
-					"idmap error %d fallback error %d\n",
-					id, isgroup ? "G" : " ", error1, error);
-		}
-	}
+
+	/* restore @ symbol in case we clobered for unscoped lookup */
+	if (at && *at == '\0')
+		*at = '@';
+
+	/* free mapped domain id string */
+	if (new_id)
+		FREE(new_id, M_TEMP);
 
 	return (error);
+}
+
+/*
+ * nfs4_sid2wkid:
+ *	 mapid a wellknown identity to guid.
+ * returns well known name for the sid or NULL if sid does not map.
+ */
+#define MAXWELLKNOWNID 18
+
+static const char*
+nfs4_sid2wkid(ntsid_t *sp)
+{
+	if ((sp->sid_kind == 1) && (sp->sid_authcount == 1)) {
+		/* check if it's one of our well-known ACE WHO names */
+		if (sp->sid_authority[5] == 0) {
+			if (sp->sid_authorities[0] == 0) // S-1-0-0
+				return ("nobody@localdomain");
+		} else if (sp->sid_authority[5] == 1) {
+			if (sp->sid_authorities[0] == 0) // S-1-1-0
+				return ("EVERYONE@");
+		} else if (sp->sid_authority[5] == 3) {
+			if (sp->sid_authorities[0] == 0) // S-1-3-0
+				return ("OWNER@");
+			else if (sp->sid_authorities[0] == 1) // S-1-3-1
+				return ("GROUP@");
+		} else if (sp->sid_authority[5] == 5) {
+			if (sp->sid_authorities[0] == 1) // S-1-5-1
+				return ("DIALUP@");
+			else if (sp->sid_authorities[0] == 2) // S-1-5-2
+				return ("NETWORK@");
+			else if (sp->sid_authorities[0] == 3) // S-1-5-3
+				return ("BATCH@");
+			else if (sp->sid_authorities[0] == 4) // S-1-5-4
+				return ("INTERACTIVE@");
+			else if (sp->sid_authorities[0] == 6) // S-1-5-6
+				return ("SERVICE@");
+			else if (sp->sid_authorities[0] == 7) // S-1-5-7
+				return ("ANONYMOUS@");
+			else if (sp->sid_authorities[0] == 11) // S-1-5-11
+				return ("AUTHENTICATED@");
+		}
+	}
+	return (NULL);
+}
+
+static void
+nfs4_mapguid_log(int error, const char *where, guid_t *gp, int isgroup, const char *idstr)
+{
+	if (error && (nfs_idmap_ctrl & NFS_IDMAP_CTRL_LOG_FAILED_MAPPINGS))
+		printf("nfs4_guid2id: %s idmap failed for "
+		       "%02x%02x%02x%02x_%02x%02x%02x%02x_%02x%02x%02x%02x_%02x%02x%02x%02x %s "
+		       "error %d\n", where,
+		       gp->g_guid[0], gp->g_guid[1], gp->g_guid[2], gp->g_guid[3],
+		       gp->g_guid[4], gp->g_guid[5], gp->g_guid[6], gp->g_guid[7],
+		       gp->g_guid[8], gp->g_guid[9], gp->g_guid[10], gp->g_guid[11],
+		       gp->g_guid[12], gp->g_guid[13], gp->g_guid[14], gp->g_guid[15],
+		       isgroup ? "G" : " ", error);
+	if (!error && (nfs_idmap_ctrl & NFS_IDMAP_CTRL_LOG_SUCCESSFUL_MAPPINGS))
+		printf("nfs4_guid2id: %s idmap for "
+		       "%02x%02x%02x%02x_%02x%02x%02x%02x_%02x%02x%02x%02x_%02x%02x%02x%02x %s "
+		       "got ID %s\n", where,
+		       gp->g_guid[0], gp->g_guid[1], gp->g_guid[2], gp->g_guid[3],
+		       gp->g_guid[4], gp->g_guid[5], gp->g_guid[6], gp->g_guid[7],
+		       gp->g_guid[8], gp->g_guid[9], gp->g_guid[10], gp->g_guid[11],
+		       gp->g_guid[12], gp->g_guid[13], gp->g_guid[14], gp->g_guid[15],
+		       isgroup ? "G" : " ", idstr);
+}
+
+static int
+nfs4_addv4domain(char *id, size_t *idlen)
+{
+	char *at = NULL, *cp;
+	int have_domain;
+	int error = 0;
+	size_t idsize;
+
+
+	if (id == NULL || *id == '\0')
+		return (EINVAL);
+
+	for (cp = id; *cp != '\0'; cp++) {
+		if (*cp == '@') {
+			at = cp;
+			break;
+		}
+	}
+
+	have_domain = (at  && at[1] != '\0');
+
+	if (have_domain) {
+		char *dsnode = at + 1;
+		char *nfs4domain;
+		size_t domain_len;
+		char *mapped_domain;
+
+		MALLOC_ZONE(nfs4domain, char*, MAXPATHLEN, M_NAMEI, M_WAITOK);
+		error = kauth_cred_dsnode2nfs4domain(dsnode, nfs4domain);
+		if (!error) {
+			domain_len = strnlen(nfs4domain, MAXPATHLEN);
+			mapped_domain = nfs4domain;
+		} else {
+			error = 0;
+			domain_len = strnlen(nfs4_default_domain, MAXPATHLEN);
+			mapped_domain = nfs4_default_domain;
+		}
+		if (domain_len) {
+			/* chop off id after the '@' */
+			at[1] = '\0';
+			/* Add our mapped_domain */
+			idsize = strlcat(id, mapped_domain, *idlen);
+			if (*idlen > idsize)
+				*idlen = idsize;
+			else
+				error = ENOSPC;
+		}
+		FREE_ZONE(nfs4domain, MAXPATHLEN, M_NAMEI);
+	} else if (at == NULL) {
+		/*
+		 * If we didn't find an 'at' then cp points to the end of id passed in.
+		 * and if we have a nfs4_default_domain set. Try to append the
+		 * default domain if we have root or set ENOSPC.
+		 */
+		size_t default_domain_len = strnlen(nfs4_default_domain, MAXPATHLEN);
+
+		if (default_domain_len) {
+			strlcat(id, "@", *idlen);
+			idsize = strlcat(id, nfs4_default_domain, *idlen);
+			if (*idlen > idsize)
+				*idlen = idsize;
+			else
+				error = ENOSPC;
+		} else {
+			; /* Unscoped name otw */
+		}
+	}
+
+	if (!error && nfs_idmap_ctrl & NFS_IDMAP_CTRL_LOG_SUCCESSFUL_MAPPINGS)
+		printf("nfs4_guid2id: id after nfs4 domain map: %s[%zd].\n", id, *idlen);
+
+	return (error);
+}
+
+static char *
+nfs4_fallback_id(int numid, int isgrp, char *buf, size_t size)
+{
+	const char *idp = NULL;
+
+	if (!(nfs_idmap_ctrl & NFS_IDMAP_CTRL_FALLBACK_NO_COMMON_IDS)) {
+		/* map well known uid's to strings */
+		if (numid == 0)
+			idp = isgrp ? "wheel" : "root";
+		else if (numid == -2)
+			idp = "nobody";
+	}
+	if (!idp) {
+		/* or just use a decimal number string. */
+		snprintf(buf, size-1, "%d", numid);
+		buf[size-1] = '\0';
+	} else {
+		size_t idplen = strlcpy(buf, idp, size);
+		if (idplen >= size)
+			return (NULL);
+	}
+
+	return (buf);
 }
 
 /*
@@ -1232,18 +1432,34 @@ gotnumid:
  * Try to use the ID mapping service... but we may fallback to trying to do it ourselves.
  */
 int
-nfs4_guid2id(guid_t *guidp, char *id, int *idlen, int isgroup)
+nfs4_guid2id(guid_t *guidp, char *id, size_t *idlen, int isgroup)
 {
-	int error1 = 0, error = 0, compare;
-	int id1len, id2len, len;
+	int  error = 0;
+	size_t id1len,  len;
 	char *id1buf, *id1;
 	char numbuf[32];
-	const char *id2 = NULL;
+	ntsid_t sid;
 
 	id1buf = id1 = NULL;
-	id1len = id2len = 0;
-	compare = ((nfs_idmap_ctrl & NFS_IDMAP_CTRL_USE_IDMAP_SERVICE) &&
-		   (nfs_idmap_ctrl & NFS_IDMAP_CTRL_COMPARE_RESULTS));
+	id1len = 0;
+
+	/*
+	 * See if our guid maps to a well known NFSv4 name
+	 */
+	error = kauth_cred_guid2ntsid(guidp, &sid);
+	if (!error) {
+		const char *wkid = nfs4_sid2wkid(&sid);
+		if (wkid) {
+			len = strnlen(wkid, MAXWELLKNOWNID);
+			strlcpy(id, wkid, *idlen);
+			error = (len < *idlen) ? 0 : ENOSPC;
+			*idlen = len;
+			nfs4_mapguid_log(error, "kauth_cred_guid2ntsid", guidp, 1, id);
+			return (error);
+		}
+	} else {
+		nfs4_mapguid_log(error, "kauth_cred_guid2ntsid", guidp, isgroup, NULL);
+	}
 
 	if (nfs_idmap_ctrl & NFS_IDMAP_CTRL_USE_IDMAP_SERVICE) {
 		/*
@@ -1257,10 +1473,9 @@ nfs4_guid2id(guid_t *guidp, char *id, int *idlen, int isgroup)
 		 * be at least MAXPATHLEN bytes long even though most if not all ID
 		 * strings will be much much shorter than that.
 		 */
-		if (compare || (*idlen < MAXPATHLEN)) {
+
+		if (*idlen < MAXPATHLEN) {
 			MALLOC_ZONE(id1buf, char*, MAXPATHLEN, M_NAMEI, M_WAITOK);
-			if (!id1buf)
-				return (ENOMEM);
 			id1 = id1buf;
 			id1len = MAXPATHLEN;
 		} else {
@@ -1272,196 +1487,52 @@ nfs4_guid2id(guid_t *guidp, char *id, int *idlen, int isgroup)
 			error = kauth_cred_guid2grnam(guidp, id1);
 		else
 			error = kauth_cred_guid2pwnam(guidp, id1);
-		if (error && (nfs_idmap_ctrl & NFS_IDMAP_CTRL_LOG_FAILED_MAPPINGS))
-			printf("nfs4_guid2id: idmap failed for "
-				"%02x%02x%02x%02x_%02x%02x%02x%02x_%02x%02x%02x%02x_%02x%02x%02x%02x %s "
-				"error %d\n",
-				guidp->g_guid[0], guidp->g_guid[1], guidp->g_guid[2], guidp->g_guid[3],
-				guidp->g_guid[4], guidp->g_guid[5], guidp->g_guid[6], guidp->g_guid[7],
-				guidp->g_guid[8], guidp->g_guid[9], guidp->g_guid[10], guidp->g_guid[11],
-				guidp->g_guid[12], guidp->g_guid[13], guidp->g_guid[14], guidp->g_guid[15],
-				isgroup ? "G" : " ", error);
-		if (!error && (nfs_idmap_ctrl & NFS_IDMAP_CTRL_LOG_SUCCESSFUL_MAPPINGS))
-			printf("nfs4_guid2id: idmap for "
-				"%02x%02x%02x%02x_%02x%02x%02x%02x_%02x%02x%02x%02x_%02x%02x%02x%02x %s "
-				"got ID %s\n",
-				guidp->g_guid[0], guidp->g_guid[1], guidp->g_guid[2], guidp->g_guid[3],
-				guidp->g_guid[4], guidp->g_guid[5], guidp->g_guid[6], guidp->g_guid[7],
-				guidp->g_guid[8], guidp->g_guid[9], guidp->g_guid[10], guidp->g_guid[11],
-				guidp->g_guid[12], guidp->g_guid[13], guidp->g_guid[14], guidp->g_guid[15],
-				isgroup ? "G" : " ", id1);
-		error1 = error;
-		if (!error) {
-			if (compare) {
-				id1len = strnlen(id1, id1len);
-			} else if (id1 == id1buf) {
-				/* copy idmap result to output buffer */
-				len = strlcpy(id, id1, *idlen);
-				if (len >= *idlen)
-					error = ENOSPC;
-				else
-					*idlen = len;
-			}
-		}
+		if (error)
+			nfs4_mapguid_log(error, "kauth_cred2[pw|gr]nam", guidp, isgroup, id1);
+	} else {
+		error = ENOTSUP;
 	}
-	if (error || compare || !(nfs_idmap_ctrl & NFS_IDMAP_CTRL_USE_IDMAP_SERVICE)) {
+
+	if (error) {
 		/*
 		 * fallback path... see if we can come up with an answer ourselves.
 		 */
-		ntsid_t sid;
 		uid_t uid;
 
-		if (!(nfs_idmap_ctrl & NFS_IDMAP_CTRL_FALLBACK_NO_WELLKNOWN_IDS)) {
-			error = kauth_cred_guid2ntsid(guidp, &sid);
-			if (!error && (sid.sid_kind == 1) && (sid.sid_authcount == 1)) {
-				/* check if it's one of our well-known ACE WHO names */
-				if (sid.sid_authority[5] == 0) {
-					if (sid.sid_authorities[0] == 0) // S-1-0-0
-						id2 = "nobody@localdomain";
-				} else if (sid.sid_authority[5] == 1) {
-					if (sid.sid_authorities[0] == 0) // S-1-1-0
-						id2 = "EVERYONE@";
-				} else if (sid.sid_authority[5] == 3) {
-					if (sid.sid_authorities[0] == 0) // S-1-3-0
-						id2 = "OWNER@";
-					else if (sid.sid_authorities[0] == 1) // S-1-3-1
-						id2 = "GROUP@";
-				} else if (sid.sid_authority[5] == 5) {
-					if (sid.sid_authorities[0] == ntohl(1)) // S-1-5-1
-						id2 = "DIALUP@";
-					else if (sid.sid_authorities[0] == ntohl(2)) // S-1-5-2
-						id2 = "NETWORK@";
-					else if (sid.sid_authorities[0] == ntohl(3)) // S-1-5-3
-						id2 = "BATCH@";
-					else if (sid.sid_authorities[0] == ntohl(4)) // S-1-5-4
-						id2 = "INTERACTIVE@";
-					else if (sid.sid_authorities[0] == ntohl(6)) // S-1-5-6
-						id2 = "SERVICE@";
-					else if (sid.sid_authorities[0] == ntohl(7)) // S-1-5-7
-						id2 = "ANONYMOUS@";
-					else if (sid.sid_authorities[0] == ntohl(11)) // S-1-5-11
-						id2 = "AUTHENTICATED@";
-				}
-			}
-		}
-		if (!id2) {
-			/* OK, let's just try mapping it to a UID/GID */
-			if (isgroup)
-				error = kauth_cred_guid2gid(guidp, (gid_t*)&uid);
+		/* OK, let's just try mapping it to a UID/GID */
+		if (isgroup)
+			error = kauth_cred_guid2gid(guidp, (gid_t*)&uid);
+		else
+			error = kauth_cred_guid2uid(guidp, &uid);
+		if (!error) {
+			char *fbidp = nfs4_fallback_id(uid, isgroup, numbuf, sizeof(numbuf));
+			if (fbidp == NULL)
+				error = ENOSPC;
 			else
-				error = kauth_cred_guid2uid(guidp, &uid);
-			if (!error) {
-				if (!(nfs_idmap_ctrl & NFS_IDMAP_CTRL_FALLBACK_NO_COMMON_IDS)) {
-					/* map well known uid's to strings */
-					if (uid == 0)
-						id2 = isgroup ? "wheel@localdomain" : "root@localdomain";
-					else if (uid == (uid_t)-2)
-						id2 = "nobody@localdomain";
-				}
-				if (!id2) {
-					/* or just use a decimal number string. */
-					snprintf(numbuf, sizeof(numbuf), "%d", uid);
-					id2 = numbuf;
-				}
-			}
+				id1 = fbidp;
 		}
-		if (error && (nfs_idmap_ctrl & NFS_IDMAP_CTRL_LOG_FAILED_MAPPINGS))
-			printf("nfs4_guid2id: fallback map failed for "
-				"%02x%02x%02x%02x_%02x%02x%02x%02x_%02x%02x%02x%02x_%02x%02x%02x%02x %s "
-				"error %d\n",
-				guidp->g_guid[0], guidp->g_guid[1], guidp->g_guid[2], guidp->g_guid[3],
-				guidp->g_guid[4], guidp->g_guid[5], guidp->g_guid[6], guidp->g_guid[7],
-				guidp->g_guid[8], guidp->g_guid[9], guidp->g_guid[10], guidp->g_guid[11],
-				guidp->g_guid[12], guidp->g_guid[13], guidp->g_guid[14], guidp->g_guid[15],
-				isgroup ? "G" : " ", error);
-		if (!error && (nfs_idmap_ctrl & NFS_IDMAP_CTRL_LOG_SUCCESSFUL_MAPPINGS))
-			printf("nfs4_guid2id: fallback map for "
-				"%02x%02x%02x%02x_%02x%02x%02x%02x_%02x%02x%02x%02x_%02x%02x%02x%02x %s "
-				"got ID %s\n",
-				guidp->g_guid[0], guidp->g_guid[1], guidp->g_guid[2], guidp->g_guid[3],
-				guidp->g_guid[4], guidp->g_guid[5], guidp->g_guid[6], guidp->g_guid[7],
-				guidp->g_guid[8], guidp->g_guid[9], guidp->g_guid[10], guidp->g_guid[11],
-				guidp->g_guid[12], guidp->g_guid[13], guidp->g_guid[14], guidp->g_guid[15],
-				isgroup ? "G" : " ", id2);
-		if (!error && id2) {
-			if (compare) {
-				id2len = strnlen(id2, MAXPATHLEN);
-			} else {
-				/* copy fallback result to output buffer */
-				len = strlcpy(id, id2, *idlen);
-				if (len >= *idlen)
-					error = ENOSPC;
-				else
-					*idlen = len;
-			}
-		}
+	} else {
+		error =	nfs4_addv4domain(id1, &id1len);
 	}
 
-	if (compare) {
-		/* compare the results, log if different */
-		if (!error1 && !error) {
-			if ((id1len != id2len) || strncmp(id1, id2, id1len))
-				printf("nfs4_guid2id: idmap/fallback results differ for "
-					"%02x%02x%02x%02x_%02x%02x%02x%02x_%02x%02x%02x%02x_%02x%02x%02x%02x %s "
-					"idmap %s fallback %s\n",
-					guidp->g_guid[0], guidp->g_guid[1], guidp->g_guid[2], guidp->g_guid[3],
-					guidp->g_guid[4], guidp->g_guid[5], guidp->g_guid[6], guidp->g_guid[7],
-					guidp->g_guid[8], guidp->g_guid[9], guidp->g_guid[10], guidp->g_guid[11],
-					guidp->g_guid[12], guidp->g_guid[13], guidp->g_guid[14], guidp->g_guid[15],
-					isgroup ? "G" : " ", id1, id2);
-			if (id1 == id1buf) {
-				/* copy idmap result to output buffer */
-				len = strlcpy(id, id1, *idlen);
-				if (len >= *idlen)
-					error = ENOSPC;
-				else
-					*idlen = len;
-			}
-		} else if (error1 && !error) {
-			printf("nfs4_guid2id: idmap/fallback results differ for "
-				"%02x%02x%02x%02x_%02x%02x%02x%02x_%02x%02x%02x%02x_%02x%02x%02x%02x %s "
-				"idmap error %d fallback %s\n",
-				guidp->g_guid[0], guidp->g_guid[1], guidp->g_guid[2], guidp->g_guid[3],
-				guidp->g_guid[4], guidp->g_guid[5], guidp->g_guid[6], guidp->g_guid[7],
-				guidp->g_guid[8], guidp->g_guid[9], guidp->g_guid[10], guidp->g_guid[11],
-				guidp->g_guid[12], guidp->g_guid[13], guidp->g_guid[14], guidp->g_guid[15],
-				isgroup ? "G" : " ", error1, id2);
-			/* copy fallback result to output buffer */
-			len = strlcpy(id, id2, *idlen);
+	if (!error) {
+
+		if (id1 != id) {
+			/* copy idmap result to output buffer */
+			len = strlcpy(id, id1, *idlen);
 			if (len >= *idlen)
 				error = ENOSPC;
 			else
 				*idlen = len;
-		} else if (!error1 && error) {
-			printf("nfs4_guid2id: idmap/fallback results differ for "
-				"%02x%02x%02x%02x_%02x%02x%02x%02x_%02x%02x%02x%02x_%02x%02x%02x%02x %s "
-				"idmap %s fallback error %d\n",
-				guidp->g_guid[0], guidp->g_guid[1], guidp->g_guid[2], guidp->g_guid[3],
-				guidp->g_guid[4], guidp->g_guid[5], guidp->g_guid[6], guidp->g_guid[7],
-				guidp->g_guid[8], guidp->g_guid[9], guidp->g_guid[10], guidp->g_guid[11],
-				guidp->g_guid[12], guidp->g_guid[13], guidp->g_guid[14], guidp->g_guid[15],
-				isgroup ? "G" : " ", id1, error);
-			if (id1 == id1buf) {
-				/* copy idmap result to output buffer */
-				len = strlcpy(id, id1, *idlen);
-				if (len >= *idlen)
-					error = ENOSPC;
-				else
-					*idlen = len;
-			}
-			error = 0;
-		} else {
-			if (error1 != error)
-				printf("nfs4_guid2id: idmap/fallback results differ for %s %s - "
-					"idmap error %d fallback error %d\n",
-					id, isgroup ? "G" : " ", error1, error);
 		}
 	}
+	nfs4_mapguid_log(error, "End of routine",  guidp, isgroup, id1);
+
 	if (id1buf)
 		FREE_ZONE(id1buf, MAXPATHLEN, M_NAMEI);
+
 	return (error);
 }
-
 
 /*
  * Set a vnode attr's supported bits according to the given bitmap
@@ -2020,7 +2091,7 @@ nfs4_parsefattr(
 				error = kauth_cred_guid2uid(&nvap->nva_uuuid, &nvap->nva_uid);
 			if (error) {
 				/* unable to get either GUID or UID, set to default */
-				nvap->nva_uid = (uid_t)((nfs_idmap_ctrl & NFS_IDMAP_CTRL_UNKNOWN_IS_99) ? 99 : -2);
+				nvap->nva_uid = (uid_t)(-2);
 				if (nfs_idmap_ctrl & NFS_IDMAP_CTRL_LOG_FAILED_MAPPINGS)
 					printf("nfs4_parsefattr: owner %s is no one, no %s?, error %d\n", s,
 						kauth_guid_equal(&nvap->nva_uuuid, &kauth_null_guid) ? "guid" : "uid",
@@ -2055,7 +2126,7 @@ nfs4_parsefattr(
 				error = kauth_cred_guid2gid(&nvap->nva_guuid, &nvap->nva_gid);
 			if (error) {
 				/* unable to get either GUID or GID, set to default */
-				nvap->nva_gid = (gid_t)((nfs_idmap_ctrl & NFS_IDMAP_CTRL_UNKNOWN_IS_99) ? 99 : -2);
+				nvap->nva_gid = (gid_t)(-2);
 				if (nfs_idmap_ctrl & NFS_IDMAP_CTRL_LOG_FAILED_MAPPINGS)
 					printf("nfs4_parsefattr: group %s is no one, no %s?, error %d\n", s,
 						kauth_guid_equal(&nvap->nva_guuid, &kauth_null_guid) ? "guid" : "gid",
@@ -2175,7 +2246,8 @@ nfsmout:
 int
 nfsm_chain_add_fattr4_f(struct nfsm_chain *nmc, struct vnode_attr *vap, struct nfsmount *nmp)
 {
-	int error = 0, attrbytes, slen, len, i, isgroup;
+	int error = 0, attrbytes, i, isgroup;
+	size_t slen, len;
 	uint32_t *pattrbytes, val, acecount;;
 	uint32_t bitmap[NFS_ATTR_BITMAP_LEN];
 	char sbuf[64], *s;
@@ -2215,11 +2287,12 @@ nfsm_chain_add_fattr4_f(struct nfsm_chain *nmc, struct vnode_attr *vap, struct n
 			val = nfs4_ace_vfstype_to_nfstype(val, &error);
 			nfsm_chain_add_32(error, nmc, val);
 			val = nfs4_ace_vfsflags_to_nfsflags(acl->acl_ace[i].ace_flags);
+			isgroup = (kauth_cred_guid2gid(&acl->acl_ace[i].ace_applicable, &gid) == 0);
+			val |= (isgroup) ? NFS_ACE_IDENTIFIER_GROUP : 0;
 			nfsm_chain_add_32(error, nmc, val);
 			val = nfs4_ace_vfsrights_to_nfsmask(acl->acl_ace[i].ace_rights);
 			nfsm_chain_add_32(error, nmc, val);
 			len = slen;
-			isgroup = (kauth_cred_guid2gid(&acl->acl_ace[i].ace_applicable, &gid) == 0);
 			error = nfs4_guid2id(&acl->acl_ace[i].ace_applicable, s, &len, isgroup);
 			if (error == ENOSPC) {
 				if (s != sbuf) {
@@ -2458,7 +2531,7 @@ restart:
 			break;
 		if (!(nmp->nm_sockflags & NMSOCK_READY))
 			error = EPIPE;
-		if (nmp->nm_state & NFSSTA_FORCE)
+		if (nmp->nm_state & (NFSSTA_FORCE|NFSSTA_DEAD))
 			error = ENXIO;
 		if (nmp->nm_sockflags & NMSOCK_UNMOUNT)
 			error = ENXIO;
@@ -2480,7 +2553,7 @@ restart:
 	if (now.tv_sec == nmp->nm_recover_start) {
 		printf("nfs recovery throttled for %s, 0x%x\n", vfs_statfs(nmp->nm_mountp)->f_mntfromname, nmp->nm_stategenid);
 		lck_mtx_unlock(&nmp->nm_lock);
-		tsleep(&lbolt, (PZERO-1), "nfsrecoverrestart", hz);
+		tsleep(nfs_recover, (PZERO-1), "nfsrecoverrestart", hz);
 		goto restart;
 	}
 	nmp->nm_recover_start = now.tv_sec;
@@ -2570,7 +2643,7 @@ restart:
 				if ((error == ETIMEDOUT) || nfs_mount_state_error_should_restart(error)) {
 					if (error == ETIMEDOUT)
 						nfs_need_reconnect(nmp);
-					tsleep(&lbolt, (PZERO-1), "nfsrecoverrestart", 0);
+					tsleep(nfs_recover, (PZERO-1), "nfsrecoverrestart", hz);
 					printf("nfs recovery restarting for %s, 0x%x, error %d\n",
 						vfs_statfs(nmp->nm_mountp)->f_mntfromname, nmp->nm_stategenid, error);
 					goto restart;
@@ -2626,7 +2699,7 @@ reclaim_locks:
 					if ((error == ETIMEDOUT) || nfs_mount_state_error_should_restart(error)) {
 						if (error == ETIMEDOUT)
 							nfs_need_reconnect(nmp);
-						tsleep(&lbolt, (PZERO-1), "nfsrecoverrestart", 0);
+						tsleep(nfs_recover, (PZERO-1), "nfsrecoverrestart", hz);
 						printf("nfs recovery restarting for %s, 0x%x, error %d\n",
 							vfs_statfs(nmp->nm_mountp)->f_mntfromname, nmp->nm_stategenid, error);
 						goto restart;
@@ -2651,7 +2724,7 @@ reclaim_locks:
 				nfs4_delegation_return(nofp->nof_np, R_RECOVER, thd, noop->noo_cred);
 				if (!(nmp->nm_sockflags & NMSOCK_READY)) {
 					/* looks like we need a reconnect */
-					tsleep(&lbolt, (PZERO-1), "nfsrecoverrestart", 0);
+					tsleep(nfs_recover, (PZERO-1), "nfsrecoverrestart", hz);
 					printf("nfs recovery restarting for %s, 0x%x, error %d\n",
 						vfs_statfs(nmp->nm_mountp)->f_mntfromname, nmp->nm_stategenid, error);
 					goto restart;

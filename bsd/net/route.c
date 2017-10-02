@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2012 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2017 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -68,26 +68,36 @@
 #include <sys/mbuf.h>
 #include <sys/socket.h>
 #include <sys/domain.h>
+#include <sys/stat.h>
+#include <sys/ubc.h>
+#include <sys/vnode.h>
 #include <sys/syslog.h>
 #include <sys/queue.h>
 #include <sys/mcache.h>
 #include <sys/protosw.h>
-#include <kern/lock.h>
+#include <sys/kernel.h>
+#include <kern/locks.h>
 #include <kern/zalloc.h>
 
+#include <net/dlil.h>
 #include <net/if.h>
 #include <net/route.h>
 #include <net/ntstat.h>
+#include <net/nwk_wq.h>
+#if NECP
+#include <net/necp.h>
+#endif /* NECP */
 
 #include <netinet/in.h>
 #include <netinet/in_var.h>
-#include <netinet/ip_mroute.h>
 #include <netinet/ip_var.h>
 #include <netinet/ip6.h>
+#include <netinet/in_arp.h>
 
 #if INET6
 #include <netinet6/ip6_var.h>
 #include <netinet6/in6_var.h>
+#include <netinet6/nd6.h>
 #endif /* INET6 */
 
 #include <net/if_dl.h>
@@ -96,6 +106,10 @@
 #include <libkern/OSDebug.h>
 
 #include <pexpert/pexpert.h>
+
+#if CONFIG_MACF
+#include <sys/kauth.h>
+#endif
 
 /*
  * Synchronization notes:
@@ -127,7 +141,7 @@
  *
  *	- Routing table lock (rnh_lock).
  *
- * rt_parent, rt_mask, rt_llinfo_free
+ * rt_parent, rt_mask, rt_llinfo_free, rt_tree_genid
  *
  *	- Set once during creation and never changes; no locks to read.
  *
@@ -161,7 +175,7 @@
  *	  single-threaded, thus exclusive.  This flag will also prevent the
  *	  route from being looked up via rt_lookup().
  *
- * generation_id
+ * rt_genid
  *
  *	- Assumes that 32-bit writes are atomic; no locks.
  *
@@ -197,14 +211,12 @@
 
 #define	equal(a1, a2) (bcmp((caddr_t)(a1), (caddr_t)(a2), (a1)->sa_len) == 0)
 
-extern void kdp_set_gateway_mac (void *gatewaymac);
+extern void kdp_set_gateway_mac(void *gatewaymac);
 
-extern struct domain routedomain;
-struct route_cb route_cb;
-__private_extern__ struct rtstat rtstat  = { 0, 0, 0, 0, 0 };
+__private_extern__ struct rtstat rtstat  = { 0, 0, 0, 0, 0, 0 };
 struct radix_node_head *rt_tables[AF_MAX+1];
 
-decl_lck_mtx_data(,rnh_lock_data);	/* global routing tables mutex */
+decl_lck_mtx_data(, rnh_lock_data);	/* global routing tables mutex */
 lck_mtx_t		*rnh_lock = &rnh_lock_data;
 static lck_attr_t	*rnh_lock_attr;
 static lck_grp_t	*rnh_lock_grp;
@@ -217,7 +229,7 @@ static lck_grp_attr_t	*rte_mtx_grp_attr;
 
 int rttrash = 0;		/* routes not in table but not freed */
 
-unsigned int rte_debug;
+unsigned int rte_debug = 0;
 
 /* Possible flags for rte_debug */
 #define	RTD_DEBUG	0x1	/* enable or disable rtentry debug facility */
@@ -232,6 +244,8 @@ static struct zone *rte_zone;			/* special zone for rtentry */
 
 #define	RTD_INUSE		0xFEEDFACE	/* entry is in use */
 #define	RTD_FREED		0xDEADBEEF	/* entry is freed */
+
+#define MAX_SCOPE_ADDR_STR_LEN	(MAX_IPv6_STR_LEN + 6)
 
 /* For gdb */
 __private_extern__ unsigned int ctrace_stack_size = CTRACE_STACK_SIZE;
@@ -278,8 +292,8 @@ static inline struct rtentry *rte_alloc_debug(void);
 static inline void rte_free_debug(struct rtentry *);
 static inline void rte_lock_debug(struct rtentry_dbg *);
 static inline void rte_unlock_debug(struct rtentry_dbg *);
-static void rt_maskedcopy(struct sockaddr *,
-	    struct sockaddr *, struct sockaddr *);
+static void rt_maskedcopy(const struct sockaddr *,
+	    struct sockaddr *, const struct sockaddr *);
 static void rtable_init(void **);
 static inline void rtref_audit(struct rtentry_dbg *);
 static inline void rtunref_audit(struct rtentry_dbg *);
@@ -293,14 +307,14 @@ static void rtalloc_ign_common_locked(struct route *, uint32_t, unsigned int);
 static inline void sin6_set_ifscope(struct sockaddr *, unsigned int);
 static inline void sin6_set_embedded_ifscope(struct sockaddr *, unsigned int);
 static inline unsigned int sin6_get_embedded_ifscope(struct sockaddr *);
-static struct sockaddr *sa_copy(struct sockaddr *, struct sockaddr_storage *,
-    unsigned int *);
 static struct sockaddr *ma_copy(int, struct sockaddr *,
     struct sockaddr_storage *, unsigned int);
 static struct sockaddr *sa_trim(struct sockaddr *, int);
 static struct radix_node *node_lookup(struct sockaddr *, struct sockaddr *,
     unsigned int);
 static struct radix_node *node_lookup_default(int);
+static struct rtentry *rt_lookup_common(boolean_t, boolean_t, struct sockaddr *,
+    struct sockaddr *, struct radix_node_head *, unsigned int);
 static int rn_match_ifscope(struct radix_node *, void *);
 static struct ifaddr *ifa_ifwithroute_common_locked(int,
     const struct sockaddr *, const struct sockaddr *, unsigned int);
@@ -308,37 +322,18 @@ static struct rtentry *rte_alloc(void);
 static void rte_free(struct rtentry *);
 static void rtfree_common(struct rtentry *, boolean_t);
 static void rte_if_ref(struct ifnet *, int);
+static void rt_set_idleref(struct rtentry *);
+static void rt_clear_idleref(struct rtentry *);
+static void route_event_callback(void *);
+static void rt_str4(struct rtentry *, char *, uint32_t, char *, uint32_t);
+#if INET6
+static void rt_str6(struct rtentry *, char *, uint32_t, char *, uint32_t);
+#endif /* INET6 */
 
-uint32_t route_generation = 0;
-
-/*
- * sockaddr_in with scope ID field; this is used internally to keep
- * track of scoped route entries in the routing table.  The fact that
- * such a value is embedded in the structure is an artifact of the
- * current implementation which could change in future.
- */
-struct sockaddr_inifscope {
-	__uint8_t	sin_len;
-	sa_family_t	sin_family;
-	in_port_t	sin_port;
-	struct	in_addr sin_addr;
-	/*
-	 * To avoid possible conflict with an overlaid sockaddr_inarp
-	 * having sin_other set to SIN_PROXY, we use the first 4-bytes
-	 * of sin_zero since sin_srcaddr is one of the unused fields
-	 * in sockaddr_inarp.
-	 */
-	union {
-		char	sin_zero[8];
-		struct {
-			__uint32_t	ifscope;
-		} _in_index;
-	} un;
-#define	sin_scope_id	un._in_index.ifscope
-};
-
-#define	SINIFSCOPE(sa)	((struct sockaddr_inifscope *)(size_t)(sa))
-#define	SIN6IFSCOPE(sa)	SIN6(sa)
+uint32_t route_genid_inet = 0;
+#if INET6
+uint32_t route_genid_inet6 = 0;
+#endif /* INET6 */
 
 #define	ASSERT_SINIFSCOPE(sa) {						\
 	if ((sa)->sa_family != AF_INET ||				\
@@ -349,7 +344,7 @@ struct sockaddr_inifscope {
 #define	ASSERT_SIN6IFSCOPE(sa) {					\
 	if ((sa)->sa_family != AF_INET6 ||				\
 	    (sa)->sa_len < sizeof (struct sockaddr_in6))		\
-		panic("%s: bad sockaddr_in %p\n", __func__, sa);	\
+		panic("%s: bad sockaddr_in6 %p\n", __func__, sa);	\
 }
 
 /*
@@ -392,12 +387,82 @@ static unsigned int primary6_ifscope = IFSCOPE_NONE;
 #define	RN(r)		((struct radix_node *)r)
 #define	RT_HOST(r)	(RT(r)->rt_flags & RTF_HOST)
 
-SYSCTL_DECL(_net_idle_route);
+unsigned int rt_verbose = 0;
+#if (DEVELOPMENT || DEBUG)
+SYSCTL_DECL(_net_route);
+SYSCTL_UINT(_net_route, OID_AUTO, verbose, CTLFLAG_RW | CTLFLAG_LOCKED,
+	&rt_verbose, 0, "");
+#endif /* (DEVELOPMENT || DEBUG) */
 
-static int rt_if_idle_expire_timeout = RT_IF_IDLE_EXPIRE_TIMEOUT;
-SYSCTL_INT(_net_idle_route, OID_AUTO, expire_timeout, CTLFLAG_RW|CTLFLAG_LOCKED,
-    &rt_if_idle_expire_timeout, 0, "Default expiration time on routes for "
-    "interface idle reference counting");
+static void
+rtable_init(void **table)
+{
+	struct domain *dom;
+
+	domain_proto_mtx_lock_assert_held();
+
+	TAILQ_FOREACH(dom, &domains, dom_entry) {
+		if (dom->dom_rtattach != NULL)
+			dom->dom_rtattach(&table[dom->dom_family],
+			    dom->dom_rtoffset);
+	}
+}
+
+/*
+ * Called by route_dinit().
+ */
+void
+route_init(void)
+{
+	int size;
+
+#if INET6
+	_CASSERT(offsetof(struct route, ro_rt) ==
+	    offsetof(struct route_in6, ro_rt));
+	_CASSERT(offsetof(struct route, ro_lle) ==
+	    offsetof(struct route_in6, ro_lle));
+	_CASSERT(offsetof(struct route, ro_srcia) ==
+	    offsetof(struct route_in6, ro_srcia));
+	_CASSERT(offsetof(struct route, ro_flags) ==
+	    offsetof(struct route_in6, ro_flags));
+	_CASSERT(offsetof(struct route, ro_dst) ==
+	    offsetof(struct route_in6, ro_dst));
+#endif /* INET6 */
+
+	PE_parse_boot_argn("rte_debug", &rte_debug, sizeof (rte_debug));
+	if (rte_debug != 0)
+		rte_debug |= RTD_DEBUG;
+
+	rnh_lock_grp_attr = lck_grp_attr_alloc_init();
+	rnh_lock_grp = lck_grp_alloc_init("route", rnh_lock_grp_attr);
+	rnh_lock_attr = lck_attr_alloc_init();
+	lck_mtx_init(rnh_lock, rnh_lock_grp, rnh_lock_attr);
+
+	rte_mtx_grp_attr = lck_grp_attr_alloc_init();
+	rte_mtx_grp = lck_grp_alloc_init(RTE_NAME, rte_mtx_grp_attr);
+	rte_mtx_attr = lck_attr_alloc_init();
+
+	lck_mtx_lock(rnh_lock);
+	rn_init();	/* initialize all zeroes, all ones, mask table */
+	lck_mtx_unlock(rnh_lock);
+	rtable_init((void **)rt_tables);
+
+	if (rte_debug & RTD_DEBUG)
+		size = sizeof (struct rtentry_dbg);
+	else
+		size = sizeof (struct rtentry);
+
+	rte_zone = zinit(size, RTE_ZONE_MAX * size, 0, RTE_ZONE_NAME);
+	if (rte_zone == NULL) {
+		panic("%s: failed allocating rte_zone", __func__);
+		/* NOTREACHED */
+	}
+	zone_change(rte_zone, Z_EXPAND, TRUE);
+	zone_change(rte_zone, Z_CALLERACCT, FALSE);
+	zone_change(rte_zone, Z_NOENCRYPT, TRUE);
+
+	TAILQ_INIT(&rttrash_head);
+}
 
 /*
  * Given a route, determine whether or not it is the non-scoped default
@@ -507,7 +572,7 @@ sin6_get_embedded_ifscope(struct sockaddr *sa)
  * In any case, the effective scope ID value is returned to the caller via
  * pifscope, if it is non-NULL.
  */
-static struct sockaddr *
+struct sockaddr *
 sa_copy(struct sockaddr *src, struct sockaddr_storage *dst,
     unsigned int *pifscope)
 {
@@ -536,7 +601,13 @@ sa_copy(struct sockaddr *src, struct sockaddr_storage *dst,
 			eifscope = sin6_get_embedded_ifscope(SA(dst));
 			if (eifscope != IFSCOPE_NONE && ifscope == IFSCOPE_NONE)
 				ifscope = eifscope;
-			sin6_set_ifscope(SA(dst), ifscope);
+			if (ifscope != IFSCOPE_NONE) {
+				/* Set ifscope from pifscope or eifscope */
+				sin6_set_ifscope(SA(dst), ifscope);
+			} else {
+				/* If sin6_scope_id has a value, use that one */
+				ifscope = sin6_get_ifscope(SA(dst));
+			}
 			/*
 			 * If sin6_scope_id is set but the address doesn't
 			 * contain the equivalent embedded value, set it.
@@ -603,7 +674,7 @@ sa_trim(struct sockaddr *sa, int skip)
 	if (sa->sa_len <= skip)
 		return (sa);
 
-	for (cp = base + (sa->sa_len - skip); cp > base && cp[-1] == 0;)
+	for (cp = base + (sa->sa_len - skip); cp > base && cp[-1] == 0; )
 		cp--;
 
 	sa->sa_len = (cp - base) + skip;
@@ -621,18 +692,28 @@ sa_trim(struct sockaddr *sa, int skip)
 }
 
 /*
- * Called by rtm_msg{1,2} routines to "scrub" the scope ID field away from
- * the socket address structure, so that clients of the routing socket will
+ * Called by rtm_msg{1,2} routines to "scrub" socket address structures of
+ * kernel private information, so that clients of the routing socket will
  * not be confused by the presence of the information, or the side effect of
  * the increased length due to that.  The source sockaddr is not modified;
  * instead, the scrubbing happens on the destination sockaddr storage that
  * is passed in by the caller.
+ *
+ * Scrubbing entails:
+ *   - removing embedded scope identifiers from network mask and destination
+ *     IPv4 and IPv6 socket addresses
+ *   - optionally removing global scope interface hardware addresses from
+ *     link-layer interface addresses when the MAC framework check fails.
  */
 struct sockaddr *
-rtm_scrub_ifscope(int type, int idx, struct sockaddr *hint, struct sockaddr *sa,
-    struct sockaddr_storage *ss)
+rtm_scrub(int type, int idx, struct sockaddr *hint, struct sockaddr *sa,
+    void *buf, uint32_t buflen, kauth_cred_t *credp)
 {
+	struct sockaddr_storage *ss = (struct sockaddr_storage *)buf;
 	struct sockaddr *ret = sa;
+
+	VERIFY(buf != NULL && buflen >= sizeof (*ss));
+	bzero(buf, buflen);
 
 	switch (idx) {
 	case RTAX_DST:
@@ -674,7 +755,6 @@ rtm_scrub_ifscope(int type, int idx, struct sockaddr *hint, struct sockaddr *sa,
 		    offsetof(struct sockaddr_in6, sin6_addr);
 
 		if (sa->sa_len > skip && sa->sa_len <= sizeof (*ss)) {
-			bzero(ss, sizeof (*ss));
 			bcopy(sa, ss, sa->sa_len);
 			/*
 			 * Don't use {sin,sin6}_set_ifscope() as sa_family
@@ -695,6 +775,36 @@ rtm_scrub_ifscope(int type, int idx, struct sockaddr *hint, struct sockaddr *sa,
 			if (hint->sa_family == AF_INET6 &&
 			    type != RTM_GET && type != RTM_GET2)
 				SA(ret)->sa_len = sizeof (struct sockaddr_in6);
+		}
+		break;
+	}
+	case RTAX_GATEWAY: {
+		/*
+		 * Break if the gateway is not AF_LINK type (indirect routes)
+		 *
+		 * Else, if is, check if it is resolved. If not yet resolved
+		 * simply break else scrub the link layer address.
+		 */
+		if ((sa->sa_family != AF_LINK) || (SDL(sa)->sdl_alen == 0))
+			break;
+		/* fallthrough */
+	}
+	case RTAX_IFP: {
+		if (sa->sa_family == AF_LINK && credp) {
+			struct sockaddr_dl *sdl = SDL(buf);
+			const void *bytes;
+			size_t size;
+
+			/* caller should handle worst case: SOCK_MAXADDRLEN */
+			VERIFY(buflen >= sa->sa_len);
+
+			bcopy(sa, sdl, sa->sa_len);
+			bytes = dlil_ifaddr_bytes(sdl, &size, credp);
+			if (bytes != CONST_LLADDR(sdl)) {
+				VERIFY(sdl->sdl_alen == size);
+				bcopy(bytes, LLADDR(sdl), size);
+			}
+			ret = (struct sockaddr *)sdl;
 		}
 		break;
 	}
@@ -724,63 +834,31 @@ rn_match_ifscope(struct radix_node *rn, void *arg)
 	    (SIN6IFSCOPE(rt_key(rt))->sin6_scope_id == ma->ifscope));
 }
 
-static void
-rtable_init(void **table)
-{
-	struct domain *dom;
-	for (dom = domains; dom; dom = dom->dom_next)
-		if (dom->dom_rtattach)
-			dom->dom_rtattach(&table[dom->dom_family],
-			    dom->dom_rtoffset);
-}
-
-void
-route_init(void)
-{
-	int size;
-
-	PE_parse_boot_argn("rte_debug", &rte_debug, sizeof (rte_debug));
-	if (rte_debug != 0)
-		rte_debug |= RTD_DEBUG;
-
-	rnh_lock_grp_attr = lck_grp_attr_alloc_init();
-	rnh_lock_grp = lck_grp_alloc_init("route", rnh_lock_grp_attr);
-	rnh_lock_attr = lck_attr_alloc_init();
-	lck_mtx_init(rnh_lock, rnh_lock_grp, rnh_lock_attr);
-
-	rte_mtx_grp_attr = lck_grp_attr_alloc_init();
-	rte_mtx_grp = lck_grp_alloc_init(RTE_NAME, rte_mtx_grp_attr);
-	rte_mtx_attr = lck_attr_alloc_init();
-
-	lck_mtx_lock(rnh_lock);
-	rn_init();	/* initialize all zeroes, all ones, mask table */
-	lck_mtx_unlock(rnh_lock);
-	rtable_init((void **)rt_tables);
-
-	if (rte_debug & RTD_DEBUG)
-		size = sizeof (struct rtentry_dbg);
-	else
-		size = sizeof (struct rtentry);
-
-	rte_zone = zinit(size, RTE_ZONE_MAX * size, 0, RTE_ZONE_NAME);
-	if (rte_zone == NULL)
-		panic("route_init: failed allocating rte_zone");
-
-	zone_change(rte_zone, Z_EXPAND, TRUE);
-	zone_change(rte_zone, Z_CALLERACCT, FALSE);
-	zone_change(rte_zone, Z_NOENCRYPT, TRUE);
-
-	TAILQ_INIT(&rttrash_head);
-}
-
 /*
  * Atomically increment route generation counter
  */
 void
 routegenid_update(void)
 {
-	(void) atomic_add_32_ov(&route_generation, 1);
+	routegenid_inet_update();
+#if INET6
+	routegenid_inet6_update();
+#endif /* INET6 */
 }
+
+void
+routegenid_inet_update(void)
+{
+	atomic_add_32(&route_genid_inet, 1);
+}
+
+#if INET6
+void
+routegenid_inet6_update(void)
+{
+	atomic_add_32(&route_genid_inet6, 1);
+}
+#endif /* INET6 */
 
 /*
  * Packet routing routines.
@@ -805,18 +883,16 @@ rtalloc_ign_common_locked(struct route *ro, uint32_t ignore,
 
 	if ((rt = ro->ro_rt) != NULL) {
 		RT_LOCK_SPIN(rt);
-		if (rt->rt_ifp != NULL && (rt->rt_flags & RTF_UP) &&
-		    rt->generation_id == route_generation) {
+		if (rt->rt_ifp != NULL && !ROUTE_UNUSABLE(ro)) {
 			RT_UNLOCK(rt);
 			return;
 		}
 		RT_UNLOCK(rt);
-		rtfree_locked(rt);
-		ro->ro_rt = NULL;
+		ROUTE_RELEASE_LOCKED(ro);	/* rnh_lock already held */
 	}
 	ro->ro_rt = rtalloc1_common_locked(&ro->ro_dst, 1, ignore, ifscope);
 	if (ro->ro_rt != NULL) {
-		ro->ro_rt->generation_id = route_generation;
+		RT_GENID_SYNC(ro->ro_rt);
 		RT_LOCK_ASSERT_NOTHELD(ro->ro_rt);
 	}
 }
@@ -824,7 +900,7 @@ rtalloc_ign_common_locked(struct route *ro, uint32_t ignore,
 void
 rtalloc_ign(struct route *ro, uint32_t ignore)
 {
-	lck_mtx_assert(rnh_lock, LCK_MTX_ASSERT_NOTOWNED);
+	LCK_MTX_ASSERT(rnh_lock, LCK_MTX_ASSERT_NOTOWNED);
 	lck_mtx_lock(rnh_lock);
 	rtalloc_ign_common_locked(ro, ignore, IFSCOPE_NONE);
 	lck_mtx_unlock(rnh_lock);
@@ -833,7 +909,7 @@ rtalloc_ign(struct route *ro, uint32_t ignore)
 void
 rtalloc_scoped_ign(struct route *ro, uint32_t ignore, unsigned int ifscope)
 {
-	lck_mtx_assert(rnh_lock, LCK_MTX_ASSERT_NOTOWNED);
+	LCK_MTX_ASSERT(rnh_lock, LCK_MTX_ASSERT_NOTOWNED);
 	lck_mtx_lock(rnh_lock);
 	rtalloc_ign_common_locked(ro, ignore, ifscope);
 	lck_mtx_unlock(rnh_lock);
@@ -852,11 +928,7 @@ rtalloc1_scoped_locked(struct sockaddr *dst, int report, uint32_t ignflags,
 	return (rtalloc1_common_locked(dst, report, ignflags, ifscope));
 }
 
-/*
- * Look up the route that matches the address given
- * Or, at least try.. Create a cloned route if needed.
- */
-static struct rtentry *
+struct rtentry *
 rtalloc1_common_locked(struct sockaddr *dst, int report, uint32_t ignflags,
     unsigned int ifscope)
 {
@@ -905,6 +977,38 @@ rtalloc1_common_locked(struct sockaddr *dst, int report, uint32_t ignflags,
 		 * reference held during rtrequest.
 		 */
 		rtfree_locked(rt);
+
+		/*
+		 * If the newly created cloned route is a direct host route
+		 * then also check if it is to a router or not.
+		 * If it is, then set the RTF_ROUTER flag on the host route
+		 * for the gateway.
+		 *
+		 * XXX It is possible for the default route to be created post
+		 * cloned route creation of router's IP.
+		 * We can handle that corner case by special handing for RTM_ADD
+		 * of default route.
+		 */
+		if ((newrt->rt_flags & (RTF_HOST | RTF_LLINFO)) ==
+		    (RTF_HOST | RTF_LLINFO)) {
+			struct rtentry *defrt = NULL;
+			struct sockaddr_storage def_key;
+
+			bzero(&def_key, sizeof(def_key));
+			def_key.ss_len = rt_key(newrt)->sa_len;
+			def_key.ss_family = rt_key(newrt)->sa_family;
+
+			defrt = rtalloc1_scoped_locked((struct sockaddr *)&def_key,
+					0, 0, newrt->rt_ifp->if_index);
+
+			if (defrt) {
+				if (equal(rt_key(newrt), defrt->rt_gateway)) {
+					newrt->rt_flags |= RTF_ROUTER;
+				}
+				rtfree_locked(defrt);
+			}
+		}
+
 		if ((rt = newrt) && (rt->rt_flags & RTF_XRESOLVE)) {
 			/*
 			 * If the new route specifies it be
@@ -922,6 +1026,7 @@ unreachable:
 	 * Which basically means "cant get there from here"
 	 */
 	rtstat.rts_unreach++;
+
 miss:
 	if (report) {
 		/*
@@ -940,8 +1045,8 @@ done:
 struct rtentry *
 rtalloc1(struct sockaddr *dst, int report, uint32_t ignflags)
 {
-	struct rtentry * entry;
-	lck_mtx_assert(rnh_lock, LCK_MTX_ASSERT_NOTOWNED);
+	struct rtentry *entry;
+	LCK_MTX_ASSERT(rnh_lock, LCK_MTX_ASSERT_NOTOWNED);
 	lck_mtx_lock(rnh_lock);
 	entry = rtalloc1_locked(dst, report, ignflags);
 	lck_mtx_unlock(rnh_lock);
@@ -952,8 +1057,8 @@ struct rtentry *
 rtalloc1_scoped(struct sockaddr *dst, int report, uint32_t ignflags,
     unsigned int ifscope)
 {
-	struct rtentry * entry;
-	lck_mtx_assert(rnh_lock, LCK_MTX_ASSERT_NOTOWNED);
+	struct rtentry *entry;
+	LCK_MTX_ASSERT(rnh_lock, LCK_MTX_ASSERT_NOTOWNED);
 	lck_mtx_lock(rnh_lock);
 	entry = rtalloc1_scoped_locked(dst, report, ignflags, ifscope);
 	lck_mtx_unlock(rnh_lock);
@@ -975,6 +1080,9 @@ rtfree_common(struct rtentry *rt, boolean_t locked)
 {
 	struct radix_node_head *rnh;
 
+	LCK_MTX_ASSERT(rnh_lock, locked ?
+	    LCK_MTX_ASSERT_OWNED : LCK_MTX_ASSERT_NOTOWNED);
+
 	/*
 	 * Atomically decrement the reference count and if it reaches 0,
 	 * and there is a close function defined, call the close function.
@@ -993,20 +1101,19 @@ rtfree_common(struct rtentry *rt, boolean_t locked)
 	 */
 	if (!locked) {
 		/*
-		* Note that we check it again below after grabbing rnh_lock,
-		* since it is possible that another thread doing a lookup wins
-		* the race, grabs the rnh_lock first, and bumps up the reference
-		* count in which case the route should be left alone as it is
-		* still in use.  It's also possible that another thread frees
-		* the route after we drop rt_lock; to prevent the route from
-		* being freed, we hold an extra reference.
-		*/
+		 * Note that we check it again below after grabbing rnh_lock,
+		 * since it is possible that another thread doing a lookup wins
+		 * the race, grabs the rnh_lock first, and bumps up reference
+		 * count in which case the route should be left alone as it is
+		 * still in use.  It's also possible that another thread frees
+		 * the route after we drop rt_lock; to prevent the route from
+		 * being freed, we hold an extra reference.
+		 */
 		RT_ADDREF_LOCKED(rt);
 		RT_UNLOCK(rt);
 		lck_mtx_lock(rnh_lock);
 		RT_LOCK_SPIN(rt);
-		RT_REMREF_LOCKED(rt);
-		if (rt->rt_refcnt > 0) {
+		if (rtunref(rt) > 0) {
 			/* We've lost the race, so abort */
 			RT_UNLOCK(rt);
 			goto done;
@@ -1019,11 +1126,15 @@ rtfree_common(struct rtentry *rt, boolean_t locked)
 	 */
 	RT_CONVERT_LOCK(rt);
 
-	lck_mtx_assert(rnh_lock, LCK_MTX_ASSERT_OWNED);
+	LCK_MTX_ASSERT(rnh_lock, LCK_MTX_ASSERT_OWNED);
 
 	/* Negative refcnt must never happen */
-	if (rt->rt_refcnt != 0)
+	if (rt->rt_refcnt != 0) {
 		panic("rt %p invalid refcnt %d", rt, rt->rt_refcnt);
+		/* NOTREACHED */
+	}
+	/* Idle refcnt must have been dropped during rtunref() */
+	VERIFY(!(rt->rt_flags & RTF_IFREF));
 
 	/*
 	 * find the tree for that address family
@@ -1050,8 +1161,11 @@ rtfree_common(struct rtentry *rt, boolean_t locked)
 		struct rtentry *rt_parent;
 		struct ifaddr *rt_ifa;
 
-		if (rt->rt_nodes->rn_flags & (RNF_ACTIVE | RNF_ROOT))
+		rt->rt_flags |= RTF_DEAD;
+		if (rt->rt_nodes->rn_flags & (RNF_ACTIVE | RNF_ROOT)) {
 			panic("rt %p freed while in radix tree\n", rt);
+			/* NOTREACHED */
+		}
 		/*
 		 * the rtentry must have been removed from the routing table
 		 * so it is represented in rttrash; remove that now.
@@ -1083,11 +1197,15 @@ rtfree_common(struct rtentry *rt, boolean_t locked)
 			rt->rt_llinfo = NULL;
 		}
 
+		/* Destroy eventhandler lists context */
+		eventhandler_lists_ctxt_destroy(&rt->rt_evhdlr_ctxt);
+
 		/*
 		 * Route is no longer in the tree and refcnt is 0;
 		 * we have exclusive access, so destroy it.
 		 */
 		RT_UNLOCK(rt);
+		rte_lock_destroy(rt);
 
 		if (rt_parent != NULL)
 			rtfree_locked(rt_parent);
@@ -1110,7 +1228,6 @@ rtfree_common(struct rtentry *rt, boolean_t locked)
 		/*
 		 * and the rtentry itself of course
 		 */
-		rte_lock_destroy(rt);
 		rte_free(rt);
 	} else {
 		/*
@@ -1141,10 +1258,18 @@ rtunref(struct rtentry *p)
 {
 	RT_LOCK_ASSERT_HELD(p);
 
-	if (p->rt_refcnt == 0)
+	if (p->rt_refcnt == 0) {
 		panic("%s(%p) bad refcnt\n", __func__, p);
-
-	--p->rt_refcnt;
+		/* NOTREACHED */
+	} else if (--p->rt_refcnt == 0) {
+		/*
+		 * Release any idle reference count held on the interface;
+		 * if the route is eligible, still UP and the refcnt becomes
+		 * non-zero at some point in future before it is purged from
+		 * the routing table, rt_set_idleref() will undo this.
+		 */
+		rt_clear_idleref(p);
+	}
 
 	if (rte_debug & RTD_DEBUG)
 		rtunref_audit((struct rtentry_dbg *)p);
@@ -1158,9 +1283,10 @@ rtunref_audit(struct rtentry_dbg *rte)
 {
 	uint16_t idx;
 
-	if (rte->rtd_inuse != RTD_INUSE)
+	if (rte->rtd_inuse != RTD_INUSE) {
 		panic("rtunref: on freed rte=%p\n", rte);
-
+		/* NOTREACHED */
+	}
 	idx = atomic_add_16_ov(&rte->rtd_refrele_cnt, 1) % CTRACE_HIST_SIZE;
 	if (rte_debug & RTD_TRACE)
 		ctrace_record(&rte->rtd_refrele[idx]);
@@ -1174,8 +1300,17 @@ rtref(struct rtentry *p)
 {
 	RT_LOCK_ASSERT_HELD(p);
 
-	if (++p->rt_refcnt == 0)
+	VERIFY((p->rt_flags & RTF_DEAD) == 0);
+	if (++p->rt_refcnt == 0) {
 		panic("%s(%p) bad refcnt\n", __func__, p);
+		/* NOTREACHED */
+	} else if (p->rt_refcnt == 1) {
+		/*
+		 * Hold an idle reference count on the interface,
+		 * if the route is eligible for it.
+		 */
+		rt_set_idleref(p);
+	}
 
 	if (rte_debug & RTD_DEBUG)
 		rtref_audit((struct rtentry_dbg *)p);
@@ -1186,18 +1321,19 @@ rtref_audit(struct rtentry_dbg *rte)
 {
 	uint16_t idx;
 
-	if (rte->rtd_inuse != RTD_INUSE)
+	if (rte->rtd_inuse != RTD_INUSE) {
 		panic("rtref_audit: on freed rte=%p\n", rte);
-
+		/* NOTREACHED */
+	}
 	idx = atomic_add_16_ov(&rte->rtd_refhold_cnt, 1) % CTRACE_HIST_SIZE;
 	if (rte_debug & RTD_TRACE)
 		ctrace_record(&rte->rtd_refhold[idx]);
 }
 
 void
-rtsetifa(struct rtentry *rt, struct ifaddr* ifa)
+rtsetifa(struct rtentry *rt, struct ifaddr *ifa)
 {
-	lck_mtx_assert(rnh_lock, LCK_MTX_ASSERT_OWNED);
+	LCK_MTX_ASSERT(rnh_lock, LCK_MTX_ASSERT_OWNED);
 
 	RT_LOCK_ASSERT_HELD(rt);
 
@@ -1227,8 +1363,8 @@ rtsetifa(struct rtentry *rt, struct ifaddr* ifa)
  */
 void
 rtredirect(struct ifnet *ifp, struct sockaddr *dst, struct sockaddr *gateway,
-   struct sockaddr *netmask, int flags, struct sockaddr *src,
-   struct rtentry **rtp)
+    struct sockaddr *netmask, int flags, struct sockaddr *src,
+    struct rtentry **rtp)
 {
 	struct rtentry *rt = NULL;
 	int error = 0;
@@ -1237,8 +1373,9 @@ rtredirect(struct ifnet *ifp, struct sockaddr *dst, struct sockaddr *gateway,
 	struct ifaddr *ifa = NULL;
 	unsigned int ifscope = (ifp != NULL) ? ifp->if_index : IFSCOPE_NONE;
 	struct sockaddr_storage ss;
+	int af = src->sa_family;
 
-	lck_mtx_assert(rnh_lock, LCK_MTX_ASSERT_NOTOWNED);
+	LCK_MTX_ASSERT(rnh_lock, LCK_MTX_ASSERT_NOTOWNED);
 	lck_mtx_lock(rnh_lock);
 
 	/*
@@ -1246,10 +1383,9 @@ rtredirect(struct ifnet *ifp, struct sockaddr *dst, struct sockaddr *gateway,
 	 * comparison against rt_gateway below.
 	 */
 #if INET6
-	if ((src->sa_family == AF_INET && ip_doscopedroute) ||
-	    (src->sa_family == AF_INET6 && ip6_doscopedroute))
+	if ((af == AF_INET) || (af == AF_INET6))
 #else
-	if (src->sa_family == AF_INET && ip_doscopedroute)
+	if (af == AF_INET)
 #endif /* !INET6 */
 		src = sa_copy(src, &ss, &ifscope);
 
@@ -1277,8 +1413,8 @@ rtredirect(struct ifnet *ifp, struct sockaddr *dst, struct sockaddr *gateway,
 	 * in_ifinit), so okay to access ifa_addr without locking.
 	 */
 	if (!(flags & RTF_DONE) && rt != NULL &&
-	     (!equal(src, rt->rt_gateway) || !equal(rt->rt_ifa->ifa_addr,
-	     ifa->ifa_addr))) {
+	    (!equal(src, rt->rt_gateway) || !equal(rt->rt_ifa->ifa_addr,
+	    ifa->ifa_addr))) {
 		error = EINVAL;
 	} else {
 		IFA_REMREF(ifa);
@@ -1360,8 +1496,13 @@ out:
 	} else {
 		if (stat != NULL)
 			(*stat)++;
-		if (use_routegenid)
-			routegenid_update();
+
+		if (af == AF_INET)
+			routegenid_inet_update();
+#if INET6
+		else if (af == AF_INET6)
+			routegenid_inet6_update();
+#endif /* INET6 */
 	}
 	lck_mtx_unlock(rnh_lock);
 	bzero((caddr_t)&info, sizeof(info));
@@ -1378,14 +1519,8 @@ out:
 int
 rtioctl(unsigned long req, caddr_t data, struct proc *p)
 {
-#pragma unused(p)
-#if INET && MROUTING
-	return mrt_ioctl(req, data);
-#else
-#pragma unused(req)
-#pragma unused(data)
-	return ENXIO;
-#endif
+#pragma unused(p, req, data)
+	return (ENXIO);
 }
 
 struct ifaddr *
@@ -1431,7 +1566,7 @@ ifa_ifwithroute_common_locked(int flags, const struct sockaddr *dst,
 	struct rtentry *rt = NULL;
 	struct sockaddr_storage dst_ss, gw_ss;
 
-	lck_mtx_assert(rnh_lock, LCK_MTX_ASSERT_OWNED);
+	LCK_MTX_ASSERT(rnh_lock, LCK_MTX_ASSERT_OWNED);
 
 	/*
 	 * Just in case the sockaddr passed in by the caller
@@ -1440,19 +1575,19 @@ ifa_ifwithroute_common_locked(int flags, const struct sockaddr *dst,
 	 */
 #if INET6
 	if (dst != NULL &&
-	    ((dst->sa_family == AF_INET && ip_doscopedroute) ||
-	    (dst->sa_family == AF_INET6 && ip6_doscopedroute)))
+	    ((dst->sa_family == AF_INET) ||
+	    (dst->sa_family == AF_INET6)))
 #else
-	if (dst != NULL && dst->sa_family == AF_INET && ip_doscopedroute)
+	if (dst != NULL && dst->sa_family == AF_INET)
 #endif /* !INET6 */
 		dst = sa_copy(SA((uintptr_t)dst), &dst_ss, NULL);
 
 #if INET6
 	if (gw != NULL &&
-	    ((gw->sa_family == AF_INET && ip_doscopedroute) ||
-	    (gw->sa_family == AF_INET6 && ip6_doscopedroute)))
+	    ((gw->sa_family == AF_INET) ||
+	    (gw->sa_family == AF_INET6)))
 #else
-	if (gw != NULL && gw->sa_family == AF_INET && ip_doscopedroute)
+	if (gw != NULL && gw->sa_family == AF_INET)
 #endif /* !INET6 */
 		gw = sa_copy(SA((uintptr_t)gw), &gw_ss, NULL);
 
@@ -1605,13 +1740,13 @@ rtrequest_common_locked(int req, struct sockaddr *dst0,
 	struct ifaddr *ifa = NULL;
 	struct sockaddr *ndst, *dst = dst0;
 	struct sockaddr_storage ss, mask;
-	struct timeval curr_calendartime;
+	struct timeval caltime;
 	int af = dst->sa_family;
 	void (*ifa_rtrequest)(int, struct rtentry *, struct sockaddr *);
 
-#define senderr(x) { error = x ; goto bad; }
+#define	senderr(x) { error = x; goto bad; }
 
-	lck_mtx_assert(rnh_lock, LCK_MTX_ASSERT_OWNED);
+	LCK_MTX_ASSERT(rnh_lock, LCK_MTX_ASSERT_OWNED);
 	/*
 	 * Find the correct routing tree to use for this Address Family
 	 */
@@ -1638,11 +1773,9 @@ rtrequest_common_locked(int req, struct sockaddr *dst0,
 	 * routing socket request.
 	 */
 #if INET6
-	if (req != RTM_RESOLVE &&
-	    ((af == AF_INET && ip_doscopedroute) ||
-	    (af == AF_INET6 && ip6_doscopedroute))) {
+	if (req != RTM_RESOLVE && ((af == AF_INET) || (af == AF_INET6))) {
 #else
-	if (req != RTM_RESOLVE && af == AF_INET && ip_doscopedroute) {
+	if (req != RTM_RESOLVE && af == AF_INET) {
 #endif /* !INET6 */
 		/* Transform dst into the internal routing table form */
 		dst = sa_copy(dst, &ss, &ifscope);
@@ -1653,17 +1786,9 @@ rtrequest_common_locked(int req, struct sockaddr *dst0,
 
 		if (ifscope != IFSCOPE_NONE)
 			flags |= RTF_IFSCOPE;
-	} else {
-		if ((flags & RTF_IFSCOPE) && (af != AF_INET && af != AF_INET6))
-			senderr(EINVAL);
-
-#if INET6
-		if ((af == AF_INET && !ip_doscopedroute) ||
-		    (af == AF_INET6 && !ip6_doscopedroute))
-#else
-		if (af == AF_INET && !ip_doscopedroute)
-#endif /* !INET6 */
-			ifscope = IFSCOPE_NONE;
+	} else if ((flags & RTF_IFSCOPE) &&
+	    (af != AF_INET && af != AF_INET6)) {
+		senderr(EINVAL);
 	}
 
 	if (ifscope == IFSCOPE_NONE)
@@ -1672,16 +1797,28 @@ rtrequest_common_locked(int req, struct sockaddr *dst0,
 	switch (req) {
 	case RTM_DELETE: {
 		struct rtentry *gwrt = NULL;
+		boolean_t was_router = FALSE;
+		uint32_t old_rt_refcnt = 0;
 		/*
 		 * Remove the item from the tree and return it.
 		 * Complain if it is not there and do no more processing.
 		 */
 		if ((rn = rnh->rnh_deladdr(dst, netmask, rnh)) == NULL)
 			senderr(ESRCH);
-		if (rn->rn_flags & (RNF_ACTIVE | RNF_ROOT))
-			panic ("rtrequest delete");
+		if (rn->rn_flags & (RNF_ACTIVE | RNF_ROOT)) {
+			panic("rtrequest delete");
+			/* NOTREACHED */
+		}
 		rt = (struct rtentry *)rn;
 
+		RT_LOCK(rt);
+		old_rt_refcnt = rt->rt_refcnt;
+		rt->rt_flags &= ~RTF_UP;
+		/*
+		 * Release any idle reference count held on the interface
+		 * as this route is no longer externally visible.
+		 */
+		rt_clear_idleref(rt);
 		/*
 		 * Take an extra reference to handle the deletion of a route
 		 * entry whose reference count is already 0; e.g. an expiring
@@ -1691,9 +1828,7 @@ rtrequest_common_locked(int req, struct sockaddr *dst0,
 		 * will decrement the reference via rtfree_locked() and then
 		 * possibly deallocate it.
 		 */
-		RT_LOCK(rt);
 		RT_ADDREF_LOCKED(rt);
-		rt->rt_flags &= ~RTF_UP;
 
 		/*
 		 * For consistency, in case the caller didn't set the flag.
@@ -1704,9 +1839,20 @@ rtrequest_common_locked(int req, struct sockaddr *dst0,
 		 * Clear RTF_ROUTER if it's set.
 		 */
 		if (rt->rt_flags & RTF_ROUTER) {
+			was_router = TRUE;
 			VERIFY(rt->rt_flags & RTF_HOST);
 			rt->rt_flags &= ~RTF_ROUTER;
 		}
+
+		/*
+		 * Enqueue work item to invoke callback for this route entry
+		 *
+		 * If the old count is 0, it implies that last reference is being
+		 * removed and there's no one listening for this route event.
+		 */
+		if (old_rt_refcnt != 0)
+			route_event_enqueue_nwk_wq_entry(rt, NULL,
+			    ROUTE_ENTRY_DELETED, NULL, TRUE);
 
 		/*
 		 * Now search what's left of the subtree for any cloned
@@ -1716,7 +1862,16 @@ rtrequest_common_locked(int req, struct sockaddr *dst0,
 		    rt_mask(rt)) {
 			RT_UNLOCK(rt);
 			rnh->rnh_walktree_from(rnh, dst, rt_mask(rt),
-					       rt_fixdelete, rt);
+			    rt_fixdelete, rt);
+			RT_LOCK(rt);
+		}
+
+		if (was_router) {
+			struct route_event rt_ev;
+			route_event_init(&rt_ev, rt, NULL, ROUTE_LLENTRY_DELETED);
+			RT_UNLOCK(rt);
+			(void) rnh->rnh_walktree(rnh,
+			    route_event_walktree, (void *)&rt_ev);
 			RT_LOCK(rt);
 		}
 
@@ -1757,7 +1912,16 @@ rtrequest_common_locked(int req, struct sockaddr *dst0,
 			set_primary_ifscope(rt_key(rt)->sa_family,
 			    IFSCOPE_NONE);
 		}
-		rt_clear_idleref(rt);
+
+#if NECP
+		/*
+		 * If this is a change in a default route, update
+		 * necp client watchers to re-evaluate
+		 */
+		if (SA_DEFAULT(rt_key(rt))) {
+			necp_update_all_clients();
+		}
+#endif /* NECP */
 
 		RT_UNLOCK(rt);
 
@@ -1782,11 +1946,30 @@ rtrequest_common_locked(int req, struct sockaddr *dst0,
 			/* Dereference or deallocate the route */
 			rtfree_locked(rt);
 		}
+		if (af == AF_INET)
+			routegenid_inet_update();
+#if INET6
+		else if (af == AF_INET6)
+			routegenid_inet6_update();
+#endif /* INET6 */
 		break;
 	}
 	case RTM_RESOLVE:
 		if (ret_nrt == NULL || (rt = *ret_nrt) == NULL)
 			senderr(EINVAL);
+		/*
+		 * According to the UNIX conformance tests, we need to return
+		 * ENETUNREACH when the parent route is RTF_REJECT.
+		 * However, there isn't any point in cloning RTF_REJECT
+		 * routes, so we immediately return an error.
+		 */
+		if (rt->rt_flags & RTF_REJECT) {
+			if (rt->rt_flags & RTF_HOST) {
+				senderr(EHOSTUNREACH);
+			} else {
+				senderr(ENETUNREACH);
+			}
+		}
 		/*
 		 * If cloning, we have the parent route given by the caller
 		 * and will use its rt_gateway, rt_rmx as part of the cloning
@@ -1807,11 +1990,9 @@ rtrequest_common_locked(int req, struct sockaddr *dst0,
 			flags |= RTF_HOST;
 
 #if INET6
-		if ((af != AF_INET && af != AF_INET6) ||
-		    (af == AF_INET && !ip_doscopedroute) ||
-		    (af == AF_INET6 && !ip6_doscopedroute))
+		if (af != AF_INET && af != AF_INET6)
 #else
-		if (af != AF_INET || !ip_doscopedroute)
+		if (af != AF_INET)
 #endif /* !INET6 */
 			goto makeroute;
 
@@ -1828,6 +2009,11 @@ rtrequest_common_locked(int req, struct sockaddr *dst0,
 		    (rt->rt_flags & RTF_PROXY)) {
 			ifscope = IFSCOPE_NONE;
 			flags &= ~RTF_IFSCOPE;
+			/*
+			 * These types of cloned routes aren't currently
+			 * eligible for idle interface reference counting.
+			 */
+			flags |= RTF_NOIFREF;
 		} else {
 			if (flags & RTF_IFSCOPE) {
 				ifscope = (af == AF_INET) ?
@@ -1854,9 +2040,10 @@ rtrequest_common_locked(int req, struct sockaddr *dst0,
 		goto makeroute;
 
 	case RTM_ADD:
-		if ((flags & RTF_GATEWAY) && !gateway)
+		if ((flags & RTF_GATEWAY) && !gateway) {
 			panic("rtrequest: RTF_GATEWAY but no gateway");
-
+			/* NOTREACHED */
+		}
 		if (flags & RTF_IFSCOPE) {
 			ifa = ifa_ifwithroute_scoped_locked(flags, dst0,
 			    gateway, ifscope);
@@ -1866,15 +2053,36 @@ rtrequest_common_locked(int req, struct sockaddr *dst0,
 		if (ifa == NULL)
 			senderr(ENETUNREACH);
 makeroute:
-		getmicrotime(&curr_calendartime);
+		/*
+		 * We land up here for both RTM_RESOLVE and RTM_ADD
+		 * when we decide to create a route.
+		 */
 		if ((rt = rte_alloc()) == NULL)
 			senderr(ENOBUFS);
 		Bzero(rt, sizeof(*rt));
 		rte_lock_init(rt);
-                rt->base_calendartime = curr_calendartime.tv_sec;
+		eventhandler_lists_ctxt_init(&rt->rt_evhdlr_ctxt);
+		getmicrotime(&caltime);
+		rt->base_calendartime = caltime.tv_sec;
 		rt->base_uptime = net_uptime();
 		RT_LOCK(rt);
 		rt->rt_flags = RTF_UP | flags;
+
+		/*
+		 * Point the generation ID to the tree's.
+		 */
+		switch (af) {
+		case AF_INET:
+			rt->rt_tree_genid = &route_genid_inet;
+			break;
+#if INET6
+		case AF_INET6:
+			rt->rt_tree_genid = &route_genid_inet6;
+			break;
+#endif /* INET6 */
+		default:
+			break;
+		}
 
 		/*
 		 * Add the gateway. Possibly re-malloc-ing the storage for it
@@ -1913,7 +2121,7 @@ makeroute:
 		/* XXX mtu manipulation will be done in rnh_addaddr -- itojun */
 
 		rn = rnh->rnh_addaddr((caddr_t)ndst, (caddr_t)netmask,
-					rnh, rt->rt_nodes);
+		    rnh, rt->rt_nodes);
 		if (rn == 0) {
 			struct rtentry *rt2;
 			/*
@@ -1940,8 +2148,7 @@ makeroute:
 				    rt2->rt_flags, 0);
 				rtfree_locked(rt2);
 				rn = rnh->rnh_addaddr((caddr_t)ndst,
-						      (caddr_t)netmask,
-						      rnh, rt->rt_nodes);
+				    (caddr_t)netmask, rnh, rt->rt_nodes);
 			} else if (rt2) {
 				/* undo the extra ref we got */
 				rtfree_locked(rt2);
@@ -1986,20 +2193,12 @@ makeroute:
 			    (*ret_nrt)->rt_rmx.rmx_expire == 0);
 			rt->rt_rmx = (*ret_nrt)->rt_rmx;
 			rt_setexpire(rt, (*ret_nrt)->rt_expire);
-			if ((*ret_nrt)->rt_flags & (RTF_CLONING | RTF_PRCLONING)) {
+			if ((*ret_nrt)->rt_flags &
+			    (RTF_CLONING | RTF_PRCLONING)) {
 				rt->rt_parent = (*ret_nrt);
 				RT_ADDREF_LOCKED(*ret_nrt);
 			}
 			RT_UNLOCK(*ret_nrt);
-
-			/*
-			 * Enable interface reference counting for unicast
-			 * cloned routes and bump up the reference count.
-			 */
-			if (rt->rt_parent != NULL &&
-			    !(rt->rt_flags & (RTF_BROADCAST | RTF_MULTICAST))) {
-				rt_set_idleref(rt);
-			}
 		}
 
 		/*
@@ -2023,6 +2222,16 @@ makeroute:
 			    rt->rt_ifp->if_index);
 		}
 
+#if NECP
+		/*
+		 * If this is a change in a default route, update
+		 * necp client watchers to re-evaluate
+		 */
+		if (SA_DEFAULT(rt_key(rt))) {
+			necp_update_all_clients();
+		}
+#endif /* NECP */
+
 		/*
 		 * actually return a resultant rtentry and
 		 * give the caller a single reference.
@@ -2031,6 +2240,15 @@ makeroute:
 			*ret_nrt = rt;
 			RT_ADDREF_LOCKED(rt);
 		}
+
+		if (af == AF_INET)
+			routegenid_inet_update();
+#if INET6
+		else if (af == AF_INET6)
+			routegenid_inet6_update();
+#endif /* INET6 */
+
+		RT_GENID_SYNC(rt);
 
 		/*
 		 * We repeat the same procedures from rt_setgate() here
@@ -2047,7 +2265,7 @@ makeroute:
 			arg.rt0 = rt;
 			RT_UNLOCK(rt);
 			rnh->rnh_walktree_from(rnh, rt_key(rt), rt_mask(rt),
-					       rt_fixchange, &arg);
+			    rt_fixchange, &arg);
 		} else {
 			RT_UNLOCK(rt);
 		}
@@ -2067,7 +2285,7 @@ rtrequest(int req, struct sockaddr *dst, struct sockaddr *gateway,
     struct sockaddr *netmask, int flags, struct rtentry **ret_nrt)
 {
 	int error;
-	lck_mtx_assert(rnh_lock, LCK_MTX_ASSERT_NOTOWNED);
+	LCK_MTX_ASSERT(rnh_lock, LCK_MTX_ASSERT_NOTOWNED);
 	lck_mtx_lock(rnh_lock);
 	error = rtrequest_locked(req, dst, gateway, netmask, flags, ret_nrt);
 	lck_mtx_unlock(rnh_lock);
@@ -2080,7 +2298,7 @@ rtrequest_scoped(int req, struct sockaddr *dst, struct sockaddr *gateway,
     unsigned int ifscope)
 {
 	int error;
-	lck_mtx_assert(rnh_lock, LCK_MTX_ASSERT_NOTOWNED);
+	LCK_MTX_ASSERT(rnh_lock, LCK_MTX_ASSERT_NOTOWNED);
 	lck_mtx_lock(rnh_lock);
 	error = rtrequest_scoped_locked(req, dst, gateway, netmask, flags,
 	    ret_nrt, ifscope);
@@ -2101,11 +2319,11 @@ rt_fixdelete(struct radix_node *rn, void *vp)
 	struct rtentry *rt = (struct rtentry *)rn;
 	struct rtentry *rt0 = vp;
 
-	lck_mtx_assert(rnh_lock, LCK_MTX_ASSERT_OWNED);
+	LCK_MTX_ASSERT(rnh_lock, LCK_MTX_ASSERT_OWNED);
 
 	RT_LOCK(rt);
 	if (rt->rt_parent == rt0 &&
-	    !(rt->rt_flags & (RTF_PINNED | RTF_CLONING | RTF_PRCLONING))) {
+	    !(rt->rt_flags & (RTF_CLONING | RTF_PRCLONING))) {
 		/*
 		 * Safe to drop rt_lock and use rt_key, since holding
 		 * rnh_lock here prevents another thread from calling
@@ -2116,7 +2334,7 @@ rt_fixdelete(struct radix_node *rn, void *vp)
 		    rt_mask(rt), rt->rt_flags, NULL));
 	}
 	RT_UNLOCK(rt);
-	return 0;
+	return (0);
 }
 
 /*
@@ -2142,12 +2360,12 @@ rt_fixchange(struct radix_node *rn, void *vp)
 	u_char *xk1, *xm1, *xk2, *xmp;
 	int i, len;
 
-	lck_mtx_assert(rnh_lock, LCK_MTX_ASSERT_OWNED);
+	LCK_MTX_ASSERT(rnh_lock, LCK_MTX_ASSERT_OWNED);
 
 	RT_LOCK(rt);
 
 	if (!rt->rt_parent ||
-	    (rt->rt_flags & (RTF_PINNED | RTF_CLONING | RTF_PRCLONING))) {
+	    (rt->rt_flags & (RTF_CLONING | RTF_PRCLONING))) {
 		RT_UNLOCK(rt);
 		return (0);
 	}
@@ -2228,18 +2446,24 @@ int
 rt_setgate(struct rtentry *rt, struct sockaddr *dst, struct sockaddr *gate)
 {
 	int dlen = SA_SIZE(dst->sa_len), glen = SA_SIZE(gate->sa_len);
-	struct radix_node_head *rnh = rt_tables[dst->sa_family];
+	struct radix_node_head *rnh = NULL;
 	boolean_t loop = FALSE;
 
-	lck_mtx_assert(rnh_lock, LCK_MTX_ASSERT_OWNED);
+	if (dst->sa_family != AF_INET && dst->sa_family != AF_INET6) {
+		return (EINVAL);
+	}
+
+	rnh = rt_tables[dst->sa_family];
+	LCK_MTX_ASSERT(rnh_lock, LCK_MTX_ASSERT_OWNED);
 	RT_LOCK_ASSERT_HELD(rt);
 
 	/*
 	 * If this is for a route that is on its way of being removed,
 	 * or is temporarily frozen, reject the modification request.
 	 */
-	if (rt->rt_flags & RTF_CONDEMNED)
+	if (rt->rt_flags & RTF_CONDEMNED) {
 		return (EBUSY);
+	}
 
 	/* Add an extra ref for ourselves */
 	RT_ADDREF_LOCKED(rt);
@@ -2382,6 +2606,16 @@ rt_setgate(struct rtentry *rt, struct sockaddr *dst, struct sockaddr *gate)
 			    rt->rt_ifp->if_index);
 		}
 
+#if NECP
+		/*
+		 * If this is a change in a default route, update
+		 * necp client watchers to re-evaluate
+		 */
+		if (SA_DEFAULT(dst)) {
+			necp_update_all_clients();
+		}
+#endif /* NECP */
+
 		/*
 		 * Tell the kernel debugger about the new default gateway
 		 * if the gateway route uses the primary interface, or
@@ -2483,7 +2717,7 @@ rt_set_gwroute(struct rtentry *rt, struct sockaddr *dst, struct rtentry *gwrt)
 {
 	boolean_t gwrt_isrouter;
 
-	lck_mtx_assert(rnh_lock, LCK_MTX_ASSERT_OWNED);
+	LCK_MTX_ASSERT(rnh_lock, LCK_MTX_ASSERT_OWNED);
 	RT_LOCK_ASSERT_HELD(rt);
 
 	if (gwrt != NULL)
@@ -2533,23 +2767,23 @@ rt_set_gwroute(struct rtentry *rt, struct sockaddr *dst, struct rtentry *gwrt)
 }
 
 static void
-rt_maskedcopy(struct sockaddr *src, struct sockaddr *dst,
-	      struct sockaddr *netmask)
+rt_maskedcopy(const struct sockaddr *src, struct sockaddr *dst,
+    const struct sockaddr *netmask)
 {
-	u_char *cp1 = (u_char *)src;
-	u_char *cp2 = (u_char *)dst;
-	u_char *cp3 = (u_char *)netmask;
-	u_char *cplim = cp2 + *cp3;
-	u_char *cplim2 = cp2 + *cp1;
+	const char *netmaskp = &netmask->sa_data[0];
+	const char *srcp = &src->sa_data[0];
+	char *dstp = &dst->sa_data[0];
+	const char *maskend = (char *)dst
+				    + MIN(netmask->sa_len, src->sa_len);
+	const char *srcend = (char *)dst + src->sa_len;
 
-	*cp2++ = *cp1++; *cp2++ = *cp1++; /* copies sa_len & sa_family */
-	cp3 += 2;
-	if (cplim > cplim2)
-		cplim = cplim2;
-	while (cp2 < cplim)
-		*cp2++ = *cp1++ & *cp3++;
-	if (cp2 < cplim2)
-		bzero((caddr_t)cp2, (unsigned)(cplim2 - cp2));
+	dst->sa_len = src->sa_len;
+	dst->sa_family = src->sa_family;
+
+	while (dstp < maskend)
+		*dstp++ = *srcp++ & *netmaskp++;
+	if (dstp < srcend)
+		memset(dstp, 0, (size_t)(srcend - dstp));
 }
 
 /*
@@ -2608,6 +2842,29 @@ node_lookup_default(int af)
 	    rnh->rnh_lookup(&sin6_def, NULL, rnh));
 }
 
+boolean_t
+rt_ifa_is_dst(struct sockaddr *dst, struct ifaddr *ifa)
+{
+	boolean_t result = FALSE;
+
+	if (ifa == NULL || ifa->ifa_addr == NULL)
+		return (result);
+
+	IFA_LOCK_SPIN(ifa);
+
+	if (dst->sa_family == ifa->ifa_addr->sa_family &&
+	    ((dst->sa_family == AF_INET &&
+	    SIN(dst)->sin_addr.s_addr ==
+	    SIN(ifa->ifa_addr)->sin_addr.s_addr) ||
+	    (dst->sa_family == AF_INET6 &&
+	    SA6_ARE_ADDR_EQUAL(SIN6(dst), SIN6(ifa->ifa_addr)))))
+		result = TRUE;
+
+	IFA_UNLOCK(ifa);
+
+	return (result);
+}
+
 /*
  * Common routine to lookup/match a route.  It invokes the lookup/matchaddr
  * callback which could be address family-specific.  The main difference
@@ -2631,16 +2888,29 @@ node_lookup_default(int af)
  * to the loopback interface).  The search rule follows the longest matching
  * prefix with the additional interface constraint.
  */
-struct rtentry *
-rt_lookup(boolean_t lookup_only, struct sockaddr *dst, struct sockaddr *netmask,
-    struct radix_node_head *rnh, unsigned int ifscope)
+static struct rtentry *
+rt_lookup_common(boolean_t lookup_only, boolean_t coarse, struct sockaddr *dst,
+    struct sockaddr *netmask, struct radix_node_head *rnh, unsigned int ifscope)
 {
-	struct radix_node *rn0, *rn;
-	boolean_t dontcare;
+	struct radix_node *rn0, *rn = NULL;
 	int af = dst->sa_family;
-	struct sockaddr_storage dst_ss, mask_ss;
+	struct sockaddr_storage dst_ss;
+	struct sockaddr_storage mask_ss;
+	boolean_t dontcare;
+#if (DEVELOPMENT || DEBUG)
+	char dbuf[MAX_SCOPE_ADDR_STR_LEN], gbuf[MAX_IPv6_STR_LEN];
+	char s_dst[MAX_IPv6_STR_LEN], s_netmask[MAX_IPv6_STR_LEN];
+#endif
+	VERIFY(!coarse || ifscope == IFSCOPE_NONE);
 
-	lck_mtx_assert(rnh_lock, LCK_MTX_ASSERT_OWNED);
+	LCK_MTX_ASSERT(rnh_lock, LCK_MTX_ASSERT_OWNED);
+#if INET6
+	/*
+	 * While we have rnh_lock held, see if we need to schedule the timer.
+	 */
+	if (nd6_sched_timeout_want)
+		nd6_sched_timeout(NULL, NULL);
+#endif /* INET6 */
 
 	if (!lookup_only)
 		netmask = NULL;
@@ -2649,11 +2919,9 @@ rt_lookup(boolean_t lookup_only, struct sockaddr *dst, struct sockaddr *netmask,
 	 * Non-scoped route lookup.
 	 */
 #if INET6
-	if ((af != AF_INET && af != AF_INET6) ||
-	    (af == AF_INET && !ip_doscopedroute) ||
-	    (af == AF_INET6 && !ip6_doscopedroute)) {
+	if (af != AF_INET && af != AF_INET6) {
 #else
-	if (af != AF_INET || !ip_doscopedroute) {
+	if (af != AF_INET) {
 #endif /* !INET6 */
 		rn = rnh->rnh_matchaddr(dst, rnh);
 
@@ -2682,6 +2950,28 @@ rt_lookup(boolean_t lookup_only, struct sockaddr *dst, struct sockaddr *netmask,
 	if (netmask != NULL)
 		netmask = ma_copy(af, netmask, &mask_ss, ifscope);
 	dontcare = (ifscope == IFSCOPE_NONE);
+
+#if (DEVELOPMENT || DEBUG)
+	if (rt_verbose) {
+		if (af == AF_INET)
+			(void) inet_ntop(af, &SIN(dst)->sin_addr.s_addr,
+			    s_dst, sizeof (s_dst));
+		else
+			(void) inet_ntop(af, &SIN6(dst)->sin6_addr,
+			    s_dst, sizeof (s_dst));
+
+		if (netmask != NULL && af == AF_INET)
+			(void) inet_ntop(af, &SIN(netmask)->sin_addr.s_addr,
+			    s_netmask, sizeof (s_netmask));
+		if (netmask != NULL && af == AF_INET6)
+			(void) inet_ntop(af, &SIN6(netmask)->sin6_addr,
+			    s_netmask, sizeof (s_netmask));
+		else
+			*s_netmask = '\0';
+		printf("%s (%d, %d, %s, %s, %u)\n",
+		    __func__, lookup_only, coarse, s_dst, s_netmask, ifscope);
+	}
+#endif
 
 	/*
 	 * Scoped route lookup:
@@ -2717,7 +3007,19 @@ rt_lookup(boolean_t lookup_only, struct sockaddr *dst, struct sockaddr *netmask,
 	 */
 	if (rn != NULL) {
 		struct rtentry *rt = RT(rn);
-		if (rt->rt_ifp != lo_ifp) {
+#if (DEVELOPMENT || DEBUG)
+		if (rt_verbose) {
+			rt_str(rt, dbuf, sizeof (dbuf), gbuf, sizeof (gbuf));
+			printf("%s unscoped search %p to %s->%s->%s ifa_ifp %s\n",
+			    __func__, rt,
+			    dbuf, gbuf,
+			    (rt->rt_ifp != NULL) ? rt->rt_ifp->if_xname : "",
+			    (rt->rt_ifa->ifa_ifp != NULL) ?
+			    rt->rt_ifa->ifa_ifp->if_xname : "");
+		}
+#endif
+		if (!(rt->rt_ifp->if_flags & IFF_LOOPBACK) ||
+		    (rt->rt_flags & RTF_GATEWAY)) {
 			if (rt->rt_ifp->if_index != ifscope) {
 				/*
 				 * Wrong interface; keep the original result
@@ -2725,11 +3027,15 @@ rt_lookup(boolean_t lookup_only, struct sockaddr *dst, struct sockaddr *netmask,
 				 * and do a more specific scoped search using
 				 * the scope of the found route.  Otherwise,
 				 * start again from scratch.
+				 *
+				 * For loopback scope we keep the unscoped
+				 * route for local addresses
 				 */
 				rn = NULL;
 				if (dontcare)
 					ifscope = rt->rt_ifp->if_index;
-				else
+				else if (ifscope != lo_ifp->if_index ||
+				    rt_ifa_is_dst(dst, rt->rt_ifa) == FALSE)
 					rn0 = NULL;
 			} else if (!(rt->rt_flags & RTF_IFSCOPE)) {
 				/*
@@ -2749,21 +3055,35 @@ rt_lookup(boolean_t lookup_only, struct sockaddr *dst, struct sockaddr *netmask,
 	 * interface scope as the one requested.  The following will result
 	 * in searching for the longest prefix scoped match.
 	 */
-	if (rn == NULL)
+	if (rn == NULL) {
 		rn = node_lookup(dst, netmask, ifscope);
+#if (DEVELOPMENT || DEBUG)
+		if (rt_verbose && rn != NULL) {
+			struct rtentry *rt = RT(rn);
 
+			rt_str(rt, dbuf, sizeof (dbuf), gbuf, sizeof (gbuf));
+			printf("%s scoped search %p to %s->%s->%s ifa %s\n",
+			    __func__, rt,
+			    dbuf, gbuf,
+			    (rt->rt_ifp != NULL) ? rt->rt_ifp->if_xname : "",
+			    (rt->rt_ifa->ifa_ifp != NULL) ?
+			    rt->rt_ifa->ifa_ifp->if_xname : "");
+		}
+#endif
+	}
 	/*
 	 * Use the original result if either of the following is true:
 	 *
 	 *   1) The scoped search did not yield any result.
-	 *   2) The result from the scoped search is a scoped default route,
+	 *   2) The caller insists on performing a coarse-grained lookup.
+	 *   3) The result from the scoped search is a scoped default route,
 	 *	and the original (non-scoped) result is not a default route,
 	 *	i.e. the original result is a more specific host/net route.
-	 *   3)	The scoped search yielded a net route but the original
+	 *   4)	The scoped search yielded a net route but the original
 	 *	result is a host route, i.e. the original result is treated
 	 *	as a more specific route.
 	 */
-	if (rn == NULL || (rn0 != NULL &&
+	if (rn == NULL || coarse || (rn0 != NULL &&
 	    ((SA_DEFAULT(rt_key(RT(rn))) && !SA_DEFAULT(rt_key(RT(rn0)))) ||
 	    (!RT_HOST(rn) && RT_HOST(rn0)))))
 		rn = rn0;
@@ -2773,8 +3093,9 @@ rt_lookup(boolean_t lookup_only, struct sockaddr *dst, struct sockaddr *netmask,
 	 * route as long as the interface portion satistifes the scope.
 	 */
 	if (rn == NULL && (rn = node_lookup_default(af)) != NULL &&
-	    RT(rn)->rt_ifp->if_index != ifscope)
+	    RT(rn)->rt_ifp->if_index != ifscope) {
 		rn = NULL;
+	}
 
 	if (rn != NULL) {
 		/*
@@ -2793,8 +3114,41 @@ rt_lookup(boolean_t lookup_only, struct sockaddr *dst, struct sockaddr *netmask,
 			rn = NULL;
 		}
 	}
+#if (DEVELOPMENT || DEBUG)
+	if (rt_verbose) {
+		if (rn == NULL)
+			printf("%s %u return NULL\n", __func__, ifscope);
+		else {
+			struct rtentry *rt = RT(rn);
 
+			rt_str(rt, dbuf, sizeof (dbuf), gbuf, sizeof (gbuf));
+
+			printf("%s %u return %p to %s->%s->%s ifa_ifp %s\n",
+			    __func__, ifscope, rt,
+			    dbuf, gbuf,
+			    (rt->rt_ifp != NULL) ? rt->rt_ifp->if_xname : "",
+			    (rt->rt_ifa->ifa_ifp != NULL) ?
+			    rt->rt_ifa->ifa_ifp->if_xname : "");
+		}
+	}
+#endif
 	return (RT(rn));
+}
+
+struct rtentry *
+rt_lookup(boolean_t lookup_only, struct sockaddr *dst, struct sockaddr *netmask,
+    struct radix_node_head *rnh, unsigned int ifscope)
+{
+	return (rt_lookup_common(lookup_only, FALSE, dst, netmask,
+	    rnh, ifscope));
+}
+
+struct rtentry *
+rt_lookup_coarse(boolean_t lookup_only, struct sockaddr *dst,
+    struct sockaddr *netmask, struct radix_node_head *rnh)
+{
+	return (rt_lookup_common(lookup_only, TRUE, dst, netmask,
+	    rnh, IFSCOPE_NONE));
 }
 
 boolean_t
@@ -2824,30 +3178,76 @@ int
 rtinit(struct ifaddr *ifa, int cmd, int flags)
 {
 	int error;
-	lck_mtx_assert(rnh_lock, LCK_MTX_ASSERT_NOTOWNED);
+
+	LCK_MTX_ASSERT(rnh_lock, LCK_MTX_ASSERT_NOTOWNED);
+
 	lck_mtx_lock(rnh_lock);
 	error = rtinit_locked(ifa, cmd, flags);
 	lck_mtx_unlock(rnh_lock);
+
 	return (error);
 }
 
 int
 rtinit_locked(struct ifaddr *ifa, int cmd, int flags)
 {
-	struct rtentry *rt;
+	struct radix_node_head *rnh;
+	uint8_t nbuf[128];	/* long enough for IPv6 */
+#if (DEVELOPMENT || DEBUG)
+	char dbuf[MAX_IPv6_STR_LEN], gbuf[MAX_IPv6_STR_LEN];
+	char abuf[MAX_IPv6_STR_LEN];
+#endif
+	struct rtentry *rt = NULL;
 	struct sockaddr *dst;
-	struct sockaddr *deldst;
-	struct mbuf *m = 0;
-	struct rtentry *nrt = 0;
-	u_int32_t ifa_flags;
-	int error;
+	struct sockaddr *netmask;
+	int error = 0;
 
 	/*
 	 * Holding rnh_lock here prevents the possibility of ifa from
 	 * changing (e.g. in_ifinit), so it is safe to access its
 	 * ifa_{dst}addr (here and down below) without locking.
 	 */
-	dst = flags & RTF_HOST ? ifa->ifa_dstaddr : ifa->ifa_addr;
+	LCK_MTX_ASSERT(rnh_lock, LCK_MTX_ASSERT_OWNED);
+
+	if (flags & RTF_HOST) {
+		dst = ifa->ifa_dstaddr;
+		netmask = NULL;
+	} else {
+		dst = ifa->ifa_addr;
+		netmask = ifa->ifa_netmask;
+	}
+
+	if (dst->sa_len == 0) {
+		log(LOG_ERR, "%s: %s failed, invalid dst sa_len %d\n",
+		    __func__, rtm2str(cmd), dst->sa_len);
+		error = EINVAL;
+		goto done;
+	}
+	if (netmask != NULL && netmask->sa_len > sizeof (nbuf)) {
+		log(LOG_ERR, "%s: %s failed, mask sa_len %d too large\n",
+		    __func__, rtm2str(cmd), dst->sa_len);
+		error = EINVAL;
+		goto done;
+	}
+
+#if (DEVELOPMENT || DEBUG)
+	if (dst->sa_family == AF_INET) {
+		(void) inet_ntop(AF_INET, &SIN(dst)->sin_addr.s_addr,
+		    abuf, sizeof (abuf));
+	}
+#if INET6
+	else if (dst->sa_family == AF_INET6) {
+		(void) inet_ntop(AF_INET6, &SIN6(dst)->sin6_addr,
+		    abuf, sizeof (abuf));
+	}
+#endif /* INET6 */
+#endif /* (DEVELOPMENT || DEBUG) */	
+
+	if ((rnh = rt_tables[dst->sa_family]) == NULL) {
+		error = EINVAL;
+		goto done;
+	}
+
 	/*
 	 * If it's a delete, check that if it exists, it's on the correct
 	 * interface or we might scrub a route to another ifa which would
@@ -2859,116 +3259,169 @@ rtinit_locked(struct ifaddr *ifa, int cmd, int flags)
 		 * If it's a net, mask off the host bits
 		 * (Assuming we have a mask)
 		 */
-		if ((flags & RTF_HOST) == 0 && ifa->ifa_netmask) {
-			m = m_get(M_DONTWAIT, MT_SONAME);
-			if (m == NULL) {
-				return(ENOBUFS);
-			}
-			deldst = mtod(m, struct sockaddr *);
-			rt_maskedcopy(dst, deldst, ifa->ifa_netmask);
-			dst = deldst;
+		if (netmask != NULL) {
+			rt_maskedcopy(dst, SA(nbuf), netmask);
+			dst = SA(nbuf);
 		}
 		/*
-		 * Get an rtentry that is in the routing tree and
-		 * contains the correct info. (if this fails, can't get there).
-		 * We set "report" to FALSE so that if it doesn't exist,
-		 * it doesn't report an error or clone a route, etc. etc.
+		 * Get an rtentry that is in the routing tree and contains
+		 * the correct info.  Note that we perform a coarse-grained
+		 * lookup here, in case there is a scoped variant of the
+		 * subnet/prefix route which we should ignore, as we never
+		 * add a scoped subnet/prefix route as part of adding an
+		 * interface address.
 		 */
-		rt = rtalloc1_locked(dst, 0, 0);
-		if (rt) {
+		rt = rt_lookup_coarse(TRUE, dst, NULL, rnh);
+		if (rt != NULL) {
+#if (DEVELOPMENT || DEBUG)
+			rt_str(rt, dbuf, sizeof (dbuf), gbuf, sizeof (gbuf));
+#endif			
 			/*
 			 * Ok so we found the rtentry. it has an extra reference
 			 * for us at this stage. we won't need that so
 			 * lop that off now.
 			 */
-			RT_LOCK_SPIN(rt);
+			RT_LOCK(rt);
 			if (rt->rt_ifa != ifa) {
-				RT_REMREF_LOCKED(rt);
-				RT_UNLOCK(rt);
 				/*
-				 * If the interface in the rtentry doesn't match
-				 * the interface we are using, then we don't
-				 * want to delete it, so return an error.
-				 * This seems to be the only point of
-				 * this whole RTM_DELETE clause.
+				 * If the interface address in the rtentry
+				 * doesn't match the interface we are using,
+				 * then we don't want to delete it, so return
+				 * an error.  This seems to be the only point
+				 * of this whole RTM_DELETE clause.
 				 */
-				if (m)
-					(void) m_free(m);
-				return (flags & RTF_HOST ? EHOSTUNREACH
-							: ENETUNREACH);
-			} else {
+#if (DEVELOPMENT || DEBUG)
+				if (rt_verbose) {
+					log(LOG_DEBUG, "%s: not removing "
+					    "route to %s->%s->%s, flags %b, "
+					    "ifaddr %s, rt_ifa 0x%llx != "
+					    "ifa 0x%llx\n", __func__, dbuf,
+					    gbuf, ((rt->rt_ifp != NULL) ?
+					    rt->rt_ifp->if_xname : ""),
+					    rt->rt_flags, RTF_BITS, abuf,
+					    (uint64_t)VM_KERNEL_ADDRPERM(
+					    rt->rt_ifa),
+					    (uint64_t)VM_KERNEL_ADDRPERM(ifa));
+				}
+#endif /* (DEVELOPMENT || DEBUG) */
 				RT_REMREF_LOCKED(rt);
 				RT_UNLOCK(rt);
+				rt = NULL;
+				error = ((flags & RTF_HOST) ?
+				    EHOSTUNREACH : ENETUNREACH);
+				goto done;
+			} else if (rt->rt_flags & RTF_STATIC) {
+				/*
+				 * Don't remove the subnet/prefix route if
+				 * this was manually added from above.
+				 */
+#if (DEVELOPMENT || DEBUG)
+				if (rt_verbose) {
+					log(LOG_DEBUG, "%s: not removing "
+					    "static route to %s->%s->%s, "
+					    "flags %b, ifaddr %s\n", __func__,
+					    dbuf, gbuf, ((rt->rt_ifp != NULL) ?
+					    rt->rt_ifp->if_xname : ""),
+					    rt->rt_flags, RTF_BITS, abuf);
+				}
+#endif /* (DEVELOPMENT || DEBUG) */
+				RT_REMREF_LOCKED(rt);
+				RT_UNLOCK(rt);
+				rt = NULL;
+				error = EBUSY;
+				goto done;
 			}
+#if (DEVELOPMENT || DEBUG)
+			if (rt_verbose) {
+				log(LOG_DEBUG, "%s: removing route to "
+				    "%s->%s->%s, flags %b, ifaddr %s\n",
+				    __func__, dbuf, gbuf,
+				    ((rt->rt_ifp != NULL) ?
+				    rt->rt_ifp->if_xname : ""),
+				    rt->rt_flags, RTF_BITS, abuf);
+			}
+#endif /* (DEVELOPMENT || DEBUG) */
+			RT_REMREF_LOCKED(rt);
+			RT_UNLOCK(rt);
+			rt = NULL;
 		}
-		/* XXX */
-#if 0
-		else {
-			/*
-			 * One would think that as we are deleting, and we know
-			 * it doesn't exist, we could just return at this point
-			 * with an "ELSE" clause, but apparently not..
-			 */
-			lck_mtx_unlock(rnh_lock);
-			return (flags & RTF_HOST ? EHOSTUNREACH
-							: ENETUNREACH);
-		}
-#endif
 	}
 	/*
 	 * Do the actual request
 	 */
-	IFA_LOCK_SPIN(ifa);
-	ifa_flags = ifa->ifa_flags;
-	IFA_UNLOCK(ifa);
-	error = rtrequest_locked(cmd, dst, ifa->ifa_addr, ifa->ifa_netmask,
-			flags | ifa_flags, &nrt);
-	if (m)
-		(void) m_free(m);
-	/*
-	 * If we are deleting, and we found an entry, then
-	 * it's been removed from the tree.. now throw it away.
-	 */
-	if (cmd == RTM_DELETE && error == 0 && (rt = nrt)) {
-		/*
-		 * notify any listening routing agents of the change
-		 */
-		RT_LOCK(rt);
-		rt_newaddrmsg(cmd, ifa, error, nrt);
-		if (use_routegenid)
-			routegenid_update();
-		RT_UNLOCK(rt);
-		rtfree_locked(rt);
-	}
+	if ((error = rtrequest_locked(cmd, dst, ifa->ifa_addr, netmask,
+	    flags | ifa->ifa_flags, &rt)) != 0)
+		goto done;
 
-	/*
-	 * We are adding, and we have a returned routing entry.
-	 * We need to sanity check the result.
-	 */
-	if (cmd == RTM_ADD && error == 0 && (rt = nrt)) {
-		RT_LOCK(rt);
+	VERIFY(rt != NULL);
+#if (DEVELOPMENT || DEBUG)
+	rt_str(rt, dbuf, sizeof (dbuf), gbuf, sizeof (gbuf));
+#endif /* (DEVELOPMENT || DEBUG) */
+	switch (cmd) {
+	case RTM_DELETE:
 		/*
-		 * If it came back with an unexpected interface, then it must
-		 * have already existed or something. (XXX)
+		 * If we are deleting, and we found an entry, then it's
+		 * been removed from the tree.   Notify any listening
+		 * routing agents of the change and throw it away.
 		 */
+		RT_LOCK(rt);
+		rt_newaddrmsg(cmd, ifa, error, rt);
+		RT_UNLOCK(rt);
+#if (DEVELOPMENT || DEBUG)
+		if (rt_verbose) {
+			log(LOG_DEBUG, "%s: removed route to %s->%s->%s, "
+			    "flags %b, ifaddr %s\n", __func__, dbuf, gbuf,
+			    ((rt->rt_ifp != NULL) ? rt->rt_ifp->if_xname : ""),
+			    rt->rt_flags, RTF_BITS, abuf);
+		}
+#endif /* (DEVELOPMENT || DEBUG) */
+		rtfree_locked(rt);
+		break;
+
+	case RTM_ADD:
+		/*
+		 * We are adding, and we have a returned routing entry.
+		 * We need to sanity check the result.  If it came back
+		 * with an unexpected interface, then it must have already
+		 * existed or something.
+		 */
+		RT_LOCK(rt);
 		if (rt->rt_ifa != ifa) {
 			void (*ifa_rtrequest)
 			    (int, struct rtentry *, struct sockaddr *);
+#if (DEVELOPMENT || DEBUG)
+			if (rt_verbose) {
+				if (!(rt->rt_ifa->ifa_ifp->if_flags &
+				    (IFF_POINTOPOINT|IFF_LOOPBACK))) {
+					log(LOG_ERR, "%s: %s route to %s->%s->%s, "
+					    "flags %b, ifaddr %s, rt_ifa 0x%llx != "
+					    "ifa 0x%llx\n", __func__, rtm2str(cmd),
+					    dbuf, gbuf, ((rt->rt_ifp != NULL) ?
+					        rt->rt_ifp->if_xname : ""), rt->rt_flags,
+					    RTF_BITS, abuf,
+					    (uint64_t)VM_KERNEL_ADDRPERM(rt->rt_ifa),
+					    (uint64_t)VM_KERNEL_ADDRPERM(ifa));
+				}
 
-			if (!(rt->rt_ifa->ifa_ifp->if_flags &
-			    (IFF_POINTOPOINT|IFF_LOOPBACK)))
-				printf("rtinit: wrong ifa (%p) was (%p)\n",
-				    ifa, rt->rt_ifa);
+				log(LOG_DEBUG, "%s: %s route to %s->%s->%s, "
+				    "flags %b, ifaddr %s, rt_ifa was 0x%llx "
+				    "now 0x%llx\n", __func__, rtm2str(cmd),
+				    dbuf, gbuf, ((rt->rt_ifp != NULL) ?
+				    rt->rt_ifp->if_xname : ""), rt->rt_flags,
+				    RTF_BITS, abuf,
+				    (uint64_t)VM_KERNEL_ADDRPERM(rt->rt_ifa),
+				    (uint64_t)VM_KERNEL_ADDRPERM(ifa));
+			}
+#endif /* (DEVELOPMENT || DEBUG) */
+
 			/*
 			 * Ask that the protocol in question
 			 * remove anything it has associated with
 			 * this route and ifaddr.
 			 */
-			IFA_LOCK_SPIN(rt->rt_ifa);
 			ifa_rtrequest = rt->rt_ifa->ifa_rtrequest;
-			IFA_UNLOCK(rt->rt_ifa);
 			if (ifa_rtrequest != NULL)
-				ifa_rtrequest(RTM_DELETE, rt, SA(0));
+				ifa_rtrequest(RTM_DELETE, rt, NULL);
 			/*
 			 * Set the route's ifa.
 			 */
@@ -2994,23 +3447,35 @@ rtinit_locked(struct ifaddr *ifa, int cmd, int flags)
 			 * we are adding.
 			 */
 			rt->rt_ifp = ifa->ifa_ifp;
-			rt->rt_rmx.rmx_mtu = ifa->ifa_ifp->if_mtu;	/*XXX*/
+			/*
+			 * If rmx_mtu is not locked, update it
+			 * to the MTU used by the new interface.
+			 */
+			if (!(rt->rt_rmx.rmx_locks & RTV_MTU))
+				rt->rt_rmx.rmx_mtu = rt->rt_ifp->if_mtu;
+
 			/*
 			 * Now ask the protocol to check if it needs
 			 * any special processing in its new form.
 			 */
-			IFA_LOCK_SPIN(ifa);
 			ifa_rtrequest = ifa->ifa_rtrequest;
-			IFA_UNLOCK(ifa);
 			if (ifa_rtrequest != NULL)
-				ifa_rtrequest(RTM_ADD, rt, SA(0));
+				ifa_rtrequest(RTM_ADD, rt, NULL);
+		} else {
+#if (DEVELOPMENT || DEBUG)
+			if (rt_verbose) {
+				log(LOG_DEBUG, "%s: added route to %s->%s->%s, "
+				    "flags %b, ifaddr %s\n", __func__, dbuf,
+				    gbuf, ((rt->rt_ifp != NULL) ?
+				    rt->rt_ifp->if_xname : ""), rt->rt_flags,
+				    RTF_BITS, abuf);
+			}
+#endif /* (DEVELOPMENT || DEBUG) */
 		}
 		/*
 		 * notify any listenning routing agents of the change
 		 */
-		rt_newaddrmsg(cmd, ifa, error, nrt);
-		if (use_routegenid)
-			routegenid_update();
+		rt_newaddrmsg(cmd, ifa, error, rt);
 		/*
 		 * We just wanted to add it; we don't actually need a
 		 * reference.  This will result in a route that's added
@@ -3020,38 +3485,36 @@ rtinit_locked(struct ifaddr *ifa, int cmd, int flags)
 		 */
 		RT_REMREF_LOCKED(rt);
 		RT_UNLOCK(rt);
+		break;
+
+	default:
+		VERIFY(0);
+		/* NOTREACHED */
 	}
+done:
 	return (error);
 }
 
-u_int64_t
-rt_expiry(struct rtentry *rt, u_int64_t base, u_int32_t delta)
-{
-	u_int64_t retval;
-
-	/*
-	 * If the interface of the route doesn't demand aggressive draining,
-	 * return the expiration time based on the caller-supplied delta.
-	 * Otherwise use the more aggressive route expiration delta (or
-	 * the caller-supplied delta, whichever is less.)
-	 */
-	if (rt->rt_ifp == NULL || rt->rt_ifp->if_want_aggressive_drain == 0)
-		retval = base + delta;
-	else
-		retval = base + MIN(rt_if_idle_expire_timeout, delta);
-
-	return (retval);
-}
-
-void
+static void
 rt_set_idleref(struct rtentry *rt)
 {
 	RT_LOCK_ASSERT_HELD(rt);
 
-	rt_clear_idleref(rt);
-	rt->rt_if_ref_fn = rte_if_ref;
-	rt->rt_if_ref_fn(rt->rt_ifp, 1);
-	rt->rt_flags |= RTF_IFREF;
+	/*
+	 * We currently keep idle refcnt only on unicast cloned routes
+	 * that aren't marked with RTF_NOIFREF.
+	 */
+	if (rt->rt_parent != NULL && !(rt->rt_flags &
+	    (RTF_NOIFREF|RTF_BROADCAST | RTF_MULTICAST)) &&
+	    (rt->rt_flags & (RTF_UP|RTF_WASCLONED|RTF_IFREF)) ==
+	    (RTF_UP|RTF_WASCLONED)) {
+		rt_clear_idleref(rt);	/* drop existing refcnt if any  */
+		rt->rt_if_ref_fn = rte_if_ref;
+		/* Become a regular mutex, just in case */
+		RT_CONVERT_LOCK(rt);
+		rt->rt_if_ref_fn(rt->rt_ifp, 1);
+		rt->rt_flags |= RTF_IFREF;
+	}
 }
 
 void
@@ -3060,6 +3523,9 @@ rt_clear_idleref(struct rtentry *rt)
 	RT_LOCK_ASSERT_HELD(rt);
 
 	if (rt->rt_if_ref_fn != NULL) {
+		VERIFY((rt->rt_flags & (RTF_NOIFREF | RTF_IFREF)) == RTF_IFREF);
+		/* Become a regular mutex, just in case */
+		RT_CONVERT_LOCK(rt);
 		rt->rt_if_ref_fn(rt->rt_ifp, -1);
 		rt->rt_flags &= ~RTF_IFREF;
 		rt->rt_if_ref_fn = NULL;
@@ -3122,7 +3588,6 @@ rt_lock(struct rtentry *rt, boolean_t spin)
 void
 rt_unlock(struct rtentry *rt)
 {
-	RT_LOCK_ASSERT_HELD(rt);
 	if (rte_debug & RTD_DEBUG)
 		rte_unlock_debug((struct rtentry_dbg *)rt);
 	lck_mtx_unlock(&rt->rt_lock);
@@ -3134,6 +3599,7 @@ rte_lock_debug(struct rtentry_dbg *rte)
 {
 	uint32_t idx;
 
+	RT_LOCK_ASSERT_HELD((struct rtentry *)rte);
 	idx = atomic_add_32_ov(&rte->rtd_lock_cnt, 1) % CTRACE_HIST_SIZE;
 	if (rte_debug & RTD_TRACE)
 		ctrace_record(&rte->rtd_lock[idx]);
@@ -3144,6 +3610,7 @@ rte_unlock_debug(struct rtentry_dbg *rte)
 {
 	uint32_t idx;
 
+	RT_LOCK_ASSERT_HELD((struct rtentry *)rte);
 	idx = atomic_add_32_ov(&rte->rtd_unlock_cnt, 1) % CTRACE_HIST_SIZE;
 	if (rte_debug & RTD_TRACE)
 		ctrace_record(&rte->rtd_unlock[idx]);
@@ -3166,8 +3633,10 @@ rte_free(struct rtentry *p)
 		return;
 	}
 
-	if (p->rt_refcnt != 0)
+	if (p->rt_refcnt != 0) {
 		panic("rte_free: rte=%p refcnt=%d non-zero\n", p, p->rt_refcnt);
+		/* NOTREACHED */
+	}
 
 	zfree(rte_zone, p);
 }
@@ -3180,13 +3649,15 @@ rte_if_ref(struct ifnet *ifp, int cnt)
 	uint32_t old;
 
 	/* Force cnt to 1 increment/decrement */
-	if (cnt < -1 || cnt > 1)
+	if (cnt < -1 || cnt > 1) {
 		panic("%s: invalid count argument (%d)", __func__, cnt);
-
+		/* NOTREACHED */
+	}
 	old = atomic_add_32_ov(&ifp->if_route_refcnt, cnt);
-	if (cnt < 0 && old == 0)
+	if (cnt < 0 && old == 0) {
 		panic("%s: ifp=%p negative route refcnt!", __func__, ifp);
-
+		/* NOTREACHED */
+	}
 	/*
 	 * The following is done without first holding the ifnet lock,
 	 * for performance reasons.  The relevant ifnet fields, with
@@ -3214,7 +3685,7 @@ rte_if_ref(struct ifnet *ifp, int cnt)
 		ev_msg.dv[0].data_length = sizeof (struct net_event_data);
 		ev_msg.dv[0].data_ptr	= &ev_data;
 
-		kev_post_msg(&ev_msg);
+		dlil_post_complete_msg(NULL, &ev_msg);
 	}
 }
 
@@ -3238,14 +3709,17 @@ rte_free_debug(struct rtentry *p)
 {
 	struct rtentry_dbg *rte = (struct rtentry_dbg *)p;
 
-	if (p->rt_refcnt != 0)
+	if (p->rt_refcnt != 0) {
 		panic("rte_free: rte=%p refcnt=%d\n", p, p->rt_refcnt);
-
-	if (rte->rtd_inuse == RTD_FREED)
+		/* NOTREACHED */
+	}
+	if (rte->rtd_inuse == RTD_FREED) {
 		panic("rte_free: double free rte=%p\n", rte);
-	else if (rte->rtd_inuse != RTD_INUSE)
+		/* NOTREACHED */
+	} else if (rte->rtd_inuse != RTD_INUSE) {
 		panic("rte_free: corrupted rte=%p\n", rte);
-
+		/* NOTREACHED */
+	}
 	bcopy((caddr_t)p, (caddr_t)&rte->rtd_entry_saved, sizeof (*p));
 	/* Preserve rt_lock to help catch use-after-free cases */
 	bzero((caddr_t)p, offsetof(struct rtentry, rt_lock));
@@ -3267,51 +3741,121 @@ ctrace_record(ctrace_t *tr)
 	(void) OSBacktrace(tr->pc, CTRACE_STACK_SIZE);
 }
 
-__private_extern__ void
-route_copyout(
-	struct route *dst,
-	const struct route *src,
-	size_t length)
+void
+route_copyout(struct route *dst, const struct route *src, size_t length)
 {
-	/* Copy everything (rt, dst, flags) from ifnet */
+	/* Copy everything (rt, srcif, flags, dst) from src */
 	bcopy(src, dst, length);
 
 	/* Hold one reference for the local copy of struct route */
 	if (dst->ro_rt != NULL)
 		RT_ADDREF(dst->ro_rt);
+
+	/* Hold one reference for the local copy of struct lle */
+	if (dst->ro_lle != NULL)
+		LLE_ADDREF(dst->ro_lle);
+
+	/* Hold one reference for the local copy of struct ifaddr */
+	if (dst->ro_srcia != NULL)
+		IFA_ADDREF(dst->ro_srcia);
 }
 
-__private_extern__ void
-route_copyin(
-	struct route *src,
-	struct route *dst,
-	size_t length)
+void
+route_copyin(struct route *src, struct route *dst, size_t length)
 {
-	/* No cached route in the ifnet? */
+	/*
+	 * No cached route at the destination?
+	 * If none, then remove old references if present
+	 * and copy entire src route.
+	 */
 	if (dst->ro_rt == NULL) {
 		/*
-		 * Copy everything (rt, dst, flags) from ip_forward();
-		 * the reference to the route was held at the time
-		 * it was allocated and is kept intact.
+		 * Ditch the cached link layer reference (dst)
+		 * since we're about to take everything there is in src
+		 */
+		if (dst->ro_lle != NULL)
+			LLE_REMREF(dst->ro_lle);
+		/*
+		 * Ditch the address in the cached copy (dst) since
+		 * we're about to take everything there is in src.
+		 */
+		if (dst->ro_srcia != NULL)
+			IFA_REMREF(dst->ro_srcia);
+		/*
+		 * Copy everything (rt, ro_lle, srcia, flags, dst) from src; the
+		 * references to rt and/or srcia were held at the time
+		 * of storage and are kept intact.
 		 */
 		bcopy(src, dst, length);
-	} else if (src->ro_rt != NULL) {
-		/*
-		 * If the same, update just the ro_flags and ditch the one
-		 * in the local copy.  Else ditch the one that is currently
-		 * cached, and cache the new route.
-		 */
-		if (dst->ro_rt == src->ro_rt) {
-			dst->ro_flags = src->ro_flags;
-			rtfree(src->ro_rt);
-		} else {
-			rtfree(dst->ro_rt);
-			bcopy(src, dst, length);
-		}
+		goto done;
 	}
 
-	/* This function consumes the reference */
+	/*
+	 * We know dst->ro_rt is not NULL here.
+	 * If the src->ro_rt is the same, update ro_lle, srcia and flags
+	 * and ditch the route in the local copy.
+	 */
+	if (dst->ro_rt == src->ro_rt) {
+		dst->ro_flags = src->ro_flags;
+
+		if (dst->ro_lle != src->ro_lle) {
+			if (dst->ro_lle != NULL)
+				LLE_REMREF(dst->ro_lle);
+			dst->ro_lle = src->ro_lle;
+		} else if (src->ro_lle != NULL) {
+			LLE_REMREF(src->ro_lle);
+		}
+
+		if (dst->ro_srcia != src->ro_srcia) {
+			if (dst->ro_srcia != NULL)
+				IFA_REMREF(dst->ro_srcia);
+			dst->ro_srcia = src->ro_srcia;
+		} else if (src->ro_srcia != NULL) {
+			IFA_REMREF(src->ro_srcia);
+		}
+		rtfree(src->ro_rt);
+		goto done;
+	}
+
+	/*
+	 * If they are dst's ro_rt is not equal to src's,
+	 * and src'd rt is not NULL, then remove old references
+	 * if present and copy entire src route.
+	 */
+	if (src->ro_rt != NULL) {
+		rtfree(dst->ro_rt);
+
+		if (dst->ro_lle != NULL)
+			LLE_REMREF(dst->ro_lle);
+		if (dst->ro_srcia != NULL)
+			IFA_REMREF(dst->ro_srcia);
+		bcopy(src, dst, length);
+		goto done;
+	}
+
+	/*
+	 * Here, dst's cached route is not NULL but source's is.
+	 * Just get rid of all the other cached reference in src.
+	 */
+	if (src->ro_srcia != NULL) {
+		/*
+		 * Ditch src address in the local copy (src) since we're
+		 * not caching the route entry anyway (ro_rt is NULL).
+		 */
+		IFA_REMREF(src->ro_srcia);
+	}
+	if (src->ro_lle != NULL) {
+		/*
+		 * Ditch cache lle in the local copy (src) since we're
+		 * not caching the route anyway (ro_rt is NULL).
+		 */
+		LLE_REMREF(src->ro_lle);
+	}
+done:
+	/* This function consumes the references on src */
+	src->ro_lle = NULL;
 	src->ro_rt = NULL;
+	src->ro_srcia = NULL;
 }
 
 /*
@@ -3325,10 +3869,10 @@ route_copyin(
  * If the returned route is non-NULL, the caller is responsible for
  * releasing the reference and unlocking the route.
  */
-#define senderr(e) { error = (e); goto bad; }
+#define	senderr(e) { error = (e); goto bad; }
 errno_t
 route_to_gwroute(const struct sockaddr *net_dest, struct rtentry *hint0,
-     struct rtentry **out_route)
+    struct rtentry **out_route)
 {
 	uint64_t timenow;
 	struct rtentry *rt = hint0, *hint = hint0;
@@ -3525,7 +4069,6 @@ bad:
 void
 rt_revalidate_gwroute(struct rtentry *rt, struct rtentry *gwrt)
 {
-	VERIFY(rt->rt_flags & (RTF_CLONING | RTF_PRCLONING));
 	VERIFY(gwrt != NULL);
 
 	RT_LOCK_SPIN(rt);
@@ -3534,6 +4077,7 @@ rt_revalidate_gwroute(struct rtentry *rt, struct rtentry *gwrt)
 	    rt_key(gwrt)->sa_family && (rt->rt_gwroute == NULL ||
 	    !(rt->rt_gwroute->rt_flags & RTF_UP))) {
 		boolean_t isequal;
+		VERIFY(rt->rt_flags & (RTF_CLONING | RTF_PRCLONING));
 
 		if (rt->rt_gateway->sa_family == AF_INET ||
 		    rt->rt_gateway->sa_family == AF_INET6) {
@@ -3565,3 +4109,259 @@ rt_revalidate_gwroute(struct rtentry *rt, struct rtentry *gwrt)
 		RT_UNLOCK(rt);
 	}
 }
+
+static void
+rt_str4(struct rtentry *rt, char *ds, uint32_t dslen, char *gs, uint32_t gslen)
+{
+	VERIFY(rt_key(rt)->sa_family == AF_INET);
+
+	if (ds != NULL) {
+		(void) inet_ntop(AF_INET,
+		    &SIN(rt_key(rt))->sin_addr.s_addr, ds, dslen);
+		if (dslen >= MAX_SCOPE_ADDR_STR_LEN &&
+		    SINIFSCOPE(rt_key(rt))->sin_scope_id != IFSCOPE_NONE) {
+			char scpstr[16];
+
+			snprintf(scpstr, sizeof(scpstr), "@%u",
+			    SINIFSCOPE(rt_key(rt))->sin_scope_id);
+
+			strlcat(ds, scpstr, dslen);
+		}
+	}
+
+	if (gs != NULL) {
+		if (rt->rt_flags & RTF_GATEWAY) {
+			(void) inet_ntop(AF_INET,
+			    &SIN(rt->rt_gateway)->sin_addr.s_addr, gs, gslen);
+		} else if (rt->rt_ifp != NULL) {
+			snprintf(gs, gslen, "link#%u", rt->rt_ifp->if_unit);
+		} else {
+			snprintf(gs, gslen, "%s", "link");
+		}
+	}
+}
+
+#if INET6
+static void
+rt_str6(struct rtentry *rt, char *ds, uint32_t dslen, char *gs, uint32_t gslen)
+{
+	VERIFY(rt_key(rt)->sa_family == AF_INET6);
+
+	if (ds != NULL) {
+		(void) inet_ntop(AF_INET6,
+		    &SIN6(rt_key(rt))->sin6_addr, ds, dslen);
+		if (dslen >= MAX_SCOPE_ADDR_STR_LEN &&
+		    SIN6IFSCOPE(rt_key(rt))->sin6_scope_id != IFSCOPE_NONE) {
+			char scpstr[16];
+
+			snprintf(scpstr, sizeof(scpstr), "@%u",
+			    SIN6IFSCOPE(rt_key(rt))->sin6_scope_id);
+
+			strlcat(ds, scpstr, dslen);
+		}
+	}
+
+	if (gs != NULL) {
+		if (rt->rt_flags & RTF_GATEWAY) {
+			(void) inet_ntop(AF_INET6,
+			    &SIN6(rt->rt_gateway)->sin6_addr, gs, gslen);
+		} else if (rt->rt_ifp != NULL) {
+			snprintf(gs, gslen, "link#%u", rt->rt_ifp->if_unit);
+		} else {
+			snprintf(gs, gslen, "%s", "link");
+		}
+	}
+}
+#endif /* INET6 */
+
+
+void
+rt_str(struct rtentry *rt, char *ds, uint32_t dslen, char *gs, uint32_t gslen)
+{
+	switch (rt_key(rt)->sa_family) {
+	case AF_INET:
+		rt_str4(rt, ds, dslen, gs, gslen);
+		break;
+#if INET6
+	case AF_INET6:
+		rt_str6(rt, ds, dslen, gs, gslen);
+		break;
+#endif /* INET6 */
+	default:
+		if (ds != NULL)
+			bzero(ds, dslen);
+		if (gs != NULL)
+			bzero(gs, gslen);
+		break;
+	}
+}
+
+void route_event_init(struct route_event *p_route_ev, struct rtentry *rt,
+    struct rtentry *gwrt, int route_ev_code)
+{
+	VERIFY(p_route_ev != NULL);
+	bzero(p_route_ev, sizeof(*p_route_ev));
+
+	p_route_ev->rt = rt;
+	p_route_ev->gwrt = gwrt;
+	p_route_ev->route_event_code = route_ev_code;
+}
+
+static void
+route_event_callback(void *arg)
+{
+	struct route_event *p_rt_ev = (struct route_event *)arg;
+	struct rtentry *rt = p_rt_ev->rt;
+	eventhandler_tag evtag = p_rt_ev->evtag;
+	int route_ev_code = p_rt_ev->route_event_code;
+
+	if (route_ev_code == ROUTE_EVHDLR_DEREGISTER) {
+		VERIFY(evtag != NULL);
+		EVENTHANDLER_DEREGISTER(&rt->rt_evhdlr_ctxt, route_event,
+		    evtag);
+		rtfree(rt);
+		return;
+	}
+
+	EVENTHANDLER_INVOKE(&rt->rt_evhdlr_ctxt, route_event, rt_key(rt),
+	    route_ev_code, (struct sockaddr *)&p_rt_ev->rt_addr,
+	    rt->rt_flags);
+
+	/* The code enqueuing the route event held a reference */
+	rtfree(rt);
+	/* XXX No reference is taken on gwrt */
+}
+
+int
+route_event_walktree(struct radix_node *rn, void *arg)
+{
+	struct route_event *p_route_ev = (struct route_event *)arg;
+	struct rtentry *rt = (struct rtentry *)rn;
+	struct rtentry *gwrt = p_route_ev->rt;
+
+	LCK_MTX_ASSERT(rnh_lock, LCK_MTX_ASSERT_OWNED);
+
+	RT_LOCK(rt);
+
+	/* Return if the entry is pending cleanup */
+	if (rt->rt_flags & RTPRF_OURS) {
+		RT_UNLOCK(rt);
+		return (0);
+	}
+
+	/* Return if it is not an indirect route */
+	if (!(rt->rt_flags & RTF_GATEWAY)) {
+		RT_UNLOCK(rt);
+		return (0);
+	}
+
+	if (rt->rt_gwroute != gwrt) {
+		RT_UNLOCK(rt);
+		return (0);
+	}
+
+	route_event_enqueue_nwk_wq_entry(rt, gwrt, p_route_ev->route_event_code,
+	    NULL, TRUE);
+	RT_UNLOCK(rt);
+
+	return (0);
+}
+
+struct route_event_nwk_wq_entry
+{
+	struct nwk_wq_entry nwk_wqe;
+	struct route_event rt_ev_arg;
+};
+
+void
+route_event_enqueue_nwk_wq_entry(struct rtentry *rt, struct rtentry *gwrt,
+    uint32_t route_event_code, eventhandler_tag evtag, boolean_t rt_locked)
+{
+	struct route_event_nwk_wq_entry *p_rt_ev = NULL;
+	struct sockaddr *p_gw_saddr = NULL;
+
+	MALLOC(p_rt_ev, struct route_event_nwk_wq_entry *,
+	    sizeof(struct route_event_nwk_wq_entry),
+	    M_NWKWQ, M_WAITOK | M_ZERO);
+
+	/*
+	 * If the intent is to de-register, don't take
+	 * reference, route event registration already takes
+	 * a reference on route.
+	 */
+	if (route_event_code != ROUTE_EVHDLR_DEREGISTER) {
+		/* The reference is released by route_event_callback */
+		if (rt_locked)
+			RT_ADDREF_LOCKED(rt);
+		else
+			RT_ADDREF(rt);
+	}
+
+	p_rt_ev->rt_ev_arg.rt = rt;
+	p_rt_ev->rt_ev_arg.gwrt = gwrt;
+	p_rt_ev->rt_ev_arg.evtag = evtag;
+
+	if (gwrt != NULL)
+		p_gw_saddr = gwrt->rt_gateway;
+	else
+		p_gw_saddr = rt->rt_gateway;
+
+	VERIFY(p_gw_saddr->sa_len <= sizeof(p_rt_ev->rt_ev_arg.rt_addr));
+	bcopy(p_gw_saddr, &(p_rt_ev->rt_ev_arg.rt_addr), p_gw_saddr->sa_len);
+
+	p_rt_ev->rt_ev_arg.route_event_code = route_event_code;
+	p_rt_ev->nwk_wqe.func = route_event_callback;
+	p_rt_ev->nwk_wqe.is_arg_managed = TRUE;
+	p_rt_ev->nwk_wqe.arg = &p_rt_ev->rt_ev_arg;
+	nwk_wq_enqueue((struct nwk_wq_entry*)p_rt_ev);
+}
+
+const char *
+route_event2str(int route_event)
+{
+	const char *route_event_str = "ROUTE_EVENT_UNKNOWN";
+	switch (route_event) {
+		case ROUTE_STATUS_UPDATE:
+			route_event_str = "ROUTE_STATUS_UPDATE";
+			break;
+		case ROUTE_ENTRY_REFRESH:
+			route_event_str = "ROUTE_ENTRY_REFRESH";
+			break;
+		case ROUTE_ENTRY_DELETED:
+			route_event_str = "ROUTE_ENTRY_DELETED";
+			break;
+		case ROUTE_LLENTRY_RESOLVED:
+			route_event_str = "ROUTE_LLENTRY_RESOLVED";
+			break;
+		case ROUTE_LLENTRY_UNREACH:
+			route_event_str = "ROUTE_LLENTRY_UNREACH";
+			break;
+		case ROUTE_LLENTRY_CHANGED:
+			route_event_str = "ROUTE_LLENTRY_CHANGED";
+			break;
+		case ROUTE_LLENTRY_STALE:
+			route_event_str = "ROUTE_LLENTRY_STALE";
+			break;
+		case ROUTE_LLENTRY_TIMEDOUT:
+			route_event_str = "ROUTE_LLENTRY_TIMEDOUT";
+			break;
+		case ROUTE_LLENTRY_DELETED:
+			route_event_str = "ROUTE_LLENTRY_DELETED";
+			break;
+		case ROUTE_LLENTRY_EXPIRED:
+			route_event_str = "ROUTE_LLENTRY_EXPIRED";
+			break;
+		case ROUTE_LLENTRY_PROBED:
+			route_event_str = "ROUTE_LLENTRY_PROBED";
+			break;
+		case ROUTE_EVHDLR_DEREGISTER:
+			route_event_str = "ROUTE_EVHDLR_DEREGISTER";
+			break;
+		default:
+			/* Init'd to ROUTE_EVENT_UNKNOWN */
+			break;
+	}
+	return  route_event_str;
+}
+
+

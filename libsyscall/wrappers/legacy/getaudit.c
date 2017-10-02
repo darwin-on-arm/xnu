@@ -21,7 +21,6 @@
  * @APPLE_LICENSE_HEADER_END@
  */
 
-#include <sys/param.h>
 #include <bsm/audit.h>
 
 /*

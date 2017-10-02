@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998-2004 Apple Computer, Inc. All rights reserved.
+ * Copyright (c) 1998-2016 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -30,6 +30,8 @@
 #include <IOKit/IODMACommand.h>
 #include <libkern/c++/OSData.h>
 #include <libkern/OSDebug.h>
+#include <mach_debug/zone_info.h>
+#include "IOKitKernelInternal.h"
 
 __BEGIN_DECLS
 extern ppnum_t pmap_find_phys(pmap_t pmap, addr64_t va);
@@ -38,10 +40,10 @@ __END_DECLS
 #define super IOService
 OSDefineMetaClassAndAbstractStructors(IOMapper, IOService);
 
-OSMetaClassDefineReservedUsed(IOMapper, 0);
-OSMetaClassDefineReservedUsed(IOMapper, 1);
-OSMetaClassDefineReservedUsed(IOMapper, 2);
-OSMetaClassDefineReservedUsed(IOMapper, 3);
+OSMetaClassDefineReservedUnused(IOMapper, 0);
+OSMetaClassDefineReservedUnused(IOMapper, 1);
+OSMetaClassDefineReservedUnused(IOMapper, 2);
+OSMetaClassDefineReservedUnused(IOMapper, 3);
 OSMetaClassDefineReservedUnused(IOMapper, 4);
 OSMetaClassDefineReservedUnused(IOMapper, 5);
 OSMetaClassDefineReservedUnused(IOMapper, 6);
@@ -60,13 +62,13 @@ IOMapper * IOMapper::gSystem = (IOMapper *) IOMapper::kUnknown;
 class IOMapperLock {
     IOLock *fWaitLock;
 public:
-    IOMapperLock() { fWaitLock = IOLockAlloc(); };
-    ~IOMapperLock() { IOLockFree(fWaitLock); };
+    IOMapperLock() { fWaitLock = IOLockAlloc(); }
+    ~IOMapperLock() { IOLockFree(fWaitLock); }
 
-    void lock()   { IOLockLock(fWaitLock); };
-    void unlock() { IOLockUnlock(fWaitLock); };
-    void sleep(void *event)  { IOLockSleep(fWaitLock, event, THREAD_UNINT); };
-    void wakeup(void *event) { IOLockWakeup(fWaitLock, event, false); };
+    void lock()   { IOLockLock(fWaitLock); }
+    void unlock() { IOLockUnlock(fWaitLock); }
+    void sleep(void *event)  { IOLockSleep(fWaitLock, event, THREAD_UNINT); }
+    void wakeup(void *event) { IOLockWakeup(fWaitLock, event, false); }
 };
 
 static IOMapperLock sMapperLock;
@@ -79,6 +81,8 @@ bool IOMapper::start(IOService *provider)
 
     if (!initHardware(provider))
         return false;
+
+    fPageSize = getPageSize();
 
     if (fIsSystem) { 
         sMapperLock.lock();
@@ -98,22 +102,8 @@ bool IOMapper::start(IOService *provider)
     return true;
 }
 
-bool IOMapper::allocTable(IOByteCount size)
-{
-    assert(!fTable);
-
-    fTableSize = size;
-    fTableHandle = NewARTTable(size, &fTable, &fTablePhys);
-    return fTableHandle != 0;
-}
-
 void IOMapper::free()
 {
-    if (fTableHandle) {
-        FreeARTTable(fTableHandle, fTableSize);
-        fTableHandle = 0;
-    }
-
     super::free();
 }
 
@@ -142,104 +132,63 @@ void IOMapper::waitForSystemMapper()
 
 IOMapper * IOMapper::copyMapperForDevice(IOService * device)
 {
+    return copyMapperForDeviceWithIndex(device, 0);
+}
+
+IOMapper * IOMapper::copyMapperForDeviceWithIndex(IOService * device, unsigned int index)
+{
+    OSData *data;
     OSObject * obj;
-    IOMapper * mapper;
+    IOMapper * mapper = NULL;
     OSDictionary * matching;
     
     obj = device->copyProperty("iommu-parent");
-    if (!obj)
-	return (NULL);
+    if (!obj) return (NULL);
 
-    if ((mapper = OSDynamicCast(IOMapper, obj)))
-	return (mapper);
+    if ((mapper = OSDynamicCast(IOMapper, obj))) goto found;
 
-    matching = IOService::propertyMatching(gIOMapperIDKey, obj);
+    if ((data = OSDynamicCast(OSData, obj)))
+    {
+        if (index >= data->getLength() / sizeof(UInt32)) goto done;
+        
+        data = OSData::withBytesNoCopy((UInt32 *)data->getBytesNoCopy() + index, sizeof(UInt32));
+        if (!data) goto done;
+
+        matching = IOService::propertyMatching(gIOMapperIDKey, data);
+        data->release();
+    }
+    else
+        matching = IOService::propertyMatching(gIOMapperIDKey, obj);
+
     if (matching)
     {
-	mapper = OSDynamicCast(IOMapper, IOService::waitForMatchingService(matching));
-    	matching->release();
+        mapper = OSDynamicCast(IOMapper, IOService::waitForMatchingService(matching));
+        matching->release();
     }
+
+done:
+    if (obj) obj->release();
+found:
     if (mapper)
-	device->setProperty("iommu-parent", mapper);
-    else
-	obj->release();
-    
-    return (mapper);
-}
+    {
+        if (!mapper->fAllocName)
+        {
+            char name[MACH_ZONE_NAME_MAX_LEN];
+            char kmodname[KMOD_MAX_NAME];
+            vm_tag_t tag;
+            uint32_t kmodid;
 
-ppnum_t IOMapper::iovmAllocDMACommand(IODMACommand * command, IOItemCount pageCount)
-{
-    return (0);
-}
-
-void IOMapper::iovmFreeDMACommand(IODMACommand * command,
-				  ppnum_t addr, IOItemCount pageCount)
-{
-}
-
-ppnum_t IOMapper::iovmMapMemory(
-    			  OSObject                    * memory,   // dma command or iomd
-			  ppnum_t                       offsetPage,
-			  ppnum_t                       pageCount,
-			  uint32_t                      options,
-			  upl_page_info_t             * pageList,
-			  const IODMAMapSpecification * mapSpecification)
-{
-    return (0);
-}
-
-void IOMapper::iovmInsert(ppnum_t addr, IOItemCount offset,
-                            ppnum_t *pageList, IOItemCount pageCount)
-{
-    while (pageCount--)
-        iovmInsert(addr, offset++, *pageList++);
-}
-
-void IOMapper::iovmInsert(ppnum_t addr, IOItemCount offset,
-                            upl_page_info_t *pageList, IOItemCount pageCount)
-{
-    for (IOItemCount i = 0; i < pageCount; i++)
-        iovmInsert(addr, offset + i, pageList[i].phys_addr);
-}
-
-OSData * IOMapper::
-NewARTTable(IOByteCount size, void ** virtAddrP, ppnum_t *physAddrP)
-{
-    if (!virtAddrP || !physAddrP)
-	return 0;
-
-    kern_return_t kr;
-    vm_address_t address;
-
-    size = round_page(size);
-    kr = kmem_alloc_contig(kernel_map, &address, size, PAGE_MASK, 0 /*max_pnum*/, 0 /*pnum_mask*/, false);
-    if (kr)
-        return 0;
-
-    ppnum_t pagenum = pmap_find_phys(kernel_pmap, (addr64_t) address);
-    if (pagenum)
-	*physAddrP = pagenum;
-    else {
-	FreeARTTable((OSData *) address, size);
-	address = 0;
+            tag = IOMemoryTag(kernel_map);
+            if (!(kmodid = vm_tag_get_kext(tag, &kmodname[0], KMOD_MAX_NAME)))
+            {
+                snprintf(kmodname, sizeof(kmodname), "%d", tag);
+            }
+            snprintf(name, sizeof(name), "%s.DMA.%s", kmodname, device->getName());
+            mapper->fAllocName = kern_allocation_name_allocate(name, 16);
+        }
     }
 
-    *virtAddrP = (void *) address;
-
-    return (OSData *) address;
-}
-
-void IOMapper::FreeARTTable(OSData *artHandle, IOByteCount size)
-{
-    vm_address_t address = (vm_address_t) artHandle;
-
-    size = round_page(size);
-    kmem_free(kernel_map, address, size);	// Just panic if address is 0
-}
-
-bool IOMapper::getBypassMask(addr64_t *maskP) const
-{
-    return false;
+    return (mapper);
 }
 
 __BEGIN_DECLS
@@ -247,55 +196,40 @@ __BEGIN_DECLS
 // These are C accessors to the system mapper for non-IOKit clients
 ppnum_t IOMapperIOVMAlloc(unsigned pages)
 {
+    IOReturn ret;
+    uint64_t dmaAddress, dmaLength;
+
     IOMapper::checkForSystemMapper();
 
+    ret = kIOReturnUnsupported;
     if (IOMapper::gSystem)
-        return IOMapper::gSystem->iovmAlloc((IOItemCount) pages);
-    else
-        return 0;
+    {
+        ret = IOMapper::gSystem->iovmMapMemory(
+        		NULL, 0, ptoa_64(pages), 
+        		(kIODMAMapReadAccess | kIODMAMapWriteAccess),
+        		NULL, NULL, NULL,
+        		&dmaAddress, &dmaLength);
+    }
+
+    if (kIOReturnSuccess == ret) return (atop_64(dmaAddress));
+    return (0);
 }
 
 void IOMapperIOVMFree(ppnum_t addr, unsigned pages)
 {
     if (IOMapper::gSystem)
-        IOMapper::gSystem->iovmFree(addr, (IOItemCount) pages);
+    {
+        IOMapper::gSystem->iovmUnmapMemory(NULL, NULL, ptoa_64(addr), ptoa_64(pages));
+    }
 }
 
 ppnum_t IOMapperInsertPage(ppnum_t addr, unsigned offset, ppnum_t page)
 {
-    if (IOMapper::gSystem) {
-		if (!addr) panic("!addr");
-        IOMapper::gSystem->iovmInsert(addr, (IOItemCount) offset, page);
-        return addr + offset;
-    }
-    else
-        return page;
-}
-
-void IOMapperInsertPPNPages(ppnum_t addr, unsigned offset,
-                            ppnum_t *pageList, unsigned pageCount)
-{
-    if (!IOMapper::gSystem)
-        panic("IOMapperInsertPPNPages no system mapper");
-    else
-        assert(!((vm_address_t) IOMapper::gSystem & 3));
-
-    IOMapper::gSystem->
-        iovmInsert(addr, (IOItemCount) offset, pageList, pageCount);
-}
-
-void IOMapperInsertUPLPages(ppnum_t addr, unsigned offset,
-                            upl_page_info_t *pageList, unsigned pageCount)
-{
-    if (!IOMapper::gSystem)
-        panic("IOMapperInsertUPLPages no system mapper");
-    else
-        assert(!((vm_address_t) IOMapper::gSystem & 3));
-
-    IOMapper::gSystem->iovmInsert(addr,
-                                 (IOItemCount) offset,
-                                  pageList,
-                                  (IOItemCount) pageCount);
+    if (!IOMapper::gSystem) return (page);
+    if (!addr) panic("!addr");
+    IOMapper::gSystem->iovmInsert((kIODMAMapReadAccess | kIODMAMapWriteAccess),
+				  ptoa_64(addr), ptoa_64(offset), ptoa_64(page), ptoa_64(1));
+    return (addr + offset);
 }
 
 /////////////////////////////////////////////////////////////////////////////
@@ -313,7 +247,7 @@ UInt8 IOMappedRead8(IOPhysicalAddress address)
     IOMapper::checkForSystemMapper();
 
     if (IOMapper::gSystem) {
-        addr64_t addr = IOMapper::gSystem->mapAddr(address);
+        addr64_t addr = IOMapper::gSystem->mapToPhysicalAddress(address);
         return (UInt8) ml_phys_read_byte_64(addr);
     }
     else
@@ -325,7 +259,7 @@ UInt16 IOMappedRead16(IOPhysicalAddress address)
     IOMapper::checkForSystemMapper();
 
     if (IOMapper::gSystem) {
-        addr64_t addr = IOMapper::gSystem->mapAddr(address);
+        addr64_t addr = IOMapper::gSystem->mapToPhysicalAddress(address);
         return (UInt16) ml_phys_read_half_64(addr);
     }
     else
@@ -337,7 +271,7 @@ UInt32 IOMappedRead32(IOPhysicalAddress address)
     IOMapper::checkForSystemMapper();
 
     if (IOMapper::gSystem) {
-        addr64_t addr = IOMapper::gSystem->mapAddr(address);
+        addr64_t addr = IOMapper::gSystem->mapToPhysicalAddress(address);
 	return (UInt32) ml_phys_read_word_64(addr);
     }
     else
@@ -349,7 +283,7 @@ UInt64 IOMappedRead64(IOPhysicalAddress address)
     IOMapper::checkForSystemMapper();
 
     if (IOMapper::gSystem) {
-        addr64_t addr = IOMapper::gSystem->mapAddr(address);
+        addr64_t addr = IOMapper::gSystem->mapToPhysicalAddress(address);
         return (UInt64) ml_phys_read_double_64(addr);
     }
     else
@@ -361,7 +295,7 @@ void IOMappedWrite8(IOPhysicalAddress address, UInt8 value)
     IOMapper::checkForSystemMapper();
 
     if (IOMapper::gSystem) {
-        addr64_t addr = IOMapper::gSystem->mapAddr(address);
+        addr64_t addr = IOMapper::gSystem->mapToPhysicalAddress(address);
         ml_phys_write_byte_64(addr, value);
     }
     else
@@ -373,7 +307,7 @@ void IOMappedWrite16(IOPhysicalAddress address, UInt16 value)
     IOMapper::checkForSystemMapper();
 
     if (IOMapper::gSystem) {
-        addr64_t addr = IOMapper::gSystem->mapAddr(address);
+        addr64_t addr = IOMapper::gSystem->mapToPhysicalAddress(address);
         ml_phys_write_half_64(addr, value);
     }
     else
@@ -385,7 +319,7 @@ void IOMappedWrite32(IOPhysicalAddress address, UInt32 value)
     IOMapper::checkForSystemMapper();
 
     if (IOMapper::gSystem) {
-        addr64_t addr = IOMapper::gSystem->mapAddr(address);
+        addr64_t addr = IOMapper::gSystem->mapToPhysicalAddress(address);
         ml_phys_write_word_64(addr, value);
     }
     else
@@ -397,7 +331,7 @@ void IOMappedWrite64(IOPhysicalAddress address, UInt64 value)
     IOMapper::checkForSystemMapper();
 
     if (IOMapper::gSystem) {
-        addr64_t addr = IOMapper::gSystem->mapAddr(address);
+        addr64_t addr = IOMapper::gSystem->mapToPhysicalAddress(address);
         ml_phys_write_double_64(addr, value);
     }
     else

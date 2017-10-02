@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008 Apple Inc. All rights reserved.
+ * Copyright (c) 2008-2016 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -25,6 +25,8 @@
  * 
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
+
+#include <sys/errno.h>
 
 #include <mach/mach_types.h>
 #include <mach/vm_attributes.h>
@@ -55,32 +57,31 @@
 // #define KDP_VM_READ_DEBUG 1
 // #define KDP_VM_WRITE_DEBUG 1
 
+/*
+ * A (potentially valid) physical address is not a kernel address
+ * i.e. it'a a user address.
+ */
+#define IS_PHYS_ADDR(addr)		IS_USERADDR64_CANONICAL(addr)
+
 boolean_t kdp_read_io;
 boolean_t kdp_trans_off;
 
-static addr64_t kdp_vtophys(pmap_t pmap, addr64_t va);
-
-int kern_dump_pmap_traverse_preflight_callback(vm_map_offset_t start,
-											   vm_map_offset_t end,
-											   void *context);
-int kern_dump_pmap_traverse_send_callback(vm_map_offset_t start,
-										  vm_map_offset_t end,
-										  void *context);
+pmap_paddr_t kdp_vtophys(pmap_t pmap, vm_offset_t va);
 
 pmap_t kdp_pmap = 0;
 
-static addr64_t
+pmap_paddr_t
 kdp_vtophys(
 	pmap_t pmap,
-	addr64_t va)
+	vm_offset_t va)
 {
-	addr64_t    pa;
+	pmap_paddr_t    pa;
 	ppnum_t pp;
 
 	pp = pmap_find_phys(pmap, va);
 	if(!pp) return 0;
         
-	pa = ((addr64_t)pp << 12) | (va & 0x0000000000000FFFULL);
+	pa = ((pmap_paddr_t)pp << PAGE_SHIFT) | (va & PAGE_MASK);
 
 	return(pa);
 }
@@ -99,7 +100,7 @@ kdp_machine_vm_read( mach_vm_address_t src, caddr_t dst, mach_vm_size_t len)
 	printf("kdp_vm_read: src %llx dst %p len %llx\n", src, (void *)dst, len);
 #endif
 
-	if (kdp_trans_off) {
+	if (kdp_trans_off && IS_PHYS_ADDR(src)) {
 		kdp_readphysmem64_req_t rq;
 		mach_vm_size_t ret;
 
@@ -141,8 +142,10 @@ kdp_machine_vm_read( mach_vm_address_t src, caddr_t dst, mach_vm_size_t len)
 			cnt = resid;
 
 /* Do a physical copy */
-		ml_copy_phys(cur_phys_src, cur_phys_dst, (vm_size_t)cnt);
-
+		if (EFAULT == ml_copy_phys(cur_phys_src,
+					   cur_phys_dst,
+					   (vm_size_t)cnt))
+			goto exit;
 		cur_virt_src += cnt;
 		cur_virt_dst += cnt;
 		resid -= cnt;
@@ -193,7 +196,10 @@ kdp_machine_phys_read(kdp_readphysmem64_req_t *rq, caddr_t dst,
 	/* Do a physical copy; use ml_copy_phys() in the event this is
 	 * a short read with potential side effects.
 	 */
-		ml_copy_phys(cur_phys_src, cur_phys_dst, (vm_size_t)cnt);
+		if (EFAULT == ml_copy_phys(cur_phys_src,
+					   cur_phys_dst,
+					   (vm_size_t)cnt))
+			goto exit;
 		cur_phys_src += cnt;
 		cur_virt_dst += cnt;
 		resid -= cnt;
@@ -239,7 +245,8 @@ kdp_machine_vm_write( caddr_t src, mach_vm_address_t dst, mach_vm_size_t len)
 		if (cnt > resid) 
 			cnt = resid;
 
-		ml_copy_phys(cur_phys_src, cur_phys_dst, cnt);		/* Copy stuff over */
+		if (EFAULT == ml_copy_phys(cur_phys_src, cur_phys_dst, cnt))
+			goto exit;		/* Copy stuff over */
 
 		cur_virt_src +=cnt;
 		cur_virt_dst +=cnt;
@@ -291,7 +298,8 @@ kdp_machine_phys_write(kdp_writephysmem64_req_t *rq, caddr_t src,
 		if (cnt > resid) 
 			cnt = resid;
 
-		ml_copy_phys(cur_phys_src, cur_phys_dst, cnt);		/* Copy stuff over */
+		if (EFAULT == ml_copy_phys(cur_phys_src, cur_phys_dst, cnt))
+			goto exit;		/* Copy stuff over */
 
 		cur_virt_src +=cnt;
 		cur_phys_dst +=cnt;
@@ -325,7 +333,6 @@ kdp_machine_ioport_read(kdp_readioport_req_t *rq, caddr_t data, uint16_t lcpu)
 		break;
 	default:
 		return KDPERR_BADFLAVOR;
-		break;
 	}
 
 	return KDPERR_NO_ERROR;
@@ -354,7 +361,6 @@ kdp_machine_ioport_write(kdp_writeioport_req_t *rq, caddr_t data, uint16_t lcpu)
 		break;
 	default:
 		return KDPERR_BADFLAVOR;
-		break;
 	}
 
 	return KDPERR_NO_ERROR;
@@ -388,290 +394,6 @@ kdp_machine_msr64_write(kdp_writemsr64_req_t *rq, caddr_t data, uint16_t lcpu)
 	return KDPERR_NO_ERROR;
 }
 
-int
-pmap_traverse_present_mappings(pmap_t pmap,
-							   vm_map_offset_t start,
-							   vm_map_offset_t end,
-							   pmap_traverse_callback callback,
-							   void *context)
-{
-	int ret = KERN_SUCCESS;
-	vm_map_offset_t vcurstart, vcur;
-	boolean_t lastvavalid = FALSE;
-
-	/* Assumes pmap is locked, or being called from the kernel debugger */
-	
-	if (start > end) {
-		return (KERN_INVALID_ARGUMENT);
-	}
-
-	if (start & PAGE_MASK_64) {
-		return (KERN_INVALID_ARGUMENT);
-	}
-
-	for (vcur = vcurstart = start; (ret == KERN_SUCCESS) && (vcur < end); ) {
-		ppnum_t ppn = pmap_find_phys(pmap, vcur);
-
-		if (ppn != 0 && !pmap_valid_page(ppn)) {
-			/* not something we want */
-			ppn = 0;
-		}
-
-		if (ppn != 0) {
-			if (!lastvavalid) {
-				/* Start of a new virtual region */
-				vcurstart = vcur;
-				lastvavalid = TRUE;
-			}
-		} else {
-			if (lastvavalid) {
-				/* end of a virtual region */
-				
-				ret = callback(vcurstart, vcur, context);
-
-				lastvavalid = FALSE;
-			}
-
-			/* Try to skip by 2MB if possible */
-			if (((vcur & PDMASK) == 0) && cpu_64bit) {
-				pd_entry_t *pde;
-
-				pde = pmap_pde(pmap, vcur);
-				if (0 == pde || ((*pde & INTEL_PTE_VALID) == 0)) {
-					/* Make sure we wouldn't overflow */
-					if (vcur < (end - NBPD)) {
-						vcur += NBPD;
-						continue;
-					}
-				}
-			}
-		}
-		
-		vcur += PAGE_SIZE_64;
-	}
-	
-	if ((ret == KERN_SUCCESS)
-		&& lastvavalid) {
-		/* send previous run */
-
-		ret = callback(vcurstart, vcur, context);
-	}
-	return (ret);
-}
-
-struct kern_dump_preflight_context {
-	uint32_t	region_count;
-	uint64_t	dumpable_bytes;
-};
-
-struct kern_dump_send_context {
-	uint64_t	hoffset;
-	uint64_t	foffset;
-	uint64_t	header_size;
-};
-
-int
-kern_dump_pmap_traverse_preflight_callback(vm_map_offset_t start,
-										   vm_map_offset_t end,
-										   void *context)
-{
-	struct kern_dump_preflight_context *kdc = (struct kern_dump_preflight_context *)context;
-	int ret = KERN_SUCCESS;
-
-	kdc->region_count++;
-	kdc->dumpable_bytes += (end - start);
-
-	return (ret);
-}
-
-int
-kern_dump_pmap_traverse_send_callback(vm_map_offset_t start,
-									  vm_map_offset_t end,
-									  void *context)
-{
-	struct kern_dump_send_context *kdc = (struct kern_dump_send_context *)context;
-	int ret = KERN_SUCCESS;
-	kernel_segment_command_t sc;
-	vm_size_t size = (vm_size_t)(end - start);
-
-	if (kdc->hoffset + sizeof(sc) > kdc->header_size) {
-		return (KERN_NO_SPACE);
-	}
-
-	/*
-	 *	Fill in segment command structure.
-	 */
-    
-	sc.cmd = LC_SEGMENT_KERNEL;
-	sc.cmdsize = sizeof(kernel_segment_command_t);
-	sc.segname[0] = 0;
-	sc.vmaddr = (vm_address_t)start;
-	sc.vmsize = size;
-	sc.fileoff = (vm_address_t)kdc->foffset;
-	sc.filesize = size;
-	sc.maxprot = VM_PROT_READ;
-	sc.initprot = VM_PROT_READ;
-	sc.nsects = 0;
-	sc.flags = 0;
-
-	if ((ret = kdp_send_crashdump_pkt (KDP_SEEK, NULL, sizeof(kdc->hoffset) , &kdc->hoffset)) < 0) { 
-		printf ("kdp_send_crashdump_pkt failed with error %d\n", ret);
-		goto out;
-	} 
-    
-	if ((ret = kdp_send_crashdump_data (KDP_DATA, NULL, sizeof(kernel_segment_command_t) , (caddr_t) &sc)) < 0) {
-		printf ("kdp_send_crashdump_data failed with error %d\n", ret);
-		goto out;
-	}
-	
-	kdc->hoffset += sizeof(kernel_segment_command_t);
-
-	if ((ret = kdp_send_crashdump_pkt (KDP_SEEK, NULL, sizeof(kdc->foffset) , &kdc->foffset)) < 0) {
-		printf ("kdp_send_crashdump_pkt failed with error %d\n", ret);
-		goto out;
-	}
-		
-	if ((ret = kdp_send_crashdump_data (KDP_DATA, NULL, (unsigned int)size, (caddr_t)(uintptr_t)start)) < 0)	{
-		printf ("kdp_send_crashdump_data failed with error %d\n", ret);
-		goto out;
-	}
-	
-	kdc->foffset += size;
-
-out:
-	return (ret);
-}
-
-int
-kern_dump(void)
-{
-	int			ret;
-	struct kern_dump_preflight_context kdc_preflight;
-	struct kern_dump_send_context kdc_send;
-	uint32_t	segment_count;
-	size_t		command_size = 0, header_size = 0, tstate_size = 0;
-	uint64_t	hoffset = 0, foffset = 0;
-	kernel_mach_header_t	mh;
-
-
-	kdc_preflight.region_count = 0;
-	kdc_preflight.dumpable_bytes = 0;
-
-	ret = pmap_traverse_present_mappings(kernel_pmap,
-										 VM_MIN_KERNEL_AND_KEXT_ADDRESS,
-										 VM_MAX_KERNEL_ADDRESS,
-										 kern_dump_pmap_traverse_preflight_callback,
-										 &kdc_preflight);
-	if (ret) {
-		printf("pmap traversal failed: %d\n", ret);
-		return (ret);
-	}
-
-	printf("Kernel dump region count: %u\n", kdc_preflight.region_count);
-	printf("Kernel dump byte count: %llu\n", kdc_preflight.dumpable_bytes);
-			
-	segment_count = kdc_preflight.region_count;
-
-	tstate_size = sizeof(struct thread_command) + kern_collectth_state_size();
-
-	command_size = segment_count * sizeof(kernel_segment_command_t) +
-				tstate_size;
-
-	header_size = command_size + sizeof(kernel_mach_header_t);
-
-	/*
-	 *	Set up Mach-O header for currently executing kernel.
-	 */
-	printf ("Generated Mach-O header size was %lu\n", header_size);
-
-	mh.magic = _mh_execute_header.magic;
-	mh.cputype = _mh_execute_header.cputype;;
-	mh.cpusubtype = _mh_execute_header.cpusubtype;
-	mh.filetype = MH_CORE;
-	mh.ncmds = segment_count + 1 /* thread */;
-	mh.sizeofcmds = (uint32_t)command_size;
-	mh.flags = 0;
-#if defined(__LP64__)
-	mh.reserved = 0;
-#endif
-
-	hoffset = 0;	/* offset into header */
-	foffset = (uint32_t)round_page(header_size);	/* offset into file */
-
-	/* Transmit the Mach-O MH_CORE header, and seek forward past the 
-	 * area reserved for the segment and thread commands 
-	 * to begin data transmission 
-	 */
-	if ((ret = kdp_send_crashdump_pkt (KDP_SEEK, NULL, sizeof(hoffset) , &hoffset)) < 0) { 
-		printf ("kdp_send_crashdump_pkt failed with error %d\n", ret);
-		goto out;
-	} 
-	if ((ret = kdp_send_crashdump_data (KDP_DATA, NULL, sizeof(kernel_mach_header_t), (caddr_t) &mh) < 0)) {
-		printf ("kdp_send_crashdump_data failed with error %d\n", ret);
-		goto out;
-	}
-
-	hoffset += sizeof(kernel_mach_header_t);
-
-	if ((ret = kdp_send_crashdump_pkt (KDP_SEEK, NULL, sizeof(foffset) , &foffset) < 0)) {
-		printf ("kdp_send_crashdump_pkt failed with error %d\n", ret);
-		goto out;
-	}
-
-	printf ("Transmitting kernel state, please wait: ");
-
-	kdc_send.hoffset = hoffset;
-	kdc_send.foffset = foffset;
-	kdc_send.header_size = header_size;
-
-	ret = pmap_traverse_present_mappings(kernel_pmap,
-										 VM_MIN_KERNEL_AND_KEXT_ADDRESS,
-										 VM_MAX_KERNEL_ADDRESS,
-										 kern_dump_pmap_traverse_send_callback,
-										 &kdc_send);
-	if (ret) {
-		kprintf("pmap traversal failed: %d\n", ret);
-		return (ret);
-	}
-
-	/* Reload mutated offsets */
-	hoffset = kdc_send.hoffset;
-	foffset = kdc_send.foffset;
-
-	/*
-	 * Now send out the LC_THREAD load command, with the thread information
-	 * for the current activation.
-	 */
-	if (tstate_size > 0) {
-		char tstate[tstate_size];
-
-		kern_collectth_state (current_thread(), tstate, tstate_size);
-
-		if ((ret = kdp_send_crashdump_pkt (KDP_SEEK, NULL, sizeof(hoffset), &hoffset)) < 0) { 
-			printf ("kdp_send_crashdump_pkt failed with error %d\n", ret);
-			goto out;
-		}
-		
-		if ((ret = kdp_send_crashdump_data (KDP_DATA, NULL, tstate_size, tstate)) < 0) {
-			printf ("kdp_send_crashdump_data failed with error %d\n", ret);
-			goto out;
-		}
-
-		hoffset += tstate_size;
-	}
-
-	/* last packet */
-	if ((ret = kdp_send_crashdump_pkt (KDP_EOF, NULL, 0, ((void *) 0))) < 0)
-	{
-		printf ("kdp_send_crashdump_pkt failed with error %d\n", ret);
-		goto out;
-	}	
-
-out:
-	return (ret);
-}
-
-
 pt_entry_t *debugger_ptep;
 vm_map_offset_t debugger_window_kva;
 
@@ -686,10 +408,15 @@ kdp_machine_init(void) {
 		return;
 
 	vm_map_entry_t e;
-	kern_return_t kr = vm_map_find_space(kernel_map,
-	    &debugger_window_kva,
-	    PAGE_SIZE, 0,
-	    VM_MAKE_TAG(VM_MEMORY_IOKIT), &e);
+	kern_return_t kr;
+
+	kr = vm_map_find_space(kernel_map,
+			       &debugger_window_kva,
+			       PAGE_SIZE, 0,
+			       0,
+			       VM_MAP_KERNEL_FLAGS_NONE,
+			       VM_KERN_MEMORY_OSFMK,
+			       &e);
 
 	if (kr != KERN_SUCCESS) {
 		panic("%s: vm_map_find_space failed with %d\n", __FUNCTION__, kr);
@@ -704,4 +431,6 @@ kdp_machine_init(void) {
 		debugger_ptep = pmap_pte(kernel_pmap, debugger_window_kva);
 	}
 }
+
+
 

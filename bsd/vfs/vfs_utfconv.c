@@ -36,6 +36,12 @@
 #include <sys/malloc.h>
 #include <libkern/OSByteOrder.h>
 
+#if defined(KERNEL) && !defined(VFS_UTF8_UNIT_TEST)
+#include <kern/assert.h>
+#else
+#include <assert.h>
+#endif
+
 /*
  * UTF-8 (Unicode Transformation Format)
  *
@@ -62,13 +68,13 @@
 
 /* Surrogate Pair Constants */
 #define SP_HALF_SHIFT	10
-#define SP_HALF_BASE	0x0010000UL
-#define SP_HALF_MASK	0x3FFUL
+#define SP_HALF_BASE	0x0010000u
+#define SP_HALF_MASK	0x3FFu
 
-#define SP_HIGH_FIRST	0xD800UL
-#define SP_HIGH_LAST	0xDBFFUL
-#define SP_LOW_FIRST	0xDC00UL
-#define SP_LOW_LAST	0xDFFFUL
+#define SP_HIGH_FIRST	0xD800u
+#define SP_HIGH_LAST	0xDBFFu
+#define SP_LOW_FIRST	0xDC00u
+#define SP_LOW_LAST		0xDFFFu
 
 
 #include "vfs_utfconvdata.h"
@@ -148,7 +154,7 @@ static int unicode_decompose(u_int16_t character, u_int16_t *convertedChars);
 
 static u_int16_t unicode_combine(u_int16_t base, u_int16_t combining);
 
-static void priortysort(u_int16_t* characters, int count);
+static void prioritysort(u_int16_t* characters, int count);
 
 static u_int16_t  ucs_to_sfm(u_int16_t ucs_ch, int lastchar);
 
@@ -196,7 +202,7 @@ utf8_encodelen(const u_int16_t * ucsp, size_t ucslen, u_int16_t altslash, int fl
 	u_int16_t * chp = NULL;
 	u_int16_t sequence[8];
 	int extra = 0;
-	int charcnt;
+	size_t charcnt;
 	int swapbytes = (flags & UTF_REVERSE_ENDIAN);
 	int decompose = (flags & UTF_DECOMPOSED);
 	size_t len;
@@ -266,7 +272,7 @@ utf8_encodestr(const u_int16_t * ucsp, size_t ucslen, u_int8_t * utf8p,
 	u_int16_t * chp = NULL;
 	u_int16_t sequence[8];
 	int extra = 0;
-	int charcnt;
+	size_t charcnt;
 	int swapbytes = (flags & UTF_REVERSE_ENDIAN);
 	int nullterm  = ((flags & UTF_NO_NULL_TERM) == 0);
 	int decompose = (flags & UTF_DECOMPOSED);
@@ -378,6 +384,23 @@ utf8_encodestr(const u_int16_t * ucsp, size_t ucslen, u_int8_t * utf8p,
 	return (result);
 }
 
+// Pushes a character taking account of combining character sequences
+static void push(uint16_t ucs_ch, int *combcharcnt, uint16_t **ucsp)
+{
+	/*
+	 * Make multiple combining character sequences canonical
+	 */
+	if (unicode_combinable(ucs_ch)) {
+		++*combcharcnt;		/* start tracking a run */
+	} else if (*combcharcnt) {
+		if (*combcharcnt > 1) {
+			prioritysort(*ucsp - *combcharcnt, *combcharcnt);
+		}
+		*combcharcnt = 0;	/* start over */
+	}
+
+	*(*ucsp)++ = ucs_ch;
+}
 
 /*
  * utf8_decodestr - Decodes a UTF-8 string back to Unicode
@@ -417,13 +440,12 @@ utf8_decodestr(const u_int8_t* utf8p, size_t utf8len, u_int16_t* ucsp,
 	unsigned int byte;
 	int combcharcnt = 0;
 	int result = 0;
-	int decompose, precompose, swapbytes, escaping;
+	int decompose, precompose, escaping;
 	int sfmconv;
 	int extrabytes;
 
 	decompose  = (flags & UTF_DECOMPOSED);
 	precompose = (flags & UTF_PRECOMPOSED);
-	swapbytes  = (flags & UTF_REVERSE_ENDIAN);
 	escaping   = (flags & UTF_ESCAPE_ILLEGAL);
 	sfmconv    = (flags & UTF_SFM_CONVERSIONS);
 
@@ -497,7 +519,7 @@ utf8_decodestr(const u_int8_t* utf8p, size_t utf8len, u_int16_t* ucsp,
 				ucs_ch = (ch >> SP_HALF_SHIFT) + SP_HIGH_FIRST;
 				if (ucs_ch < SP_HIGH_FIRST || ucs_ch > SP_HIGH_LAST)
 					goto escape4;
-				*ucsp++ = swapbytes ? OSSwapInt16(ucs_ch) : (u_int16_t)ucs_ch;
+				push(ucs_ch, &combcharcnt, &ucsp);
 				if (ucsp >= bufend)
 					goto toolong;
 				ucs_ch = (ch & SP_HALF_MASK) + SP_LOW_FIRST;
@@ -505,7 +527,7 @@ utf8_decodestr(const u_int8_t* utf8p, size_t utf8len, u_int16_t* ucsp,
 					--ucsp;
 					goto escape4;
 				}
-				*ucsp++ = swapbytes ? OSSwapInt16(ucs_ch) : (u_int16_t)ucs_ch;
+				*ucsp++ = ucs_ch;
 			        continue;
 			default:
 				result = EINVAL;
@@ -516,30 +538,22 @@ utf8_decodestr(const u_int8_t* utf8p, size_t utf8len, u_int16_t* ucsp,
 					u_int16_t sequence[8];
 					int count, i;
 
-					/* Before decomposing a new unicode character, sort 
-					 * previous combining characters, if any, and reset
-					 * the counter.
-					 */
-					if (combcharcnt > 1) {
-						priortysort(ucsp - combcharcnt, combcharcnt);
-					}
-					combcharcnt = 0;
-
 					count = unicode_decompose(ucs_ch, sequence);
+
 					for (i = 0; i < count; ++i) {
-						ucs_ch = sequence[i];
-						*ucsp++ = swapbytes ? OSSwapInt16(ucs_ch) : (u_int16_t)ucs_ch;
 						if (ucsp >= bufend)
 							goto toolong;
+
+						push(sequence[i], &combcharcnt, &ucsp);
 					}
-					combcharcnt += count - 1;
-					continue;			
+
+					continue;
 				}
 			} else if (precompose && (ucsp != bufstart)) {
 				u_int16_t composite, base;
 
 				if (unicode_combinable(ucs_ch)) {
-					base = swapbytes ? OSSwapInt16(*(ucsp - 1)) : *(ucsp - 1);
+					base = ucsp[-1];
 					composite = unicode_combine(base, ucs_ch);
 					if (composite) {
 						--ucsp;
@@ -553,19 +567,7 @@ utf8_decodestr(const u_int8_t* utf8p, size_t utf8len, u_int16_t* ucsp,
 		if (ucs_ch == altslash)
 			ucs_ch = '/';
 
-		/*
-		 * Make multiple combining character sequences canonical
-		 */
-		if (unicode_combinable(ucs_ch)) {
-			++combcharcnt;   /* start tracking a run */
-		} else if (combcharcnt) {
-			if (combcharcnt > 1) {
-				priortysort(ucsp - combcharcnt, combcharcnt);
-			}
-			combcharcnt = 0;  /* start over */
-		}
-
-		*ucsp++ = swapbytes ? OSSwapInt16(ucs_ch) : (u_int16_t)ucs_ch;
+		push(ucs_ch, &combcharcnt, &ucsp);
 		continue;
 
 		/* 
@@ -593,23 +595,32 @@ escape:
 
 		/* Make a previous combining sequence canonical. */
 		if (combcharcnt > 1) {
-			priortysort(ucsp - combcharcnt, combcharcnt);
+			prioritysort(ucsp - combcharcnt, combcharcnt);
 		}
 		combcharcnt = 0;
 		
 		ucs_ch = '%';
-		*ucsp++ = swapbytes ? OSSwapInt16(ucs_ch) : (u_int16_t)ucs_ch;
+		*ucsp++ = ucs_ch;
 		ucs_ch =  hexdigits[byte >> 4];
-		*ucsp++ = swapbytes ? OSSwapInt16(ucs_ch) : (u_int16_t)ucs_ch;
+		*ucsp++ = ucs_ch;
 		ucs_ch =  hexdigits[byte & 0x0F];
-		*ucsp++ = swapbytes ? OSSwapInt16(ucs_ch) : (u_int16_t)ucs_ch;
+		*ucsp++ = ucs_ch;
 	}
 	/*
 	 * Make a previous combining sequence canonical
 	 */
 	if (combcharcnt > 1) {
-		priortysort(ucsp - combcharcnt, combcharcnt);
+		prioritysort(ucsp - combcharcnt, combcharcnt);
 	}
+
+	if (flags & UTF_REVERSE_ENDIAN) {
+		uint16_t *p = bufstart;
+		while (p < ucsp) {
+			*p = OSSwapInt16(*p);
+			++p;
+		}
+	}
+
 exit:
 	*ucslen = (u_int8_t*)ucsp - (u_int8_t*)bufstart;
 
@@ -804,7 +815,7 @@ nonASCII:
 	if (unicode_bytes <= sizeof(unicodebuf))
 		unistr = &unicodebuf[0];
 	else
-		MALLOC(unistr, u_int16_t *, unicode_bytes, M_TEMP, M_WAITOK);
+		MALLOC(unistr, uint16_t *, unicode_bytes, M_TEMP, M_WAITOK);
 
 	/* Normalize the string. */
 	result = utf8_decodestr(inbufstart, inbuflen, unistr, &unicode_bytes,
@@ -1014,12 +1025,12 @@ unicode_combine(u_int16_t base, u_int16_t combining)
 
 
 /*
- * priortysort - order combining chars into canonical order
+ * prioritysort - order combining chars into canonical order
  *
  * Similar to CFUniCharPrioritySort
  */
 static void
-priortysort(u_int16_t* characters, int count)
+prioritysort(u_int16_t* characters, int count)
 {
 	u_int32_t p1, p2;
 	u_int16_t *ch1, *ch2;
@@ -1094,7 +1105,7 @@ priortysort(u_int16_t* characters, int count)
  * colon in our tables and everything will just work. 
  */
 static u_int8_t
-sfm2mac[42] = {
+sfm2mac[] = {
 	0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,   /* 00 - 07 */
 	0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,   /* 08 - 0F */
 	0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,   /* 10 - 17 */
@@ -1102,9 +1113,10 @@ sfm2mac[42] = {
 	0x22, 0x2a, 0x3a, 0x3c, 0x3e, 0x3f, 0x5c, 0x7c,   /* 20 - 27 */
 	0x20, 0x2e                                        /* 28 - 29 */
 };
+#define SFM2MAC_LEN	((sizeof(sfm2mac))/sizeof(sfm2mac[0]))
 
 static u_int8_t
-mac2sfm[112] = {
+mac2sfm[] = {
 	0x20, 0x21, 0x20, 0x23, 0x24, 0x25, 0x26, 0x27,	  /* 20 - 27 */
 	0x28, 0x29, 0x21, 0x2b, 0x2c, 0x2d, 0x2e, 0x22,   /* 28 - 2f */
 	0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37,   /* 30 - 37 */
@@ -1118,6 +1130,7 @@ mac2sfm[112] = {
 	0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76, 0x77,   /* 70 - 77 */
 	0x78, 0x79, 0x7a, 0x7b, 0x27, 0x7d, 0x7e, 0x7f    /* 78 - 7f */
 };
+#define MAC2SFM_LEN	((sizeof(mac2sfm))/sizeof(mac2sfm[0]))
 
 
 /*
@@ -1141,6 +1154,7 @@ ucs_to_sfm(u_int16_t ucs_ch, int lastchar)
 	} else /* 0x20 - 0x7f */ {
 		u_int16_t lsb;
 
+		assert((ucs_ch - 0x0020) < MAC2SFM_LEN);
 		lsb = mac2sfm[ucs_ch - 0x0020];
 		if (lsb != ucs_ch)
 			return(0xf000 | lsb); 
@@ -1156,6 +1170,7 @@ sfm_to_ucs(u_int16_t ucs_ch)
 {
 	if (((ucs_ch & 0xffC0) == SFMCODE_PREFIX_MASK) && 
 	    ((ucs_ch & 0x003f) <= MAX_SFM2MAC)) {
+		assert((ucs_ch & 0x003f) < SFM2MAC_LEN);
 		ucs_ch = sfm2mac[ucs_ch & 0x003f];
 	}
 	return (ucs_ch);

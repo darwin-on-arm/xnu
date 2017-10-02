@@ -1,8 +1,8 @@
-pexpert/arm/common/pe_bringup.c		standard
-pexpert/arm/common/pe_semihost.s	standard
-pexpert/arm/common/pe_kprintf.c		standard
-pexpert/arm/common/pe_init.c		standard
-pexpert/arm/common/pe_bootargs.c	standard
-pexpert/arm/common/pe_identify_machine.c	standard
-pexpert/arm/common/pe_socsupport.c	standard
-pexpert/arm/common/pe_armsupport.c	standard
+OPTIONS/gprof                    optional gprof
+
+pexpert/arm/pe_bootargs.c              standard
+pexpert/arm/pe_consistent_debug.c      standard
+pexpert/arm/pe_identify_machine.c      standard
+pexpert/arm/pe_init.c                  standard
+pexpert/arm/pe_kprintf.c               standard
+pexpert/arm/pe_serial.c                standard

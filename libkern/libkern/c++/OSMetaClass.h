@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2016 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -41,7 +41,8 @@ class OSDictionary;
 class OSSerialize;
 #ifdef XNU_KERNEL_PRIVATE
 class OSOrderedSet;
-#endif
+class OSCollection;
+#endif /* XNU_KERNEL_PRIVATE */
 
 
 /*!
@@ -78,20 +79,16 @@ class OSOrderedSet;
 
 #endif /* XNU_KERNEL_PRIVATE */
 
+#define APPLE_KEXT_ALIGN_CONTAINERS     (0 == APPLE_KEXT_VTABLE_PADDING)
+
 #if defined(__LP64__)
 /*! @parseOnly */
+#define APPLE_KEXT_LEGACY_ABI  0
+#elif defined(__arm__) && (__GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ >= 2))
 #define APPLE_KEXT_LEGACY_ABI  0
 #else
 #define APPLE_KEXT_LEGACY_ABI  1
 #endif
-
-
-#if defined(__arm__)
-#undef APPLE_KEXT_LEGACY_ABI
-#endif
-
-extern "C" void kprintf(const char* fmt, ...);
-
 
 #if defined(__LP64__)
 /*! @parseOnly */
@@ -103,6 +100,20 @@ extern "C" void kprintf(const char* fmt, ...);
 
 /*! @parseOnly */
 #define APPLE_KEXT_DEPRECATED  __attribute__((deprecated))
+
+
+#if __cplusplus >= 201103L
+#define APPLE_KEXT_OVERRIDE  				override
+#if defined(__LP64__)
+#define APPLE_KEXT_COMPATIBILITY_OVERRIDE
+#else
+#define APPLE_KEXT_COMPATIBILITY_OVERRIDE	APPLE_KEXT_OVERRIDE
+#endif
+#else
+#define APPLE_KEXT_OVERRIDE
+#define APPLE_KEXT_COMPATIBILITY_OVERRIDE
+#endif
+
 
 /*!
  * @class OSMetaClassBase
@@ -293,11 +304,9 @@ public:
 #define OSCheckTypeInst(typeinst, inst) \
     OSMetaClassBase::checkTypeInst(inst, typeinst)
 
-/*! @function OSSafeRelease
- *  @abstract Release an object if not <code>NULL</code>.
- *  @param    inst  Instance of an OSObject, may be <code>NULL</code>.
- */
-#define OSSafeRelease(inst)       do { if (inst) (inst)->release(); } while (0)
+#define OSSafeRelease(inst) \
+  do { int OSSafeRelease __attribute__ ((deprecated("Use OSSafeReleaseNULL"))); (OSSafeRelease); \
+	if (inst) (inst)->release(); } while (0)
 
 /*! @function OSSafeReleaseNULL
  *  @abstract Release an object if not <code>NULL</code>, then set it to <code>NULL</code>.
@@ -348,7 +357,43 @@ _ptmf2ptf(const OSMetaClassBase *self, void (OSMetaClassBase::*func)(void))
 }
 
 #else /* !APPLE_KEXT_LEGACY_ABI */
-#if   defined(__i386__) || defined(__x86_64__)
+#if defined(__arm__) || defined(__arm64__)
+typedef long int ptrdiff_t;
+/*
+ * Ugly reverse engineered ABI.  Where does it come from?  Nobody knows.
+ * <rdar://problem/5641129> gcc 4.2-built ARM kernel panics with multiple inheritance (no, really)
+ */
+static inline _ptf_t
+_ptmf2ptf(const OSMetaClassBase *self, void (OSMetaClassBase::*func)(void))
+{
+    struct ptmf_t {
+        _ptf_t fPFN;
+        ptrdiff_t delta;
+    };
+    union {
+        void (OSMetaClassBase::*fIn)(void);
+        struct ptmf_t pTMF;
+    } map;
+
+
+    map.fIn = func;
+
+    if (map.pTMF.delta & 1) {
+        // virtual
+        union {
+            const OSMetaClassBase *fObj;
+            _ptf_t **vtablep;
+        } u;
+        u.fObj = self;
+
+        // Virtual member function so dereference table
+        return *(_ptf_t *)(((uintptr_t)*u.vtablep) + (uintptr_t)map.pTMF.fPFN);
+    } else {
+        // Not virtual, i.e. plain member func
+        return map.pTMF.fPFN;
+    } 
+}
+#elif defined(__i386__) || defined(__x86_64__)
 
 // Slightly less arcane and slightly less evil code to do
 // the same for kexts compiled with the standard Itanium C++
@@ -380,36 +425,7 @@ _ptmf2ptf(const OSMetaClassBase *self, void (OSMetaClassBase::*func)(void))
         return map.fPFN;
     }
 }
-#elif defined(__arm__)
 
-static inline _ptf_t
-_ptmf2ptf(const OSMetaClassBase *self, void (OSMetaClassBase::*func)(void))
-{
-    union {
-        void (OSMetaClassBase::*fIn)(void);
-        uintptr_t fVTOffset;
-        _ptf_t fPFN;
-    } map;
-
-    map.fIn = func;
-    
-    // High order function pointers are considered plain member functions
-    if (!(map.fVTOffset & 0x80000000)) {
-        union {
-            const OSMetaClassBase *fObj;
-            _ptf_t **vtablep;
-        } u;
-        u.fObj = self;
-        // Virtual member function so dereference vtable, no need to add +1.
-        return *(_ptf_t*)(((uintptr_t)*u.vtablep) + map.fVTOffset);
-    } else {
-        // Not virtual, i.e. plain member func
-        return map.fPFN;
-    }
-
-    
-    return map.fPFN;
-}
 #else
 #error Unknown architecture.
 #endif /* __arm__ */
@@ -820,9 +836,7 @@ typedef bool (*OSMetaClassInstanceApplierFunction)(const OSObject * instance,
  * OSMetaClass manages run-time type information
  * for Libkern and I/O Kit C++ classes.
  *
- * @discussion
- *
- * OSMetaClass manages run-time type information
+ * @discussion OSMetaClass manages run-time type information
  * for Libkern and I/O Kit C++ classes.
  * An instance of OSMetaClass exists for (nearly) every such C++ class,
  * keeping track of inheritance relationships, class lookup by name,
@@ -959,12 +973,42 @@ public:
     * @abstract
     * Look up a metaclass in the run-time type information system.
     *
-    * @param name The name of the desired class's metaclass. 
+    * @param name The name of the desired class's metaclass.
     *
     * @result
     * A pointer to the metaclass object if found, <code>NULL</code> otherwise.
     */
     static const OSMetaClass * getMetaClassWithName(const OSSymbol * name);
+
+#if XNU_KERNEL_PRIVATE
+
+   /*!
+    * @function copyMetaClassWithName
+    *
+    * @abstract
+    * Look up a metaclass in the run-time type information system.
+    *
+    * @param name The name of the desired class's metaclass.
+    *
+    * @result
+    * A pointer to the metaclass object if found, <code>NULL</code> otherwise.
+    * The metaclass will be protected from unloading until releaseMetaClass()
+    * is called.
+    */
+    static const OSMetaClass * copyMetaClassWithName(const OSSymbol * name);
+   /*!
+    * @function releaseMetaClass
+    *
+    * @abstract
+    * Releases reference obtained from copyMetaClassWithName().
+    *
+    * @discussion
+    * The metaclass will be protected from unloading until releaseMetaClass()
+    * is called.
+    */
+    void releaseMetaClass() const;
+
+#endif /* XNU_KERNEL_PRIVATE */
 
 protected:
    /*!
@@ -1138,7 +1182,7 @@ protected:
 
     // Needs to be overriden as NULL as all OSMetaClass objects are allocated
     // statically at compile time, don't accidently try to free them.
-    void operator delete(void *, size_t) { };
+    void operator delete(void *, size_t) { }
 
 public:
     static const OSMetaClass * const metaClass;
@@ -1296,6 +1340,9 @@ public:
     */
     static void considerUnloads();
 
+#if XNU_KERNEL_PRIVATE
+    static bool removeClasses(OSCollection * metaClasses);
+#endif /* XNU_KERNEL_PRIVATE */
 
    /*!
     * @function allocClassWithName
@@ -1602,7 +1649,7 @@ private:
 			         OSMetaClassInstanceApplierFunction  applier,
                                  void * context);
 public:
-#endif
+#endif /* XNU_KERNEL_PRIVATE */
 
    /* Not to be included in headerdoc.
     *
@@ -1627,7 +1674,7 @@ public:
             virtual OSObject *alloc() const;                    \
         } gMetaClass;                                           \
         friend class className ::MetaClass;                     \
-        virtual const OSMetaClass * getMetaClass() const;       \
+        virtual const OSMetaClass * getMetaClass() const APPLE_KEXT_OVERRIDE; \
     protected:                                                  \
     className (const OSMetaClass *);                            \
     virtual ~ className ()
@@ -2110,6 +2157,17 @@ void className ::_RESERVED ## className ## index ()             \
     // I/O Kit debug internal routines.
     static void printInstanceCounts();
     static void serializeClassDictionary(OSDictionary * dict);
+#ifdef XNU_KERNEL_PRIVATE
+#if IOTRACKING
+public:
+    static void * trackedNew(size_t size);
+    static void trackedDelete(void * mem, size_t size);
+    void trackedInstance(OSObject * instance) const;
+    void trackedFree(OSObject * instance) const;
+    void trackedAccumSize(OSObject * instance, size_t size) const;
+    struct IOTrackingQueue * getTracking() const;
+#endif /* IOTRACKING */
+#endif /* XNU_KERNEL_PRIVATE */
 
 private:
     // Obsolete APIs

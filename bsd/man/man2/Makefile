@@ -33,16 +33,24 @@ DATAFILES = \
 	chmod.2			\
 	chown.2			\
 	chroot.2		\
+	clonefile.2		\
+	clonefileat.2		\
 	close.2			\
 	connect.2		\
+	connectx.2		\
+	disconnectx.2		\
 	dup.2			\
 	dup2.2			\
 	execve.2		\
 	exchangedata.2		\
+	faccessat.2		\
 	fchdir.2		\
 	fchflags.2		\
 	fchmod.2		\
+	fchmodat.2		\
 	fchown.2		\
+	fchownat.2		\
+	fclonefileat.2		\
 	fcntl.2			\
 	fgetattrlist.2		\
 	fsetattrlist.2		\
@@ -54,14 +62,23 @@ DATAFILES = \
 	fpathconf.2		\
 	fremovexattr.2		\
 	fsetxattr.2		\
+	fsgetpath.2		\
 	fstat.2			\
 	fstat64.2		\
+	fstatat.2		\
 	fstatfs.2		\
 	fstatfs64.2		\
 	fsync.2			\
+	fs_snapshot_create.2	\
+	fs_snapshot_list.2	\
+	fs_snapshot_delete.2	\
+	fs_snapshot_rename.2	\
 	ftruncate.2		\
+	futimens.2		\
 	futimes.2		\
 	getattrlist.2		\
+	getattrlistat.2		\
+	getattrlistbulk.2	\
 	getaudit.2		\
 	getaudit_addr.2		\
 	getauid.2		\
@@ -69,13 +86,13 @@ DATAFILES = \
 	getdirentriesattr.2	\
 	getdtablesize.2		\
 	getegid.2		\
+	getentropy.2    \
 	geteuid.2		\
 	getfh.2			\
 	getfsstat.2		\
 	getgid.2		\
 	getgroups.2		\
 	getitimer.2		\
-	getlcid.2		\
 	getlogin.2		\
 	getpeername.2		\
 	getpgrp.2		\
@@ -99,9 +116,11 @@ DATAFILES = \
 	kill.2			\
 	kevent.2		\
 	kevent64.2		\
+	kevent_qos.2		\
 	kqueue.2		\
 	lchown.2		\
 	link.2			\
+	linkat.2		\
 	listen.2		\
 	listxattr.2		\
 	lseek.2			\
@@ -111,6 +130,7 @@ DATAFILES = \
 	mincore.2		\
 	minherit.2		\
 	mkdir.2			\
+	mkdirat.2		\
 	mkfifo.2		\
 	mknod.2			\
 	mlock.2			\
@@ -123,24 +143,29 @@ DATAFILES = \
 	nfsclnt.2		\
 	nfssvc.2		\
 	open.2			\
+	openat.2		\
 	pathconf.2		\
 	pipe.2			\
-	poll.2 			\
+	poll.2			\
 	posix_madvise.2		\
 	pread.2			\
-	profil.2		\
+	pselect.2		\
 	pthread_setugid_np.2	\
 	ptrace.2		\
 	pwrite.2		\
 	quotactl.2		\
 	read.2			\
 	readlink.2		\
+	readlinkat.2		\
 	readv.2			\
 	reboot.2		\
 	recv.2			\
 	recvfrom.2		\
 	recvmsg.2		\
 	rename.2		\
+	renameat.2		\
+	renamex_np.2		\
+	renameatx_np.2		\
 	removexattr.2		\
 	revoke.2		\
 	rmdir.2			\
@@ -159,6 +184,7 @@ DATAFILES = \
 	sendmsg.2		\
 	sendto.2		\
 	setattrlist.2		\
+	setattrlistat.2		\
 	setaudit.2		\
 	setaudit_addr.2		\
 	setauid.2		\
@@ -167,7 +193,6 @@ DATAFILES = \
 	setgid.2		\
 	setgroups.2		\
 	setitimer.2		\
-	setlcid.2		\
 	setlogin.2		\
 	setpgid.2		\
 	setpgrp.2		\
@@ -200,13 +225,15 @@ DATAFILES = \
 	statfs.2		\
 	statfs64.2		\
 	symlink.2		\
+	symlinkat.2		\
 	sync.2			\
-	syscall.2		\
 	truncate.2		\
 	umask.2			\
 	undelete.2		\
 	unlink.2		\
+	unlinkat.2		\
 	unmount.2		\
+	utimensat.2		\
 	utimes.2		\
 	vfork.2			\
 	wait.2			\
@@ -227,4 +254,3 @@ INSTALL_MAN_DIR = man2
 
 include $(MakeInc_rule)
 include $(MakeInc_dir)
-

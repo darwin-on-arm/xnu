@@ -28,4 +28,9 @@
 #include <pexpert/pexpert.h>
 #include <pexpert/boot.h>
 
-
+char *
+PE_boot_args(
+	void)
+{
+    return ((boot_args *)PE_state.bootArgs)->CommandLine;
+}

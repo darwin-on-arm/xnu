@@ -37,19 +37,20 @@
  * for usage information and documentation.
  */
 
+/*
+ * APPLE NOTE: There is a copy of this file for userspace in
+ * dtrace:sys_dis_tables.h
+ *
+ * It needs to be in sync with this file.
+ */
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#if !defined(__APPLE__)
-#include <sys/types.h>
-#include <sys/inttypes.h>
-#include <sys/param.h>
-#else
 #include <sys/types.h>
 #include <stdint.h>
 #include <sys/param.h>
-#endif /* __APPLE__ */
 
 /*
  * values for cpu mode
@@ -60,7 +61,7 @@ extern "C" {
 
 #define	OPLEN	256
 #define	PFIXLEN	  8
-#define	NCPS	12	/* number of chars per symbol	*/
+#define	NCPS	20	/* number of chars per symbol	*/
 
 /*
  * data structures that must be provided to dtrace_dis86()
@@ -87,6 +88,7 @@ typedef struct dis86 {
 	uint_t		d86_opnd_size;
 	uint_t		d86_addr_size;
 	uint_t		d86_got_modrm;
+	uint_t		d86_vsib;		/* Has a VSIB */
 	struct d86opnd	d86_opnd[4];		/* up to 4 operands */
 	int		(*d86_check_func)(void *);
 	int		(*d86_get_byte)(void *);

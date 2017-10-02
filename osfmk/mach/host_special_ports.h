@@ -85,14 +85,25 @@
 #define HOST_USER_NOTIFICATION_PORT     (3 + HOST_MAX_SPECIAL_KERNEL_PORT)
 #define HOST_AUTOMOUNTD_PORT            (4 + HOST_MAX_SPECIAL_KERNEL_PORT)
 #define HOST_LOCKD_PORT                 (5 + HOST_MAX_SPECIAL_KERNEL_PORT)
+#define HOST_KTRACE_BACKGROUND_PORT     (6 + HOST_MAX_SPECIAL_KERNEL_PORT)
 #define HOST_SEATBELT_PORT              (7 + HOST_MAX_SPECIAL_KERNEL_PORT)
 #define HOST_KEXTD_PORT                 (8 + HOST_MAX_SPECIAL_KERNEL_PORT)
 #define HOST_CHUD_PORT                  (9 + HOST_MAX_SPECIAL_KERNEL_PORT)
 #define HOST_UNFREED_PORT		(10 + HOST_MAX_SPECIAL_KERNEL_PORT)
 #define HOST_AMFID_PORT			(11 + HOST_MAX_SPECIAL_KERNEL_PORT)
 #define HOST_GSSD_PORT			(12 + HOST_MAX_SPECIAL_KERNEL_PORT)
-#define HOST_MAX_SPECIAL_PORT           (13 + HOST_MAX_SPECIAL_KERNEL_PORT)
-                                        /* room to grow here as well */
+#define HOST_TELEMETRY_PORT		(13 + HOST_MAX_SPECIAL_KERNEL_PORT)
+#define HOST_ATM_NOTIFICATION_PORT	(14 + HOST_MAX_SPECIAL_KERNEL_PORT)
+#define HOST_COALITION_PORT		(15 + HOST_MAX_SPECIAL_KERNEL_PORT)
+#define HOST_SYSDIAGNOSE_PORT           (16 + HOST_MAX_SPECIAL_KERNEL_PORT)
+#define HOST_XPC_EXCEPTION_PORT		(17 + HOST_MAX_SPECIAL_KERNEL_PORT)
+#define HOST_CONTAINERD_PORT		(18 + HOST_MAX_SPECIAL_KERNEL_PORT)
+#define HOST_NODE_PORT			(19 + HOST_MAX_SPECIAL_KERNEL_PORT)
+#define HOST_RESOURCE_NOTIFY_PORT	(20 + HOST_MAX_SPECIAL_KERNEL_PORT)
+#define HOST_CLOSURED_PORT		(21 + HOST_MAX_SPECIAL_KERNEL_PORT)
+
+#define HOST_MAX_SPECIAL_PORT		HOST_CLOSURED_PORT
+                                        /* MAX = last since rdar://19421223 */
 
 /*
  * Special node identifier to always represent the local node.
@@ -154,6 +165,12 @@
 #define host_set_lockd_port(host, port)	\
 	(host_set_special_port((host), HOST_LOCKD_PORT, (port)))
 
+#define host_get_ktrace_background_port(host, port)	\
+	(host_get_special_port((host),			\
+	HOST_LOCAL_NODE, HOST_KTRACE_BACKGROUND_PORT, (port)))
+#define host_set_ktrace_background_port(host, port)	\
+	(host_set_special_port((host), HOST_KTRACE_BACKGROUND_PORT, (port)))
+
 #define host_get_kextd_port(host, port)	\
 	(host_get_special_port((host), 			\
 	HOST_LOCAL_NODE, HOST_KEXTD_PORT, (port)))
@@ -181,8 +198,53 @@
 #define host_get_gssd_port(host, port)	\
 	(host_get_special_port((host),			\
 	HOST_LOCAL_NODE, HOST_GSSD_PORT, (port)))
-
 #define host_set_gssd_port(host, port)	\
 	(host_set_special_port((host), HOST_GSSD_PORT, (port)))
+
+#define host_get_telemetry_port(host, port)	\
+	(host_get_special_port((host),			\
+	HOST_LOCAL_NODE, HOST_TELEMETRY_PORT, (port)))
+#define host_set_telemetry_port(host, port)	\
+	(host_set_special_port((host), HOST_TELEMETRY_PORT, (port)))
+
+#define host_get_atm_notification_port(host, port)	\
+	(host_get_special_port((host),			\
+	HOST_LOCAL_NODE, HOST_ATM_NOTIFICATION_PORT, (port)))
+#define host_set_atm_notification_port(host, port)	\
+	(host_set_special_port((host), HOST_ATM_NOTIFICATION_PORT, (port)))
+
+#define host_get_coalition_port(host, port)	\
+	(host_get_special_port((host),			\
+	HOST_LOCAL_NODE, HOST_COALITION_PORT, (port)))
+#define host_set_coalition_port(host, port)	\
+	(host_set_special_port((host), HOST_COALITION_PORT, (port)))
+
+#define host_get_sysdiagnose_port(host, port)	\
+	(host_get_special_port((host),			\
+	HOST_LOCAL_NODE, HOST_SYSDIAGNOSE_PORT, (port)))
+#define host_set_sysdiagnose_port(host, port)	\
+	(host_set_special_port((host), HOST_SYSDIAGNOSE_PORT, (port)))
+
+#define host_get_container_port(host, port)	\
+	(host_get_special_port((host),			\
+	HOST_LOCAL_NODE, HOST_CONTAINERD_PORT, (port)))
+#define host_set_container_port(host, port)	\
+	(host_set_special_port((host), HOST_CONTAINERD_PORT, (port)))
+
+#define host_get_node_port(host, port)	\
+	(host_get_special_port((host),			\
+	HOST_LOCAL_NODE, HOST_NODE_PORT, (port)))
+#define host_set_node_port(host, port)	\
+	(host_set_special_port((host), HOST_NODE_PORT, (port)))
+
+#define host_get_closured_port(host, port)	\
+	(host_get_special_port((host),			\
+	HOST_LOCAL_NODE, HOST_CLOSURED_PORT, (port)))
+#define host_set_closured_port(host, port)	\
+	(host_set_special_port((host), HOST_CLOSURED_PORT, (port)))
+
+/* HOST_RESOURCE_NOTIFY_PORT doesn't #defines these conveniences.
+   All lookups go through send_resource_violation()
+ */
 
 #endif	/* _MACH_HOST_SPECIAL_PORTS_H_ */

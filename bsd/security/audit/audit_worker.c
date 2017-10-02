@@ -1,5 +1,5 @@
 /*-
- * Copyright (c) 1999-2011 Apple Inc.
+ * Copyright (c) 1999-2016 Apple Inc.
  * Copyright (c) 2006-2008 Robert N. M. Watson
  * All rights reserved.
  *
@@ -68,10 +68,8 @@
 
 #include <kern/host.h>
 #include <kern/zalloc.h>
-#include <kern/lock.h>
 #include <kern/sched_prim.h>
 #include <kern/task.h>
-#include <kern/wait_queue.h>
 
 #include <net/route.h>
 
@@ -416,6 +414,7 @@ out:
  * Note: this means that the effect bound on the size of the pending record
  * queue is 2x the length of the global queue.
  */
+__attribute__((noreturn))
 static void
 audit_worker(void)
 {

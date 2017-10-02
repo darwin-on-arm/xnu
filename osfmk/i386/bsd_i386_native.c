@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010 Apple Inc. All rights reserved.
+ * Copyright (c) 2010-2012 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -25,7 +25,6 @@
  * 
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
-#include <mach_rt.h>
 #include <mach_debug.h>
 #include <mach_ldebug.h>
 
@@ -86,12 +85,9 @@ machine_thread_dup(
 	/*
 	 * Copy over the x86_saved_state registers
 	 */
-	if (cpu_mode_is64bit()) {
-		if (thread_is_64bit(parent))
-			bcopy(USER_REGS64(parent), USER_REGS64(child), sizeof(x86_saved_state64_t));
-		else
-			bcopy(USER_REGS32(parent), USER_REGS32(child), sizeof(x86_saved_state_compat32_t));
-	} else
+	if (thread_is_64bit(parent))
+		bcopy(USER_REGS64(parent), USER_REGS64(child), sizeof(x86_saved_state64_t));
+	else
 		bcopy(USER_REGS32(parent), USER_REGS32(child), sizeof(x86_saved_state32_t));
 
 	/*
@@ -160,28 +156,8 @@ thread_set_parent(thread_t parent, int pid)
 kern_return_t
 thread_fast_set_cthread_self(uint32_t self)
 {
-	thread_t thread = current_thread();
-	pcb_t pcb = THREAD_TO_PCB(thread);
-	struct real_descriptor desc = {
-		.limit_low = 1,
-		.limit_high = 0,
-		.base_low = self & 0xffff,
-		.base_med = (self >> 16) & 0xff,
-		.base_high = (self >> 24) & 0xff,
-		.access = ACC_P|ACC_PL_U|ACC_DATA_W,
-		.granularity = SZ_32|SZ_G,
-	};
-
-	current_thread()->machine.cthread_self = (uint64_t) self;	/* preserve old func too */
-
-	/* assign descriptor */
-	mp_disable_preemption();
-	pcb->cthread_desc = desc;
-	*ldt_desc_p(USER_CTHREAD) = desc;
-	saved_state32(pcb->iss)->gs = USER_CTHREAD;
-	mp_enable_preemption();
-
-	return (USER_CTHREAD);
+	machine_thread_set_tsd_base(current_thread(), self);
+	return (USER_CTHREAD); /* N.B.: not a kern_return_t! */
 }
 
 /*
@@ -196,23 +172,7 @@ thread_fast_set_cthread_self(uint32_t self)
 kern_return_t
 thread_fast_set_cthread_self64(uint64_t self)
 {
-	pcb_t pcb = THREAD_TO_PCB(current_thread());
-	cpu_data_t              *cdp;
-
-	/* check for canonical address, set 0 otherwise  */
-	if (!IS_USERADDR64_CANONICAL(self))
-		self = 0ULL;
-
-	pcb->cthread_self = self;
-	mp_disable_preemption();
-	cdp = current_cpu_datap();
-#if defined(__x86_64__)
-	if ((cdp->cpu_uber.cu_user_gs_base != pcb->cthread_self) ||
-	    (pcb->cthread_self != rdmsr64(MSR_IA32_KERNEL_GS_BASE)))
-		wrmsr64(MSR_IA32_KERNEL_GS_BASE, self);
-#endif
-	cdp->cpu_uber.cu_user_gs_base = self;
-	mp_enable_preemption();
+	machine_thread_set_tsd_base(current_thread(), self);
 	return (USER_CTHREAD); /* N.B.: not a kern_return_t! */
 }
 

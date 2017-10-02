@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2012 Apple Computer, Inc. All rights reserved.
+ * Copyright (c) 2000-2016 Apple Computer, Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -81,20 +81,29 @@
 #include <sys/disk.h>
 #include <sys/uio_internal.h>
 #include <sys/resource.h>
+#include <machine/machine_routines.h>
 #include <miscfs/specfs/specdev.h>
 #include <vfs/vfs_support.h>
+#include <vfs/vfs_disk_conditioner.h>
+
 #include <kern/assert.h>
 #include <kern/task.h>
+#include <kern/sched_prim.h>
+#include <kern/thread.h>
+#include <kern/policy_internal.h>
+#include <kern/timer_call.h>
+#include <kern/waitq.h>
+
+#include <pexpert/pexpert.h>
 
 #include <sys/kdebug.h>
+#include <libkern/section_keywords.h>
 
 /* XXX following three prototypes should be in a header file somewhere */
 extern dev_t	chrtoblk(dev_t dev);
-extern int	iskmemdev(dev_t dev);
+extern boolean_t	iskmemdev(dev_t dev);
 extern int	bpfkqfilter(dev_t dev, struct knote *kn);
-extern int	ptsd_kqfilter(dev_t dev, struct knote *kn);
-
-extern int ignore_is_ssd;
+extern int ptsd_kqfilter(dev_t, struct knote *);
 
 struct vnode *speclisth[SPECHSZ];
 
@@ -147,7 +156,7 @@ struct vnodeopv_entry_desc spec_vnodeop_entries[] = {
 	{ &vnop_blktooff_desc, (VOPFUNC)spec_blktooff },		/* blktooff */
 	{ &vnop_offtoblk_desc, (VOPFUNC)spec_offtoblk },		/* offtoblk */
 	{ &vnop_blockmap_desc, (VOPFUNC)spec_blockmap },		/* blockmap */
-	{ (struct vnodeop_desc*)NULL, (int(*)())NULL }
+	{ (struct vnodeop_desc*)NULL, (int(*)(void *))NULL }
 };
 struct vnodeopv_desc spec_vnodeop_opv_desc =
 	{ &spec_vnodeop_p, spec_vnodeop_entries };
@@ -155,42 +164,83 @@ struct vnodeopv_desc spec_vnodeop_opv_desc =
 
 static void set_blocksize(vnode_t, dev_t);
 
+#define LOWPRI_TIER1_WINDOW_MSECS	  25
+#define LOWPRI_TIER2_WINDOW_MSECS	  100
+#define LOWPRI_TIER3_WINDOW_MSECS	  500
 
-#define THROTTLE_LEVEL_NONE	-1
-#define	THROTTLE_LEVEL_TIER0	 0
+#define LOWPRI_TIER1_IO_PERIOD_MSECS	  40
+#define LOWPRI_TIER2_IO_PERIOD_MSECS	  85
+#define LOWPRI_TIER3_IO_PERIOD_MSECS	  200
 
-#define THROTTLE_LEVEL_THROTTLED 1
-#define THROTTLE_LEVEL_TIER1	 1
-#define THROTTLE_LEVEL_TIER2	 2
+#define LOWPRI_TIER1_IO_PERIOD_SSD_MSECS  5
+#define LOWPRI_TIER2_IO_PERIOD_SSD_MSECS  15
+#define LOWPRI_TIER3_IO_PERIOD_SSD_MSECS  25
 
-#define THROTTLE_LEVEL_START	 0
-#define THROTTLE_LEVEL_END	 2
 
+int	throttle_windows_msecs[THROTTLE_LEVEL_END + 1] = {
+	0,
+	LOWPRI_TIER1_WINDOW_MSECS,
+	LOWPRI_TIER2_WINDOW_MSECS,
+	LOWPRI_TIER3_WINDOW_MSECS,
+};
+
+int	throttle_io_period_msecs[THROTTLE_LEVEL_END + 1] = {
+	0,
+	LOWPRI_TIER1_IO_PERIOD_MSECS,
+	LOWPRI_TIER2_IO_PERIOD_MSECS,
+	LOWPRI_TIER3_IO_PERIOD_MSECS,
+};
+
+int	throttle_io_period_ssd_msecs[THROTTLE_LEVEL_END + 1] = {
+	0,
+	LOWPRI_TIER1_IO_PERIOD_SSD_MSECS,
+	LOWPRI_TIER2_IO_PERIOD_SSD_MSECS,
+	LOWPRI_TIER3_IO_PERIOD_SSD_MSECS,
+};
+
+
+int	throttled_count[THROTTLE_LEVEL_END + 1];
 
 struct _throttle_io_info_t {
-	struct timeval	throttle_last_IO_timestamp[THROTTLE_LEVEL_END + 1];
-	struct timeval	throttle_last_write_timestamp;
-	struct timeval	throttle_start_IO_period_timestamp;
-
-	TAILQ_HEAD( , uthread) throttle_uthlist; 	/* List of throttled uthreads */
-
         lck_mtx_t       throttle_lock;
+
+	struct timeval	throttle_last_write_timestamp;
+	struct timeval	throttle_min_timer_deadline;
+	struct timeval	throttle_window_start_timestamp[THROTTLE_LEVEL_END + 1]; /* window starts at both the beginning and completion of an I/O */
+	struct timeval	throttle_last_IO_timestamp[THROTTLE_LEVEL_END + 1];
+	pid_t 		throttle_last_IO_pid[THROTTLE_LEVEL_END + 1];
+	struct timeval	throttle_start_IO_period_timestamp[THROTTLE_LEVEL_END + 1];
+	int32_t throttle_inflight_count[THROTTLE_LEVEL_END + 1];
+
+	TAILQ_HEAD( , uthread) throttle_uthlist[THROTTLE_LEVEL_END + 1]; 	/* Lists of throttled uthreads */
+	int		throttle_next_wake_level;
+
         thread_call_t   throttle_timer_call;
-        int32_t throttle_timer_running;
+        int32_t throttle_timer_ref;
+        int32_t throttle_timer_active;
+
         int32_t throttle_io_count;
         int32_t throttle_io_count_begin;
-        int32_t throttle_io_period;
+        int    *throttle_io_periods;
 	uint32_t throttle_io_period_num;
+
 	int32_t throttle_refcnt;
 	int32_t throttle_alloc;
+	int32_t throttle_disabled;
+	int32_t throttle_is_fusion_with_priority;
 };
 
 struct _throttle_io_info_t _throttle_io_info[LOWPRI_MAX_NUM_DEV];
 
-static void throttle_info_update_internal(struct _throttle_io_info_t *info, uthread_t ut, int policy, int flags, boolean_t isssd);
-static int throttle_get_thread_throttle_level(uthread_t ut, int policy);
 
-__private_extern__ int32_t throttle_legacy_process_count = 0;
+int	lowpri_throttle_enabled = 1;
+
+
+static void throttle_info_end_io_internal(struct _throttle_io_info_t *info, int throttle_level);
+static int throttle_info_update_internal(struct _throttle_io_info_t *info, uthread_t ut, int flags, boolean_t isssd, boolean_t inflight, struct bufattr *bap);
+static int throttle_get_thread_throttle_level(uthread_t ut);
+static int throttle_get_thread_throttle_level_internal(uthread_t ut, int io_tier);
+void throttle_info_mount_reset_period(mount_t mp, int isssd);
 
 /*
  * Trivial lookup routine that always fails.
@@ -270,17 +320,18 @@ spec_open(struct vnop_open_args *ap)
 			 */
 			if (securelevel >= 2 && isdisk(dev, VCHR))
 				return (EPERM);
+
+			/* Never allow writing to /dev/mem or /dev/kmem */
+			if (iskmemdev(dev))
+				return (EPERM);
 			/*
-			 * When running in secure mode, do not allow opens
-			 * for writing of /dev/mem, /dev/kmem, or character
-			 * devices whose corresponding block devices are
-			 * currently mounted.
+			 * When running in secure mode, do not allow opens for
+			 * writing of character devices whose corresponding block
+			 * devices are currently mounted.
 			 */
 			if (securelevel >= 1) {
 				if ((bdev = chrtoblk(dev)) != NODEV && check_mountedon(bdev, VBLK, &error))
 					return (error);
-				if (iskmemdev(dev))
-					return (EPERM);
 			}
 		}
 
@@ -293,7 +344,7 @@ spec_open(struct vnop_open_args *ap)
 
 		devsw_unlock(dev, S_IFCHR);
 
-		if (error == 0 && (D_TYPEMASK & cdevsw[maj].d_type) == D_DISK && !vp->v_un.vu_specinfo->si_initted) {
+		if (error == 0 && cdevsw[maj].d_type == D_DISK && !vp->v_un.vu_specinfo->si_initted) {
 			int	isssd = 0;
 			uint64_t throttle_mask = 0;
 			uint32_t devbsdunit = 0;
@@ -335,7 +386,7 @@ spec_open(struct vnop_open_args *ap)
 		 * opens for writing of any disk block devices.
 		 */
 		if (securelevel >= 2 && cred != FSCRED &&
-		    (ap->a_mode & FWRITE) && isdisk(dev, VBLK))
+		    (ap->a_mode & FWRITE) && bdevsw[maj].d_type == D_DISK)
 			return (EPERM);
 		/*
 		 * Do not allow opens of block devices that are
@@ -423,17 +474,22 @@ spec_read(struct vnop_read_args *ap)
 	switch (vp->v_type) {
 
 	case VCHR:
-                if ((D_TYPEMASK & cdevsw[major(vp->v_rdev)].d_type) == D_DISK && vp->v_un.vu_specinfo->si_throttleable) {
-			struct _throttle_io_info_t *throttle_info;
-
+		{
+			struct _throttle_io_info_t *throttle_info = NULL;
+			int thread_throttle_level;
+                if (cdevsw[major(vp->v_rdev)].d_type == D_DISK && vp->v_un.vu_specinfo->si_throttleable) {
 			throttle_info = &_throttle_io_info[vp->v_un.vu_specinfo->si_devbsdunit];
-
-			throttle_info_update_internal(throttle_info, NULL, -1, 0, vp->v_un.vu_specinfo->si_isssd);
+				thread_throttle_level = throttle_info_update_internal(throttle_info, NULL, 0, vp->v_un.vu_specinfo->si_isssd, TRUE, NULL);
                 }
 		error = (*cdevsw[major(vp->v_rdev)].d_read)
 			(vp->v_rdev, uio, ap->a_ioflag);
 
+			if (throttle_info) {
+				throttle_info_end_io_internal(throttle_info, thread_throttle_level);
+			}
+
 		return (error);
+		}
 
 	case VBLK:
 		if (uio->uio_offset < 0)
@@ -516,19 +572,25 @@ spec_write(struct vnop_write_args *ap)
 	switch (vp->v_type) {
 
 	case VCHR:
-                if ((D_TYPEMASK & cdevsw[major(vp->v_rdev)].d_type) == D_DISK && vp->v_un.vu_specinfo->si_throttleable) {
-			struct _throttle_io_info_t *throttle_info;
-
+		{
+			struct _throttle_io_info_t *throttle_info = NULL;
+			int thread_throttle_level;
+                if (cdevsw[major(vp->v_rdev)].d_type == D_DISK && vp->v_un.vu_specinfo->si_throttleable) {
 			throttle_info = &_throttle_io_info[vp->v_un.vu_specinfo->si_devbsdunit];
 
-			throttle_info_update_internal(throttle_info, NULL, -1, 0, vp->v_un.vu_specinfo->si_isssd);
+				thread_throttle_level = throttle_info_update_internal(throttle_info, NULL, 0, vp->v_un.vu_specinfo->si_isssd, TRUE, NULL);
 
 			microuptime(&throttle_info->throttle_last_write_timestamp);
                 }
 		error = (*cdevsw[major(vp->v_rdev)].d_write)
 			(vp->v_rdev, uio, ap->a_ioflag);
 
+			if (throttle_info) {
+				throttle_info_end_io_internal(throttle_info, thread_throttle_level);
+			}
+
 		return (error);
+		}
 
 	case VBLK:
 		if (uio_resid(uio) == 0)
@@ -623,7 +685,7 @@ spec_ioctl(struct vnop_ioctl_args *ap)
 	int	retval = 0;
 
 	KERNEL_DEBUG_CONSTANT(FSDBG_CODE(DBG_IOCTL, 0) | DBG_FUNC_START,
-			      (unsigned int)dev, (unsigned int)ap->a_command, (unsigned int)ap->a_fflag, (unsigned int)ap->a_vp->v_type, 0);
+		dev, ap->a_command, ap->a_fflag, ap->a_vp->v_type, 0);
 
 	switch (ap->a_vp->v_type) {
 
@@ -633,21 +695,9 @@ spec_ioctl(struct vnop_ioctl_args *ap)
 		break;
 
 	case VBLK:
-		if (kdebug_enable) {
-			if (ap->a_command == DKIOCUNMAP) {
-				dk_unmap_t	*unmap;
-				dk_extent_t	*extent;
-				uint32_t	i;
-
-				unmap = (dk_unmap_t *)ap->a_data;
-				extent = unmap->extents;
-
-				for (i = 0; i < unmap->extentsCount; i++, extent++) {
-					KERNEL_DEBUG_CONSTANT(FSDBG_CODE(DBG_IOCTL, 1) | DBG_FUNC_NONE, dev, extent->offset/ap->a_vp->v_specsize, extent->length, 0, 0);
-				}
-			}
-		}
 		retval = (*bdevsw[major(dev)].d_ioctl)(dev, ap->a_command, ap->a_data, ap->a_fflag, p);
+		if (!retval && ap->a_command == DKIOCSETBLOCKSIZE)
+			ap->a_vp->v_specsize = *(uint32_t *)ap->a_data;
 		break;
 
 	default:
@@ -655,7 +705,7 @@ spec_ioctl(struct vnop_ioctl_args *ap)
 		/* NOTREACHED */
 	}
 	KERNEL_DEBUG_CONSTANT(FSDBG_CODE(DBG_IOCTL, 0) | DBG_FUNC_END,
-			      (unsigned int)dev, (unsigned int)ap->a_command, (unsigned int)ap->a_fflag, retval, 0);
+		dev, ap->a_command, ap->a_fflag, retval, 0);
 
 	return (retval);
 }
@@ -677,29 +727,61 @@ spec_select(struct vnop_select_args *ap)
 	}
 }
 
-static int filt_specattach(struct knote *kn);
+static int filt_specattach(struct knote *kn, struct kevent_internal_s *kev);
 
 int
-spec_kqfilter(vnode_t vp, struct knote *kn)
+spec_kqfilter(vnode_t vp, struct knote *kn, struct kevent_internal_s *kev)
 {
 	dev_t dev;
-	int err = EINVAL;
 
-	/*
-	 * For a few special kinds of devices, we can attach knotes.
-	 * Each filter function must check whether the dev type matches it.
-	 */
+	assert(vnode_ischr(vp));
+
 	dev = vnode_specrdev(vp);
 
-	if (vnode_istty(vp)) {
-		/* We can hook into TTYs... */
-		err = filt_specattach(kn);
-	} else {
-		/* Try a bpf device, as defined in bsd/net/bpf.c */
-		err = bpfkqfilter(dev, kn);
+#if NETWORKING
+	/*
+	 * Try a bpf device, as defined in bsd/net/bpf.c
+	 * If it doesn't error out the attach, then it
+	 * claimed it. Otherwise, fall through and try
+	 * other attaches.
+	 */
+	int32_t tmp_flags = kn->kn_flags;
+	int64_t tmp_data = kn->kn_data;
+	int res;
+
+	res = bpfkqfilter(dev, kn);
+	if ((kn->kn_flags & EV_ERROR) == 0) {
+		return res;
+	}
+	kn->kn_flags = tmp_flags;
+	kn->kn_data = tmp_data;
+#endif
+
+	if (major(dev) > nchrdev) {
+		knote_set_error(kn, ENXIO);
+		return 0;
 	}
 
-	return err;
+	kn->kn_vnode_kqok = !!(cdevsw_flags[major(dev)] & CDEVSW_SELECT_KQUEUE);
+	kn->kn_vnode_use_ofst = !!(cdevsw_flags[major(dev)] & CDEVSW_USE_OFFSET);
+
+	if (cdevsw_flags[major(dev)] & CDEVSW_IS_PTS) {
+		kn->kn_filtid = EVFILTID_PTSD;
+		return ptsd_kqfilter(dev, kn);
+	} else if (cdevsw[major(dev)].d_type == D_TTY &&
+	           !(cdevsw_flags[major(dev)] & CDEVSW_IS_PTC) &&
+	           kn->kn_vnode_kqok) {
+		/*
+		 * TTYs from drivers that use struct ttys use their own filter
+		 * routines.  The PTC driver doesn't use the tty for character
+		 * counts, so it must go through the select fallback.
+		 */
+		kn->kn_filtid = EVFILTID_TTY;
+		return knote_fops(kn)->f_attach(kn, kev);
+	}
+
+	/* Try to attach to other char special devices */
+	return filt_specattach(kn, kev);
 }
 
 /*
@@ -728,33 +810,8 @@ spec_fsync(struct vnop_fsync_args *ap)
 /*
  * Just call the device strategy routine
  */
-extern int hard_throttle_on_root;
-
 void throttle_init(void);
 
-
-#define LOWPRI_THROTTLE_WINDOW_MSECS 500
-#define LOWPRI_LEGACY_THROTTLE_WINDOW_MSECS 200
-#define LOWPRI_IO_PERIOD_MSECS 200
-#define LOWPRI_IO_PERIOD_SSD_MSECS 20
-#define LOWPRI_TIMER_PERIOD_MSECS 10
-
-
-int 	lowpri_throttle_window_msecs = LOWPRI_THROTTLE_WINDOW_MSECS;
-int 	lowpri_legacy_throttle_window_msecs = LOWPRI_LEGACY_THROTTLE_WINDOW_MSECS;
-int 	lowpri_io_period_msecs = LOWPRI_IO_PERIOD_MSECS;
-int 	lowpri_io_period_ssd_msecs = LOWPRI_IO_PERIOD_SSD_MSECS;
-int	lowpri_timer_period_msecs = LOWPRI_TIMER_PERIOD_MSECS;
-
-/*
- * If a process requiring legacy iothrottle behavior is running on the
- * system, use legacy limits for throttle window and max IO size.
- */
-#if CONFIG_EMBEDDED
-#define THROTTLE_WINDOW (lowpri_throttle_window_msecs)
-#else
-#define THROTTLE_WINDOW (throttle_legacy_process_count == 0 ? lowpri_throttle_window_msecs : lowpri_legacy_throttle_window_msecs)
-#endif
 
 #if 0 
 #define DEBUG_ALLOC_THROTTLE_INFO(format, debug_info, args...)	\
@@ -767,16 +824,25 @@ int	lowpri_timer_period_msecs = LOWPRI_TIMER_PERIOD_MSECS;
 #define DEBUG_ALLOC_THROTTLE_INFO(format, debug_info, args...)
 #endif
 
-SYSCTL_INT(_debug, OID_AUTO, lowpri_throttle_window_msecs, CTLFLAG_RW | CTLFLAG_LOCKED, &lowpri_throttle_window_msecs, 0, "");
-SYSCTL_INT(_debug, OID_AUTO, lowpri_legacy_throttle_window_msecs, CTLFLAG_RW | CTLFLAG_LOCKED, &lowpri_legacy_throttle_window_msecs, 0, "");
-SYSCTL_INT(_debug, OID_AUTO, lowpri_io_period_msecs, CTLFLAG_RW | CTLFLAG_LOCKED, &lowpri_io_period_msecs, 0, "");
-SYSCTL_INT(_debug, OID_AUTO, lowpri_io_period_ssd_msecs, CTLFLAG_RW | CTLFLAG_LOCKED, &lowpri_io_period_ssd_msecs, 0, "");
-SYSCTL_INT(_debug, OID_AUTO, lowpri_timer_period_msecs, CTLFLAG_RW | CTLFLAG_LOCKED, &lowpri_timer_period_msecs, 0, "");
-SYSCTL_INT(_debug, OID_AUTO, lowpri_legacy_process_count, CTLFLAG_RD | CTLFLAG_LOCKED, &throttle_legacy_process_count, 0, "");
 
-static lck_grp_t        *throttle_mtx_grp;
-static lck_attr_t       *throttle_mtx_attr;
-static lck_grp_attr_t   *throttle_mtx_grp_attr;
+SYSCTL_INT(_debug, OID_AUTO, lowpri_throttle_tier1_window_msecs, CTLFLAG_RW | CTLFLAG_LOCKED, &throttle_windows_msecs[THROTTLE_LEVEL_TIER1], 0, "");
+SYSCTL_INT(_debug, OID_AUTO, lowpri_throttle_tier2_window_msecs, CTLFLAG_RW | CTLFLAG_LOCKED, &throttle_windows_msecs[THROTTLE_LEVEL_TIER2], 0, "");
+SYSCTL_INT(_debug, OID_AUTO, lowpri_throttle_tier3_window_msecs, CTLFLAG_RW | CTLFLAG_LOCKED, &throttle_windows_msecs[THROTTLE_LEVEL_TIER3], 0, "");
+
+SYSCTL_INT(_debug, OID_AUTO, lowpri_throttle_tier1_io_period_msecs, CTLFLAG_RW | CTLFLAG_LOCKED, &throttle_io_period_msecs[THROTTLE_LEVEL_TIER1], 0, "");
+SYSCTL_INT(_debug, OID_AUTO, lowpri_throttle_tier2_io_period_msecs, CTLFLAG_RW | CTLFLAG_LOCKED, &throttle_io_period_msecs[THROTTLE_LEVEL_TIER2], 0, "");
+SYSCTL_INT(_debug, OID_AUTO, lowpri_throttle_tier3_io_period_msecs, CTLFLAG_RW | CTLFLAG_LOCKED, &throttle_io_period_msecs[THROTTLE_LEVEL_TIER3], 0, "");
+
+SYSCTL_INT(_debug, OID_AUTO, lowpri_throttle_tier1_io_period_ssd_msecs, CTLFLAG_RW | CTLFLAG_LOCKED, &throttle_io_period_ssd_msecs[THROTTLE_LEVEL_TIER1], 0, "");
+SYSCTL_INT(_debug, OID_AUTO, lowpri_throttle_tier2_io_period_ssd_msecs, CTLFLAG_RW | CTLFLAG_LOCKED, &throttle_io_period_ssd_msecs[THROTTLE_LEVEL_TIER2], 0, "");
+SYSCTL_INT(_debug, OID_AUTO, lowpri_throttle_tier3_io_period_ssd_msecs, CTLFLAG_RW | CTLFLAG_LOCKED, &throttle_io_period_ssd_msecs[THROTTLE_LEVEL_TIER3], 0, "");
+
+SYSCTL_INT(_debug, OID_AUTO, lowpri_throttle_enabled, CTLFLAG_RW | CTLFLAG_LOCKED, &lowpri_throttle_enabled, 0, "");
+
+
+static lck_grp_t        *throttle_lock_grp;
+static lck_attr_t       *throttle_lock_attr;
+static lck_grp_attr_t   *throttle_lock_grp_attr;
 
 
 /*
@@ -826,7 +892,7 @@ throttle_info_rel(struct _throttle_io_info_t *info)
 	if ((info->throttle_refcnt == 0) && (info->throttle_alloc)) {
 		DEBUG_ALLOC_THROTTLE_INFO("Freeing info = %p\n", info);
 		
-		lck_mtx_destroy(&info->throttle_lock, throttle_mtx_grp);
+		lck_mtx_destroy(&info->throttle_lock, throttle_lock_grp);
 		FREE(info, M_TEMP); 
 	}
 	return oldValue;
@@ -852,7 +918,6 @@ throttle_info_ref(struct _throttle_io_info_t *info)
 	return oldValue;
 }
 
-
 /*
  * on entry the throttle_lock is held...
  * this function is responsible for taking
@@ -864,55 +929,146 @@ throttle_info_ref(struct _throttle_io_info_t *info)
  * to free it
  */
 static uint32_t
-throttle_timer_start(struct _throttle_io_info_t *info, boolean_t update_io_count)
+throttle_timer_start(struct _throttle_io_info_t *info, boolean_t update_io_count, int wakelevel)
 {	
 	struct timeval  elapsed;
+	struct timeval  now;
+	struct timeval  period;
 	uint64_t	elapsed_msecs;
 	int		throttle_level;
-	uint64_t	deadline;
+	int		level;
+	int		msecs;
+	boolean_t	throttled = FALSE;
+	boolean_t	need_timer = FALSE;
+
+	microuptime(&now);
 
 	if (update_io_count == TRUE) {
 		info->throttle_io_count_begin = info->throttle_io_count;
 		info->throttle_io_period_num++;
 
-	        microuptime(&info->throttle_start_IO_period_timestamp);
+		while (wakelevel >= THROTTLE_LEVEL_THROTTLED)
+			info->throttle_start_IO_period_timestamp[wakelevel--] = now;
+
+		info->throttle_min_timer_deadline = now;
+
+		msecs = info->throttle_io_periods[THROTTLE_LEVEL_THROTTLED];
+		period.tv_sec = msecs / 1000;
+		period.tv_usec = (msecs % 1000) * 1000;
+
+		timevaladd(&info->throttle_min_timer_deadline, &period);
 	}
 	for (throttle_level = THROTTLE_LEVEL_START; throttle_level < THROTTLE_LEVEL_END; throttle_level++) {
 
-		microuptime(&elapsed);
-		timevalsub(&elapsed, &info->throttle_last_IO_timestamp[throttle_level]);
+		elapsed = now;
+		timevalsub(&elapsed, &info->throttle_window_start_timestamp[throttle_level]);
 		elapsed_msecs = (uint64_t)elapsed.tv_sec * (uint64_t)1000 + (elapsed.tv_usec / 1000);
 
-		if (elapsed_msecs < (uint64_t)THROTTLE_WINDOW) {
-			/*
-			 * we had an I/O occur in this level within
-			 * our throttle window, so we need to
-			 * to make sure the timer continues to run
-			 */
+		for (level = throttle_level + 1; level <= THROTTLE_LEVEL_END; level++) {
+
+			if (!TAILQ_EMPTY(&info->throttle_uthlist[level])) {
+
+				if (elapsed_msecs < (uint64_t)throttle_windows_msecs[level] || info->throttle_inflight_count[throttle_level]) {
+					/*
+					 * we had an I/O occur at a higher priority tier within
+					 * this tier's throttle window
+					 */
+					throttled = TRUE;
+				}
+				/*
+				 * we assume that the windows are the same or longer
+				 * as we drop through the throttling tiers...  thus
+				 * we can stop looking once we run into a tier with
+				 * threads to schedule regardless of whether it's
+				 * still in its throttling window or not
+				 */
+				break;
+			}
+		}
+		if (throttled == TRUE)
 			break;
+	}
+	if (throttled == TRUE) {
+		uint64_t	deadline = 0;
+		struct timeval  target;
+		struct timeval  min_target;
+
+	        /*
+		 * we've got at least one tier still in a throttled window
+		 * so we need a timer running... compute the next deadline
+		 * and schedule it
+		 */
+		for (level = throttle_level+1; level <= THROTTLE_LEVEL_END; level++) {
+
+			if (TAILQ_EMPTY(&info->throttle_uthlist[level]))
+				continue;
+
+			target = info->throttle_start_IO_period_timestamp[level];
+
+			msecs = info->throttle_io_periods[level];
+			period.tv_sec = msecs / 1000;
+			period.tv_usec = (msecs % 1000) * 1000;
+
+			timevaladd(&target, &period);
+			
+			if (need_timer == FALSE || timevalcmp(&target, &min_target, <)) {
+				min_target = target;
+				need_timer = TRUE;
+			}
+		}
+		if (timevalcmp(&info->throttle_min_timer_deadline, &now, >)) {
+		        if (timevalcmp(&info->throttle_min_timer_deadline, &min_target, >))
+			        min_target = info->throttle_min_timer_deadline;
+		}
+
+		if (info->throttle_timer_active) {
+			if (thread_call_cancel(info->throttle_timer_call) == FALSE) {
+				/*
+				 * couldn't kill the timer because it's already
+				 * been dispatched, so don't try to start a new
+				 * one... once we drop the lock, the timer will
+				 * proceed and eventually re-run this function
+				 */
+				need_timer = FALSE;
+			} else
+				info->throttle_timer_active = 0;
+		}
+		if (need_timer == TRUE) {
+			/*
+			 * This is defined as an int (32-bit) rather than a 64-bit
+			 * value because it would need a really big period in the
+			 * order of ~500 days to overflow this. So, we let this be
+			 * 32-bit which allows us to use the clock_interval_to_deadline()
+			 * routine.
+			 */
+			int	target_msecs;
+
+			if (info->throttle_timer_ref == 0) {
+				/*
+				 * take a reference for the timer
+				 */
+				throttle_info_ref(info);
+
+				info->throttle_timer_ref = 1;
+			}
+			elapsed = min_target;
+			timevalsub(&elapsed, &now);
+			target_msecs = elapsed.tv_sec * 1000 + elapsed.tv_usec / 1000;
+
+			if (target_msecs <= 0) {
+				/*
+				 * we may have computed a deadline slightly in the past
+				 * due to various factors... if so, just set the timer
+				 * to go off in the near future (we don't need to be precise)
+				 */
+				target_msecs = 1;
+			}
+			clock_interval_to_deadline(target_msecs, 1000000, &deadline);
+
+			thread_call_enter_delayed(info->throttle_timer_call, deadline);
+			info->throttle_timer_active = 1;
 		}
 	}
-	if (throttle_level >= THROTTLE_LEVEL_END) {
-	        /*
-		 * we're outside all of the throttle windows...
-		 * don't start a new timer
-		 */
-		info->throttle_timer_running = 0;
-
-	        return (THROTTLE_LEVEL_END);
-	}
-	if (info->throttle_timer_running == 0) {
-	        /*
-		 * take a reference for the timer
-		 */
-	        throttle_info_ref(info);
-
-		info->throttle_timer_running = 1;
-	}
-	clock_interval_to_deadline(lowpri_timer_period_msecs, 1000000, &deadline);
-
-	thread_call_enter_delayed(info->throttle_timer_call, deadline);
-
 	return (throttle_level);
 }
 
@@ -922,66 +1078,90 @@ throttle_timer(struct _throttle_io_info_t *info)
 {
 	uthread_t       ut, utlist;
 	struct timeval	elapsed;
+	struct timeval	now;
 	uint64_t	elapsed_msecs;
 	int		throttle_level;
+	int		level;
+	int		wake_level;
+	caddr_t		wake_address = NULL;
         boolean_t	update_io_count = FALSE;
 	boolean_t	need_wakeup = FALSE;
 	boolean_t	need_release = FALSE;
 
+	ut = NULL;
         lck_mtx_lock(&info->throttle_lock);
-	
-	microuptime(&elapsed);
-	timevalsub(&elapsed, &info->throttle_start_IO_period_timestamp);
+
+	info->throttle_timer_active = 0;
+	microuptime(&now);
+
+	elapsed = now;
+	timevalsub(&elapsed, &info->throttle_start_IO_period_timestamp[THROTTLE_LEVEL_THROTTLED]);
 	elapsed_msecs = (uint64_t)elapsed.tv_sec * (uint64_t)1000 + (elapsed.tv_usec / 1000);
 
-	if (elapsed_msecs >= (uint64_t)info->throttle_io_period) {
-		/*
-		 * we're closing out the current IO period...
-		 * if we have a waiting thread, wake it up
-		 * after we have reset the I/O window info
-		 */
-		need_wakeup = TRUE;
-	        update_io_count = TRUE;
-	}
-        if ((throttle_level = throttle_timer_start(info, update_io_count)) == THROTTLE_LEVEL_END) {
-		/*
-		 * we are now outside of the throttle window
-		 * for all throttle levels...
-		 *
-		 * the timer is not restarted in this case, so
-		 * we need to get rid of the reference we took when
-		 * we started up the timer... we can't do this
-		 * until we are entirely done playing with 'info'
-		 */
-		need_release = TRUE;
-	}
+	if (elapsed_msecs >= (uint64_t)info->throttle_io_periods[THROTTLE_LEVEL_THROTTLED]) {
 
-	TAILQ_FOREACH_SAFE(ut, &info->throttle_uthlist, uu_throttlelist, utlist) {
-		/*
-		 * if we are now outside of the throttle window release
-		 * all of the currently blocked threads, otherwise
-		 * look for threads that have had their IO policy changed
-		 * by someone else and are no longer throttleable, or are
-		 * not at the current throttle level and unblock them
-		 */
-		if (throttle_level == THROTTLE_LEVEL_END || throttle_get_thread_throttle_level(ut, -1) <= throttle_level) {
+		wake_level = info->throttle_next_wake_level;
 
-			TAILQ_REMOVE(&info->throttle_uthlist, ut, uu_throttlelist);
-			ut->uu_on_throttlelist = 0;
+		for (level = THROTTLE_LEVEL_START; level < THROTTLE_LEVEL_END; level++) {
+
+			elapsed = now;
+			timevalsub(&elapsed, &info->throttle_start_IO_period_timestamp[wake_level]);
+			elapsed_msecs = (uint64_t)elapsed.tv_sec * (uint64_t)1000 + (elapsed.tv_usec / 1000);
+
+			if (elapsed_msecs >= (uint64_t)info->throttle_io_periods[wake_level] && !TAILQ_EMPTY(&info->throttle_uthlist[wake_level])) {
+				/*
+				 * we're closing out the current IO period...
+				 * if we have a waiting thread, wake it up
+				 * after we have reset the I/O window info
+				 */
+				need_wakeup = TRUE;
+				update_io_count = TRUE;
+
+				info->throttle_next_wake_level = wake_level - 1;
+
+				if (info->throttle_next_wake_level == THROTTLE_LEVEL_START)
+					info->throttle_next_wake_level = THROTTLE_LEVEL_END;
+
+				break;
+			}
+			wake_level--;
+
+			if (wake_level == THROTTLE_LEVEL_START)
+				wake_level = THROTTLE_LEVEL_END;
+		}
+	}
+	if (need_wakeup == TRUE) {
+		if (!TAILQ_EMPTY(&info->throttle_uthlist[wake_level])) {
+
+			ut = (uthread_t)TAILQ_FIRST(&info->throttle_uthlist[wake_level]);
+			TAILQ_REMOVE(&info->throttle_uthlist[wake_level], ut, uu_throttlelist);
+			ut->uu_on_throttlelist = THROTTLE_LEVEL_NONE;
+			ut->uu_is_throttled = FALSE;
+
+			wake_address = (caddr_t)&ut->uu_on_throttlelist;
+		}
+	} else
+		wake_level = THROTTLE_LEVEL_START;
+
+        throttle_level = throttle_timer_start(info, update_io_count, wake_level);
+
+	if (wake_address != NULL)
+		wakeup(wake_address);
+
+	for (level = THROTTLE_LEVEL_THROTTLED; level <= throttle_level; level++) {
+
+		TAILQ_FOREACH_SAFE(ut, &info->throttle_uthlist[level], uu_throttlelist, utlist) {
+
+			TAILQ_REMOVE(&info->throttle_uthlist[level], ut, uu_throttlelist);
+			ut->uu_on_throttlelist = THROTTLE_LEVEL_NONE;
+			ut->uu_is_throttled = FALSE;
 
 			wakeup(&ut->uu_on_throttlelist);
 		}
 	}
-	if (need_wakeup && !TAILQ_EMPTY(&info->throttle_uthlist)) {
-		/*
-		 * we've entered a new I/O period and we're still
-		 * in the throttle window, so wakeup the next guy in line
-		 */
-		ut = (uthread_t)TAILQ_FIRST(&info->throttle_uthlist);
-		TAILQ_REMOVE(&info->throttle_uthlist, ut, uu_throttlelist);
-		ut->uu_on_throttlelist = 0;
-
-		wakeup(&ut->uu_on_throttlelist);
+	if (info->throttle_timer_active == 0 && info->throttle_timer_ref) {
+		info->throttle_timer_ref = 0;
+		need_release = TRUE;
 	}
         lck_mtx_unlock(&info->throttle_lock);
 
@@ -990,59 +1170,237 @@ throttle_timer(struct _throttle_io_info_t *info)
 }
 
 
+static int
+throttle_add_to_list(struct _throttle_io_info_t *info, uthread_t ut, int mylevel, boolean_t insert_tail)
+{
+	boolean_t start_timer = FALSE;
+	int level = THROTTLE_LEVEL_START;
+
+	if (TAILQ_EMPTY(&info->throttle_uthlist[mylevel])) {
+		info->throttle_start_IO_period_timestamp[mylevel] = info->throttle_last_IO_timestamp[mylevel];
+		start_timer = TRUE;
+	}
+
+	if (insert_tail == TRUE)
+		TAILQ_INSERT_TAIL(&info->throttle_uthlist[mylevel], ut, uu_throttlelist);
+	else
+		TAILQ_INSERT_HEAD(&info->throttle_uthlist[mylevel], ut, uu_throttlelist);
+
+	ut->uu_on_throttlelist = mylevel;
+
+	if (start_timer == TRUE) {
+		/* we may need to start or rearm the timer */
+		level = throttle_timer_start(info, FALSE, THROTTLE_LEVEL_START);
+
+		if (level == THROTTLE_LEVEL_END) {
+			if (ut->uu_on_throttlelist >= THROTTLE_LEVEL_THROTTLED) {
+				TAILQ_REMOVE(&info->throttle_uthlist[ut->uu_on_throttlelist], ut, uu_throttlelist);
+
+				ut->uu_on_throttlelist = THROTTLE_LEVEL_NONE;
+			}
+		}
+	}
+	return (level);
+}
+
+static void
+throttle_init_throttle_window(void)
+{
+	int throttle_window_size;
+
+	/*
+	 * The hierarchy of throttle window values is as follows:
+	 * - Global defaults
+	 * - Device tree properties
+	 * - Boot-args
+	 * All values are specified in msecs.
+	 */
+
+	/* Override global values with device-tree properties */
+	if (PE_get_default("kern.io_throttle_window_tier1", &throttle_window_size, sizeof(throttle_window_size)))
+		throttle_windows_msecs[THROTTLE_LEVEL_TIER1] = throttle_window_size;
+
+	if (PE_get_default("kern.io_throttle_window_tier2", &throttle_window_size, sizeof(throttle_window_size)))
+		throttle_windows_msecs[THROTTLE_LEVEL_TIER2] = throttle_window_size;
+
+	if (PE_get_default("kern.io_throttle_window_tier3", &throttle_window_size, sizeof(throttle_window_size)))
+		throttle_windows_msecs[THROTTLE_LEVEL_TIER3] = throttle_window_size;
+	
+	/* Override with boot-args */
+	if (PE_parse_boot_argn("io_throttle_window_tier1", &throttle_window_size, sizeof(throttle_window_size)))
+		throttle_windows_msecs[THROTTLE_LEVEL_TIER1] = throttle_window_size;
+
+	if (PE_parse_boot_argn("io_throttle_window_tier2", &throttle_window_size, sizeof(throttle_window_size)))
+		throttle_windows_msecs[THROTTLE_LEVEL_TIER2] = throttle_window_size;
+	
+	if (PE_parse_boot_argn("io_throttle_window_tier3", &throttle_window_size, sizeof(throttle_window_size)))
+		throttle_windows_msecs[THROTTLE_LEVEL_TIER3] = throttle_window_size;
+}
+
+static void
+throttle_init_throttle_period(struct _throttle_io_info_t *info, boolean_t isssd)
+{
+	int throttle_period_size;
+
+	/*
+	 * The hierarchy of throttle period values is as follows:
+	 * - Global defaults
+	 * - Device tree properties
+	 * - Boot-args
+	 * All values are specified in msecs.
+	 */
+
+	/* Assign global defaults */
+	if ((isssd == TRUE) && (info->throttle_is_fusion_with_priority == 0))
+		info->throttle_io_periods = &throttle_io_period_ssd_msecs[0];
+	else
+		info->throttle_io_periods = &throttle_io_period_msecs[0];
+
+	/* Override global values with device-tree properties */
+	if (PE_get_default("kern.io_throttle_period_tier1", &throttle_period_size, sizeof(throttle_period_size)))
+		info->throttle_io_periods[THROTTLE_LEVEL_TIER1] = throttle_period_size;
+	
+	if (PE_get_default("kern.io_throttle_period_tier2", &throttle_period_size, sizeof(throttle_period_size)))
+		info->throttle_io_periods[THROTTLE_LEVEL_TIER2] = throttle_period_size;
+
+	if (PE_get_default("kern.io_throttle_period_tier3", &throttle_period_size, sizeof(throttle_period_size)))
+		info->throttle_io_periods[THROTTLE_LEVEL_TIER3] = throttle_period_size;
+	
+	/* Override with boot-args */
+	if (PE_parse_boot_argn("io_throttle_period_tier1", &throttle_period_size, sizeof(throttle_period_size)))
+		info->throttle_io_periods[THROTTLE_LEVEL_TIER1] = throttle_period_size;
+	
+	if (PE_parse_boot_argn("io_throttle_period_tier2", &throttle_period_size, sizeof(throttle_period_size)))
+		info->throttle_io_periods[THROTTLE_LEVEL_TIER2] = throttle_period_size;
+
+	if (PE_parse_boot_argn("io_throttle_period_tier3", &throttle_period_size, sizeof(throttle_period_size)))
+		info->throttle_io_periods[THROTTLE_LEVEL_TIER3] = throttle_period_size;
+
+}
+
+#if CONFIG_IOSCHED
+extern	void vm_io_reprioritize_init(void);
+int	iosched_enabled = 1;
+#endif
+
 void
 throttle_init(void)
 {
         struct _throttle_io_info_t *info;
         int	i;
-
+	int	level;
+#if CONFIG_IOSCHED
+	int 	iosched;
+#endif
 	/*                                                                                                                                    
          * allocate lock group attribute and group                                                                                            
          */
-        throttle_mtx_grp_attr = lck_grp_attr_alloc_init();
-        throttle_mtx_grp = lck_grp_alloc_init("throttle I/O", throttle_mtx_grp_attr);
+        throttle_lock_grp_attr = lck_grp_attr_alloc_init();
+        throttle_lock_grp = lck_grp_alloc_init("throttle I/O", throttle_lock_grp_attr);
+
+	/* Update throttle parameters based on device tree configuration */
+	throttle_init_throttle_window();
 
         /*                                                                                                                                    
          * allocate the lock attribute                                                                                                        
          */
-        throttle_mtx_attr = lck_attr_alloc_init();
+        throttle_lock_attr = lck_attr_alloc_init();
 
 	for (i = 0; i < LOWPRI_MAX_NUM_DEV; i++) {
 	        info = &_throttle_io_info[i];
 	  
-	        lck_mtx_init(&info->throttle_lock, throttle_mtx_grp, throttle_mtx_attr);
+	        lck_mtx_init(&info->throttle_lock, throttle_lock_grp, throttle_lock_attr);
 		info->throttle_timer_call = thread_call_allocate((thread_call_func_t)throttle_timer, (thread_call_param_t)info);
 
-		TAILQ_INIT(&info->throttle_uthlist);
+		for (level = 0; level <= THROTTLE_LEVEL_END; level++) {
+			TAILQ_INIT(&info->throttle_uthlist[level]);
+			info->throttle_last_IO_pid[level] = 0;
+			info->throttle_inflight_count[level] = 0;
+		}
+		info->throttle_next_wake_level = THROTTLE_LEVEL_END;
+		info->throttle_disabled = 0;
+		info->throttle_is_fusion_with_priority = 0;
 	}
+#if CONFIG_IOSCHED
+	if (PE_parse_boot_argn("iosched", &iosched, sizeof(iosched))) {
+		iosched_enabled = iosched;
+	}
+	if (iosched_enabled) {
+		/* Initialize I/O Reprioritization mechanism */
+		vm_io_reprioritize_init();
+	}
+#endif
 }
 
+void
+sys_override_io_throttle(int flag)
+{
+	if (flag == THROTTLE_IO_ENABLE)
+		lowpri_throttle_enabled = 1;
+
+	if (flag == THROTTLE_IO_DISABLE)
+		lowpri_throttle_enabled = 0;
+}
+
+int rethrottle_wakeups = 0;
 
 /*
- * KPI routine
- * 
- * wakeup and remove the specified thread from the throttle queue
- * if it's no longer in a throttleable state...
- * takes a valid uthread (which may or may not be on the
- * throttle queue) as input
+ * the uu_rethrottle_lock is used to synchronize this function
+ * with "throttle_lowpri_io" which is where a throttled thread
+ * will block... that function will grab this lock before beginning
+ * it's decision making process concerning the need to block, and
+ * hold it through the assert_wait.  When that thread is awakened
+ * for any reason (timer or rethrottle), it will reacquire the
+ * uu_rethrottle_lock before determining if it really is ok for
+ * it to now run.  This is the point at which the thread could
+ * enter a different throttling queue and reblock or return from
+ * the throttle w/o having waited out it's entire throttle if
+ * the rethrottle has now moved it out of any currently
+ * active throttle window.
+ *
+ *
+ * NOTES:
+ * 1 - This may be called with the task lock held.
+ * 2 - This may be called with preemption and interrupts disabled
+ *     in the kqueue wakeup path so we can't take the throttle_lock which is a mutex
+ * 3 - This cannot safely dereference uu_throttle_info, as it may
+ *     get deallocated out from under us
  */
+
 void
-unthrottle_thread(uthread_t ut)
+rethrottle_thread(uthread_t ut)
 {
-       struct _throttle_io_info_t *info;
+	/*
+	 * If uthread doesn't have throttle state, then there's no chance
+	 * of it needing a rethrottle.
+	 */
+	if (ut->uu_throttle_info == NULL)
+		return;
 
-       if ((info = ut->uu_throttle_info) == NULL)
-               return;
+	boolean_t s = ml_set_interrupts_enabled(FALSE);
+	lck_spin_lock(&ut->uu_rethrottle_lock);
 
-        lck_mtx_lock(&info->throttle_lock);
+	if (ut->uu_is_throttled == FALSE)
+		ut->uu_was_rethrottled = TRUE;
+	else {
+		int my_new_level = throttle_get_thread_throttle_level(ut);
 
-       if (ut->uu_on_throttlelist && throttle_get_thread_throttle_level(ut, -1) <= THROTTLE_LEVEL_THROTTLED) { 
-               TAILQ_REMOVE(&info->throttle_uthlist, ut, uu_throttlelist);
-               ut->uu_on_throttlelist = 0;
+		if (my_new_level != ut->uu_on_throttlelist) {
+			/*
+			 * ut is currently blocked (as indicated by
+			 * ut->uu_is_throttled == TRUE)
+			 * and we're changing it's throttle level, so
+			 * we need to wake it up.
+			 */
+			ut->uu_is_throttled = FALSE;
+			wakeup(&ut->uu_on_throttlelist);
 
-               wakeup(&ut->uu_on_throttlelist);
-       }
-        lck_mtx_unlock(&info->throttle_lock);
+			rethrottle_wakeups++;
+			KERNEL_DEBUG_CONSTANT((FSDBG_CODE(DBG_FSRW, 102)), thread_tid(ut->uu_thread), ut->uu_on_throttlelist, my_new_level, 0, 0);
+		}
+	}
+	lck_spin_unlock(&ut->uu_rethrottle_lock);
+	ml_set_interrupts_enabled(s);
 }
 
 
@@ -1057,6 +1415,7 @@ void *
 throttle_info_create(void)
 {
 	struct _throttle_io_info_t *info; 
+	int	level;
 
 	MALLOC(info, struct _throttle_io_info_t *, sizeof(*info), M_TEMP, M_ZERO | M_WAITOK);
 	/* Should never happen but just in case */
@@ -1066,10 +1425,13 @@ throttle_info_create(void)
 	DEBUG_ALLOC_THROTTLE_INFO("Creating info = %p\n", info, info );
 	info->throttle_alloc = TRUE;
 
-	lck_mtx_init(&info->throttle_lock, throttle_mtx_grp, throttle_mtx_attr);
+	lck_mtx_init(&info->throttle_lock, throttle_lock_grp, throttle_lock_attr);
 	info->throttle_timer_call = thread_call_allocate((thread_call_func_t)throttle_timer, (thread_call_param_t)info);
 
-	TAILQ_INIT(&info->throttle_uthlist);
+	for (level = 0; level <= THROTTLE_LEVEL_END; level++) {
+		TAILQ_INIT(&info->throttle_uthlist[level]);
+	}
+	info->throttle_next_wake_level = THROTTLE_LEVEL_END;
 
 	/* Take a reference */
 	OSIncrementAtomic(&info->throttle_refcnt);
@@ -1166,6 +1528,27 @@ throttle_info_mount_rel(mount_t mp)
 	mp->mnt_throttle_info = NULL;
 }
 
+/*
+ * Reset throttling periods for the given mount point
+ *
+ * private interface used by disk conditioner to reset
+ * throttling periods when 'is_ssd' status changes
+ */
+void
+throttle_info_mount_reset_period(mount_t mp, int isssd)
+{
+	struct _throttle_io_info_t *info;
+
+	if (mp == NULL)
+		info = &_throttle_io_info[LOWPRI_MAX_NUM_DEV - 1];
+	else if (mp->mnt_throttle_info == NULL)
+		info = &_throttle_io_info[mp->mnt_devbsdunit];
+	else
+		info = mp->mnt_throttle_info;
+
+	throttle_init_throttle_period(info, isssd);
+}
+
 void
 throttle_info_get_last_io_time(mount_t mp, struct timeval *tv)
 {
@@ -1194,72 +1577,100 @@ update_last_io_time(mount_t mp)
 		info = mp->mnt_throttle_info;
 
 	microuptime(&info->throttle_last_write_timestamp);
+	if (mp != NULL)
+		mp->mnt_last_write_completed_timestamp = info->throttle_last_write_timestamp;
 }
-
 
 int
 throttle_get_io_policy(uthread_t *ut)
 {
-	*ut = get_bsdthread_info(current_thread());
+	if (ut != NULL)
+		*ut = get_bsdthread_info(current_thread());
 
-	return (proc_get_task_selfdiskacc());
+	return (proc_get_effective_thread_policy(current_thread(), TASK_POLICY_IO));
+}
+
+int
+throttle_get_passive_io_policy(uthread_t *ut)
+{
+	if (ut != NULL)
+		*ut = get_bsdthread_info(current_thread());
+
+	return (proc_get_effective_thread_policy(current_thread(), TASK_POLICY_PASSIVE_IO));
 }
 
 
-
 static int
-throttle_get_thread_throttle_level(uthread_t ut, int policy)
-{	
-	int	thread_throttle_level = THROTTLE_LEVEL_NONE;
+throttle_get_thread_throttle_level(uthread_t ut)
+{
+	uthread_t *ut_p = (ut == NULL) ? &ut : NULL;
+	int io_tier = throttle_get_io_policy(ut_p);
 
-	if (ut == NULL)
-		ut = get_bsdthread_info(current_thread());
+	return throttle_get_thread_throttle_level_internal(ut, io_tier);
+}
 
-	if (policy == -1)
-		policy = proc_get_diskacc(ut->uu_thread);
+/*
+ * Return a throttle level given an existing I/O tier (such as returned by throttle_get_io_policy)
+ */
+static int
+throttle_get_thread_throttle_level_internal(uthread_t ut, int io_tier) {
+	int thread_throttle_level = io_tier;
+	int user_idle_level;
 
-	switch (policy) {
+	assert(ut != NULL);
 
-	case IOPOL_DEFAULT:
-	case IOPOL_NORMAL:
-		thread_throttle_level = THROTTLE_LEVEL_TIER0;
-	case IOPOL_PASSIVE:
-		if (ut->uu_throttle_bc == TRUE)
-			thread_throttle_level = THROTTLE_LEVEL_TIER2;
-		break;
-	case IOPOL_THROTTLE:
-		thread_throttle_level = THROTTLE_LEVEL_TIER2;
-		break;
-	case IOPOL_UTILITY:
-		thread_throttle_level = THROTTLE_LEVEL_TIER1;
-		break;
-	default:
-		printf("unknown I/O policy %d", policy);
-		break;
+	/* Bootcache misses should always be throttled */
+	if (ut->uu_throttle_bc == TRUE)
+		thread_throttle_level = THROTTLE_LEVEL_TIER3;
+
+	/*
+	 * Issue tier3 I/O as tier2 when the user is idle
+	 * to allow maintenance tasks to make more progress.
+	 *
+	 * Assume any positive idle level is enough... for now it's
+	 * only ever 0 or 128 but this is not defined anywhere.
+	 */
+	if (thread_throttle_level >= THROTTLE_LEVEL_TIER3) {
+		user_idle_level = timer_get_user_idle_level();
+		if (user_idle_level > 0) {
+			thread_throttle_level--;
+		}
 	}
+
 	return (thread_throttle_level);
 }
 
-
+/*
+ * I/O will be throttled if either of the following are true:
+ *   - Higher tiers have in-flight I/O
+ *   - The time delta since the last start/completion of a higher tier is within the throttle window interval
+ *
+ * In-flight I/O is bookended by throttle_info_update_internal/throttle_info_end_io_internal
+ */
 static int
-throttle_io_will_be_throttled_internal(void * throttle_info)
+throttle_io_will_be_throttled_internal(void * throttle_info, int * mylevel, int * throttling_level)
 {
     	struct _throttle_io_info_t *info = throttle_info;
 	struct timeval elapsed;
+	struct timeval now;
 	uint64_t elapsed_msecs;
 	int	thread_throttle_level;
 	int	throttle_level;
 
-	if ((thread_throttle_level = throttle_get_thread_throttle_level(NULL, -1)) < THROTTLE_LEVEL_THROTTLED)
-		return (0);
+	if ((thread_throttle_level = throttle_get_thread_throttle_level(NULL)) < THROTTLE_LEVEL_THROTTLED)
+		return (THROTTLE_DISENGAGED);
+
+	microuptime(&now);
 
 	for (throttle_level = THROTTLE_LEVEL_START; throttle_level < thread_throttle_level; throttle_level++) {
-
-		microuptime(&elapsed);
-		timevalsub(&elapsed, &info->throttle_last_IO_timestamp[throttle_level]);
+		if (info->throttle_inflight_count[throttle_level]) {
+			break;
+		}
+		elapsed = now;
+		timevalsub(&elapsed, &info->throttle_window_start_timestamp[throttle_level]);
 		elapsed_msecs = (uint64_t)elapsed.tv_sec * (uint64_t)1000 + (elapsed.tv_usec / 1000);
 
-		if (elapsed_msecs < (uint64_t)THROTTLE_WINDOW)
+		if (elapsed_msecs < (uint64_t)throttle_windows_msecs[thread_throttle_level])
 			break;
 	}
 	if (throttle_level >= thread_throttle_level) {
@@ -1268,20 +1679,25 @@ throttle_io_will_be_throttled_internal(void * throttle_info)
 		 * that affect the throttle level of this thread,
 		 * so go ahead and treat as normal I/O
 		 */
-		return (0);
+		return (THROTTLE_DISENGAGED);
 	}
+	if (mylevel)
+		*mylevel = thread_throttle_level;
+	if (throttling_level)
+		*throttling_level = throttle_level;
+
 	if (info->throttle_io_count != info->throttle_io_count_begin) {
 		/*
 		 * we've already issued at least one throttleable I/O
 		 * in the current I/O window, so avoid issuing another one
 		 */
-		return (2);
+		return (THROTTLE_NOW);
 	}
 	/*
 	 * we're in the throttle window, so
 	 * cut the I/O size back
 	 */
-	return (1);
+	return (THROTTLE_ENGAGED);
 }
 
 /* 
@@ -1292,7 +1708,7 @@ throttle_io_will_be_throttled_internal(void * throttle_info)
 int
 throttle_io_will_be_throttled(__unused int lowpri_window_msecs, mount_t mp)
 {
-    	void	*info;
+    	struct _throttle_io_info_t	*info;
 
 	/*
 	 * Should we just return zero if no mount point
@@ -1304,20 +1720,56 @@ throttle_io_will_be_throttled(__unused int lowpri_window_msecs, mount_t mp)
 	else
 	        info = mp->mnt_throttle_info;
 
-	return throttle_io_will_be_throttled_internal(info);
+	if (info->throttle_is_fusion_with_priority) {
+		uthread_t ut = get_bsdthread_info(current_thread());
+		if (ut->uu_lowpri_window == 0)
+			return (THROTTLE_DISENGAGED);
+	}
+
+	if (info->throttle_disabled)
+		return (THROTTLE_DISENGAGED);
+	else
+		return throttle_io_will_be_throttled_internal(info, NULL, NULL);
 }
 
+/* 
+ * Routine to increment I/O throttling counters maintained in the proc
+ */
 
+static void 
+throttle_update_proc_stats(pid_t throttling_pid, int count)
+{
+	proc_t throttling_proc;
+	proc_t throttled_proc = current_proc();
+
+	/* The throttled_proc is always the current proc; so we are not concerned with refs */
+	OSAddAtomic64(count, &(throttled_proc->was_throttled));
+	
+	/* The throttling pid might have exited by now */
+	throttling_proc = proc_find(throttling_pid);
+	if (throttling_proc != PROC_NULL) {
+		OSAddAtomic64(count, &(throttling_proc->did_throttle));
+		proc_rele(throttling_proc);
+	}
+}
+
+/*
+ * Block until woken up by the throttle timer or by a rethrottle call.
+ * As long as we hold the throttle_lock while querying the throttle tier, we're
+ * safe against seeing an old throttle tier after a rethrottle.
+ */
 uint32_t
 throttle_lowpri_io(int sleep_amount)
 {
 	uthread_t ut;
 	struct _throttle_io_info_t *info;
 	int	throttle_type = 0;
+	int	mylevel = 0;
+	int	throttling_level = THROTTLE_LEVEL_NONE;
 	int	sleep_cnt = 0;
-	int	locked = 0;
 	uint32_t  throttle_io_period_num = 0;
 	boolean_t insert_tail = TRUE;
+	boolean_t s;
 
 	ut = get_bsdthread_info(current_thread());
 
@@ -1326,7 +1778,15 @@ throttle_lowpri_io(int sleep_amount)
 
 	info = ut->uu_throttle_info;
 
-	if ((sleep_amount == 0) || (info == NULL))
+	if (info == NULL) {
+		ut->uu_throttle_bc = FALSE;
+		ut->uu_lowpri_window = 0;
+		return (0);
+	}
+	lck_mtx_lock(&info->throttle_lock);
+	assert(ut->uu_on_throttlelist < THROTTLE_LEVEL_THROTTLED);
+
+	if (sleep_amount == 0)
 		goto done;
 
 	if (sleep_amount == 1 && ut->uu_throttle_bc == FALSE)
@@ -1334,9 +1794,11 @@ throttle_lowpri_io(int sleep_amount)
 
 	throttle_io_period_num = info->throttle_io_period_num;
 
-	while ( (throttle_type = throttle_io_will_be_throttled_internal(info)) ) {
+	ut->uu_was_rethrottled = FALSE;
 
-		if (throttle_type == 1) {
+	while ( (throttle_type = throttle_io_will_be_throttled_internal(info, &mylevel, &throttling_level)) ) {
+
+		if (throttle_type == THROTTLE_ENGAGED) {
 			if (sleep_amount == 0)
 				break;			
 			if (info->throttle_io_period_num < throttle_io_period_num)
@@ -1344,32 +1806,71 @@ throttle_lowpri_io(int sleep_amount)
 			if ((info->throttle_io_period_num - throttle_io_period_num) >= (uint32_t)sleep_amount)
 				break;
 		}
-		if (!locked) {
-			lck_mtx_lock(&info->throttle_lock);
-			locked = 1;
-		}
-		if (info->throttle_timer_running == 0) {
+		/*
+		 * keep the same position in the list if "rethrottle_thread" changes our throttle level  and
+		 * then puts us back to the original level before we get a chance to run
+		 */
+		if (ut->uu_on_throttlelist >= THROTTLE_LEVEL_THROTTLED && ut->uu_on_throttlelist != mylevel) {
 			/*
-			 * try to start the timer since it's
-			 * currently not running.  on failure, no
-			 * timer reference to drop since it wasn't started
+			 * must have been awakened via "rethrottle_thread" (the timer pulls us off the list)
+			 * and we've changed our throttling level, so pull ourselves off of the appropriate list
+			 * and make sure we get put on the tail of the new list since we're starting anew w/r to
+			 * the throttling engine
 			 */
-			if (throttle_timer_start(info, TRUE) == THROTTLE_LEVEL_END)
+			TAILQ_REMOVE(&info->throttle_uthlist[ut->uu_on_throttlelist], ut, uu_throttlelist);
+			ut->uu_on_throttlelist = THROTTLE_LEVEL_NONE;
+			insert_tail = TRUE;
+		}
+		if (ut->uu_on_throttlelist < THROTTLE_LEVEL_THROTTLED) {
+			if (throttle_add_to_list(info, ut, mylevel, insert_tail) == THROTTLE_LEVEL_END)
 				goto done;
 		}
+		assert(throttling_level >= THROTTLE_LEVEL_START && throttling_level <= THROTTLE_LEVEL_END);
+
+		s = ml_set_interrupts_enabled(FALSE);
+		lck_spin_lock(&ut->uu_rethrottle_lock);
+
+		/*
+		 * this is the critical section w/r to our interaction
+		 * with "rethrottle_thread"
+		 */
+		if (ut->uu_was_rethrottled == TRUE) {
+
+			lck_spin_unlock(&ut->uu_rethrottle_lock);
+			ml_set_interrupts_enabled(s);
+			lck_mtx_yield(&info->throttle_lock);
+
+			KERNEL_DEBUG_CONSTANT((FSDBG_CODE(DBG_FSRW, 103)), thread_tid(ut->uu_thread), ut->uu_on_throttlelist, 0, 0, 0);
+
+			ut->uu_was_rethrottled = FALSE;
+			continue;
+		}
+		KERNEL_DEBUG_CONSTANT((FSDBG_CODE(DBG_THROTTLE, PROCESS_THROTTLED)) | DBG_FUNC_NONE,
+				info->throttle_last_IO_pid[throttling_level], throttling_level, proc_selfpid(), mylevel, 0);
+		
 		if (sleep_cnt == 0) {
 			KERNEL_DEBUG_CONSTANT((FSDBG_CODE(DBG_FSRW, 97)) | DBG_FUNC_START,
-						      ut->uu_lowpri_window, info->throttle_io_period, info->throttle_io_count, 0, 0);
+					      throttle_windows_msecs[mylevel], info->throttle_io_periods[mylevel], info->throttle_io_count, 0, 0);
+			throttled_count[mylevel]++;
 		}
-		if (ut->uu_on_throttlelist == 0) {
-			if (insert_tail == TRUE)
-				TAILQ_INSERT_TAIL(&info->throttle_uthlist, ut, uu_throttlelist);
-			else
-				TAILQ_INSERT_HEAD(&info->throttle_uthlist, ut, uu_throttlelist);
+		ut->uu_wmesg = "throttle_lowpri_io";
 
-			ut->uu_on_throttlelist = 1;
-		}
-		msleep((caddr_t)&ut->uu_on_throttlelist, &info->throttle_lock, PRIBIO + 1, "throttle_lowpri_io", NULL);
+		assert_wait((caddr_t)&ut->uu_on_throttlelist, THREAD_UNINT);
+
+		ut->uu_is_throttled = TRUE;
+		lck_spin_unlock(&ut->uu_rethrottle_lock);
+		ml_set_interrupts_enabled(s);
+
+		lck_mtx_unlock(&info->throttle_lock);
+
+		thread_block(THREAD_CONTINUE_NULL);
+
+		ut->uu_wmesg = NULL;
+
+		ut->uu_is_throttled = FALSE;
+		ut->uu_was_rethrottled = FALSE;
+
+		lck_mtx_lock(&info->throttle_lock);
 
 		sleep_cnt++;
 		
@@ -1382,29 +1883,29 @@ throttle_lowpri_io(int sleep_amount)
 		}
 	}
 done:
-	if (ut->uu_on_throttlelist) {
-		if (!locked) {
-			lck_mtx_lock(&info->throttle_lock);
-			locked = 1;
-		}
-		if (ut->uu_on_throttlelist) {
-			TAILQ_REMOVE(&info->throttle_uthlist, ut, uu_throttlelist);
-
-			ut->uu_on_throttlelist = 0;
-		}
+	if (ut->uu_on_throttlelist >= THROTTLE_LEVEL_THROTTLED) {
+		TAILQ_REMOVE(&info->throttle_uthlist[ut->uu_on_throttlelist], ut, uu_throttlelist);
+		ut->uu_on_throttlelist = THROTTLE_LEVEL_NONE;
 	}
-	if (locked)
-		lck_mtx_unlock(&info->throttle_lock);
-		
-	if (sleep_cnt)
+	lck_mtx_unlock(&info->throttle_lock);
+
+	if (sleep_cnt) {
 		KERNEL_DEBUG_CONSTANT((FSDBG_CODE(DBG_FSRW, 97)) | DBG_FUNC_END,
-				      ut->uu_lowpri_window, info->throttle_io_period, info->throttle_io_count, 0, 0);
-	if (info)
-		throttle_info_rel(info);
+				      throttle_windows_msecs[mylevel], info->throttle_io_periods[mylevel], info->throttle_io_count, 0, 0);
+		/*
+		 * We update the stats for the last pid which opened a throttle window for the throttled thread.
+		 * This might not be completely accurate since the multiple throttles seen by the lower tier pid
+		 * might have been caused by various higher prio pids. However, updating these stats accurately 
+		 * means doing a proc_find while holding the throttle lock which leads to deadlock.
+		 */
+		throttle_update_proc_stats(info->throttle_last_IO_pid[throttling_level], sleep_cnt);
+	}
 
 	ut->uu_throttle_info = NULL;
 	ut->uu_throttle_bc = FALSE;
 	ut->uu_lowpri_window = 0;
+
+	throttle_info_rel(info);
 
 	return (sleep_cnt);
 }
@@ -1413,20 +1914,21 @@ done:
  * KPI routine
  *
  * set a kernel thread's IO policy.  policy can be:
- * IOPOL_NORMAL, IOPOL_THROTTLE, IOPOL_PASSIVE
+ * IOPOL_NORMAL, IOPOL_THROTTLE, IOPOL_PASSIVE, IOPOL_UTILITY, IOPOL_STANDARD
  *
  * explanations about these policies are in the man page of setiopolicy_np
  */
 void throttle_set_thread_io_policy(int policy)
 {
-	proc_apply_thread_selfdiskacc(policy);
+	proc_set_thread_policy(current_thread(), TASK_POLICY_INTERNAL, TASK_POLICY_IOPOL, policy);
 }
 
-
-static
 void throttle_info_reset_window(uthread_t ut)
 {
 	struct _throttle_io_info_t *info;
+
+	if (ut == NULL) 
+		ut = get_bsdthread_info(current_thread());
 
 	if ( (info = ut->uu_throttle_info) ) {
 		throttle_info_rel(info);
@@ -1438,38 +1940,113 @@ void throttle_info_reset_window(uthread_t ut)
 }
 
 static
-void throttle_info_set_initial_window(uthread_t ut, struct _throttle_io_info_t *info, boolean_t BC_throttle)
+void throttle_info_set_initial_window(uthread_t ut, struct _throttle_io_info_t *info, boolean_t BC_throttle, boolean_t isssd)
 {
+	if (lowpri_throttle_enabled == 0 || info->throttle_disabled)
+		return;
+
+	if (info->throttle_io_periods == 0) {
+		throttle_init_throttle_period(info, isssd);
+	}
 	if (ut->uu_throttle_info == NULL) {
 
 		ut->uu_throttle_info = info;
 		throttle_info_ref(info);
 		DEBUG_ALLOC_THROTTLE_INFO("updating info = %p\n", info, info );
 
-		ut->uu_lowpri_window = THROTTLE_WINDOW;
+		ut->uu_lowpri_window = 1;
 		ut->uu_throttle_bc = BC_throttle;
 	}
 }
 
+/*
+ * Update inflight IO count and throttling window
+ * Should be called when an IO is done
+ *
+ * Only affects IO that was sent through spec_strategy
+ */
+void throttle_info_end_io(buf_t bp) {
+	mount_t mp;
+	struct bufattr *bap;
+	struct _throttle_io_info_t *info;
+	int io_tier;
 
+	bap = &bp->b_attr;
+	if (!ISSET(bap->ba_flags, BA_STRATEGY_TRACKED_IO)) {
+		return;
+	}
+	CLR(bap->ba_flags, BA_STRATEGY_TRACKED_IO);
+
+	mp = buf_vnode(bp)->v_mount;
+	if (mp != NULL) {
+		info = &_throttle_io_info[mp->mnt_devbsdunit];
+	} else {
+		info = &_throttle_io_info[LOWPRI_MAX_NUM_DEV - 1];
+	}
+
+	io_tier = GET_BUFATTR_IO_TIER(bap);
+	if (ISSET(bap->ba_flags, BA_IO_TIER_UPGRADE)) {
+		io_tier--;
+	}
+
+	throttle_info_end_io_internal(info, io_tier);
+}
+
+/*
+ * Decrement inflight count initially incremented by throttle_info_update_internal
+ */
 static
-void throttle_info_update_internal(struct _throttle_io_info_t *info, uthread_t ut, int policy, int flags, boolean_t isssd)
+void throttle_info_end_io_internal(struct _throttle_io_info_t *info, int throttle_level) {
+	if (throttle_level == THROTTLE_LEVEL_NONE) {
+		return;
+	}
+
+	microuptime(&info->throttle_window_start_timestamp[throttle_level]);
+	OSDecrementAtomic(&info->throttle_inflight_count[throttle_level]);
+	assert(info->throttle_inflight_count[throttle_level] >= 0);
+}
+
+/*
+ * If inflight is TRUE and bap is NULL then the caller is responsible for calling
+ * throttle_info_end_io_internal to avoid leaking in-flight I/O.
+ */
+static
+int throttle_info_update_internal(struct _throttle_io_info_t *info, uthread_t ut, int flags, boolean_t isssd, boolean_t inflight, struct bufattr *bap)
 {
 	int	thread_throttle_level;
 
-	if (THROTTLE_WINDOW == 0)
-		return;
+	if (lowpri_throttle_enabled == 0 || info->throttle_disabled)
+		return THROTTLE_LEVEL_NONE;
 
 	if (ut == NULL)
 		ut = get_bsdthread_info(current_thread());
 
-	thread_throttle_level = throttle_get_thread_throttle_level(ut, policy);
+	if (bap && inflight && !ut->uu_throttle_bc) {
+		thread_throttle_level = GET_BUFATTR_IO_TIER(bap);
+		if (ISSET(bap->ba_flags, BA_IO_TIER_UPGRADE)) {
+			thread_throttle_level--;
+		}
+	} else {
+		thread_throttle_level = throttle_get_thread_throttle_level(ut);
+	}
 
-	if (thread_throttle_level == THROTTLE_LEVEL_TIER0 && ISSET(flags, B_PASSIVE))
-		thread_throttle_level = THROTTLE_LEVEL_NONE;
-
-	if (thread_throttle_level != THROTTLE_LEVEL_NONE)
+	if (thread_throttle_level != THROTTLE_LEVEL_NONE) {
+        if(!ISSET(flags, B_PASSIVE)) {
+			info->throttle_last_IO_pid[thread_throttle_level] = proc_selfpid();
+			if (inflight && !ut->uu_throttle_bc) {
+				if (NULL != bap) {
+					SET(bap->ba_flags, BA_STRATEGY_TRACKED_IO);
+				}
+				OSIncrementAtomic(&info->throttle_inflight_count[thread_throttle_level]);
+			} else {
+				microuptime(&info->throttle_window_start_timestamp[thread_throttle_level]);
+			}
+			KERNEL_DEBUG_CONSTANT((FSDBG_CODE(DBG_THROTTLE, OPEN_THROTTLE_WINDOW)) | DBG_FUNC_NONE,
+					current_proc()->p_pid, thread_throttle_level, 0, 0, 0);
+		}
 		microuptime(&info->throttle_last_IO_timestamp[thread_throttle_level]);
+	}
+
 
 	if (thread_throttle_level >= THROTTLE_LEVEL_THROTTLED) {
 		/*
@@ -1482,23 +2059,15 @@ void throttle_info_update_internal(struct _throttle_io_info_t *info, uthread_t u
 		 * do the delay just before we return from the system
 		 * call that triggered this I/O or from vnode_pagein
 		 */
-	        if (info->throttle_io_period == 0) {
-
-			if (isssd == TRUE)
-			        info->throttle_io_period = lowpri_io_period_ssd_msecs;
-			else
-			        info->throttle_io_period = lowpri_io_period_msecs;
-
-			if (info->throttle_io_period < lowpri_timer_period_msecs)
-				info->throttle_io_period = lowpri_timer_period_msecs;
-		}
 	        OSAddAtomic(1, &info->throttle_io_count);
 
-		throttle_info_set_initial_window(ut, info, FALSE);
+		throttle_info_set_initial_window(ut, info, FALSE, isssd);
 	}
+
+	return thread_throttle_level;
 }
 
-void throttle_info_update_by_mount(mount_t mp)
+void *throttle_info_update_by_mount(mount_t mp)
 {
 	struct _throttle_io_info_t *info;
 	uthread_t ut;
@@ -1506,27 +2075,17 @@ void throttle_info_update_by_mount(mount_t mp)
 
 	ut = get_bsdthread_info(current_thread());
 
-	if (ut->uu_lowpri_window)
-		return;
-
 	if (mp != NULL) {
-		if ((mp->mnt_kern_flag & MNTK_SSD) && !ignore_is_ssd)
+		if (disk_conditioner_mount_is_ssd(mp))
 			isssd = TRUE;
 		info = &_throttle_io_info[mp->mnt_devbsdunit];
 	} else
 		info = &_throttle_io_info[LOWPRI_MAX_NUM_DEV - 1];
 
-	if (info->throttle_io_period == 0) {
+	if (!ut->uu_lowpri_window)
+		throttle_info_set_initial_window(ut, info, FALSE, isssd);
 
-		if (isssd == TRUE)
-			info->throttle_io_period = lowpri_io_period_ssd_msecs;
-		else
-			info->throttle_io_period = lowpri_io_period_msecs;
-
-		if (info->throttle_io_period < lowpri_timer_period_msecs)
-			info->throttle_io_period = lowpri_timer_period_msecs;
-	}
-	throttle_info_set_initial_window(ut, info, FALSE);
+	return info;
 }
 
 
@@ -1539,7 +2098,7 @@ void throttle_info_update_by_mount(mount_t mp)
 void throttle_info_update(void *throttle_info, int flags)
 {
         if (throttle_info)
-		throttle_info_update_internal(throttle_info, NULL, -1, flags, FALSE);
+		throttle_info_update_internal(throttle_info, NULL, flags, FALSE, FALSE, NULL);
 }
 
 /*
@@ -1560,8 +2119,36 @@ void throttle_info_update_by_mask(void *throttle_info_handle, int flags)
 	 */
 	throttle_info_update(throttle_info, flags);
 }
+/*
+ * KPI routine
+ * 
+ * This routine marks the throttle info as disabled. Used for mount points which 
+ * support I/O scheduling.
+ */
+
+void throttle_info_disable_throttle(int devno, boolean_t isfusion)
+{
+	struct _throttle_io_info_t *info;
+
+	if (devno < 0 || devno >= LOWPRI_MAX_NUM_DEV) 
+		panic("Illegal devno (%d) passed into throttle_info_disable_throttle()", devno);
+
+	info = &_throttle_io_info[devno];
+	// don't disable software throttling on devices that are part of a fusion device
+	// and override the software throttle periods to use HDD periods
+	if (isfusion) {
+		info->throttle_is_fusion_with_priority = isfusion;
+		throttle_init_throttle_period(info, FALSE);
+	}
+	info->throttle_disabled = !info->throttle_is_fusion_with_priority;
+	return;
+} 
 
 
+/*
+ * KPI routine (private)
+ * Called to determine if this IO is being throttled to this level so that it can be treated specially
+ */
 int throttle_info_io_will_be_throttled(void * throttle_info, int policy)
 {
     	struct _throttle_io_info_t *info = throttle_info;
@@ -1573,9 +2160,12 @@ int throttle_info_io_will_be_throttled(void * throttle_info, int policy)
         switch (policy) {
 
         case IOPOL_THROTTLE:
-                thread_throttle_level = THROTTLE_LEVEL_TIER2;
+                thread_throttle_level = THROTTLE_LEVEL_TIER3;
                 break;
         case IOPOL_UTILITY:
+                thread_throttle_level = THROTTLE_LEVEL_TIER2;
+                break;
+        case IOPOL_STANDARD:
                 thread_throttle_level = THROTTLE_LEVEL_TIER1;
                 break;
         default:
@@ -1583,12 +2173,15 @@ int throttle_info_io_will_be_throttled(void * throttle_info, int policy)
 		break;
 	}
 	for (throttle_level = THROTTLE_LEVEL_START; throttle_level < thread_throttle_level; throttle_level++) {
+		if (info->throttle_inflight_count[throttle_level]) {
+			break;
+		}
 
 		microuptime(&elapsed);
-		timevalsub(&elapsed, &info->throttle_last_IO_timestamp[throttle_level]);
+		timevalsub(&elapsed, &info->throttle_window_start_timestamp[throttle_level]);
 		elapsed_msecs = (uint64_t)elapsed.tv_sec * (uint64_t)1000 + (elapsed.tv_usec / 1000);
 
-		if (elapsed_msecs < (uint64_t)THROTTLE_WINDOW)
+		if (elapsed_msecs < (uint64_t)throttle_windows_msecs[thread_throttle_level])
 			break;
 	}
 	if (throttle_level >= thread_throttle_level) {
@@ -1596,39 +2189,43 @@ int throttle_info_io_will_be_throttled(void * throttle_info, int policy)
 		 * we're beyond all of the throttle windows
 		 * so go ahead and treat as normal I/O
 		 */
-		return (0);
+		return (THROTTLE_DISENGAGED);
 	}
 	/*
 	 * we're in the throttle window
 	 */
-	return (1);
+	return (THROTTLE_ENGAGED);
 }
 
-void
-throttle_legacy_process_incr(void)
+int throttle_lowpri_window(void)
 {
-	OSIncrementAtomic(&throttle_legacy_process_count);
+	struct uthread *ut = get_bsdthread_info(current_thread());
+	return ut->uu_lowpri_window;
 }
 
-void
-throttle_legacy_process_decr(void)
-{
-	OSDecrementAtomic(&throttle_legacy_process_count);
-}
 
+#if CONFIG_IOSCHED
+int upl_get_cached_tier(void *);
+#endif
 
 int
 spec_strategy(struct vnop_strategy_args *ap)
 {
 	buf_t	bp;
 	int	bflags;
-	int	policy;
+	int	io_tier;
+	int	passive;
 	dev_t	bdev;
 	uthread_t ut;
 	mount_t mp;
+	struct	bufattr *bap;
 	int	strategy_ret;
 	struct _throttle_io_info_t *throttle_info;
 	boolean_t isssd = FALSE;
+	boolean_t inflight = FALSE;
+	boolean_t upgrade = FALSE;
+	int code = 0;
+
 #if !CONFIG_EMBEDDED
 	proc_t curproc = current_proc();
 #endif /* !CONFIG_EMBEDDED */
@@ -1636,67 +2233,143 @@ spec_strategy(struct vnop_strategy_args *ap)
         bp = ap->a_bp;
 	bdev = buf_device(bp);
 	mp = buf_vnode(bp)->v_mount;
+	bap = &bp->b_attr;
 
-	policy = throttle_get_io_policy(&ut);
+#if CONFIG_IOSCHED
+       if (bp->b_flags & B_CLUSTER) {
 
-	if (bp->b_flags & B_META) 
-		bp->b_attr.ba_flags |= BA_META;
+               io_tier = upl_get_cached_tier(bp->b_upl);
 
-	if (policy == IOPOL_THROTTLE || policy == IOPOL_UTILITY) {
-		bp->b_flags |= B_THROTTLED_IO;
-		bp->b_attr.ba_flags |= BA_THROTTLED_IO;
-		bp->b_flags &= ~B_PASSIVE;
-	} else if (policy == IOPOL_PASSIVE)
+               if (io_tier == -1)
+                       io_tier = throttle_get_io_policy(&ut);
+#if DEVELOPMENT || DEBUG
+               else {
+                       int my_io_tier = throttle_get_io_policy(&ut);
+
+                       if (io_tier != my_io_tier)
+                               KERNEL_DEBUG_CONSTANT((FSDBG_CODE(DBG_THROTTLE, IO_TIER_UPL_MISMATCH)) | DBG_FUNC_NONE, buf_kernel_addrperm_addr(bp), my_io_tier, io_tier, 0, 0);
+               }
+#endif
+       } else
+               io_tier = throttle_get_io_policy(&ut);
+#else
+	io_tier = throttle_get_io_policy(&ut);
+#endif
+	passive = throttle_get_passive_io_policy(&ut);
+
+	/*
+	 * Mark if the I/O was upgraded by throttle_get_thread_throttle_level
+	 * while preserving the original issued tier (throttle_get_io_policy
+	 * does not return upgraded tiers)
+	 */
+	if (mp && io_tier > throttle_get_thread_throttle_level_internal(ut, io_tier)) {
+#if CONFIG_IOSCHED
+		if (!(mp->mnt_ioflags & MNT_IOFLAGS_IOSCHED_SUPPORTED)) {
+			upgrade = TRUE;
+		}
+#else /* CONFIG_IOSCHED */
+		upgrade = TRUE;
+#endif /* CONFIG_IOSCHED */
+	}
+
+	if (bp->b_flags & B_META)
+		bap->ba_flags |= BA_META;
+
+#if CONFIG_IOSCHED
+	/* 
+	 * For I/O Scheduling, we currently do not have a way to track and expedite metadata I/Os.
+	 * To ensure we dont get into priority inversions due to metadata I/Os, we use the following rules:
+	 * For metadata reads, ceil all I/Os to IOSCHED_METADATA_TIER & mark them passive if the I/O tier was upgraded
+	 * For metadata writes, unconditionally mark them as IOSCHED_METADATA_TIER and passive
+	 */
+	if (bap->ba_flags & BA_META) {
+		if (mp && (mp->mnt_ioflags & MNT_IOFLAGS_IOSCHED_SUPPORTED)) {
+			if (bp->b_flags & B_READ) {
+				if (io_tier > IOSCHED_METADATA_TIER) {
+					io_tier = IOSCHED_METADATA_TIER;
+					passive = 1;
+				}
+			} else {
+				io_tier = IOSCHED_METADATA_TIER;
+				passive = 1;
+			}
+		}
+	}
+#endif /* CONFIG_IOSCHED */
+			
+	SET_BUFATTR_IO_TIER(bap, io_tier);
+
+	if (passive) {
 		bp->b_flags |= B_PASSIVE;
+		bap->ba_flags |= BA_PASSIVE;
+	}
 
 #if !CONFIG_EMBEDDED
 	if ((curproc != NULL) && ((curproc->p_flag & P_DELAYIDLESLEEP) == P_DELAYIDLESLEEP))
-		bp->b_attr.ba_flags |= BA_DELAYIDLESLEEP;
+		bap->ba_flags |= BA_DELAYIDLESLEEP;
 #endif /* !CONFIG_EMBEDDED */
 		
 	bflags = bp->b_flags;
 
-        if (kdebug_enable) {
-	        int    code = 0;
+	if (((bflags & B_READ) == 0) && ((bflags & B_ASYNC) == 0))
+		bufattr_markquickcomplete(bap);
 
-		if (bflags & B_READ)
-		        code |= DKIO_READ;
-		if (bflags & B_ASYNC)
-		        code |= DKIO_ASYNC;
+	if (bflags & B_READ)
+	        code |= DKIO_READ;
+	if (bflags & B_ASYNC)
+	        code |= DKIO_ASYNC;
 
-		if (bflags & B_META)
-		        code |= DKIO_META;
-		else if (bflags & B_PAGEIO)
-		        code |= DKIO_PAGING;
+	if (bap->ba_flags & BA_META)
+	        code |= DKIO_META;
+	else if (bflags & B_PAGEIO)
+	        code |= DKIO_PAGING;
 
-		if (bflags & B_THROTTLED_IO)
-			code |= DKIO_THROTTLE;
-		else if (bflags & B_PASSIVE)
-			code |= DKIO_PASSIVE;
+	if (io_tier != 0)
+		code |= DKIO_THROTTLE;
 
-		if (bp->b_attr.ba_flags & BA_NOCACHE)
-			code |= DKIO_NOCACHE;
+	code |= ((io_tier << DKIO_TIER_SHIFT) & DKIO_TIER_MASK);
 
+	if (bflags & B_PASSIVE)
+		code |= DKIO_PASSIVE;
+
+	if (bap->ba_flags & BA_NOCACHE)
+		code |= DKIO_NOCACHE;
+
+	if (upgrade) {
+		code |= DKIO_TIER_UPGRADE;
+		SET(bap->ba_flags, BA_IO_TIER_UPGRADE);
+	}
+
+	if (kdebug_enable) {
 		KERNEL_DEBUG_CONSTANT_IST(KDEBUG_COMMON, FSDBG_CODE(DBG_DKRW, code) | DBG_FUNC_NONE,
-					  bp, bdev, (int)buf_blkno(bp), buf_count(bp), 0);
+					  buf_kernel_addrperm_addr(bp), bdev, (int)buf_blkno(bp), buf_count(bp), 0);
         }
-	if (((bflags & (B_THROTTLED_IO | B_PASSIVE | B_IOSTREAMING | B_PAGEIO | B_READ)) == (B_PAGEIO | B_READ)) &&
-	    mp && (mp->mnt_kern_flag & MNTK_ROOTDEV))
-	        hard_throttle_on_root = 1;
+
+	thread_update_io_stats(current_thread(), buf_count(bp), code);
 
 	if (mp != NULL) {
-		if ((mp->mnt_kern_flag & MNTK_SSD) && !ignore_is_ssd)
+		if (disk_conditioner_mount_is_ssd(mp))
 			isssd = TRUE;
+		/*
+		 * Partially initialized mounts don't have a final devbsdunit and should not be tracked.
+		 * Verify that devbsdunit is initialized (non-zero) or that 0 is the correct initialized value
+		 * (mnt_throttle_mask is initialized and num_trailing_0 would be 0)
+		 */
+		if (mp->mnt_devbsdunit || (mp->mnt_throttle_mask != LOWPRI_MAX_NUM_DEV - 1 && mp->mnt_throttle_mask & 0x1)) {
+			inflight = TRUE;
+		}
 		throttle_info = &_throttle_io_info[mp->mnt_devbsdunit];
+
 	} else
 		throttle_info = &_throttle_io_info[LOWPRI_MAX_NUM_DEV - 1];
 
-	throttle_info_update_internal(throttle_info, ut, policy, bflags, isssd);
+	throttle_info_update_internal(throttle_info, ut, bflags, isssd, inflight, bap);
 
 	if ((bflags & B_READ) == 0) {
 		microuptime(&throttle_info->throttle_last_write_timestamp);
 
 		if (mp) {
+			mp->mnt_last_write_issued_timestamp = throttle_info->throttle_last_write_timestamp;
 			INCR_PENDING_IO(buf_count(bp), mp->mnt_pending_write_size);
 		}
 	} else if (mp) {
@@ -1727,6 +2400,11 @@ spec_strategy(struct vnop_strategy_args *ap)
 	typedef	int strategy_fcn_ret_t(struct buf *bp);
 	
 	strategy_ret = (*(strategy_fcn_ret_t*)bdevsw[major(bdev)].d_strategy)(bp);
+
+	// disk conditioner needs to track when this I/O actually starts
+	// which means track it after `strategy` which may include delays
+	// from inflight I/Os
+	microuptime(&bp->b_timestamp_tv);
 	
 	if (IO_SATISFIED_BY_CACHE == strategy_ret) {
 		/*
@@ -1740,7 +2418,7 @@ spec_strategy(struct vnop_strategy_args *ap)
 		 * If the boot cache indicates this IO should be throttled,
 		 * delay the thread.
 		 */
-		throttle_info_set_initial_window(ut, throttle_info, TRUE);
+		throttle_info_set_initial_window(ut, throttle_info, TRUE, isssd);
 	}
 	return (0);
 }
@@ -1768,7 +2446,6 @@ spec_close(struct vnop_close_args *ap)
 	int flags = ap->a_fflag;
 	struct proc *p = vfs_context_proc(ap->a_context);
 	struct session *sessp;
-	int do_rele = 0;
 
 	switch (vp->v_type) {
 
@@ -1783,10 +2460,12 @@ spec_close(struct vnop_close_args *ap)
 		 * last close)
 		 */
 		sessp = proc_session(p);
+		devsw_lock(dev, S_IFCHR);
 		if (sessp != SESSION_NULL) {
 			if (vp == sessp->s_ttyvp && vcount(vp) == 1) {
-				struct tty *tp;
+				struct tty *tp = TTY_NULL;
 
+				devsw_unlock(dev, S_IFCHR);
 				session_lock(sessp);
 				if (vp == sessp->s_ttyvp) {
 					tp = SESSION_TP(sessp);
@@ -1794,29 +2473,33 @@ spec_close(struct vnop_close_args *ap)
 					sessp->s_ttyvid = 0;
 					sessp->s_ttyp = TTY_NULL;
 					sessp->s_ttypgrpid = NO_PID;
-					do_rele = 1;
 				} 
 				session_unlock(sessp);
 
-				if (do_rele) {
-					vnode_rele(vp);
-					if (NULL != tp)
-						ttyfree(tp);
+				if (tp != TTY_NULL) {
+					/*
+					 * We may have won a race with a proc_exit
+					 * of the session leader, the winner
+					 * clears the flag (even if not set)
+					 */
+					tty_lock(tp);
+					ttyclrpgrphup(tp);
+					tty_unlock(tp);
+
+					ttyfree(tp);
 				}
+				devsw_lock(dev, S_IFCHR);
 			}
 			session_rele(sessp);
 		}
-
-		devsw_lock(dev, S_IFCHR);
 
 		if (--vp->v_specinfo->si_opencount < 0)
 			panic("negative open count (c, %u, %u)", major(dev), minor(dev));
 
 		/*
-		 * close always, or close on last reference, or close on revoke
+		 * close on last reference or on vnode revoke call
 		 */
-		if ((D_TRACKCLOSE & cdevsw[major(dev)].d_type) != 0 ||
-		    vcount(vp) == 0 || (flags & IO_REVOKE) != 0)
+		if (vcount(vp) == 0 || (flags & IO_REVOKE) != 0)
 			error = cdevsw[major(dev)].d_close(dev, flags, S_IFCHR, p);
 
 		devsw_unlock(dev, S_IFCHR);
@@ -1957,34 +2640,136 @@ spec_offtoblk(struct vnop_offtoblk_args *ap)
 }
 
 static void filt_specdetach(struct knote *kn);
-static int filt_spec(struct knote *kn, long hint);
+static int filt_specevent(struct knote *kn, long hint);
+static int filt_spectouch(struct knote *kn, struct kevent_internal_s *kev);
+static int filt_specprocess(struct knote *kn, struct filt_process_s *data, struct kevent_internal_s *kev);
 static unsigned filt_specpeek(struct knote *kn);
 
-struct filterops spec_filtops = {
-	.f_isfd 	= 1,
-        .f_attach 	= filt_specattach,
-        .f_detach 	= filt_specdetach,
-        .f_event 	= filt_spec,
-	.f_peek 	= filt_specpeek
+SECURITY_READ_ONLY_EARLY(struct filterops) spec_filtops = {
+	.f_isfd    = 1,
+	.f_attach  = filt_specattach,
+	.f_detach  = filt_specdetach,
+	.f_event   = filt_specevent,
+	.f_touch   = filt_spectouch,
+	.f_process = filt_specprocess,
+	.f_peek    = filt_specpeek
 };
 
+
+/*
+ * Given a waitq that is assumed to be embedded within a selinfo structure,
+ * return the containing selinfo structure. While 'wq' is not really a queue
+ * element, this macro simply does the offset_of calculation to get back to a
+ * containing struct given the struct type and member name.
+ */
+#define selinfo_from_waitq(wq) \
+	qe_element((wq), struct selinfo, si_waitq)
+
 static int
-filter_to_seltype(int16_t filter)
+spec_knote_select_and_link(struct knote *kn)
 {
-	switch (filter) {
-	case EVFILT_READ: 
-		return FREAD;
-	case EVFILT_WRITE:
-		return FWRITE;
-		break;
-	default:
-		panic("filt_to_seltype(): invalid filter %d\n", filter);
+	uthread_t uth;
+	vfs_context_t ctx;
+	vnode_t vp;
+	struct waitq_set *old_wqs;
+	uint64_t rsvd, rsvd_arg;
+	uint64_t *rlptr = NULL;
+	struct selinfo *si = NULL;
+	int selres = 0;
+
+	uth = get_bsdthread_info(current_thread());
+
+	ctx = vfs_context_current();
+	vp = (vnode_t)kn->kn_fp->f_fglob->fg_data;
+
+	int error = vnode_getwithvid(vp, kn->kn_hookid);
+	if (error != 0) {
+		knote_set_error(kn, ENOENT);
 		return 0;
+	}
+
+	/*
+	 * This function may be called many times to link or re-link the
+	 * underlying vnode to the kqueue.  If we've already linked the two,
+	 * we will have a valid kn_hook_data which ties us to the underlying
+	 * device's waitq via a the waitq's prepost table object. However,
+	 * devices can abort any select action by calling selthreadclear().
+	 * This is OK because the table object will be invalidated by the
+	 * driver (through a call to selthreadclear), so any attempt to access
+	 * the associated waitq will fail because the table object is invalid.
+	 *
+	 * Even if we've already registered, we need to pass a pointer
+	 * to a reserved link structure. Otherwise, selrecord() will
+	 * infer that we're in the second pass of select() and won't
+	 * actually do anything!
+	 */
+	rsvd = rsvd_arg = waitq_link_reserve(NULL);
+	rlptr = (void *)&rsvd_arg;
+
+	/*
+	 * Trick selrecord() into hooking kqueue's wait queue set
+	 * set into device's selinfo wait queue
+	 */
+	old_wqs = uth->uu_wqset;
+	uth->uu_wqset = &(knote_get_kq(kn)->kq_wqs);
+	selres = VNOP_SELECT(vp, knote_get_seltype(kn), 0, rlptr, ctx);
+	uth->uu_wqset = old_wqs;
+
+	/*
+	 * make sure to cleanup the reserved link - this guards against
+	 * drivers that may not actually call selrecord().
+	 */
+	waitq_link_release(rsvd);
+	if (rsvd != rsvd_arg) {
+		/* the driver / handler called selrecord() */
+		struct waitq *wq;
+		memcpy(&wq, rlptr, sizeof(void *));
+
+		/*
+		 * The waitq is part of the selinfo structure managed by the
+		 * driver. For certain drivers, we want to hook the knote into
+		 * the selinfo structure's si_note field so selwakeup can call
+		 * KNOTE.
+		 */
+		si = selinfo_from_waitq(wq);
+
+		/*
+		 * The waitq_get_prepost_id() function will (potentially)
+		 * allocate a prepost table object for the waitq and return
+		 * the table object's ID to us.  It will also set the
+		 * waitq_prepost_id field within the waitq structure.
+		 *
+		 * We can just overwrite kn_hook_data because it's simply a
+		 * table ID used to grab a reference when needed.
+		 *
+		 * We have a reference on the vnode, so we know that the
+		 * device won't go away while we get this ID.
+		 */
+		kn->kn_hook_data = waitq_get_prepost_id(wq);
+	} else {
+		assert(selres != 0);
+	}
+
+	vnode_put(vp);
+
+	return selres;
+}
+
+static void filt_spec_common(struct knote *kn, int selres)
+{
+	if (kn->kn_vnode_use_ofst) {
+		if (kn->kn_fp->f_fglob->fg_offset >= (uint32_t)selres) {
+			kn->kn_data = 0;
+		} else {
+			kn->kn_data = ((uint32_t)selres) - kn->kn_fp->f_fglob->fg_offset;
+		}
+	} else {
+		kn->kn_data = selres;
 	}
 }
 
-static int 
-filt_specattach(struct knote *kn)
+static int
+filt_specattach(struct knote *kn, __unused struct kevent_internal_s *kev)
 {
 	vnode_t vp;
 	dev_t dev;
@@ -1995,131 +2780,137 @@ filt_specattach(struct knote *kn)
 
 	dev = vnode_specrdev(vp);
 
-	if (major(dev) > nchrdev) {
-		return ENXIO;
+	/*
+	 * For a few special kinds of devices, we can attach knotes with
+	 * no restrictions because their "select" vectors return the amount
+	 * of data available.  Others require an explicit NOTE_LOWAT with
+	 * data of 1, indicating that the caller doesn't care about actual
+	 * data counts, just an indication that the device has data.
+	 */
+	if (!kn->kn_vnode_kqok &&
+	    ((kn->kn_sfflags & NOTE_LOWAT) == 0 || kn->kn_sdata != 1)) {
+		knote_set_error(kn, EINVAL);
+		return 0;
 	}
 
-	if ((cdevsw_flags[major(dev)] & CDEVSW_SELECT_KQUEUE) == 0) {
-		return EINVAL;
+	/*
+	 * This forces the select fallback to call through VNOP_SELECT and hook
+	 * up selinfo on every filter routine.
+	 *
+	 * Pseudo-terminal controllers are opted out of native kevent support --
+	 * remove this when they get their own EVFILTID.
+	 */
+	if (cdevsw_flags[major(dev)] & CDEVSW_IS_PTC) {
+		kn->kn_vnode_kqok = 0;
 	}
 
-	/* Resulting wql is safe to unlink even if it has never been linked */
-	kn->kn_hook = wait_queue_link_allocate();
-	if (kn->kn_hook == NULL) {
-		return EAGAIN;
-	}
-
-	kn->kn_fop = &spec_filtops;
+	kn->kn_filtid = EVFILTID_SPEC;
+	kn->kn_hook_data = 0;
 	kn->kn_hookid = vnode_vid(vp);
 
-	knote_markstayqueued(kn);
+	knote_markstayactive(kn);
+	return spec_knote_select_and_link(kn);
+}
+
+static void
+filt_specdetach(struct knote *kn)
+{
+	knote_clearstayactive(kn);
+
+	/*
+	 * This is potentially tricky: the device's selinfo waitq that was
+	 * tricked into being part of this knote's waitq set may not be a part
+	 * of any other set, and the device itself may have revoked the memory
+	 * in which the waitq was held. We use the knote's kn_hook_data field
+	 * to keep the ID of the waitq's prepost table object. This
+	 * object keeps a pointer back to the waitq, and gives us a safe way
+	 * to decouple the dereferencing of driver allocated memory: if the
+	 * driver goes away (taking the waitq with it) then the prepost table
+	 * object will be invalidated. The waitq details are handled in the
+	 * waitq API invoked here.
+	 */
+	if (kn->kn_hook_data) {
+		waitq_unlink_by_prepost_id(kn->kn_hook_data, &(knote_get_kq(kn)->kq_wqs));
+		kn->kn_hook_data = 0;
+	}
+}
+
+static int
+filt_specevent(struct knote *kn, __unused long hint)
+{
+	/*
+	 * Nothing should call knote or knote_vanish on this knote.
+	 */
+	panic("filt_specevent(%p)", kn);
+	return 0;
+}
+
+static int
+filt_spectouch(struct knote *kn, struct kevent_internal_s *kev)
+{
+	kn->kn_sdata = kev->data;
+	kn->kn_sfflags = kev->fflags;
+	if ((kn->kn_status & KN_UDATA_SPECIFIC) == 0)
+		kn->kn_udata = kev->udata;
+
+	if (kev->flags & EV_ENABLE) {
+		return spec_knote_select_and_link(kn);
+	}
 
 	return 0;
 }
 
-static void 
-filt_specdetach(struct knote *kn)
+static int
+filt_specprocess(struct knote *kn, struct filt_process_s *data, struct kevent_internal_s *kev)
 {
-	kern_return_t ret;
-
-	/* 
-	 * Given wait queue link and wait queue set, unlink.  This is subtle.
-	 * If the device has been revoked from under us, selclearthread() will
-	 * have removed our link from the kqueue's wait queue set, which 
-	 * wait_queue_set_unlink_one() will detect and handle.
-	 */
-	ret = wait_queue_set_unlink_one(kn->kn_kq->kq_wqs, kn->kn_hook);
-	if (ret != KERN_SUCCESS) {
-		panic("filt_specdetach(): failed to unlink wait queue link.");
-	}
-
-	(void)wait_queue_link_free(kn->kn_hook);
-	kn->kn_hook = NULL;
-	kn->kn_status &= ~KN_STAYQUEUED;
-}
-
-static int 
-filt_spec(struct knote *kn, long hint)
-{
+#pragma unused(data)
 	vnode_t vp;
 	uthread_t uth;
-	wait_queue_set_t old_wqs;
 	vfs_context_t ctx;
+	int res;
 	int selres;
 	int error;
-	int use_offset;
-	dev_t dev;
-	uint64_t flags;
-
-	assert(kn->kn_hook != NULL);
-
-	if (hint != 0) {
-		panic("filt_spec(): nonzero hint?");
-	}
 
 	uth = get_bsdthread_info(current_thread());
 	ctx = vfs_context_current();
 	vp = (vnode_t)kn->kn_fp->f_fglob->fg_data;
 
+	/* FIXME JMM - locking against touches? */
+
 	error = vnode_getwithvid(vp, kn->kn_hookid);
 	if (error != 0) {
 		kn->kn_flags |= (EV_EOF | EV_ONESHOT);
+		*kev = kn->kn_kevent;
 		return 1;
 	}
-	
-	dev = vnode_specrdev(vp);
-	flags = cdevsw_flags[major(dev)];
-	use_offset = ((flags & CDEVSW_USE_OFFSET) != 0);
-	assert((flags & CDEVSW_SELECT_KQUEUE) != 0);
 
-	/* Trick selrecord() into hooking kqueue's wait queue set into device wait queue */
-	old_wqs = uth->uu_wqset;
-	uth->uu_wqset = kn->kn_kq->kq_wqs;
-	selres = VNOP_SELECT(vp, filter_to_seltype(kn->kn_filter), 0, kn->kn_hook, ctx);
-	uth->uu_wqset = old_wqs;
-
-	if (use_offset) {
-		if (kn->kn_fp->f_fglob->fg_offset >= (uint32_t)selres) {
-			kn->kn_data = 0;
-		} else {
-			kn->kn_data = ((uint32_t)selres) - kn->kn_fp->f_fglob->fg_offset;
-		}
-	} else {
-		kn->kn_data = selres;
-	}
+	selres = spec_knote_select_and_link(kn);
+	filt_spec_common(kn, selres);
 
 	vnode_put(vp);
 
-	return (kn->kn_data != 0);
+	res = ((kn->kn_sfflags & NOTE_LOWAT) != 0) ?
+		(kn->kn_data >= kn->kn_sdata) : kn->kn_data;
+
+	if (res) {
+		*kev = kn->kn_kevent;
+		if (kn->kn_flags & EV_CLEAR) {
+			kn->kn_fflags = 0;
+			kn->kn_data = 0;
+		}
+	}
+
+	return res;
 }
 
 static unsigned
 filt_specpeek(struct knote *kn)
 {
-	vnode_t vp;
-	uthread_t uth;
-	wait_queue_set_t old_wqs;
-	vfs_context_t ctx;
-	int error, selres;
-	
-	uth = get_bsdthread_info(current_thread());
-	ctx = vfs_context_current();
-	vp = (vnode_t)kn->kn_fp->f_fglob->fg_data;
+	int selres = 0;
 
-	error = vnode_getwithvid(vp, kn->kn_hookid);
-	if (error != 0) {
-		return 1; /* Just like VNOP_SELECT() on recycled vnode */
-	}
+	selres = spec_knote_select_and_link(kn);
+	filt_spec_common(kn, selres);
 
-	/*
-	 * Why pass the link here?  Because we may not have registered in the past...
-	 */
-	old_wqs = uth->uu_wqset;
-	uth->uu_wqset = kn->kn_kq->kq_wqs;
-	selres = VNOP_SELECT(vp, filter_to_seltype(kn->kn_filter), 0, kn->kn_hook, ctx);
-	uth->uu_wqset = old_wqs;
-
-	vnode_put(vp);
-	return selres;
+	return kn->kn_data;
 }
 

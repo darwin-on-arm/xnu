@@ -3,7 +3,6 @@ export MakeInc_def=${SRCROOT}/makedefs/MakeInc.def
 export MakeInc_rule=${SRCROOT}/makedefs/MakeInc.rule
 export MakeInc_dir=${SRCROOT}/makedefs/MakeInc.dir
 
-
 include $(MakeInc_cmd)
 include $(MakeInc_def)
 
@@ -11,30 +10,39 @@ INSTINC_SUBDIRS =	\
 	architecture	\
 	mach-o
 
-INSTINC_SUBDIRS_I386 =	\
+INSTINC_SUBDIRS_X86_64 =	\
 	architecture
 
-INSTINC_SUBDIRS_X86_64 =	\
+INSTINC_SUBDIRS_X86_64H =	\
 	architecture
 
 INSTINC_SUBDIRS_ARM =	\
 	architecture
 
+INSTINC_SUBDIRS_ARM64 =	\
+	architecture
 
 EXPORT_FILES = \
 	Availability.h	\
 	AvailabilityInternal.h	\
-	AvailabilityMacros.h	\
-	ar.h		\
+	AvailabilityMacros.h
+
+KERNEL_FILES = \
 	stdarg.h	\
+	stdatomic.h	\
 	stdbool.h	\
+	stddef.h	\
 	stdint.h
 
-INSTALL_MI_LIST = 
+INSTALL_MI_LIST =
 
 INSTALL_MI_DIR = .
 
-EXPORT_MI_LIST = ${EXPORT_FILES}
+INSTALL_KF_MI_LIST = ${KERNEL_FILES}
+
+INSTALL_KF_MI_LCL_LIST = ${KERNEL_FILES}
+
+EXPORT_MI_LIST = ${EXPORT_FILES} ${KERNEL_FILES}
 
 EXPORT_MI_DIR = .
 

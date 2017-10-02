@@ -70,8 +70,6 @@
  *	Functions to manipulate IPC objects.
  */
 
-#include <mach_rt.h>
-
 #include <mach/mach_types.h>
 #include <mach/boolean.h>
 #include <mach/kern_return.h>
@@ -83,6 +81,7 @@
 #include <kern/ipc_kobject.h>
 
 #include <ipc/ipc_types.h>
+#include <ipc/ipc_importance.h>
 #include <ipc/port.h>
 #include <ipc/ipc_space.h>
 #include <ipc/ipc_entry.h>
@@ -92,7 +91,6 @@
 #include <ipc/ipc_notify.h>
 #include <ipc/ipc_port.h>
 #include <ipc/ipc_pset.h>
-#include <ipc/ipc_labelh.h>
 
 #include <security/mac_mach_internal.h>
 
@@ -134,10 +132,9 @@ ipc_object_release(
  *	Returns:
  *		KERN_SUCCESS		Object returned locked.
  *		KERN_INVALID_TASK	The space is dead.
- *		KERN_INVALID_NAME	The name doesn't denote a right.
- *		KERN_INVALID_RIGHT	Name doesn't denote the correct right.
+ *		KERN_INVALID_NAME	The name doesn't denote a right
+ *		KERN_INVALID_RIGHT	Name doesn't denote the correct right
  */
-
 kern_return_t
 ipc_object_translate(
 	ipc_space_t		space,
@@ -341,9 +338,6 @@ ipc_object_alloc(
 		ipc_port_t port = (ipc_port_t)object;
 
 		bzero((char *)port, sizeof(*port));
-#if CONFIG_MACF_MACH
-		mac_port_label_init(&port->ip_label);
-#endif
 	} else if (otype == IOT_PORT_SET) {
 		ipc_pset_t pset = (ipc_pset_t)object;
 
@@ -412,9 +406,6 @@ ipc_object_alloc_name(
 		ipc_port_t port = (ipc_port_t)object;
 
 		bzero((char *)port, sizeof(*port));
-#if CONFIG_MACF_MACH
-		mac_port_label_init(&port->ip_label);
-#endif
 	} else if (otype == IOT_PORT_SET) {
 		ipc_pset_t pset = (ipc_pset_t)object;
 
@@ -461,7 +452,6 @@ ipc_object_copyin_type(
 	switch (msgt_name) {
 
 	    case MACH_MSG_TYPE_MOVE_RECEIVE:
-	    case MACH_MSG_TYPE_COPY_RECEIVE:
 		return MACH_MSG_TYPE_PORT_RECEIVE;
 
 	    case MACH_MSG_TYPE_MOVE_SEND_ONCE:
@@ -473,6 +463,10 @@ ipc_object_copyin_type(
 	    case MACH_MSG_TYPE_COPY_SEND:
 		return MACH_MSG_TYPE_PORT_SEND;
 
+	    case MACH_MSG_TYPE_DISPOSE_RECEIVE:
+	    case MACH_MSG_TYPE_DISPOSE_SEND:
+	    case MACH_MSG_TYPE_DISPOSE_SEND_ONCE:
+		/* fall thru */
 	    default:
 		return MACH_MSG_TYPE_PORT_NONE;
 	}
@@ -504,11 +498,7 @@ ipc_object_copyin(
 	ipc_port_t soright;
 	ipc_port_t release_port;
 	kern_return_t kr;
-	queue_head_t links_data;
-	queue_t links = &links_data;
-	wait_queue_link_t wql;
-
-	queue_init(links);
+	int assertcnt = 0;
 
 	/*
 	 *	Could first try a read lock when doing
@@ -526,15 +516,16 @@ ipc_object_copyin(
 			      msgt_name, TRUE,
 			      objectp, &soright,
 			      &release_port,
-			      links);
+			      &assertcnt);
 	if (IE_BITS_TYPE(entry->ie_bits) == MACH_PORT_TYPE_NONE)
 		ipc_entry_dealloc(space, name, entry);
 	is_write_unlock(space);
 
-	while(!queue_empty(links)) {
-		wql = (wait_queue_link_t) dequeue(links);
-		wait_queue_link_free(wql);
+#if IMPORTANCE_INHERITANCE
+	if (0 < assertcnt && ipc_importance_task_is_any_receiver_type(current_task()->task_imp_base)) {
+		ipc_importance_task_drop_internal_assertion(current_task()->task_imp_base, assertcnt);
 	}
+#endif /* IMPORTANCE_INHERITANCE */
 
 	if (release_port != IP_NULL)
 		ip_release(release_port);
@@ -616,13 +607,15 @@ ipc_object_copyin_from_kernel(
 		ipc_port_t port = (ipc_port_t) object;
 
 		ip_lock(port);
-		assert(ip_active(port));
-		assert(port->ip_receiver_name != MACH_PORT_NULL);
-		assert(port->ip_receiver == ipc_space_kernel);
+		if (ip_active(port)) {
+			assert(port->ip_receiver_name != MACH_PORT_NULL);
+			assert((port->ip_receiver == ipc_space_kernel) ||
+                   (port->ip_receiver->is_node_id != HOST_LOCAL_NODE));
+			port->ip_mscount++;
+		}
 
-		ip_reference(port);
-		port->ip_mscount++;
 		port->ip_srights++;
+		ip_reference(port);
 		ip_unlock(port);
 		break;
 	    }
@@ -637,11 +630,11 @@ ipc_object_copyin_from_kernel(
 		ipc_port_t port = (ipc_port_t) object;
 
 		ip_lock(port);
-		assert(ip_active(port));
-		assert(port->ip_receiver_name != MACH_PORT_NULL);
-
-		ip_reference(port);
+		if (ip_active(port)) {
+			assert(port->ip_receiver_name != MACH_PORT_NULL);
+		}
 		port->ip_sorights++;
+		ip_reference(port);
 		ip_unlock(port);
 		break;
 	    }
@@ -809,6 +802,7 @@ ipc_object_copyout(
 
 	kr = ipc_right_copyout(space, name, entry,
 			       msgt_name, overflow, object);
+
 	/* object is unlocked */
 	is_write_unlock(space);
 
@@ -848,6 +842,11 @@ ipc_object_copyout_name(
 	ipc_entry_t oentry;
 	ipc_entry_t entry;
 	kern_return_t kr;
+
+#if IMPORTANCE_INHERITANCE
+	int assertcnt = 0;
+	ipc_importance_task_t task_imp = IIT_NULL;
+#endif /* IMPORTANCE_INHERITANCE */
 
 	assert(IO_VALID(object));
 	assert(io_otype(object) == IOT_PORT);
@@ -893,10 +892,49 @@ ipc_object_copyout_name(
 
 	/* space is write-locked and active, object is locked and active */
 
+#if IMPORTANCE_INHERITANCE
+	/*
+	 * We are slamming a receive right into the space, without
+	 * first having been enqueued on a port destined there.  So,
+	 * we have to arrange to boost the task appropriately if this
+	 * port has assertions (and the task wants them).
+	 */
+	if (msgt_name == MACH_MSG_TYPE_PORT_RECEIVE) {
+		ipc_port_t port = (ipc_port_t)object;
+
+		if (space->is_task != TASK_NULL) {
+			task_imp = space->is_task->task_imp_base;
+			if (ipc_importance_task_is_any_receiver_type(task_imp)) {
+				assertcnt = port->ip_impcount;
+				ipc_importance_task_reference(task_imp);
+			} else {
+				task_imp = IIT_NULL;
+			}
+		}
+
+		/* take port out of limbo */
+		assert(port->ip_tempowner != 0);
+		port->ip_tempowner = 0;
+	}
+
+#endif /* IMPORTANCE_INHERITANCE */
+
 	kr = ipc_right_copyout(space, name, entry,
 			       msgt_name, overflow, object);
+
 	/* object is unlocked */
 	is_write_unlock(space);
+
+#if IMPORTANCE_INHERITANCE
+	/*
+	 * Add the assertions to the task that we captured before
+	 */
+	if (task_imp != IIT_NULL) {
+		ipc_importance_task_hold_internal_assertion(task_imp, assertcnt);
+		ipc_importance_task_release(task_imp);
+	}
+#endif /* IMPORTANCE_INHERITANCE */
+
 	return kr;
 }
 
@@ -906,7 +944,7 @@ ipc_object_copyout_name(
  *		Translates/consumes the destination right of a message.
  *		This is unlike normal copyout because the right is consumed
  *		in a funny way instead of being given to the receiving space.
- *		The receiver gets his name for the port, if they have receive
+ *		The receiver gets his name for the port, if he has receive
  *		rights, otherwise MACH_PORT_NULL.
  *	Conditions:
  *		The object is locked and active.  Nothing else locked.
@@ -1044,31 +1082,6 @@ ipc_object_rename(
 	/* space is unlocked */
 	return kr;
 }
-
-/*
- * Get a label out of a port, to be used by a kernel call
- * that takes a security label as a parameter. In this case, we want
- * to use the label stored in the label handle and not the label on its
- * port.
- *
- * The port should be locked for this call. The lock protecting
- * label handle contents should not be necessary, as they can only
- * be modified when a label handle with one reference is a task label.
- * User allocated label handles can never be modified.
- */
-#if CONFIG_MACF_MACH
-struct label *io_getlabel (ipc_object_t objp)
-{
-	ipc_port_t port = (ipc_port_t)objp;
-
-	assert(io_otype(objp) == IOT_PORT);
-
-	if (ip_kotype(port) == IKOT_LABELH)
-		return &((ipc_labelh_t) port->ip_kobject)->lh_label;
-	else
-		return &port->ip_label;
-}
-#endif
 
 /*
  *	Check whether the object is a port if so, free it.  But

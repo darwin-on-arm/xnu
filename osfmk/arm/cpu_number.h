@@ -1,8 +1,8 @@
 /*
- * Copyright (c) 2000 Apple Computer, Inc. All rights reserved.
+ * Copyright (c) 2007 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
- * 
+ *
  * This file contains Original Code and/or Modifications of Original Code
  * as defined in and that are subject to the Apple Public Source License
  * Version 2.0 (the 'License'). You may not use this file except in
@@ -11,10 +11,10 @@
  * unlawful or unlicensed copies of an Apple operating system, or to
  * circumvent, violate, or enable the circumvention or violation of, any
  * terms of an Apple operating system software license agreement.
- * 
+ *
  * Please obtain a copy of the License at
  * http://www.opensource.apple.com/apsl/ and read it before using this file.
- * 
+ *
  * The Original Code and all software distributed under the License are
  * distributed on an 'AS IS' basis, WITHOUT WARRANTY OF ANY KIND, EITHER
  * EXPRESS OR IMPLIED, AND APPLE HEREBY DISCLAIMS ALL SUCH WARRANTIES,
@@ -22,7 +22,7 @@
  * FITNESS FOR A PARTICULAR PURPOSE, QUIET ENJOYMENT OR NON-INFRINGEMENT.
  * Please see the License for the specific language governing rights and
  * limitations under the License.
- * 
+ *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
 /*
@@ -61,22 +61,20 @@
  *	Machine-dependent definitions for cpu identification.
  *
  */
+#ifdef	KERNEL_PRIVATE
+
 #ifndef	_ARM_CPU_NUMBER_H_
 #define	_ARM_CPU_NUMBER_H_
 
-#ifdef	KERNEL_PRIVATE
+#include <sys/cdefs.h>
 
-/* Use a function to do this less directly. */
-extern int cpu_number(void);
+__BEGIN_DECLS
 
-#ifdef MACH_KERNEL_PRIVATE
-#include <arm/cpu_data.h>
+extern int	cpu_number(void);
+extern int	cpu_cluster_id(void);
 
-/* Get the cpu number directly from the pre-processor data area */
-#define	cpu_number()	get_cpu_number()
+__END_DECLS
 
-#endif                          /* !MACH_KERNEL_PRIVATE */
+#endif	/* _ARM_CPU_NUMBER_H_ */
 
-#endif                          /* KERNEL_PRIVATE */
-
-#endif                          /* _ARM_CPU_NUMBER_H_ */
+#endif	/* KERNEL_PRIVATE */

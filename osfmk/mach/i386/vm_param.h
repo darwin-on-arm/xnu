@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2006 Apple Computer, Inc. All rights reserved.
+ * Copyright (c) 2000-2012 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -99,6 +99,14 @@
 #define	PAGE_SHIFT		I386_PGSHIFT
 #define	PAGE_MASK		(PAGE_SIZE - 1)
 
+#define PAGE_MAX_SHIFT          PAGE_SHIFT
+#define PAGE_MAX_SIZE           PAGE_SIZE
+#define PAGE_MAX_MASK           PAGE_MASK
+
+#define PAGE_MIN_SHIFT          PAGE_SHIFT
+#define PAGE_MIN_SIZE           PAGE_SIZE
+#define PAGE_MIN_MASK           PAGE_MASK
+
 #define I386_LPGBYTES		2*1024*1024	/* bytes per large page */
 #define I386_LPGSHIFT		21		/* bitshift for large pages */
 #define I386_LPGMASK		(I386_LPGBYTES-1)
@@ -129,7 +137,11 @@
 /*
  * default top of user stack... it grows down from here
  */
-#define VM_USRSTACK64		((user_addr_t) 0x00007FFF5FC00000ULL)
+#define VM_USRSTACK64		((user_addr_t) 0x00007FFEEFC00000ULL)
+
+/*
+ * XXX TODO: Obsolete?
+ */
 #define VM_DYLD64		((user_addr_t) 0x00007FFF5FC00000ULL)
 #define VM_LIB64_SHR_DATA	((user_addr_t) 0x00007FFF60000000ULL)
 #define VM_LIB64_SHR_TEXT	((user_addr_t) 0x00007FFF80000000ULL)
@@ -156,6 +168,9 @@
 
 #ifdef	KERNEL_PRIVATE 
 
+#define TEST_PAGE_SIZE_16K      FALSE
+#define TEST_PAGE_SIZE_4K       TRUE
+
 /* Kernel-wide values */
 
 #define KB		(1024ULL)		
@@ -166,12 +181,8 @@
  * Maximum physical memory supported.
  */
 #define	K32_MAXMEM	(32*GB)
-#define	K64_MAXMEM	(96*GB)
-#if defined(__i386__)
-#define KERNEL_MAXMEM	K32_MAXMEM
-#else
+#define	K64_MAXMEM	(252*GB)
 #define KERNEL_MAXMEM	K64_MAXMEM
-#endif
 
 /*
  * XXX
@@ -181,14 +192,6 @@
  * We can't let VM allocate memory from there.
  */
 
-#if defined(__i386__)
-
-#define KERNEL_IMAGE_TO_PHYS(x) (x)
-#define VM_MIN_KERNEL_ADDRESS		((vm_offset_t) 0x00001000U)
-#define VM_MIN_KERNEL_AND_KEXT_ADDRESS	VM_MIN_KERNEL_ADDRESS
-#define VM_MAX_KERNEL_ADDRESS		((vm_offset_t) 0xFE7FFFFFU)
-
-#elif defined(__x86_64__)
 
 #define KERNEL_IMAGE_TO_PHYS(x) (x)
 #define VM_MIN_KERNEL_ADDRESS		((vm_offset_t) 0xFFFFFF8000000000UL)
@@ -200,21 +203,22 @@
 #define KEXT_ALLOC_BASE(x)  ((x) - KEXT_ALLOC_MAX_OFFSET)
 #define KEXT_ALLOC_SIZE(x)  (KEXT_ALLOC_MAX_OFFSET - (x))
 
-#define VM_KERNEL_IS_KEXT(_o)						       \
-                (((vm_offset_t)(_o) >= VM_MIN_KERNEL_AND_KEXT_ADDRESS) &&      \
-                 ((vm_offset_t)(_o) <  VM_MIN_KERNEL_ADDRESS))
-
-#else
-#error unsupported architecture
-#endif
-
-#define KERNEL_STACK_SIZE	(I386_PGBYTES*4)
+#define VM_KERNEL_ADDRESS(va)	((((vm_address_t)(va))>=VM_MIN_KERNEL_AND_KEXT_ADDRESS) && \
+				(((vm_address_t)(va))<=VM_MAX_KERNEL_ADDRESS))
 
 #define VM_MAP_MIN_ADDRESS	MACH_VM_MIN_ADDRESS
 #define VM_MAP_MAX_ADDRESS	MACH_VM_MAX_ADDRESS
 
 /* FIXME  - always leave like this? */
-#define	INTSTACK_SIZE	(I386_PGBYTES*4)
+#if KASAN
+/* Increase the stack sizes to account for the redzones that get added to every
+ * stack object. */
+# define INTSTACK_SIZE (I386_PGBYTES*4*4)
+# define KERNEL_STACK_SIZE (I386_PGBYTES*4*4)
+#else
+# define INTSTACK_SIZE (I386_PGBYTES*4)
+# define KERNEL_STACK_SIZE (I386_PGBYTES*4)
+#endif
 
 #ifdef	MACH_KERNEL_PRIVATE
 
@@ -236,19 +240,6 @@
  * The common alignment for LP64 is for longs and pointers i.e. 8 bytes.
  */
 
-#if defined(__i386__)
-
-#define	KALLOC_MINSIZE		16	/* minimum allocation size */
-#define	KALLOC_LOG2_MINALIGN	4	/* log2 minimum alignment */
-
-#define LINEAR_KERNEL_ADDRESS	((vm_offset_t) 0x00000000)
-
-#define VM_MIN_KERNEL_LOADED_ADDRESS	((vm_offset_t) 0x00000000U)
-#define VM_MAX_KERNEL_LOADED_ADDRESS	((vm_offset_t) 0x1FFFFFFFU)
-
-#define NCOPY_WINDOWS 4
-
-#elif defined(__x86_64__)
 
 #define	KALLOC_MINSIZE		16	/* minimum allocation size */
 #define	KALLOC_LOG2_MINALIGN	4	/* log2 minimum alignment */
@@ -261,9 +252,6 @@
 #define NCOPY_WINDOWS 0
 
 
-#else
-#error unsupported architecture
-#endif
 
 /*
  *	Conversion between 80386 pages and VM pages
@@ -276,7 +264,7 @@
 
 #define PMAP_SET_CACHE_ATTR(mem, object, cache_attr, batch_pmap_op)	\
 	MACRO_BEGIN							\
-		pmap_set_cache_attributes((mem)->phys_page, (cache_attr));	\
+		pmap_set_cache_attributes(VM_PAGE_GET_PHYS_PAGE(mem), (cache_attr));	\
 		(object)->set_cache_attr = TRUE;				\
 		(void) batch_pmap_op;					\
 	MACRO_END							

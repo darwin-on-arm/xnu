@@ -46,6 +46,7 @@
 #include <sys/fcntl.h>
 #include <sys/filedesc.h>
 #include <sys/sem.h>
+#include <sys/syscall.h>
 
 #include <bsm/audit.h>
 #include <bsm/audit_kevents.h>
@@ -150,7 +151,7 @@ au_evclassmap_insert(au_event_t event, au_class_t class)
 void
 au_evclassmap_init(void)
 {
-	int i;
+	unsigned int i;
 
 	EVCLASS_LOCK_INIT();
 	for (i = 0; i < EVCLASSMAP_HASH_TABLE_SIZE; i++)
@@ -159,7 +160,7 @@ au_evclassmap_init(void)
 	/*
 	 * Set up the initial event to class mapping for system calls.
 	 */
-	for (i = 0; i < NUM_SYSENT; i++) {
+	for (i = 0; i < nsysent; i++) {
 		if (sys_au_event[i] != AUE_NULL)
 			au_evclassmap_insert(sys_au_event[i], 0);
 
@@ -452,6 +453,169 @@ audit_flags_and_error_to_openextendedevent(int oflags, int error)
 }
 
 /*
+ * Convert an open flags specifier into a specific type of open_extended event
+ * for auditing purposes.
+ */
+au_event_t
+audit_flags_and_error_to_openatevent(int oflags, int error)
+{
+	au_event_t aevent;
+
+	/*
+	 * Need to check only those flags we care about.
+	 */
+	oflags = oflags & (O_RDONLY | O_CREAT | O_TRUNC | O_RDWR | O_WRONLY);
+
+	/*
+	 * These checks determine what flags are on with the condition that
+	 * ONLY that combination is on, and no other flags are on.
+	 */
+	switch (oflags) {
+	case O_RDONLY:
+		aevent = AUE_OPENAT_R;
+		break;
+
+	case (O_RDONLY | O_CREAT):
+		aevent = AUE_OPENAT_RC;
+		break;
+
+	case (O_RDONLY | O_CREAT | O_TRUNC):
+		aevent = AUE_OPENAT_RTC;
+		break;
+
+	case (O_RDONLY | O_TRUNC):
+		aevent = AUE_OPENAT_RT;
+		break;
+
+	case O_RDWR:
+		aevent = AUE_OPENAT_RW;
+		break;
+
+	case (O_RDWR | O_CREAT):
+		aevent = AUE_OPENAT_RWC;
+		break;
+
+	case (O_RDWR | O_CREAT | O_TRUNC):
+		aevent = AUE_OPENAT_RWTC;
+		break;
+
+	case (O_RDWR | O_TRUNC):
+		aevent = AUE_OPENAT_RWT;
+		break;
+
+	case O_WRONLY:
+		aevent = AUE_OPENAT_W;
+		break;
+
+	case (O_WRONLY | O_CREAT):
+		aevent = AUE_OPENAT_WC;
+		break;
+
+	case (O_WRONLY | O_CREAT | O_TRUNC):
+		aevent = AUE_OPENAT_WTC;
+		break;
+
+	case (O_WRONLY | O_TRUNC):
+		aevent = AUE_OPENAT_WT;
+		break;
+
+	default:
+		aevent = AUE_OPENAT;
+		break;
+	}
+
+	/*
+	 * Convert chatty errors to better matching events.  Failures to
+	 * find a file are really just attribute events -- so recast them as
+	 * such.
+	 *
+	 * XXXAUDIT: Solaris defines that AUE_OPENAT will never be returned, it
+	 * is just a placeholder.  However, in Darwin we return that in
+	 * preference to other events.
+	 *
+	 * XXXRW: This behavior differs from FreeBSD, so possibly revise this
+	 * code or this comment.
+	 */
+	switch (aevent) {
+	case AUE_OPENAT_R:
+	case AUE_OPENAT_RT:
+	case AUE_OPENAT_RW:
+	case AUE_OPENAT_RWT:
+	case AUE_OPENAT_W:
+	case AUE_OPENAT_WT:
+		if (error == ENOENT)
+			aevent = AUE_OPENAT;
+	}
+	return (aevent);
+}
+
+/*
+ * Convert an open flags specifier into a specific type of openbyid event
+ * for auditing purposes.
+ */
+au_event_t
+audit_flags_and_error_to_openbyidevent(int oflags, int error)
+{
+	au_event_t aevent;
+
+	/*
+	 * Need to check only those flags we care about.
+	 */
+	oflags = oflags & (O_RDONLY | O_TRUNC | O_RDWR | O_WRONLY);
+
+	/*
+	 * These checks determine what flags are on with the condition that
+	 * ONLY that combination is on, and no other flags are on.
+	 */
+	switch (oflags) {
+	case O_RDONLY:
+		aevent = AUE_OPENBYID_R;
+		break;
+
+	case (O_RDONLY | O_TRUNC):
+		aevent = AUE_OPENBYID_RT;
+		break;
+
+	case O_RDWR:
+		aevent = AUE_OPENBYID_RW;
+		break;
+
+	case (O_RDWR | O_TRUNC):
+		aevent = AUE_OPENBYID_RWT;
+		break;
+
+	case O_WRONLY:
+		aevent = AUE_OPENBYID_W;
+		break;
+
+	case (O_WRONLY | O_TRUNC):
+		aevent = AUE_OPENBYID_WT;
+		break;
+
+	default:
+		aevent = AUE_OPENBYID;
+		break;
+	}
+
+	/*
+	 * Convert chatty errors to better matching events.  Failures to
+	 * find a file are really just attribute events -- so recast them as
+	 * such.
+	 */
+	switch (aevent) {
+	case AUE_OPENBYID_R:
+	case AUE_OPENBYID_RT:
+	case AUE_OPENBYID_RW:
+	case AUE_OPENBYID_RWT:
+	case AUE_OPENBYID_W:
+	case AUE_OPENBYID_WT:
+		if (error == ENOENT)
+			aevent = AUE_OPENBYID;
+	}
+	return (aevent);
+}
+
+/*
  * Convert a MSGCTL command to a specific event.
  */
 au_event_t
@@ -595,91 +759,9 @@ auditon_command_event(int cmd)
 au_event_t
 audit_fcntl_command_event(int cmd, int oflags, int error)
 {
-	au_event_t aevent;
-
 	switch(cmd) {
 	case F_OPENFROM:
-		/*
-		 * Need to check only those flags we care about.
-	 	 */
-		oflags = oflags & (O_RDONLY | O_CREAT | O_TRUNC | O_RDWR |
-		    O_WRONLY);
-
-		/*
-	 	* These checks determine what flags are on with the condition
-		* that ONLY that combination is on, and no other flags are on.
-	 	*/
-		switch (oflags) {
-		case O_RDONLY:
-			aevent = AUE_OPENAT_R;
-			break;
-
-		case (O_RDONLY | O_CREAT):
-			aevent = AUE_OPENAT_RC;
-			break;
-
-		case (O_RDONLY | O_CREAT | O_TRUNC):
-			aevent = AUE_OPENAT_RTC;
-			break;
-
-		case (O_RDONLY | O_TRUNC):
-			aevent = AUE_OPENAT_RT;
-			break;
-
-		case O_RDWR:
-			aevent = AUE_OPENAT_RW;
-			break;
-
-		case (O_RDWR | O_CREAT):
-			aevent = AUE_OPENAT_RWC;
-			break;
-
-		case (O_RDWR | O_CREAT | O_TRUNC):
-			aevent = AUE_OPENAT_RWTC;
-			break;
-
-		case (O_RDWR | O_TRUNC):
-			aevent = AUE_OPENAT_RWT;
-			break;
-
-		case O_WRONLY:
-			aevent = AUE_OPENAT_W;
-			break;
-
-		case (O_WRONLY | O_CREAT):
-			aevent = AUE_OPENAT_WC;
-			break;
-
-		case (O_WRONLY | O_CREAT | O_TRUNC):
-			aevent = AUE_OPENAT_WTC;
-			break;
-
-		case (O_WRONLY | O_TRUNC):
-			aevent = AUE_OPENAT_WT;
-			break;
-
-		default:
-			aevent = AUE_OPENAT;
-			break;
-		}
-
-		/*
-	 	 * Convert chatty errors to better matching events.  Failures to
-	 	 * find a file are really just attribute events -- so recast
-		 * them as such.
-	 	 */
-		switch (aevent) {
-		case AUE_OPENAT_R:
-		case AUE_OPENAT_RT:
-		case AUE_OPENAT_RW:
-		case AUE_OPENAT_RWT:
-		case AUE_OPENAT_W:
-		case AUE_OPENAT_WT:
-		if (error == ENOENT)
-			aevent = AUE_OPENAT;
-		}
-
-		return (aevent);
+		return (audit_flags_and_error_to_openatevent(oflags, error));
 		
 	case F_UNLINKFROM:
 		return (AUE_UNLINKAT);

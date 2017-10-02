@@ -164,6 +164,26 @@ mach_port_mod_refs(
 }
 
 kern_return_t
+mach_port_peek(
+	ipc_space_t		task,
+	mach_port_name_t	name,
+	mach_msg_trailer_type_t trailer_type,
+	mach_port_seqno_t	*seqnop,
+	mach_msg_size_t		*msg_sizep,
+	mach_msg_id_t		*msg_idp,
+	mach_msg_trailer_info_t trailer_infop,
+	mach_msg_type_number_t	*trailer_sizep)
+{
+	kern_return_t rv;
+
+	rv = _kernelrpc_mach_port_peek(task, name, trailer_type, 
+				       seqnop, msg_sizep, msg_idp,
+				       trailer_infop, trailer_sizep);
+
+	return (rv);
+}
+
+kern_return_t
 mach_port_set_mscount(
 	ipc_space_t task,
 	mach_port_name_t name,
@@ -376,6 +396,18 @@ mach_port_space_info(
 }
 
 kern_return_t
+mach_port_space_basic_info(
+	ipc_space_t task,
+	ipc_info_space_basic_t *space_basic_info)
+{
+	kern_return_t rv;
+
+	rv = _kernelrpc_mach_port_space_basic_info(task, space_basic_info);
+
+	return (rv);
+}
+
+kern_return_t
 mach_port_dnrequest_info(
 	ipc_space_t task,
 	mach_port_name_t name,
@@ -480,4 +512,108 @@ mach_port_kobject(
 	rv = _kernelrpc_mach_port_kobject(task, name, object_type, object_addr);
 
 	return (rv);
+}
+
+kern_return_t
+mach_port_construct(
+	ipc_space_t		task,
+	mach_port_options_t	*options,
+	mach_port_context_t	context,
+	mach_port_name_t	*name)
+{
+	kern_return_t rv;
+
+	rv = _kernelrpc_mach_port_construct_trap(task, options, (uint64_t) context, name);
+
+	if (rv == MACH_SEND_INVALID_DEST)
+		rv = _kernelrpc_mach_port_construct(task, options, (uint64_t) context, name);
+
+	return (rv);
+}
+
+kern_return_t
+mach_port_destruct(
+	ipc_space_t		task,
+	mach_port_name_t	name,
+	mach_port_delta_t	srdelta,
+	mach_port_context_t	guard)
+{
+	kern_return_t rv;
+
+	rv = _kernelrpc_mach_port_destruct_trap(task, name, srdelta, (uint64_t) guard);
+
+	if (rv == MACH_SEND_INVALID_DEST)
+		rv = _kernelrpc_mach_port_destruct(task, name, srdelta, (uint64_t) guard);
+
+	return (rv);
+
+}
+
+kern_return_t
+mach_port_guard(
+	ipc_space_t		task,
+	mach_port_name_t	name,
+	mach_port_context_t	guard,
+	boolean_t		strict)
+{
+	kern_return_t rv;
+
+	rv = _kernelrpc_mach_port_guard_trap(task, name, (uint64_t) guard, strict);
+
+	if (rv == MACH_SEND_INVALID_DEST)
+		rv = _kernelrpc_mach_port_guard(task, name, (uint64_t) guard, strict);
+
+	return (rv);
+
+}
+
+kern_return_t
+mach_port_unguard(
+	ipc_space_t		task,
+	mach_port_name_t	name,
+	mach_port_context_t	guard)
+{
+	kern_return_t rv;
+
+	rv = _kernelrpc_mach_port_unguard_trap(task, name, (uint64_t) guard);
+
+	if (rv == MACH_SEND_INVALID_DEST)
+		rv = _kernelrpc_mach_port_unguard(task, name, (uint64_t) guard);
+
+	return (rv);
+
+}
+
+extern kern_return_t
+_kernelrpc_mach_voucher_extract_attr_recipe(
+		mach_port_name_t voucher,
+		mach_voucher_attr_key_t key,
+		mach_voucher_attr_raw_recipe_t recipe,
+		mach_msg_type_number_t *recipe_size);
+
+kern_return_t
+mach_voucher_extract_attr_recipe(
+	mach_port_name_t voucher,
+	mach_voucher_attr_key_t key,
+	mach_voucher_attr_raw_recipe_t recipe,
+	mach_msg_type_number_t *recipe_size)
+{
+	kern_return_t rv;
+
+	rv = mach_voucher_extract_attr_recipe_trap(voucher, key, recipe, recipe_size);
+
+#ifdef __x86_64__
+	/* REMOVE once XBS kernel has new trap */
+	if (rv == ((1 << 24) | 72)) /* see mach/i386/syscall_sw.h */
+		rv = MACH_SEND_INVALID_DEST;
+#elif defined(__i386__)
+	/* REMOVE once XBS kernel has new trap */
+	if (rv == (kern_return_t)(-72))
+		rv = MACH_SEND_INVALID_DEST;
+#endif
+
+	if (rv == MACH_SEND_INVALID_DEST)
+		rv = _kernelrpc_mach_voucher_extract_attr_recipe(voucher, key, recipe, recipe_size);
+
+	return rv;
 }

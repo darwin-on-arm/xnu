@@ -41,11 +41,13 @@
 #define	_SYS_SPAWN_INTERNAL_H_
 
 #include <sys/_types.h>		/* __offsetof(), __darwin_size_t */
+#include <sys/param.h>
 #include <sys/syslimits.h>	/* PATH_MAX */
 #include <sys/spawn.h>
 #include <mach/machine.h>
 #include <mach/port.h>
 #include <mach/exception_types.h>
+#include <mach/coalition.h>	/* COALITION_NUM_TYPES */
 
 /*
  * Allowable posix_spawn() port action types
@@ -54,6 +56,7 @@ typedef enum {
 	PSPA_SPECIAL = 0,
 	PSPA_EXCEPTION = 1,
 	PSPA_AU_SESSION = 2,
+	PSPA_IMP_WATCHPORTS = 3,
 } pspa_t;
 
 /*
@@ -88,13 +91,83 @@ typedef struct _posix_spawn_port_actions {
 #define NBINPREFS	4
 
 /*
+ * Mapping of opaque data pointer to a MAC policy (specified by name).
+ */
+typedef struct _ps_mac_policy_extension {
+	char			policyname[128];
+	union {
+		uint64_t	data;
+		void 		*datap;		/* pointer in kernel memory */
+	};
+	uint64_t		datalen;
+} _ps_mac_policy_extension_t;
+
+/*
+ * A collection of extra data passed to MAC policies for the newly spawned process.
+ */
+typedef struct _posix_spawn_mac_policy_extensions {
+	int			psmx_alloc;
+	int			psmx_count;
+	_ps_mac_policy_extension_t psmx_extensions[];
+} *_posix_spawn_mac_policy_extensions_t;
+
+/*
+ * Returns size in bytes of a _posix_spawn_mac_policy_extensions holding x elements.
+ */
+#define PS_MAC_EXTENSIONS_SIZE(x)     \
+        __offsetof(struct _posix_spawn_mac_policy_extensions, psmx_extensions[(x)])
+
+#define PS_MAC_EXTENSIONS_INIT_COUNT	2
+
+/*
+ * Coalition posix spawn attributes
+ */
+struct _posix_spawn_coalition_info {
+	struct {
+		uint64_t psci_id;
+		uint32_t psci_role;
+		uint32_t psci_reserved1;
+		uint64_t psci_reserved2;
+	} psci_info[COALITION_NUM_TYPES];
+};
+
+/*
+ * Persona attributes
+ */
+struct _posix_spawn_persona_info {
+	uid_t    pspi_id;       /* persona ID (unix UID) */
+	uint32_t pspi_flags;    /* spawn persona flags */
+	uid_t    pspi_uid;      /* alternate posix/unix UID  */
+	gid_t    pspi_gid;      /* alternate posix/unix GID */
+	uint32_t pspi_ngroups;  /* alternate advisory groups */
+	gid_t    pspi_groups[NGROUPS];
+	uid_t    pspi_gmuid;    /* group membership UID */
+};
+
+#define POSIX_SPAWN_PERSONA_FLAGS_NONE     0x0
+#define POSIX_SPAWN_PERSONA_FLAGS_OVERRIDE 0x1
+#define POSIX_SPAWN_PERSONA_FLAGS_VERIFY   0x2
+
+#define POSIX_SPAWN_PERSONA_ALL_FLAGS \
+	(POSIX_SPAWN_PERSONA_FLAGS_OVERRIDE \
+	 | POSIX_SPAWN_PERSONA_FLAGS_VERIFY \
+	)
+
+#define POSIX_SPAWN_PERSONA_UID           0x00010000
+#define POSIX_SPAWN_PERSONA_GID           0x00020000
+#define POSIX_SPAWN_PERSONA_GROUPS        0x00040000
+
+
+/*
  * A posix_spawnattr structure contains all of the attribute elements that
  * can be set, as well as any metadata whose validity is signalled by the
  * presence of a bit in the flags field.  All fields are initialized to the
  * appropriate default values by posix_spawnattr_init().
  */
+
 typedef struct _posix_spawnattr {
 	short		psa_flags;		/* spawn attribute flags */
+	short 		flags_padding; 	/* get the flags to be int aligned */
 	sigset_t	psa_sigdefault;		/* signal set to default */
 	sigset_t	psa_sigmask;		/* signal set to mask */
 	pid_t		psa_pgroup;		/* pgroup to spawn into */
@@ -103,51 +176,99 @@ typedef struct _posix_spawnattr {
 	int		psa_apptype;		/* app type and process spec behav */
 	uint64_t 	psa_cpumonitor_percent; /* CPU usage monitor percentage */
 	uint64_t 	psa_cpumonitor_interval; /* CPU usage monitor interval, in seconds */
-	_posix_spawn_port_actions_t	psa_ports; /* special/exception ports */
-	/* XXX - k64/u32 unaligned below here */
-#if CONFIG_MEMORYSTATUS || CONFIG_EMBEDDED || TARGET_OS_EMBEDDED
-	/* Jetsam related */
-	short       psa_jetsam_flags; /* flags */
-	int         psa_priority;   /* relative importance */
-	int         psa_high_water_mark; /* resident page count limit */
-#endif
+	uint64_t	psa_reserved;
+
+	short       psa_jetsam_flags;		/* jetsam flags */
+	short		short_padding;		/* Padding for alignment issues */
+	int         psa_priority;		/* jetsam relative importance */
+	int         psa_memlimit_active;	/* jetsam memory limit (in MB) when process is active */
+	int         psa_memlimit_inactive;	/* jetsam memory limit (in MB) when process is inactive */
+
+	uint64_t        psa_qos_clamp;          /* QoS Clamp to set on the new process */
+	uint64_t        psa_darwin_role;           /* PRIO_DARWIN_ROLE to set on the new process */
+
+	/*
+	 * NOTE: Extensions array pointers must stay at the end so that
+	 * everything above this point stays the same size on different bitnesses
+	 * see <rdar://problem/12858307>
+	 */
+	 _posix_spawn_port_actions_t	psa_ports; /* special/exception ports */
+	_posix_spawn_mac_policy_extensions_t psa_mac_extensions; /* MAC policy-specific extensions. */
+	struct _posix_spawn_coalition_info *psa_coalition_info;  /* coalition info */
+	struct _posix_spawn_persona_info   *psa_persona_info;    /* spawn new process into given persona */
 } *_posix_spawnattr_t;
 
 /*
- * Jetsam flags
+ * Jetsam flags  eg: psa_jetsam_flags
  */
-#if CONFIG_MEMORYSTATUS || CONFIG_EMBEDDED || TARGET_OS_EMBEDDED
-#define	POSIX_SPAWN_JETSAM_USE_EFFECTIVE_PRIORITY	0x1
-#endif
+#define	POSIX_SPAWN_JETSAM_SET                      0x8000
+
+#define	POSIX_SPAWN_JETSAM_USE_EFFECTIVE_PRIORITY	0x01
+#define	POSIX_SPAWN_JETSAM_HIWATER_BACKGROUND		0x02  /* to be deprecated */
+#define	POSIX_SPAWN_JETSAM_MEMLIMIT_FATAL		0x04  /* to be deprecated */
 
 /*
- * DEPRECATED: maintained for transition purposes only
- * posix_spawn apptype settings.
+ * Additional flags available for use with
+ * the posix_spawnattr_setjetsam_ext() call
  */
-#if TARGET_OS_EMBEDDED || CONFIG_EMBEDDED
-/* for compat sake */
-#define POSIX_SPAWN_OSX_TALAPP_START    0x0400
-#define POSIX_SPAWN_IOS_RESV1_APP_START 0x0400
-#define POSIX_SPAWN_IOS_APPLE_DAEMON_START      0x0800          /* not a bug, same as widget just rename */
-#define POSIX_SPAWN_IOS_APP_START       0x1000
-#else /* TARGET_OS_EMBEDDED */
-#define POSIX_SPAWN_OSX_TALAPP_START    0x0400
-#define POSIX_SPAWN_OSX_WIDGET_START    0x0800
-#define POSIX_SPAWN_OSX_DBCLIENT_START  0x0800          /* not a bug, same as widget just rename */
-#define POSIX_SPAWN_OSX_RESVAPP_START   0x1000          /* reserved for app start usages */
-#endif /* TARGET_OS_EMBEDDED */
-
+#define	POSIX_SPAWN_JETSAM_MEMLIMIT_ACTIVE_FATAL	0x04  /* if set, limit is fatal when the process is active   */
+#define	POSIX_SPAWN_JETSAM_MEMLIMIT_INACTIVE_FATAL	0x08  /* if set, limit is fatal when the process is inactive */
 
 /*
- * posix_spawn apptype and process attribute settings.
+ * Deprecated posix_spawn psa_flags values
+ * 
+ * POSIX_SPAWN_OSX_TALAPP_START         0x0400
+ * POSIX_SPAWN_IOS_RESV1_APP_START      0x0400
+ * POSIX_SPAWN_IOS_APPLE_DAEMON_START   0x0800
+ * POSIX_SPAWN_IOS_APP_START            0x1000
+ * POSIX_SPAWN_OSX_WIDGET_START         0x0800
+ * POSIX_SPAWN_OSX_DBCLIENT_START       0x0800
+ * POSIX_SPAWN_OSX_RESVAPP_START        0x1000
  */
-#if TARGET_OS_EMBEDDED || CONFIG_EMBEDDED
-#define POSIX_SPAWN_APPTYPE_IOS_APPLEDAEMON    0x0001          /* it is an iOS apple daemon  */
-#else /* TARGET_OS_EMBEDDED */
-#define POSIX_SPAWN_APPTYPE_OSX_TAL	0x0001		/* it is a TAL app */
-#define POSIX_SPAWN_APPTYPE_OSX_WIDGET	0x0002		/* it is a widget */
-#define POSIX_SPAWN_APPTYPE_DELAYIDLESLEEP   0x10000000	/* Process is marked to delay idle sleep on disk IO */
-#endif /* TARGET_OS_EMBEDDED */
+
+/*
+ * Deprecated posix_spawn psa_apptype values
+ *
+ * POSIX_SPAWN_PROCESS_TYPE_APPLEDAEMON             0x00000001
+ * POSIX_SPAWN_PROCESS_TYPE_UIAPP                   0x00000002
+ * POSIX_SPAWN_PROCESS_TYPE_ADAPTIVE                0x00000004
+ * POSIX_SPAWN_PROCESS_TYPE_TAL                     0x00000001
+ * POSIX_SPAWN_PROCESS_TYPE_WIDGET                  0x00000002
+ * POSIX_SPAWN_PROCESS_TYPE_DELAYIDLESLEEP          0x10000000
+ *
+ * POSIX_SPAWN_PROCESS_FLAG_IMPORTANCE_DONOR        0x00000010
+ * POSIX_SPAWN_PROCESS_FLAG_ADAPTIVE                0x00000020
+ * POSIX_SPAWN_PROCESS_FLAG_START_BACKGROUND        0x00000040
+ * POSIX_SPAWN_PROCESS_FLAG_START_LIGHT_THROTTLE    0x00000080
+ */
+
+/*
+ * posix_spawn psa_apptype process type settings.
+ * when POSIX_SPAWN_PROC_TYPE is set, old psa_apptype bits are ignored
+ */
+
+#define POSIX_SPAWN_PROCESS_TYPE_NORMAL             0x00000000
+#define POSIX_SPAWN_PROCESS_TYPE_DEFAULT            POSIX_SPAWN_PROCESS_TYPE_NORMAL
+
+#define POSIX_SPAWN_PROC_TYPE_MASK                  0x00000F00
+
+#define POSIX_SPAWN_PROC_TYPE_APP_DEFAULT           0x00000100
+#define POSIX_SPAWN_PROC_TYPE_APP_TAL               0x00000200
+
+#define POSIX_SPAWN_PROC_TYPE_DAEMON_STANDARD       0x00000300
+#define POSIX_SPAWN_PROC_TYPE_DAEMON_INTERACTIVE    0x00000400
+#define POSIX_SPAWN_PROC_TYPE_DAEMON_BACKGROUND     0x00000500
+#define POSIX_SPAWN_PROC_TYPE_DAEMON_ADAPTIVE       0x00000600
+
+#define POSIX_SPAWN_PROC_CLAMP_NONE                 0x00000000
+#define POSIX_SPAWN_PROC_CLAMP_UTILITY              0x00000001
+#define POSIX_SPAWN_PROC_CLAMP_BACKGROUND           0x00000002
+#define POSIX_SPAWN_PROC_CLAMP_MAINTENANCE          0x00000003
+#define POSIX_SPAWN_PROC_CLAMP_LAST                 0x00000004
+
+/* Setting to indicate no change to darwin role */
+#define POSIX_SPAWN_DARWIN_ROLE_NONE                0x00000000
+/* Other possible values are specified by PRIO_DARWIN_ROLE in sys/resource.h */
 
 /*
  * Allowable posix_spawn() file actions
@@ -238,6 +359,15 @@ struct _posix_spawn_args_desc {
 	__darwin_size_t	port_actions_size; 	/* size of port actions block */
 	_posix_spawn_port_actions_t
 				port_actions; 	/* pointer to port block */
+	__darwin_size_t mac_extensions_size;
+	_posix_spawn_mac_policy_extensions_t
+				mac_extensions;	/* pointer to policy-specific
+						 * attributes */
+	__darwin_size_t coal_info_size;
+	struct _posix_spawn_coalition_info *coal_info;	/* pointer to coalition info */
+
+	__darwin_size_t persona_info_size;
+	struct _posix_spawn_persona_info   *persona_info;
 };
 
 #ifdef KERNEL
@@ -255,6 +385,12 @@ struct user32__posix_spawn_args_desc {
 	uint32_t		file_actions;	/* pointer to block */
 	uint32_t	port_actions_size;	/* size of port actions block */
 	uint32_t		port_actions;	/* pointer to block */
+	uint32_t	mac_extensions_size;
+	uint32_t	mac_extensions;
+	uint32_t	coal_info_size;
+	uint32_t	coal_info;
+	uint32_t	persona_info_size;
+	uint32_t	persona_info;
 };
 
 struct user__posix_spawn_args_desc {
@@ -264,6 +400,12 @@ struct user__posix_spawn_args_desc {
 	user_addr_t		file_actions;	/* pointer to block */
 	user_size_t	port_actions_size;	/* size of port actions block */
 	user_addr_t		port_actions;	/* pointer to block */
+	user_size_t	mac_extensions_size;	/* size of MAC-specific attrs. */
+	user_addr_t	mac_extensions;		/* pointer to block */
+	user_size_t	coal_info_size;
+	user_addr_t	coal_info;
+	user_size_t	persona_info_size;
+	user_addr_t	persona_info;
 };
 
 

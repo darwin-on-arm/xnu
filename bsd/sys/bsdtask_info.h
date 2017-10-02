@@ -1,6 +1,6 @@
 
 /*
- * Copyright (c) 2005 Apple Computer, Inc. All rights reserved.
+ * Copyright (c) 2005, 2015 Apple Computer, Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -29,6 +29,8 @@
 
 #ifndef _SYS_BSDTASK_INFO_H
 #define _SYS_BSDTASK_INFO_H
+
+#include <vm/vm_map.h>
 
 struct proc_taskinfo_internal {          
         uint64_t                pti_virtual_size;   /* virtual memory size (bytes) */
@@ -102,16 +104,24 @@ void  vm_map_region_top_walk(vm_map_entry_t entry, vm_region_top_info_t top);
 void vm_map_region_walk(vm_map_t map, vm_map_offset_t a, vm_map_entry_t entry, vm_object_offset_t offset, vm_object_size_t range, vm_region_extended_info_t extended);
 kern_return_t vnode_pager_get_object_vnode(memory_object_t mem_obj, uintptr_t * vnodeaddr, uint32_t * vid);
 extern uint32_t vnode_vid(void *vp);
+#if CONFIG_IOSCHED
+kern_return_t vnode_pager_get_object_devvp(memory_object_t mem_obj, uintptr_t *devvp);
+extern struct vnode *vnode_mountdevvp(struct vnode *);
+#endif
 
 #endif /* MACH_KERNEL_PRIVATE */
 
 extern int fill_procregioninfo(task_t t, uint64_t arg, struct proc_regioninfo_internal *pinfo, uintptr_t *vp, uint32_t *vid);
+extern int fill_procregioninfo_onlymappedvnodes(task_t t, uint64_t arg, struct proc_regioninfo_internal *pinfo, uintptr_t *vp, uint32_t *vid);
 void fill_taskprocinfo(task_t task, struct proc_taskinfo_internal * ptinfo);
 int fill_taskthreadinfo(task_t task, uint64_t thaddr, int thuniqueid, struct proc_threadinfo_internal * ptinfo, void *, int *);
 int fill_taskthreadlist(task_t task, void * buffer, int thcount);
 int get_numthreads(task_t);
+boolean_t bsd_hasthreadname(void *uth);
 void bsd_getthreadname(void *uth, char* buffer);
+void bsd_setthreadname(void *uth, const char* buffer);
 void bsd_threadcdir(void * uth, void *vptr, int *vidp);
+extern void bsd_copythreadname(void *dst_uth, void *src_uth);
 
 #endif /*_SYS_BSDTASK_INFO_H */
 

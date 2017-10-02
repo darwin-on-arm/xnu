@@ -70,7 +70,7 @@ mk_timer_create_trap(
 		return (MACH_PORT_NULL);
 
 	result = mach_port_allocate_qos(myspace, MACH_PORT_RIGHT_RECEIVE,
-														&mk_timer_qos, &name);
+	                                &mk_timer_qos, &name);
 	if (result == KERN_SUCCESS)
 		result = ipc_port_translate_receive(myspace, name, &port);
 
@@ -167,10 +167,12 @@ mk_timer_expire(
 		timer->is_armed = FALSE;
 		simple_unlock(&timer->lock);
 
-		msg.header.msgh_bits = MACH_MSGH_BITS(MACH_MSG_TYPE_COPY_SEND, 0);
+		msg.header.msgh_bits =
+		    MACH_MSGH_BITS_SET(MACH_MSG_TYPE_COPY_SEND, 0, 0, 0);
 		msg.header.msgh_remote_port = port;
 		msg.header.msgh_local_port = MACH_PORT_NULL;
-		msg.header.msgh_reserved = msg.header.msgh_id = 0;
+		msg.header.msgh_voucher_port = MACH_PORT_NULL;
+		msg.header.msgh_id = 0;
 
 		msg.unused[0] = msg.unused[1] = msg.unused[2] = 0;
 
@@ -240,16 +242,13 @@ mk_timer_destroy_trap(
  *                !0                      Not success           
  *
  */
-kern_return_t
-mk_timer_arm_trap(
-	struct mk_timer_arm_trap_args *args)
-{
-	mach_port_name_t	name = args->name;
-	uint64_t			expire_time = args->expire_time;
+
+static kern_return_t
+mk_timer_arm_trap_internal(mach_port_name_t name, uint64_t expire_time, uint64_t mk_leeway, uint64_t mk_timer_flags) {
 	mk_timer_t			timer;
 	ipc_space_t			myspace = current_space();
 	ipc_port_t			port;
-	kern_return_t		result;
+	kern_return_t			result;
 
 	result = ipc_port_translate_receive(myspace, name, &port);
 	if (result != KERN_SUCCESS)
@@ -258,6 +257,7 @@ mk_timer_arm_trap(
 	if (ip_kotype(port) == IKOT_TIMER) {
 		timer = (mk_timer_t)port->ip_kobject;
 		assert(timer != NULL);
+
 		simple_lock(&timer->lock);
 		assert(timer->port == port);
 		ip_unlock(port);
@@ -265,18 +265,45 @@ mk_timer_arm_trap(
 		if (!timer->is_dead) {
 			timer->is_armed = TRUE;
 
-			if (!thread_call_enter_delayed(&timer->call_entry, expire_time))
-				timer->active++;
+			if (expire_time > mach_absolute_time()) {
+				uint32_t tcflags = THREAD_CALL_DELAY_USER_NORMAL;
+
+				if (mk_timer_flags & MK_TIMER_CRITICAL) {
+					tcflags = THREAD_CALL_DELAY_USER_CRITICAL;
+				}
+
+				if (mk_leeway != 0) {
+					tcflags |= THREAD_CALL_DELAY_LEEWAY;
+				}
+
+				if (!thread_call_enter_delayed_with_leeway(
+					&timer->call_entry, NULL,
+					expire_time, mk_leeway, tcflags)) {
+
+					timer->active++;
+				}
+			} else {
+				if (!thread_call_enter1(&timer->call_entry, NULL))
+					timer->active++;
+			}
 		}
 
 		simple_unlock(&timer->lock);
-	}
-	else {
+	} else {
 		ip_unlock(port);
 		result = KERN_INVALID_ARGUMENT;
 	}
-
 	return (result);
+}
+
+kern_return_t
+mk_timer_arm_trap(struct mk_timer_arm_trap_args *args) {
+	return mk_timer_arm_trap_internal(args->name, args->expire_time, 0, MK_TIMER_NORMAL);
+}
+
+kern_return_t
+mk_timer_arm_leeway_trap(struct mk_timer_arm_leeway_trap_args *args) {
+	return mk_timer_arm_trap_internal(args->name, args->expire_time, args->mk_leeway, args->mk_timer_flags);
 }
 
 /*

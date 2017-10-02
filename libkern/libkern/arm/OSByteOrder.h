@@ -7,14 +7,7 @@
 
 #include <stdint.h>
 #include <arm/arch.h> /* for _ARM_ARCH_6 */
-
-#if !defined(OS_INLINE)
-# if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 199901L
-#        define OS_INLINE static inline
-# else
-#        define OS_INLINE static __inline__
-# endif
-#endif
+#include <sys/_types/_os_inline.h>
 
 /* Generic byte swapping functions. */
 
@@ -24,15 +17,8 @@ _OSSwapInt16(
     uint16_t        data
 )
 {
-#if defined(__llvm__)
-  data = (data << 8 | data >> 8);
-#elif defined(_ARM_ARCH_6)
-  __asm__ ("rev16 %0, %1\n" : "=l" (data) : "l" (data));
-#else
-  data = (data << 8 | data >> 8);
-#endif
-
-  return data;
+  /* Reduces to 'rev16' with clang */
+  return (uint16_t)(data << 8 | data >> 8);
 }
 
 OS_INLINE
@@ -43,13 +29,11 @@ _OSSwapInt32(
 {
 #if defined(__llvm__)
   data = __builtin_bswap32(data);
-#elif defined(_ARM_ARCH_6)
-  __asm__ ("rev %0, %1\n" : "=l" (data) : "l" (data));
 #else
   /* This actually generates the best code */
   data = (((data ^ (data >> 16 | (data << 16))) & 0xFF00FFFF) >> 8) ^ (data >> 8 | data << 24);
 #endif
-
+  
   return data;
 }
 
@@ -161,4 +145,3 @@ OSWriteSwapInt64(
 }
 
 #endif /* ! _OS_OSBYTEORDERARM_H */
-

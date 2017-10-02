@@ -25,28 +25,12 @@
 
 /* #pragma ident	"@(#)profile.c	1.7	07/01/10 SMI" */
 
-#if !defined(__APPLE__)
-#include <sys/errno.h>
-#include <sys/stat.h>
-#include <sys/modctl.h>
-#include <sys/conf.h>
-#include <sys/systm.h>
-#include <sys/ddi.h>
-#include <sys/sunddi.h>
-#include <sys/cpuvar.h>
-#include <sys/kmem.h>
-#include <sys/strsubr.h>
-#include <sys/dtrace.h>
-#include <sys/cyclic.h>
-#include <sys/atomic.h>
-#else
 #ifdef KERNEL
 #ifndef _KERNEL
 #define _KERNEL /* Solaris vs. Darwin */
 #endif
 #endif
 
-#define MACH__POSIX_C_SOURCE_PRIVATE 1 /* pulls in suitable savearea from mach/ppc/thread_status.h */
 #include <kern/cpu_data.h>
 #include <kern/thread.h>
 #include <kern/assert.h>
@@ -68,8 +52,10 @@
 
 #include <machine/pal_routines.h>
 
-#if defined(__i386__) || defined(__x86_64__)
+#if defined(__x86_64__)
 extern x86_saved_state_t *find_kern_regs(thread_t);
+#elif defined (__arm__) || defined(__arm64__)
+extern struct arm_saved_state *find_kern_regs(thread_t);
 #else
 #error Unknown architecture
 #endif
@@ -78,7 +64,6 @@ extern x86_saved_state_t *find_kern_regs(thread_t);
 #define ASSERT(x) do {} while(0)
 
 extern void profile_init(void);
-#endif /* __APPLE__ */
 
 static dev_info_t *profile_devi;
 static dtrace_provider_id_t profile_id;
@@ -112,29 +97,14 @@ static dtrace_provider_id_t profile_id;
  * and the static definition doesn't seem to be overly brittle.  Still, we
  * allow for a manual override in case we get it completely wrong.
  */
-#if !defined(__APPLE__)
 
-#ifdef __x86
-#define	PROF_ARTIFICIAL_FRAMES	10
-#else
-#ifdef __sparc
-#if DEBUG
-#define	PROF_ARTIFICIAL_FRAMES	4
-#else
-#define	PROF_ARTIFICIAL_FRAMES	3
-#endif
-#endif
-#endif
-
-#else /* is Mac OS X */
-
-#if defined(__i386__) || defined(__x86_64__)
+#if defined(__x86_64__)
 #define PROF_ARTIFICIAL_FRAMES  9
+#elif defined(__arm__) || defined(__arm64__)
+#define PROF_ARTIFICIAL_FRAMES 8
 #else
 #error Unknown architecture
 #endif
-
-#endif /* __APPLE__ */
 
 #define	PROF_NAMELEN		15
 
@@ -194,22 +164,13 @@ profile_fire(void *arg)
 	late = dtrace_gethrtime() - pcpu->profc_expected;
 	pcpu->profc_expected += pcpu->profc_interval;
 
-#if !defined(__APPLE__)
-	dtrace_probe(prof->prof_id, CPU->cpu_profile_pc,
-	    CPU->cpu_profile_upc, late, 0, 0);
-#else
-#if defined(__i386__) || defined(__x86_64__)
+#if defined(__x86_64__)
 	x86_saved_state_t *kern_regs = find_kern_regs(current_thread());
 
 	if (NULL != kern_regs) {
 		/* Kernel was interrupted. */
-#if defined(__i386__)
-		dtrace_probe(prof->prof_id, saved_state32(kern_regs)->eip,  0x0, 0, 0, 0);
-#elif defined(__x86_64__)
-		dtrace_probe(prof->prof_id, saved_state64(kern_regs)->isf.rip,  0x0, 0, 0, 0);
-#else
-#error Unknown arch
-#endif
+		dtrace_probe(prof->prof_id, saved_state64(kern_regs)->isf.rip,  0x0, late, 0, 0);
+
 	} else {
 		pal_register_cache_state(current_thread(), VALID);
 		/* Possibly a user interrupt */
@@ -218,21 +179,64 @@ profile_fire(void *arg)
 		if (NULL == tagged_regs) {
 			/* Too bad, so sad, no useful interrupt state. */
 			dtrace_probe(prof->prof_id, 0xcafebabe,
-	    		0x0, 0, 0, 0); /* XXX_BOGUS also see profile_usermode() below. */
+	    		0x0, late, 0, 0); /* XXX_BOGUS also see profile_usermode() below. */
 		} else if (is_saved_state64(tagged_regs)) {
 			x86_saved_state64_t *regs = saved_state64(tagged_regs);
 
-			dtrace_probe(prof->prof_id, 0x0, regs->isf.rip, 0, 0, 0);
+			dtrace_probe(prof->prof_id, 0x0, regs->isf.rip, late, 0, 0);
 		} else {
 			x86_saved_state32_t *regs = saved_state32(tagged_regs);
 
-			dtrace_probe(prof->prof_id, 0x0, regs->eip, 0, 0, 0);
+			dtrace_probe(prof->prof_id, 0x0, regs->eip, late, 0, 0);
+		}
+	}
+#elif defined(__arm__)
+	{
+		arm_saved_state_t *arm_kern_regs = (arm_saved_state_t *) find_kern_regs(current_thread());
+
+		// We should only come in here from interrupt context, so we should always have valid kernel regs
+		assert(NULL != arm_kern_regs);
+
+		if (arm_kern_regs->cpsr & 0xF) {
+			/* Kernel was interrupted. */
+			dtrace_probe(prof->prof_id, arm_kern_regs->pc,  0x0, late, 0, 0);
+		} else {
+			/* Possibly a user interrupt */
+			arm_saved_state_t   *arm_user_regs = (arm_saved_state_t *)find_user_regs(current_thread());
+
+			if (NULL == arm_user_regs) {
+				/* Too bad, so sad, no useful interrupt state. */
+				dtrace_probe(prof->prof_id, 0xcafebabe, 0x0, late, 0, 0); /* XXX_BOGUS also see profile_usermode() below. */
+			} else {
+				dtrace_probe(prof->prof_id, 0x0, arm_user_regs->pc, late, 0, 0);
+			}
+		}
+	}
+#elif defined(__arm64__)
+	{
+		arm_saved_state_t *arm_kern_regs = (arm_saved_state_t *) find_kern_regs(current_thread());
+
+		// We should only come in here from interrupt context, so we should always have valid kernel regs
+		assert(NULL != arm_kern_regs);
+
+		if (saved_state64(arm_kern_regs)->cpsr & 0xF) {
+			/* Kernel was interrupted. */
+			dtrace_probe(prof->prof_id, saved_state64(arm_kern_regs)->pc,  0x0, late, 0, 0);
+		} else {
+			/* Possibly a user interrupt */
+			arm_saved_state_t   *arm_user_regs = (arm_saved_state_t *)find_user_regs(current_thread());
+
+			if (NULL == arm_user_regs) {
+				/* Too bad, so sad, no useful interrupt state. */
+				dtrace_probe(prof->prof_id, 0xcafebabe, 0x0, late, 0, 0); /* XXX_BOGUS also see profile_usermode() below. */
+			} else {
+				dtrace_probe(prof->prof_id, 0x0, get_saved_state_pc(arm_user_regs), late, 0, 0);
+			}
 		}
 	}
 #else
 #error Unknown architecture
 #endif
-#endif /* __APPLE__ */
 }
 
 static void
@@ -240,22 +244,12 @@ profile_tick(void *arg)
 {
 	profile_probe_t *prof = arg;
 
-#if !defined(__APPLE__)
-	dtrace_probe(prof->prof_id, CPU->cpu_profile_pc,
-	    CPU->cpu_profile_upc, 0, 0, 0);
-#else
-#if defined(__i386__) || defined(__x86_64__)
+#if defined(__x86_64__)
 	x86_saved_state_t *kern_regs = find_kern_regs(current_thread());
 
 	if (NULL != kern_regs) {
 		/* Kernel was interrupted. */
-#if defined(__i386__)
-		dtrace_probe(prof->prof_id, saved_state32(kern_regs)->eip,  0x0, 0, 0, 0);
-#elif defined(__x86_64__)
 		dtrace_probe(prof->prof_id, saved_state64(kern_regs)->isf.rip,  0x0, 0, 0, 0);
-#else
-#error Unknown arch
-#endif
 	} else {
 		pal_register_cache_state(current_thread(), VALID);
 		/* Possibly a user interrupt */
@@ -275,10 +269,48 @@ profile_tick(void *arg)
 			dtrace_probe(prof->prof_id, 0x0, regs->eip, 0, 0, 0);
 		}
 	}
+#elif defined(__arm__)
+	{
+		arm_saved_state_t *arm_kern_regs = (arm_saved_state_t *) find_kern_regs(current_thread());
+
+		if (NULL != arm_kern_regs) {
+			/* Kernel was interrupted. */
+			dtrace_probe(prof->prof_id, arm_kern_regs->pc,  0x0, 0, 0, 0);
+		} else {
+			/* Possibly a user interrupt */
+			arm_saved_state_t   *arm_user_regs = (arm_saved_state_t *)find_user_regs(current_thread());
+
+			if (NULL == arm_user_regs) {
+				/* Too bad, so sad, no useful interrupt state. */
+				dtrace_probe(prof->prof_id, 0xcafebabe, 0x0, 0, 0, 0); /* XXX_BOGUS also see profile_usermode() below. */
+			} else {
+				dtrace_probe(prof->prof_id, 0x0, arm_user_regs->pc, 0, 0, 0);
+			}
+		}
+	}
+#elif defined(__arm64__)
+	{
+		arm_saved_state_t *arm_kern_regs = (arm_saved_state_t *) find_kern_regs(current_thread());
+
+		if (NULL != arm_kern_regs) {
+			/* Kernel was interrupted. */
+			dtrace_probe(prof->prof_id, saved_state64(arm_kern_regs)->pc,  0x0, 0, 0, 0);
+		} else {
+			/* Possibly a user interrupt */
+			arm_saved_state_t   *arm_user_regs = (arm_saved_state_t *)find_user_regs(current_thread());
+
+			if (NULL == arm_user_regs) {
+				/* Too bad, so sad, no useful interrupt state. */
+				dtrace_probe(prof->prof_id, 0xcafebabe, 0x0, 0, 0, 0); /* XXX_BOGUS also see profile_usermode() below. */
+			} else {
+				dtrace_probe(prof->prof_id, 0x0, get_saved_state_pc(arm_user_regs), 0, 0, 0);
+			}
+		}
+	}
+
 #else
 #error Unknown architecture
 #endif
-#endif /* __APPLE__ */
 }
 
 static void
@@ -298,14 +330,11 @@ profile_create(hrtime_t interval, const char *name, int kind)
 		return;
 	}
 
-#if !defined(__APPLE__)
-	prof = kmem_zalloc(sizeof (profile_probe_t), KM_SLEEP);
-#else
 	if (PROF_TICK == kind)
 		prof = kmem_zalloc(sizeof (profile_probe_t), KM_SLEEP);
 	else
 		prof = kmem_zalloc(sizeof (profile_probe_t) + NCPU*sizeof(profile_probe_percpu_t), KM_SLEEP);
-#endif /* __APPLE__ */
+
 	(void) strlcpy(prof->prof_name, name, sizeof(prof->prof_name));
 	prof->prof_interval = interval;
 	prof->prof_cyclic = CYCLIC_NONE;
@@ -324,38 +353,6 @@ profile_provide(void *arg, const dtrace_probedesc_t *desc)
 	hrtime_t val = 0, mult = 1, len;
 	const char *name, *suffix = NULL;
 
-#if !defined(__APPLE__)
-	const struct {
-		char *prefix;
-		int kind;
-	} types[] = {
-		{ PROF_PREFIX_PROFILE, PROF_PROFILE },
-		{ PROF_PREFIX_TICK, PROF_TICK },
-		{ NULL, NULL }
-	};
-
-	const struct {
-		char *name;
-		hrtime_t mult;
-	} suffixes[] = {
-		{ "ns", 	NANOSEC / NANOSEC },
-		{ "nsec",	NANOSEC / NANOSEC },
-		{ "us",		NANOSEC / MICROSEC },
-		{ "usec",	NANOSEC / MICROSEC },
-		{ "ms",		NANOSEC / MILLISEC },
-		{ "msec",	NANOSEC / MILLISEC },
-		{ "s",		NANOSEC / SEC },
-		{ "sec",	NANOSEC / SEC },
-		{ "m",		NANOSEC * (hrtime_t)60 },
-		{ "min",	NANOSEC * (hrtime_t)60 },
-		{ "h",		NANOSEC * (hrtime_t)(60 * 60) },
-		{ "hour",	NANOSEC * (hrtime_t)(60 * 60) },
-		{ "d",		NANOSEC * (hrtime_t)(24 * 60 * 60) },
-		{ "day",	NANOSEC * (hrtime_t)(24 * 60 * 60) },
-		{ "hz",		0 },
-		{ NULL }
-	};
-#else
 	const struct {
 		const char *prefix;
 		int kind;
@@ -386,8 +383,6 @@ profile_provide(void *arg, const dtrace_probedesc_t *desc)
 		{ "hz",		0 },
 		{ NULL, 0 }
 	};		
-#endif /* __APPLE__ */
-
 
 	if (desc == NULL) {
 		char n[PROF_NAMELEN];
@@ -395,11 +390,7 @@ profile_provide(void *arg, const dtrace_probedesc_t *desc)
 		/*
 		 * If no description was provided, provide all of our probes.
 		 */
-#if !defined(__APPLE__)
-		for (i = 0; i < sizeof (profile_rates) / sizeof (int); i++) {
-#else
 		for (i = 0; i < (int)(sizeof (profile_rates) / sizeof (int)); i++) {
-#endif /* __APPLE__ */
 			if ((rate = profile_rates[i]) == 0)
 				continue;
 
@@ -408,11 +399,7 @@ profile_provide(void *arg, const dtrace_probedesc_t *desc)
 			profile_create(NANOSEC / rate, n, PROF_PROFILE);
 		}
 
-#if !defined(__APPLE__)
-		for (i = 0; i < sizeof (profile_ticks) / sizeof (int); i++) {
-#else
 		for (i = 0; i < (int)(sizeof (profile_ticks) / sizeof (int)); i++) {
-#endif /* __APPLE__ */
 			if ((rate = profile_ticks[i]) == 0)
 				continue;
 
@@ -469,17 +456,11 @@ profile_provide(void *arg, const dtrace_probedesc_t *desc)
 	 * Look-up the suffix to determine the multiplier.
 	 */
 	for (i = 0, mult = 0; suffixes[i].name != NULL; i++) {
-#if !defined(__APPLE__)
-		if (strcasecmp(suffixes[i].name, suffix) == 0) {
-			mult = suffixes[i].mult;
-			break;
-		}
-#else
+		/* APPLE NOTE: Darwin employs size bounded string operations */
 		if (strncasecmp(suffixes[i].name, suffix, strlen(suffixes[i].name) + 1) == 0) {
 			mult = suffixes[i].mult;
 			break;
 		}
-#endif /* __APPLE__ */
 	}
 
 	if (suffixes[i].name == NULL && *suffix != '\0')
@@ -505,14 +486,11 @@ profile_destroy(void *arg, dtrace_id_t id, void *parg)
 	profile_probe_t *prof = parg;
 
 	ASSERT(prof->prof_cyclic == CYCLIC_NONE);
-#if !defined(__APPLE__)
-	kmem_free(prof, sizeof (profile_probe_t));
-#else
+
 	if (prof->prof_kind == PROF_TICK)
 		kmem_free(prof, sizeof (profile_probe_t));
 	else
 		kmem_free(prof, sizeof (profile_probe_t) + NCPU*sizeof(profile_probe_percpu_t));
-#endif /* __APPLE__ */
 
 	ASSERT(profile_total >= 1);
 	atomic_add_32(&profile_total, -1);
@@ -526,11 +504,7 @@ profile_online(void *arg, dtrace_cpu_t *cpu, cyc_handler_t *hdlr, cyc_time_t *wh
 	profile_probe_t *prof = arg;
 	profile_probe_percpu_t *pcpu;
 
-#if !defined(__APPLE__)
-	pcpu = kmem_zalloc(sizeof (profile_probe_percpu_t), KM_SLEEP);
-#else
 	pcpu = ((profile_probe_percpu_t *)(&(prof[1]))) + cpu_number();
-#endif /* __APPLE__ */
 	pcpu->profc_probe = prof;
 
 	hdlr->cyh_func = profile_fire;
@@ -538,11 +512,7 @@ profile_online(void *arg, dtrace_cpu_t *cpu, cyc_handler_t *hdlr, cyc_time_t *wh
 	hdlr->cyh_level = CY_HIGH_LEVEL;
 
 	when->cyt_interval = prof->prof_interval;
-#if !defined(__APPLE__)
 	when->cyt_when = dtrace_gethrtime() + when->cyt_interval;
-#else
-	when->cyt_when = 0;
-#endif /* __APPLE__ */
 
 	pcpu->profc_expected = when->cyt_when;
 	pcpu->profc_interval = when->cyt_interval;
@@ -555,11 +525,7 @@ profile_offline(void *arg, dtrace_cpu_t *cpu, void *oarg)
 	profile_probe_percpu_t *pcpu = oarg;
 
 	ASSERT(pcpu->profc_probe == arg);
-#if !defined(__APPLE__)
-	kmem_free(pcpu, sizeof (profile_probe_percpu_t));
-#else
 #pragma unused(pcpu,arg,cpu) /* __APPLE__ */
-#endif /* __APPLE__ */
 }
 
 /*ARGSUSED*/
@@ -593,19 +559,12 @@ profile_enable(void *arg, dtrace_id_t id, void *parg)
 		omni.cyo_arg = prof;
 	}
 
-#if !defined(__APPLE__)
-	if (prof->prof_kind == PROF_TICK) {
-		prof->prof_cyclic = cyclic_add(&hdlr, &when);
-	} else {
-		prof->prof_cyclic = cyclic_add_omni(&omni);
-	}
-#else
 	if (prof->prof_kind == PROF_TICK) {
 		prof->prof_cyclic = cyclic_timer_add(&hdlr, &when);
 	} else {
 		prof->prof_cyclic = (cyclic_id_t)cyclic_add_omni(&omni); /* cast puns cyclic_id_list_t with cyclic_id_t */
 	}
-#endif /* __APPLE__ */
+
 	return(0);
 }
 
@@ -618,34 +577,64 @@ profile_disable(void *arg, dtrace_id_t id, void *parg)
 	ASSERT(prof->prof_cyclic != CYCLIC_NONE);
 	ASSERT(MUTEX_HELD(&cpu_lock));
 
-#if !defined(__APPLE__)
-	cyclic_remove(prof->prof_cyclic);
-#else
 #pragma unused(arg,id)
 	if (prof->prof_kind == PROF_TICK) {
 		cyclic_timer_remove(prof->prof_cyclic);
 	} else {
 		cyclic_remove_omni((cyclic_id_list_t)prof->prof_cyclic); /* cast puns cyclic_id_list_t with cyclic_id_t */
 	}
-#endif /* __APPLE__ */
 	prof->prof_cyclic = CYCLIC_NONE;
 }
 
-#if !defined(__APPLE__)
-/*ARGSUSED*/
-static int
-profile_usermode(void *arg, dtrace_id_t id, void *parg)
+static uint64_t
+profile_getarg(void *arg, dtrace_id_t id, void *parg, int argno, int aframes)
 {
-	return (CPU->cpu_profile_pc == 0);
+#pragma unused(arg, id, parg, argno, aframes)
+	/*
+	 * All the required arguments for the profile probe are passed directly
+	 * to dtrace_probe, and we do not go through dtrace_getarg which doesn't
+	 * know how to hop to the kernel stack from the interrupt stack like
+	 * dtrace_getpcstack
+	 */
+	return 0;
 }
-#else
+
+static void
+profile_getargdesc(void *arg, dtrace_id_t id, void *parg, dtrace_argdesc_t *desc)
+{
+#pragma unused(arg, id)
+	profile_probe_t *prof = parg;
+	const char *argdesc = NULL;
+	switch (desc->dtargd_ndx) {
+		case 0:
+			argdesc = "void*";
+			break;
+		case 1:
+			argdesc = "user_addr_t";
+			break;
+		case 2:
+			if (prof->prof_kind == PROF_PROFILE) {
+				argdesc = "hrtime_t";
+			}
+			break;
+	}
+	if (argdesc) {
+		strlcpy(desc->dtargd_native, argdesc, DTRACE_ARGTYPELEN);
+	}
+	else {
+		desc->dtargd_ndx = DTRACE_ARGNONE;
+	}
+}
+
+/*
+ * APPLE NOTE:  profile_usermode call not supported.
+ */
 static int
 profile_usermode(void *arg, dtrace_id_t id, void *parg)
 {
 #pragma unused(arg,id,parg)
 	return 1; /* XXX_BOGUS */
 }
-#endif /* __APPLE__ */
 
 static dtrace_pattr_t profile_attr = {
 { DTRACE_STABILITY_EVOLVING, DTRACE_STABILITY_EVOLVING, DTRACE_CLASS_COMMON },
@@ -662,8 +651,8 @@ static dtrace_pops_t profile_pops = {
 	profile_disable,
 	NULL,
 	NULL,
-	NULL,
-	NULL,
+	profile_getargdesc,
+	profile_getarg,
 	profile_usermode,
 	profile_destroy
 };
@@ -680,19 +669,6 @@ profile_attach(dev_info_t *devi, ddi_attach_cmd_t cmd)
 		return (DDI_FAILURE);
 	}
 
-#if !defined(__APPLE__)
-	if (ddi_create_minor_node(devi, "profile", S_IFCHR, 0,
-	    DDI_PSEUDO, NULL) == DDI_FAILURE ||
-	    dtrace_register("profile", &profile_attr,
-	    DTRACE_PRIV_KERNEL | DTRACE_PRIV_USER, NULL,
-	    &profile_pops, NULL, &profile_id) != 0) {
-		ddi_remove_minor_node(devi, NULL);
-		return (DDI_FAILURE);
-	}
-	
-	profile_max = ddi_getprop(DDI_DEV_T_ANY, devi, DDI_PROP_DONTPASS,
-	    "profile-max-probes", PROFILE_MAX_DEFAULT);
-#else
 	if (ddi_create_minor_node(devi, "profile", S_IFCHR, 0,
 	    DDI_PSEUDO, 0) == DDI_FAILURE ||
 	    dtrace_register("profile", &profile_attr,
@@ -703,13 +679,15 @@ profile_attach(dev_info_t *devi, ddi_attach_cmd_t cmd)
 	}
 
 	profile_max = PROFILE_MAX_DEFAULT;
-#endif /* __APPLE__ */
 
 	ddi_report_dev(devi);
 	profile_devi = devi;
 	return (DDI_SUCCESS);
 }
 
+/*
+ * APPLE NOTE:  profile_detach not implemented
+ */
 #if !defined(__APPLE__)
 static int
 profile_detach(dev_info_t *devi, ddi_detach_cmd_t cmd)
@@ -729,100 +707,8 @@ profile_detach(dev_info_t *devi, ddi_detach_cmd_t cmd)
 	ddi_remove_minor_node(devi, NULL);
 	return (DDI_SUCCESS);
 }
+#endif /* __APPLE__ */
 
-/*ARGSUSED*/
-static int
-profile_info(dev_info_t *dip, ddi_info_cmd_t infocmd, void *arg, void **result)
-{
-	int error;
-
-	switch (infocmd) {
-	case DDI_INFO_DEVT2DEVINFO:
-		*result = (void *)profile_devi;
-		error = DDI_SUCCESS;
-		break;
-	case DDI_INFO_DEVT2INSTANCE:
-		*result = (void *)0;
-		error = DDI_SUCCESS;
-		break;
-	default:
-		error = DDI_FAILURE;
-	}
-	return (error);
-}
-
-/*ARGSUSED*/
-static int
-profile_open(dev_t *devp, int flag, int otyp, cred_t *cred_p)
-{
-	return (0);
-}
-
-static struct cb_ops profile_cb_ops = {
-	profile_open,		/* open */
-	nodev,			/* close */
-	nulldev,		/* strategy */
-	nulldev,		/* print */
-	nodev,			/* dump */
-	nodev,			/* read */
-	nodev,			/* write */
-	nodev,			/* ioctl */
-	nodev,			/* devmap */
-	nodev,			/* mmap */
-	nodev,			/* segmap */
-	nochpoll,		/* poll */
-	ddi_prop_op,		/* cb_prop_op */
-	0,			/* streamtab  */
-	D_NEW | D_MP		/* Driver compatibility flag */
-};
-
-static struct dev_ops profile_ops = {
-	DEVO_REV,		/* devo_rev, */
-	0,			/* refcnt  */
-	profile_info,		/* get_dev_info */
-	nulldev,		/* identify */
-	nulldev,		/* probe */
-	profile_attach,		/* attach */
-	profile_detach,		/* detach */
-	nodev,			/* reset */
-	&profile_cb_ops,	/* driver operations */
-	NULL,			/* bus operations */
-	nodev			/* dev power */
-};
-
-/*
- * Module linkage information for the kernel.
- */
-static struct modldrv modldrv = {
-	&mod_driverops,		/* module type (this is a pseudo driver) */
-	"Profile Interrupt Tracing",	/* name of module */
-	&profile_ops,		/* driver ops */
-};
-
-static struct modlinkage modlinkage = {
-	MODREV_1,
-	(void *)&modldrv,
-	NULL
-};
-
-int
-_init(void)
-{
-	return (mod_install(&modlinkage));
-}
-
-int
-_info(struct modinfo *modinfop)
-{
-	return (mod_info(&modlinkage, modinfop));
-}
-
-int
-_fini(void)
-{
-	return (mod_remove(&modlinkage));
-}
-#else
 d_open_t _profile_open;
 
 int _profile_open(dev_t dev, int flags, int devtype, struct proc *p)
@@ -876,4 +762,3 @@ void profile_init( void )
 		panic("profile_init: called twice!\n");
 }
 #undef PROFILE_MAJOR
-#endif /* __APPLE__ */

@@ -44,8 +44,9 @@ void	host_notify_port_destroy(
 			ipc_port_t			port);
 
 void	host_notify_calendar_change(void);
+void	host_notify_calendar_set(void);
 
-void	host_notify_init(void) __attribute__((section("__TEXT, initcode")));
+void	host_notify_init(void);
 
 #endif /* MACH_KERNEL_PRIVATE */
 

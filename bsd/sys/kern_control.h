@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2004 Apple Computer, Inc. All rights reserved.
+ * Copyright (c) 2000-2004, 2012-2016 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -36,6 +36,9 @@
 
 
 #include <sys/appleapiopts.h>
+#include <sys/_types/_u_char.h>
+#include <sys/_types/_u_int16_t.h>
+#include <sys/_types/_u_int32_t.h>
 
 /*
  * Define Controller event subclass, and associated events.
@@ -135,13 +138,65 @@ struct ctl_info {
 	@field sc_reserved Reserved, must be set to zero.
 */
 struct sockaddr_ctl {
-    u_char		sc_len;		/* depends on size of bundle ID string */
-    u_char		sc_family;	/* AF_SYSTEM */
+    u_char	sc_len;		/* depends on size of bundle ID string */
+    u_char	sc_family;	/* AF_SYSTEM */
     u_int16_t 	ss_sysaddr;	/* AF_SYS_KERNCONTROL */
     u_int32_t	sc_id; 		/* Controller unique identifier  */
     u_int32_t 	sc_unit;	/* Developer private unit number */
     u_int32_t 	sc_reserved[5];
 };
+
+#ifdef PRIVATE
+
+struct xkctl_reg {
+	u_int32_t	xkr_len;
+	u_int32_t	xkr_kind;
+	u_int32_t	xkr_id;
+	u_int32_t	xkr_reg_unit;
+	u_int32_t	xkr_flags;
+	u_int64_t	xkr_kctlref;
+	u_int32_t	xkr_recvbufsize;
+	u_int32_t	xkr_sendbufsize;
+	u_int32_t	xkr_lastunit;
+	u_int32_t	xkr_pcbcount;
+	u_int64_t	xkr_connect;
+	u_int64_t	xkr_disconnect;
+	u_int64_t	xkr_send;
+	u_int64_t	xkr_send_list;
+	u_int64_t	xkr_setopt;
+	u_int64_t	xkr_getopt;
+	u_int64_t	xkr_rcvd;
+	char		xkr_name[MAX_KCTL_NAME];
+};
+
+struct xkctlpcb {
+	u_int32_t	xkp_len;
+	u_int32_t	xkp_kind;
+	u_int64_t	xkp_kctpcb;
+	u_int32_t	xkp_unit;
+	u_int32_t	xkp_kctlid;
+	u_int64_t	xkp_kctlref;
+	char		xkp_kctlname[MAX_KCTL_NAME];
+};
+
+struct kctlstat {
+	u_int64_t	kcs_reg_total __attribute__((aligned(8)));
+	u_int64_t	kcs_reg_count __attribute__((aligned(8)));
+	u_int64_t	kcs_pcbcount __attribute__((aligned(8)));
+	u_int64_t	kcs_gencnt __attribute__((aligned(8)));
+	u_int64_t	kcs_connections __attribute__((aligned(8)));
+	u_int64_t	kcs_conn_fail __attribute__((aligned(8)));
+	u_int64_t	kcs_send_fail __attribute__((aligned(8)));
+	u_int64_t	kcs_send_list_fail __attribute__((aligned(8)));
+	u_int64_t	kcs_enqueue_fail __attribute__((aligned(8)));
+	u_int64_t	kcs_enqueue_fullsock __attribute__((aligned(8)));
+	u_int64_t	kcs_bad_kctlref __attribute__((aligned(8)));
+	u_int64_t	kcs_tbl_size_too_big __attribute__((aligned(8)));
+	u_int64_t	kcs_enqdata_mb_alloc_fail __attribute__((aligned(8)));
+	u_int64_t	kcs_enqdata_sbappend_fail __attribute__((aligned(8)));
+};
+
+#endif /* PRIVATE */
 
 #ifdef KERNEL
 
@@ -182,6 +237,22 @@ typedef void * kern_ctl_ref;
 */
 #define CTL_FLAG_REG_SOCK_STREAM	0x4
 
+#ifdef KERNEL_PRIVATE
+/*!
+  	@defined CTL_FLAG_REG_EXTENDED
+    @discussion This flag indicates that this kernel control utilizes the
+	the extended fields within the kern_ctl_reg structure.
+*/
+#define CTL_FLAG_REG_EXTENDED	0x8
+
+/*!
+  	@defined CTL_FLAG_REG_CRIT
+    @discussion This flag indicates that this kernel control utilizes the
+	the extended fields within the kern_ctl_reg structure.
+*/
+#define CTL_FLAG_REG_CRIT	0x10
+#endif /* KERNEL_PRIVATE */
+
 /* Data flags for controllers */
 /*!
 	@defined CTL_DATA_NOWAKEUP
@@ -192,12 +263,23 @@ typedef void * kern_ctl_ref;
     	the client after all of the data has been enqueued.
 */
 #define CTL_DATA_NOWAKEUP	0x1
+
 /*!
 	@defined CTL_DATA_EOR
     @discussion The CTL_DATA_EOR flag can be used for the enqueue
     	data and enqueue mbuf functions to mark the end of a record.
 */
 #define CTL_DATA_EOR		0x2
+
+#ifdef KERNEL_PRIVATE
+/*!
+  	@defined CTL_DATA_CRIT
+    	@discussion This flag indicates the data is critical to the client
+    		and that it needs to be forced into the socket buffer
+    		by resizing it if needed.
+*/
+#define CTL_DATA_CRIT	0x4
+#endif /* KERNEL_PRIVATE */
 
 __BEGIN_DECLS
 
@@ -299,6 +381,44 @@ typedef errno_t (*ctl_setopt_func)(kern_ctl_ref kctlref, u_int32_t unit, void *u
 typedef errno_t (*ctl_getopt_func)(kern_ctl_ref kctlref, u_int32_t unit, void *unitinfo,
 								   int opt, void *data, size_t *len);
 
+#ifdef KERNEL_PRIVATE
+/*!
+	@typedef ctl_rcvd_func
+	@discussion The ctl_rcvd_func is called when the client reads data from
+		the kernel control socket. The kernel control can use this callback
+		in combination with ctl_getenqueuespace() to avoid overflowing
+		the socket's receive buffer. When ctl_getenqueuespace() returns
+		0 or ctl_enqueuedata()/ctl_enqueuembuf() return ENOBUFS, the
+		kernel control can wait until this callback is called before
+		trying to enqueue the data again.
+	@param kctlref The control ref of the kernel control.
+	@param unit The unit number of the kernel control instance.
+	@param unitinfo The user-defined private data initialized by the
+		ctl_connect_func callback.
+	@param flags The recv flags. See the recv(2) man page.
+ */
+typedef void (*ctl_rcvd_func)(kern_ctl_ref kctlref, u_int32_t unit, void *unitinfo,
+				int flags);
+
+/*!
+	@typedef ctl_send_list_func
+	@discussion The ctl_send_list_func is used to receive data sent from
+		the client to the kernel control.
+	@param kctlref The control ref of the kernel control.
+	@param unit The unit number of the kernel control instance the client has
+		connected to.
+	@param unitinfo The user-defined private data initialized by the
+		ctl_connect_func callback.
+	@param m The data sent by the client to the kernel control in an
+		mbuf packet chain. Your function is responsible for releasing 
+		mbuf packet chain.
+	@param flags The flags specified by the client when calling
+		send/sendto/sendmsg (MSG_OOB/MSG_DONTROUTE).
+ */
+typedef errno_t (*ctl_send_list_func)(kern_ctl_ref kctlref, u_int32_t unit, void *unitinfo,
+					mbuf_t m, int flags);
+#endif /* KERNEL_PRIVATE */
+
 /*!
 	@struct kern_ctl_reg
 	@discussion This structure defines the properties of a kernel
@@ -351,6 +471,10 @@ struct kern_ctl_reg
     ctl_send_func		ctl_send;
     ctl_setopt_func		ctl_setopt;
     ctl_getopt_func		ctl_getopt;
+#ifdef KERNEL_PRIVATE
+    ctl_rcvd_func		ctl_rcvd;	/* Only valid if CTL_FLAG_REG_EXTENDED is set */
+    ctl_send_list_func		ctl_send_list;	/* Only valid if CTL_FLAG_REG_EXTENDED is set */
+#endif /* KERNEL_PRIVATE */
 };
 
 /*!
@@ -393,8 +517,8 @@ ctl_deregister(kern_ctl_ref kctlref);
 	@param unit The unit number of the kernel control instance.
 	@param data A pointer to the data to send.
 	@param len The length of data to send.
-	@param flags Send flags. CTL_DATA_NOWAKEUP is currently the only
-		supported flag.
+	@param flags Send flags. CTL_DATA_NOWAKEUP and CTL_DATA_EOR are currently
+		the only supported flags.
 	@result 0 - Data was enqueued to be read by the client.
 		EINVAL - Invalid parameters.
 		EMSGSIZE - The buffer is too large.
@@ -411,8 +535,8 @@ ctl_enqueuedata(kern_ctl_ref kctlref, u_int32_t unit, void *data, size_t len, u_
 	@param kctlref The control reference of the kernel control.
 	@param unit The unit number of the kernel control instance.
 	@param m An mbuf chain containing the data to send to the client.
-	@param flags Send flags. CTL_DATA_NOWAKEUP is currently the only
-		supported flag.
+	@param flags Send flags. CTL_DATA_NOWAKEUP and CTL_DATA_EOR are currently
+		the only supported flags.
 	@result 0 - Data was enqueued to be read by the client.
 		EINVAL - Invalid parameters.
 		ENOBUFS - The queue is full.
@@ -420,6 +544,42 @@ ctl_enqueuedata(kern_ctl_ref kctlref, u_int32_t unit, void *data, size_t len, u_
 errno_t 
 ctl_enqueuembuf(kern_ctl_ref kctlref, u_int32_t unit, mbuf_t m, u_int32_t flags);
 
+#ifdef PRIVATE
+/*!
+	@function ctl_enqueuembuf_list
+	@discussion Send data stored in an mbuf packet chain from the kernel
+		control to the client. The caller is responsible for freeing
+		the mbuf chain if ctl_enqueuembuf returns an error.
+		Not valid if ctl_flags contains CTL_FLAG_REG_SOCK_STREAM.
+	@param kctlref The control reference of the kernel control.
+	@param unit The unit number of the kernel control instance.
+	@param m_list An mbuf chain containing the data to send to the client.
+	@param flags Send flags. CTL_DATA_NOWAKEUP is
+		the only supported flags.
+	@param m_remain A pointer to the list of mbuf packets in the chain that
+		could not be enqueued.  
+	@result 0 - Data was enqueued to be read by the client.
+		EINVAL - Invalid parameters.
+		ENOBUFS - The queue is full.
+ */
+errno_t 
+ctl_enqueuembuf_list(kern_ctl_ref kctlref, u_int32_t unit, mbuf_t m_list,
+	u_int32_t flags, mbuf_t *m_remain);
+
+/*!
+	@function ctl_getenqueuepacketcount
+	@discussion Retrieve the number of packets in the socket
+		receive buffer.
+	@param kctlref The control reference of the kernel control.
+	@param unit The unit number of the kernel control instance.
+	@param pcnt The address where to return the current count. 
+	@result 0 - Success; the packet count is returned to caller.
+		EINVAL - Invalid parameters.
+ */
+errno_t
+ctl_getenqueuepacketcount(kern_ctl_ref kctlref, u_int32_t unit, u_int32_t *pcnt);
+
+#endif /* PRIVATE */
 
 /*!
 	@function ctl_getenqueuespace
@@ -434,7 +594,37 @@ ctl_enqueuembuf(kern_ctl_ref kctlref, u_int32_t unit, mbuf_t m, u_int32_t flags)
 errno_t 
 ctl_getenqueuespace(kern_ctl_ref kctlref, u_int32_t unit, size_t *space);
 
+/*!
+ @function ctl_getenqueuereadable
+ @discussion Retrieve the difference between enqueued bytes and
+	low-water mark for the socket receive buffer.
+ @param kctlref The control reference of the kernel control.
+ @param unit The unit number of the kernel control instance.
+ @param difference The address at which to return the current difference
+	between the low-water mark for the socket and the number of bytes
+	enqueued. 0 indicates that the socket is readable by the client
+	(the number of bytes in the buffer is above the low-water mark).
+ @result 0 - Success; the difference is returned to caller.
+ EINVAL - Invalid parameters.
+ */
+errno_t
+ctl_getenqueuereadable(kern_ctl_ref kctlref, u_int32_t unit, u_int32_t *difference);
+
 #ifdef KERNEL_PRIVATE
+
+#include <sys/queue.h>
+#include <libkern/locks.h>
+
+/*
+ * internal structure maintained for each register controller
+ */
+struct ctl_cb;
+struct kctl;
+struct socket;
+struct socket_info;
+
+void kctl_fill_socketinfo(struct socket *, struct socket_info *);
+
 u_int32_t ctl_id_by_name(const char *name);
 errno_t ctl_name_by_id(u_int32_t id, char *out_name, size_t maxsize);
 #endif /* KERNEL_PRIVATE */

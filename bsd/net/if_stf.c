@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2012 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2017 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -175,15 +175,16 @@ static int stf_init_done;
 
 static void in_stf_input(struct mbuf *, int);
 static void stfinit(void);
-extern  struct domain inetdomain;
-struct protosw in_stf_protosw =
-{ SOCK_RAW,	&inetdomain,	IPPROTO_IPV6,	PR_ATOMIC|PR_ADDR,
-  in_stf_input, NULL,	NULL,		rip_ctloutput,
-  NULL,
-  NULL,	NULL,	NULL,	NULL,
-  NULL,
-  &rip_usrreqs,
-  NULL,		rip_unlock,	NULL, {NULL, NULL}, NULL, {0}
+
+static struct protosw in_stf_protosw =
+{
+	.pr_type =		SOCK_RAW,
+	.pr_protocol =		IPPROTO_IPV6,
+	.pr_flags =		PR_ATOMIC|PR_ADDR,
+	.pr_input =		in_stf_input,
+	.pr_ctloutput =		rip_ctloutput,
+	.pr_usrreqs =		&rip_usrreqs,
+	.pr_unlock =		rip_unlock,
 };
 
 static int stf_encapcheck(const struct mbuf *, int, int, void *);
@@ -311,7 +312,7 @@ stfattach(void)
 	struct stf_softc *sc;
 	int error;
 	const struct encaptab *p;
-	struct ifnet_init_params	stf_init;
+	struct ifnet_init_eparams	stf_init;
 
 	stfinit();
 
@@ -320,13 +321,11 @@ stfattach(void)
 	if (error != 0)
 		printf("proto_register_plumber failed for AF_INET6 error=%d\n", error);
 
-	sc = _MALLOC(sizeof(struct stf_softc), M_DEVBUF, M_WAITOK);
+	sc = _MALLOC(sizeof(struct stf_softc), M_DEVBUF, M_WAITOK | M_ZERO);
 	if (sc == 0) {
 		printf("stf softc attach failed\n" );
 		return;
 	}
-	
-	bzero(sc, sizeof(*sc));
 	
 	p = encap_attach_func(AF_INET, IPPROTO_IPV6, stf_encapcheck,
 	    &in_stf_protosw, sc);
@@ -339,6 +338,9 @@ stfattach(void)
 	lck_mtx_init(&sc->sc_ro_mtx, stf_mtx_grp, LCK_ATTR_NULL);
 	
 	bzero(&stf_init, sizeof(stf_init));
+	stf_init.ver = IFNET_INIT_CURRENT_VERSION;
+	stf_init.len = sizeof (stf_init);
+	stf_init.flags = IFNET_INIT_LEGACY;
 	stf_init.name = "stf";
 	stf_init.unit = 0;
 	stf_init.type = IFT_STF;
@@ -351,7 +353,7 @@ stfattach(void)
 	stf_init.ioctl = stf_ioctl;
 	stf_init.set_bpf_tap = stf_set_bpf_tap;
 	
-	error = ifnet_allocate(&stf_init, &sc->sc_if);
+	error = ifnet_allocate_extended(&stf_init, &sc->sc_if);
 	if (error != 0) {
 		printf("stfattach, ifnet_allocate failed - %d\n", error);
 		encap_detach(sc->encap_cookie);
@@ -524,7 +526,9 @@ stf_pre_output(
 	struct ip6_hdr *ip6;
 	struct in6_ifaddr *ia6;
 	struct sockaddr_in 	*dst4;
-	struct ip_out_args ipoa = { IFSCOPE_NONE, { 0 }, IPOAF_SELECT_SRCIF };
+	struct ip_out_args ipoa =
+	    { IFSCOPE_NONE, { 0 }, IPOAF_SELECT_SRCIF, 0,
+	    SO_TC_UNSPEC, _NET_SERVICE_TYPE_UNSPEC };
 	errno_t				result = 0;
 
 	sc = ifnet_softc(ifp);
@@ -577,7 +581,7 @@ stf_pre_output(
 		bpf_tap_out(ifp, 0, m, &af, sizeof(af));
 	}
 
-	M_PREPEND(m, sizeof(struct ip), M_DONTWAIT);
+	M_PREPEND(m, sizeof(struct ip), M_DONTWAIT, 1);
 	if (m && mbuf_len(m) < sizeof(struct ip))
 		m = m_pullup(m, sizeof(struct ip));
 	if (m == NULL) {
@@ -598,26 +602,22 @@ stf_pre_output(
 	ip->ip_ttl = ip_stf_ttl;
 	ip->ip_len = m->m_pkthdr.len;	/*host order*/
 	if (ifp->if_flags & IFF_LINK1)
-		ip_ecn_ingress(ECN_ALLOWED, &ip->ip_tos, &tos);
+		ip_ecn_ingress(ECN_NORMAL, &ip->ip_tos, &tos);
 	else
 		ip_ecn_ingress(ECN_NOCARE, &ip->ip_tos, &tos);
 
 	lck_mtx_lock(&sc->sc_ro_mtx);
 	dst4 = (struct sockaddr_in *)(void *)&sc->sc_ro.ro_dst;
-	if (dst4->sin_family != AF_INET ||
+	if (ROUTE_UNUSABLE(&sc->sc_ro) || dst4->sin_family != AF_INET ||
 	    bcmp(&dst4->sin_addr, &ip->ip_dst, sizeof(ip->ip_dst)) != 0) {
+		ROUTE_RELEASE(&sc->sc_ro);
 		/* cache route doesn't match: always the case during the first use */
 		dst4->sin_family = AF_INET;
 		dst4->sin_len = sizeof(struct sockaddr_in);
 		bcopy(&ip->ip_dst, &dst4->sin_addr, sizeof(dst4->sin_addr));
-		if (sc->sc_ro.ro_rt) {
-			rtfree(sc->sc_ro.ro_rt);
-			sc->sc_ro.ro_rt = NULL;
-		}
 	}
 
-	result = ip_output_list(m, 0, NULL, &sc->sc_ro, IP_OUTARGS, NULL,
-	    &ipoa);
+	result = ip_output(m, NULL, &sc->sc_ro, IP_OUTARGS, NULL, &ipoa);
 	lck_mtx_unlock(&sc->sc_ro_mtx);
 
 	/* Assumption: ip_output will free mbuf on errors */
@@ -798,7 +798,7 @@ in_stf_input(
 
 	itos = (ntohl(ip6.ip6_flow) >> 20) & 0xff;
 	if ((ifnet_flags(ifp) & IFF_LINK1) != 0)
-		ip_ecn_egress(ECN_ALLOWED, &otos, &itos);
+		ip_ecn_egress(ECN_NORMAL, &otos, &itos);
 	else
 		ip_ecn_egress(ECN_NOCARE, &otos, &itos);
 	ip6.ip6_flow &= ~htonl(0xff << 20);
@@ -893,7 +893,7 @@ stf_ioctl(
 		break;
 
 	default:
-		error = EINVAL;
+		error = EOPNOTSUPP;
 		break;
 	}
 

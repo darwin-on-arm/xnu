@@ -69,16 +69,30 @@
 /* Extending into 64-bits from here: */ 
 #define	kHasRTM			0x0000000100000000ULL
 #define	kHasHLE			0x0000000200000000ULL
+#define	kHasRDSEED		0x0000000800000000ULL
+#define	kHasADX			0x0000000400000000ULL
+#define	kHasMPX			0x0000001000000000ULL
+#define	kHasSGX			0x0000002000000000ULL
+#if !defined(RC_HIDE_XNU_J137)
+#define	kHasAVX512F		0x0000004000000000ULL
+#define	kHasAVX512CD		0x0000008000000000ULL
+#define	kHasAVX512DQ		0x0000010000000000ULL
+#define	kHasAVX512BW		0x0000020000000000ULL
+#define	kHasAVX512IFMA		0x0000040000000000ULL
+#define	kHasAVX512VBMI		0x0000080000000000ULL
+#define	kHasAVX512VL		0x0000100000000000ULL
+#endif /* not RC_HIDE_XNU_J137 */
 
 
 #ifndef	__ASSEMBLER__
 #include <sys/cdefs.h>
+#include <sys/commpage.h>
 
 __BEGIN_DECLS
 extern uint64_t  _get_cpu_capabilities( void );
 __END_DECLS
 
-inline static
+__inline static
 int _NumCPUs( void )
 {
 	return (int) (_get_cpu_capabilities() & kNumCPUs) >> kNumCPUsShift;
@@ -182,7 +196,10 @@ int _NumCPUs( void )
 #define _COMM_PAGE_MEMORY_SIZE		(_COMM_PAGE_START_ADDRESS+0x038)	/* uint64_t max memory size */
 
 #define _COMM_PAGE_CPUFAMILY		(_COMM_PAGE_START_ADDRESS+0x040)	/* uint32_t hw.cpufamily, x86*/
-#define _COMM_PAGE_UNUSED2		(_COMM_PAGE_START_ADDRESS+0x044)	/* [0x44,0x50) unused */
+#define _COMM_PAGE_KDEBUG_ENABLE	(_COMM_PAGE_START_ADDRESS+0x044)	/* uint32_t export "kdebug_enable" to userspace */
+#define	_COMM_PAGE_ATM_DIAGNOSTIC_CONFIG	(_COMM_PAGE_START_ADDRESS+0x48) /* uint32_t export "atm_diagnostic_config" to userspace */
+
+#define _COMM_PAGE_UNUSED2		(_COMM_PAGE_START_ADDRESS+0x04C)	/* [0x4C,0x50) unused */
 
 #define	_COMM_PAGE_TIME_DATA_START	(_COMM_PAGE_START_ADDRESS+0x050)	/* base of offsets below (_NT_SCALE etc) */
 #define _COMM_PAGE_NT_TSC_BASE		(_COMM_PAGE_START_ADDRESS+0x050)	/* used by nanotime() */
@@ -193,6 +210,15 @@ int _NumCPUs( void )
 #define _COMM_PAGE_GTOD_GENERATION	(_COMM_PAGE_START_ADDRESS+0x06c)	/* used by gettimeofday() */
 #define _COMM_PAGE_GTOD_NS_BASE		(_COMM_PAGE_START_ADDRESS+0x070)	/* used by gettimeofday() */
 #define _COMM_PAGE_GTOD_SEC_BASE	(_COMM_PAGE_START_ADDRESS+0x078)	/* used by gettimeofday() */
+ 
+/* NOTE: APPROX_TIME must be aligned to 64-byte cache line size: */
+#define _COMM_PAGE_APPROX_TIME		(_COMM_PAGE_START_ADDRESS+0x080)	/* used by mach_approximate_time() */
+#define _COMM_PAGE_APPROX_TIME_SUPPORTED (_COMM_PAGE_START_ADDRESS+0x088)	/* used by mach_approximate_time() */
+
+/* Align following entries to next cache line */
+#define _COMM_PAGE_CONT_TIMEBASE	(_COMM_PAGE_START_ADDRESS+0x0C0)	/* used by mach_continuous_time() */
+#define _COMM_PAGE_BOOTTIME_USEC	(_COMM_PAGE_START_ADDRESS+0x0C8)	/* uint64_t boottime */
+#define _COMM_PAGE_NEWTIMEOFDAY_DATA	(_COMM_PAGE_START_ADDRESS+0x0D0) 	/* used by gettimeofday(). Currently, sizeof(new_commpage_timeofday_data_t) = 40*/
 
 #define _COMM_PAGE_END			(_COMM_PAGE_START_ADDRESS+0xfff)	/* end of common page */
 
@@ -226,22 +252,22 @@ int _NumCPUs( void )
 
 #define _COMM_TEXT_PREEMPT_OFFSET		(0x5a0)	/* called from withing pfz */
 #define _COMM_TEXT_BACKOFF_OFFSET		(0x600)	/* called from PFZ */
+#define _COMM_TEXT_RET_OFFSET			(0x680)	/* called from PFZ */
 #define _COMM_TEXT_PFZ_START_OFFSET		(0xc00)	/* offset for Preemption Free Zone */
 #define _COMM_TEXT_PFZ_ENQUEUE_OFFSET		(0xc00)	/* internal FIFO enqueue */
 #define _COMM_TEXT_PFZ_DEQUEUE_OFFSET		(0xc80)	/* internal FIFO dequeue */
-#define _COMM_TEXT_PFZ_MUTEX_LOCK_OFFSET	(0xd00)	/* internal pthread_mutex_lock() */
-#define _COMM_TEXT_UNUSED_OFFSET		(0xd80)	/* end of routines in text page */
-#define _COMM_TEXT_PFZ_END_OFFSET		(0xfff)	/* offset for end of PFZ */
+#define _COMM_TEXT_UNUSED_OFFSET		(0xd00)	/* end of routines in text page */
+#define _COMM_TEXT_PFZ_END_OFFSET		(0xd00)	/* offset for end of PFZ */
 
 
 #define _COMM_PAGE_PREEMPT		(_COMM_PAGE_TEXT_START+_COMM_TEXT_PREEMPT_OFFSET)
 #define _COMM_PAGE_BACKOFF		(_COMM_PAGE_TEXT_START+_COMM_TEXT_BACKOFF_OFFSET)	
+#define _COMM_PAGE_RET			(_COMM_PAGE_TEXT_START+_COMM_TEXT_RET_OFFSET)	
 
 #define _COMM_PAGE_PFZ_START		(_COMM_PAGE_TEXT_START+_COMM_PAGE_PFZ_START_OFFSET)
 
 #define _COMM_PAGE_PFZ_ENQUEUE		(_COMM_PAGE_TEXT_START+_COMM_TEXT_PFZ_ENQUEUE_OFFSET)
 #define _COMM_PAGE_PFZ_DEQUEUE		(_COMM_PAGE_TEXT_START+_COMM_TEXT_PFZ_DEQUEUE_OFFSET)
-#define	_COMM_PAGE_PFZ_MUTEX_LOCK	(_COMM_PAGE_TEXT_START+_COMM_TEXT_PFZ_MUTEX_LOCK_OFFSET)
 
 #define	_COMM_PAGE_UNUSED6		(_COMM_PAGE_TEXT_START+_COMM_TEXT_UNUSED_OFFSET)	
 #define _COMM_PAGE_PFZ_END		(_COMM_PAGE_TEXT_START+_COMM_TEXT_PFZ_END_OFFSET)
@@ -266,7 +292,6 @@ symbol_name: nop
 	CREATE_COMM_PAGE_SYMBOL(___backoff, _COMM_PAGE_BACKOFF)
 	CREATE_COMM_PAGE_SYMBOL(___pfz_enqueue, _COMM_PAGE_PFZ_ENQUEUE)
 	CREATE_COMM_PAGE_SYMBOL(___pfz_dequeue, _COMM_PAGE_PFZ_DEQUEUE)
-	CREATE_COMM_PAGE_SYMBOL(___pfz_mutex_lock, _COMM_PAGE_PFZ_MUTEX_LOCK)
 	CREATE_COMM_PAGE_SYMBOL(___end_comm_page, _COMM_PAGE_END)
 
 	.data		/* Required to make a well behaved symbol file */

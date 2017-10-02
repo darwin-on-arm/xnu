@@ -1,8 +1,8 @@
 /*
- * Copyright (c) 2009-2011 Apple Inc. All rights reserved.
+ * Copyright (c) 2009-2016 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
- * 
+ *
  * This file contains Original Code and/or Modifications of Original Code
  * as defined in and that are subject to the Apple Public Source License
  * Version 2.0 (the 'License'). You may not use this file except in
@@ -11,10 +11,10 @@
  * unlawful or unlicensed copies of an Apple operating system, or to
  * circumvent, violate, or enable the circumvention or violation of, any
  * terms of an Apple operating system software license agreement.
- * 
+ *
  * Please obtain a copy of the License at
  * http://www.opensource.apple.com/apsl/ and read it before using this file.
- * 
+ *
  * The Original Code and all software distributed under the License are
  * distributed on an 'AS IS' basis, WITHOUT WARRANTY OF ANY KIND, EITHER
  * EXPRESS OR IMPLIED, AND APPLE HEREBY DISCLAIMS ALL SUCH WARRANTIES,
@@ -22,7 +22,7 @@
  * FITNESS FOR A PARTICULAR PURPOSE, QUIET ENJOYMENT OR NON-INFRINGEMENT.
  * Please see the License for the specific language governing rights and
  * limitations under the License.
- * 
+ *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
 
@@ -97,9 +97,12 @@
 extern int ipsec_bypass;
 #endif /* IPSEC */
 
-#include <netinet6/ip6_fw.h>
-
 #include <net/net_osdep.h>
+
+#if DUMMYNET
+#include <netinet/ip_fw.h>
+#include <netinet/ip_dummynet.h>
+#endif /* DUMMYNET */
 
 #if PF
 #include <net/pfvar.h>
@@ -128,19 +131,36 @@ ip6_forward(struct mbuf *m, struct route_in6 *ip6forward_rt,
 	int error, type = 0, code = 0;
 	boolean_t proxy = FALSE;
 	struct mbuf *mcopy = NULL;
-	struct ifnet *ifp, *origifp;	/* maybe unnecessary */
-	u_int32_t inzone, outzone;
+	struct ifnet *ifp, *rcvifp, *origifp;	/* maybe unnecessary */
+	u_int32_t inzone, outzone, len;
 	struct in6_addr src_in6, dst_in6;
+	uint64_t curtime = net_uptime();
 #if IPSEC
 	struct secpolicy *sp = NULL;
 #endif
-	struct timeval timenow;
 	unsigned int ifscope = IFSCOPE_NONE;
 #if PF
 	struct pf_mtag *pf_mtag;
 #endif /* PF */
 
-	getmicrotime(&timenow);
+	/*
+	 * In the prefix proxying case, the route to the proxied node normally
+	 * gets created by nd6_prproxy_ns_output(), as part of forwarding a
+	 * NS (NUD/AR) packet to the proxied node.  In the event that such
+	 * packet did not arrive in time before the correct route gets created,
+	 * ip6_input() would have performed a rtalloc() which most likely will
+	 * create the wrong cloned route; this route points back to the same
+	 * interface as the inbound interface, since the parent non-scoped
+	 * prefix route points there.  Therefore we check if that is the case
+	 * and perform the necessary fixup to get the correct route installed.
+	 */
+	if (!srcrt && nd6_prproxy &&
+	    (rt = ip6forward_rt->ro_rt) != NULL && (rt->rt_flags & RTF_PROXY)) {
+		nd6_proxy_find_fwdroute(m->m_pkthdr.rcvif, ip6forward_rt);
+		if ((rt = ip6forward_rt->ro_rt) != NULL)
+			ifscope = rt->rt_ifp->if_index;
+	}
+
 #if PF
 	pf_mtag = pf_find_mtag(m);
 	if (pf_mtag != NULL && pf_mtag->pftag_rtableid != IFSCOPE_NONE)
@@ -155,8 +175,8 @@ ip6_forward(struct mbuf *m, struct route_in6 *ip6forward_rt,
 		RT_LOCK(rt);
 		if (rt->rt_ifp->if_index != ifscope) {
 			RT_UNLOCK(rt);
-			rtfree(rt);
-			rt = ip6forward_rt->ro_rt = NULL;
+			ROUTE_RELEASE(ip6forward_rt);
+			rt = NULL;
 		} else {
 			RT_UNLOCK(rt);
 		}
@@ -181,8 +201,7 @@ ip6_forward(struct mbuf *m, struct route_in6 *ip6forward_rt,
 #endif /*IPSEC*/
 
 	/*
-	 * Do not forward packets to multicast destination (should be handled
-	 * by ip6_mforward().
+	 * Do not forward packets to multicast destination.
 	 * Do not forward packets with unspecified source.  It was discussed
 	 * in July 2000, on ipngwg mailing list.
 	 */
@@ -191,8 +210,8 @@ ip6_forward(struct mbuf *m, struct route_in6 *ip6forward_rt,
 	    IN6_IS_ADDR_UNSPECIFIED(&ip6->ip6_src)) {
 		ip6stat.ip6s_cantforward++;
 		/* XXX in6_ifstat_inc(rt->rt_ifp, ifs6_in_discard) */
-		if (ip6_log_time + ip6_log_interval < timenow.tv_sec) {
-			ip6_log_time = timenow.tv_sec;
+		if (ip6_log_time + ip6_log_interval < curtime) {
+			ip6_log_time = curtime;
 			log(LOG_DEBUG,
 			    "cannot forward "
 			    "from %s to %s nxt %d received on %s\n",
@@ -207,8 +226,8 @@ ip6_forward(struct mbuf *m, struct route_in6 *ip6forward_rt,
 
 	if (ip6->ip6_hlim <= IPV6_HLIMDEC) {
 		/* XXX in6_ifstat_inc(rt->rt_ifp, ifs6_in_discard) */
-		icmp6_error(m, ICMP6_TIME_EXCEEDED,
-				ICMP6_TIME_EXCEED_TRANSIT, 0);
+		icmp6_error_flag(m, ICMP6_TIME_EXCEEDED,
+				ICMP6_TIME_EXCEED_TRANSIT, 0, 0);
 		return (NULL);
 	}
 
@@ -335,14 +354,14 @@ ip6_forward(struct mbuf *m, struct route_in6 *ip6forward_rt,
 
 	error = ipsec6_output_tunnel(&state, sp, 0);
 	key_freesp(sp, KEY_SADB_UNLOCKED);
-	if (state.tunneled == 4)
+	if (state.tunneled == 4) {
+		ROUTE_RELEASE(&state.ro);
 		return (NULL);  /* packet is gone - sent over IPv4 */
-		
-	m = state.m;
-	if (state.ro.ro_rt) {
-		rtfree(state.ro.ro_rt);
-		state.ro.ro_rt = NULL;
 	}
+
+	m = state.m;
+	ROUTE_RELEASE(&state.ro);
+
 	if (error) {
 		/* mbuf is already reclaimed in ipsec6_output_tunnel. */
 		switch (error) {
@@ -371,8 +390,8 @@ ip6_forward(struct mbuf *m, struct route_in6 *ip6forward_rt,
 		return (NULL);
 	}
     }
-    skip_ipsec:
 #endif /* IPSEC */
+    skip_ipsec:
 
 	dst = (struct sockaddr_in6 *)&ip6forward_rt->ro_dst;
 	if ((rt = ip6forward_rt->ro_rt) != NULL) {
@@ -381,19 +400,19 @@ ip6_forward(struct mbuf *m, struct route_in6 *ip6forward_rt,
 		RT_ADDREF_LOCKED(rt);
 	}
 
+	VERIFY(rt == NULL || rt == ip6forward_rt->ro_rt);
 	if (!srcrt) {
 		/*
 		 * ip6forward_rt->ro_dst.sin6_addr is equal to ip6->ip6_dst
 		 */
-		if (rt == NULL || !(rt->rt_flags & RTF_UP) ||
-		    rt->generation_id != route_generation) {
+		if (ROUTE_UNUSABLE(ip6forward_rt)) {
 			if (rt != NULL) {
 				/* Release extra ref */
 				RT_REMREF_LOCKED(rt);
 				RT_UNLOCK(rt);
-				rtfree(rt);
-				ip6forward_rt->ro_rt = NULL;
 			}
+			ROUTE_RELEASE(ip6forward_rt);
+
 			/* this probably fails but give it a try again */
 			rtalloc_scoped_ign((struct route *)ip6forward_rt,
 			    RTF_PRCLONING, ifscope);
@@ -414,16 +433,15 @@ ip6_forward(struct mbuf *m, struct route_in6 *ip6forward_rt,
 			return (NULL);
 		}
 		RT_LOCK_ASSERT_HELD(rt);
-	} else if (rt == NULL || !(rt->rt_flags & RTF_UP) ||
-	    !IN6_ARE_ADDR_EQUAL(&ip6->ip6_dst, &dst->sin6_addr) ||
-	    rt->generation_id != route_generation) {
+	} else if (ROUTE_UNUSABLE(ip6forward_rt) ||
+	    !IN6_ARE_ADDR_EQUAL(&ip6->ip6_dst, &dst->sin6_addr)) {
 		if (rt != NULL) {
 			/* Release extra ref */
 			RT_REMREF_LOCKED(rt);
 			RT_UNLOCK(rt);
-			rtfree(rt);
-			ip6forward_rt->ro_rt = NULL;
 		}
+		ROUTE_RELEASE(ip6forward_rt);
+
 		bzero(dst, sizeof(*dst));
 		dst->sin6_len = sizeof(struct sockaddr_in6);
 		dst->sin6_family = AF_INET6;
@@ -457,6 +475,8 @@ ip6_forward(struct mbuf *m, struct route_in6 *ip6forward_rt,
 	 */
 	src_in6 = ip6->ip6_src;
 	if (in6_setscope(&src_in6, rt->rt_ifp, &outzone)) {
+		RT_REMREF_LOCKED(rt);
+		RT_UNLOCK(rt);
 		/* XXX: this should not happen */
 		ip6stat.ip6s_cantforward++;
 		ip6stat.ip6s_badscope++;
@@ -464,6 +484,8 @@ ip6_forward(struct mbuf *m, struct route_in6 *ip6forward_rt,
 		return (NULL);
 	}
 	if (in6_setscope(&src_in6, m->m_pkthdr.rcvif, &inzone)) {
+		RT_REMREF_LOCKED(rt);
+		RT_UNLOCK(rt);
 		ip6stat.ip6s_cantforward++;
 		ip6stat.ip6s_badscope++;
 		m_freem(m);
@@ -475,8 +497,8 @@ ip6_forward(struct mbuf *m, struct route_in6 *ip6forward_rt,
 		ip6stat.ip6s_badscope++;
 		in6_ifstat_inc(rt->rt_ifp, ifs6_in_discard);
 
-		if (ip6_log_time + ip6_log_interval < timenow.tv_sec) {
-			ip6_log_time = timenow.tv_sec;
+		if (ip6_log_time + ip6_log_interval < curtime) {
+			ip6_log_time = curtime;
 			log(LOG_DEBUG,
 			    "cannot forward "
 			    "src %s, dst %s, nxt %d, rcvif %s, outif %s\n",
@@ -507,6 +529,8 @@ ip6_forward(struct mbuf *m, struct route_in6 *ip6forward_rt,
 	if (in6_setscope(&dst_in6, m->m_pkthdr.rcvif, &inzone) != 0 ||
 	    in6_setscope(&dst_in6, rt->rt_ifp, &outzone) != 0 ||
 	    inzone != outzone) {
+		RT_REMREF_LOCKED(rt);
+		RT_UNLOCK(rt);
 		ip6stat.ip6s_cantforward++;
 		ip6stat.ip6s_badscope++;
 		m_freem(m);
@@ -596,29 +620,6 @@ ip6_forward(struct mbuf *m, struct route_in6 *ip6forward_rt,
 		}
 		type = ND_REDIRECT;
 	}
-
-#if IPFW2
-	/*
-	 * Check with the firewall...
-	 */
-	if (ip6_fw_enable && ip6_fw_chk_ptr) {
-		u_short port = 0;
-		ifp = rt->rt_ifp;
-		/* Drop the lock but retain the extra ref */
-		RT_UNLOCK(rt);
-		/* If ipfw says divert, we have to just drop packet */
-		if (ip6_fw_chk_ptr(&ip6, ifp, &port, &m)) {
-			m_freem(m);
-			goto freecopy;
-		}
-		if (!m) {
-			goto freecopy;
-		}
-		/* We still have the extra ref on rt */
-		RT_LOCK(rt);
-	}
-#endif
-
 	/*
 	 * Fake scoped addresses. Note that even link-local source or
 	 * destinaion can appear, if the originating node just sends the
@@ -638,7 +639,7 @@ ip6_forward(struct mbuf *m, struct route_in6 *ip6forward_rt,
 		 *	rthdr. (itojun)
 		 */
 #if 1
-		if (0)
+		if ((0))
 #else
 		if ((rt->rt_flags & (RTF_BLACKHOLE|RTF_REJECT)) == 0)
 #endif
@@ -652,10 +653,19 @@ ip6_forward(struct mbuf *m, struct route_in6 *ip6forward_rt,
 		}
 
 		/* we can just use rcvif in forwarding. */
-		origifp = m->m_pkthdr.rcvif;
-	}
-	else
+		origifp = rcvifp = m->m_pkthdr.rcvif;
+	} else if (nd6_prproxy) {
+		/*
+		 * In the prefix proxying case, we need to inform nd6_output()
+		 * about the inbound interface, so that any subsequent NS
+		 * packets generated by nd6_prproxy_ns_output() will not be
+		 * sent back to that same interface.
+		 */
+		origifp = rcvifp = m->m_pkthdr.rcvif;
+	} else {
+		rcvifp = m->m_pkthdr.rcvif;
 		origifp = rt->rt_ifp;
+	}
 	/*
 	 * clear embedded scope identifiers if necessary.
 	 * in6_clearscope will touch the addresses only when necessary.
@@ -671,7 +681,7 @@ ip6_forward(struct mbuf *m, struct route_in6 *ip6forward_rt,
 	 * If this is to be processed locally, let ip6_input have it.
 	 */
 	if (proxy) {
-		VERIFY(m->m_pkthdr.aux_flags & MAUXF_PROXY_DST);
+		VERIFY(m->m_pkthdr.pkt_flags & PKTF_PROXY_DST);
 		/* Release extra ref */
 		RT_REMREF(rt);
 		if (mcopy != NULL)
@@ -679,26 +689,60 @@ ip6_forward(struct mbuf *m, struct route_in6 *ip6forward_rt,
 		return (m);
 	}
 
-#if PF
-	/* Invoke outbound packet filter */
-	error = pf_af_hook(ifp, NULL, &m, AF_INET6, FALSE, NULL);
+	/* Mark this packet as being forwarded from another interface */
+	m->m_pkthdr.pkt_flags |= PKTF_FORWARDED;
 
-	if (error != 0 || m == NULL) {
-		if (m != NULL) {
-			panic("%s: unexpected packet %p\n", __func__, m);
-			/* NOTREACHED */
+#if PF
+	if (PF_IS_ENABLED) {
+#if DUMMYNET
+		struct ip_fw_args args;
+		bzero(&args, sizeof(args));
+
+		args.fwa_m = m;
+		args.fwa_oif = ifp;
+		args.fwa_oflags = 0;
+		args.fwa_ro6 = ip6forward_rt;
+		args.fwa_ro6_pmtu = ip6forward_rt;
+		args.fwa_mtu = rt->rt_ifp->if_mtu;
+		args.fwa_dst6 = dst;
+		args.fwa_origifp = origifp;
+		/* Invoke outbound packet filter */
+		error = pf_af_hook(ifp, NULL, &m, AF_INET6, FALSE, &args);
+#else /* !DUMMYNET */
+		error = pf_af_hook(ifp, NULL, &m, AF_INET6, FALSE, NULL);
+#endif /* !DUMMYNET */
+		if (error != 0 || m == NULL) {
+			if (m != NULL) {
+				panic("%s: unexpected packet %p\n", __func__, m);
+				/* NOTREACHED */
+			}
+			/* Already freed by callee */
+			goto senderr;
 		}
-		/* Already freed by callee */
-		goto senderr;
+		/*
+		 * We do not use ip6 header again in the code below,
+		 * however still adding the bit here so that any new
+		 * code in future doesn't end up working with the
+		 * wrong pointer
+		 */
+		ip6 = mtod(m, struct ip6_hdr *);
 	}
-	ip6 = mtod(m, struct ip6_hdr *);
 #endif /* PF */
 
+	len = m_pktlen(m);
 	error = nd6_output(ifp, origifp, m, dst, rt, NULL);
 	if (error) {
 		in6_ifstat_inc(ifp, ifs6_out_discard);
 		ip6stat.ip6s_cantforward++;
 	} else {
+		/*
+		 * Increment stats on the source interface; the ones
+		 * for destination interface has been taken care of
+		 * during output above by virtue of PKTF_FORWARDED.
+		 */
+		rcvifp->if_fpackets++;
+		rcvifp->if_fbytes += len;
+
 		ip6stat.ip6s_forward++;
 		in6_ifstat_inc(ifp, ifs6_out_forward);
 		if (type)

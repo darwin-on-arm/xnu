@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2003-2008 Apple Inc. All rights reserved.
+ * Copyright (c) 2003-2016 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -63,6 +63,7 @@
 
 #include <mach/mach_types.h>
 #include <kern/kern_types.h>
+#include <kern/waitq.h>
 #include <kern/zalloc.h>
 #include <kern/task.h>
 #include <kern/sched_prim.h>
@@ -123,7 +124,7 @@ typedef struct aio_workq   {
 	TAILQ_HEAD(, aio_workq_entry) 	aioq_entries;
 	int				aioq_count;
 	lck_mtx_t			aioq_mtx;
-	wait_queue_t			aioq_waitq;
+	struct waitq			aioq_waitq;
 } *aio_workq_t;
 
 #define AIO_NUM_WORK_QUEUES 1
@@ -303,7 +304,7 @@ aio_workq_init(aio_workq_t wq)
 	TAILQ_INIT(&wq->aioq_entries);
 	wq->aioq_count = 0;
 	lck_mtx_init(&wq->aioq_mtx, aio_queue_lock_grp, aio_lock_attr);
-	wq->aioq_waitq = wait_queue_alloc(SYNC_POLICY_FIFO);
+	waitq_init(&wq->aioq_waitq, SYNC_POLICY_FIFO);
 }
 
 
@@ -606,14 +607,13 @@ _aio_close(proc_t p, int fd )
 		     	 	  (int)p, fd, 0, 0, 0 );
 
 		while (aio_proc_active_requests_for_file(p, fd) > 0) {
-			msleep(&p->AIO_CLEANUP_SLEEP_CHAN, aio_proc_mutex(p), PRIBIO | PDROP, "aio_close", 0 );
+			msleep(&p->AIO_CLEANUP_SLEEP_CHAN, aio_proc_mutex(p), PRIBIO, "aio_close", 0 );
 		}
 
-	} else {
-		aio_proc_unlock(p);
 	}
-
-
+	
+	aio_proc_unlock(p);
+	
 	KERNEL_DEBUG( (BSDDBG_CODE(DBG_BSD_AIO, AIO_close)) | DBG_FUNC_END,
 		     	  (int)p, fd, 0, 0, 0 );
 
@@ -1394,7 +1394,8 @@ aio_enqueue_work( proc_t procp, aio_workq_entry *entryp, int proc_locked)
 	/* And work queue */
 	aio_workq_lock_spin(queue);
 	aio_workq_add_entry_locked(queue, entryp);
-	wait_queue_wakeup_one(queue->aioq_waitq, queue, THREAD_AWAKENED, -1);
+	waitq_wakeup64_one(&queue->aioq_waitq, CAST_EVENT64_T(queue),
+			   THREAD_AWAKENED, WAITQ_ALL_PRIORITIES);
 	aio_workq_unlock(queue);
 	
 	if (proc_locked == 0) {
@@ -1464,6 +1465,8 @@ lio_listio(proc_t p, struct lio_listio_args *uap, int *retval )
 	struct user_sigevent		aiosigev;
 	aio_lio_context		*lio_context;
 	boolean_t 			free_context = FALSE;
+    uint32_t *paio_offset;
+    uint32_t *paio_nbytes;
 	
 	KERNEL_DEBUG( (BSDDBG_CODE(DBG_BSD_AIO, AIO_listio)) | DBG_FUNC_START,
 		     	  (int)p, uap->nent, uap->mode, 0, 0 );
@@ -1595,9 +1598,15 @@ lio_listio(proc_t p, struct lio_listio_args *uap, int *retval )
 		aio_enqueue_work(p, entryp, 1);
 		aio_proc_unlock(p);
 		
-		KERNEL_DEBUG( (BSDDBG_CODE(DBG_BSD_AIO, AIO_work_queued)) | DBG_FUNC_NONE,
-				  (int)p, (int)entryp->uaiocbp, 0, 0, 0 );
-	}
+        KERNEL_DEBUG_CONSTANT( (BSDDBG_CODE(DBG_BSD_AIO, AIO_work_queued)) | DBG_FUNC_START,
+                      (int)p, (int)entryp->uaiocbp, entryp->flags, entryp->aiocb.aio_fildes, 0 );
+        paio_offset = (uint32_t*) &entryp->aiocb.aio_offset;
+        paio_nbytes = (uint32_t*) &entryp->aiocb.aio_nbytes;
+        KERNEL_DEBUG_CONSTANT( (BSDDBG_CODE(DBG_BSD_AIO, AIO_work_queued)) | DBG_FUNC_END,
+                              paio_offset[0], (sizeof(entryp->aiocb.aio_offset) == sizeof(uint64_t) ? paio_offset[1] : 0),
+                              paio_nbytes[0], (sizeof(entryp->aiocb.aio_nbytes) == sizeof(uint64_t) ? paio_nbytes[1] : 0),
+                              0 );
+    }
 
 	switch(uap->mode) {
 	case LIO_WAIT:
@@ -1653,8 +1662,9 @@ ExitRoutine:
  * we get a wake up call on sleep channel &aio_anchor.aio_async_workq 
  * after new work is queued up.
  */
+__attribute__((noreturn))
 static void
-aio_work_thread( void )
+aio_work_thread(void)
 {
 	aio_workq_entry		 	*entryp;
 	int 			error;
@@ -1825,7 +1835,7 @@ aio_get_some_work( void )
 
 nowork:
 	/* We will wake up when someone enqueues something */
-	wait_queue_assert_wait(queue->aioq_waitq, queue, THREAD_UNINT, 0);
+	waitq_assert_wait64(&queue->aioq_waitq, CAST_EVENT64_T(queue), THREAD_UNINT, 0);
 	aio_workq_unlock(queue);
 	thread_block( (thread_continue_t)aio_work_thread );
 
@@ -1896,7 +1906,18 @@ aio_create_queue_entry(proc_t procp, user_addr_t aiocbp, void *group_tag, int ki
 
 	/* do some more validation on the aiocb and embedded file descriptor */
 	result = aio_validate( entryp );
+	if ( result != 0 )
+		goto error_exit_with_ref;
 
+	/* get a reference on the current_thread, which is passed in vfs_context. */
+	entryp->thread = current_thread();
+	thread_reference( entryp->thread );
+	return ( entryp );
+
+error_exit_with_ref:
+	if ( VM_MAP_NULL != entryp->aio_map ) {
+		vm_map_deallocate( entryp->aio_map );
+	}
 error_exit:
 	if ( result && entryp != NULL ) {
 		zfree( aio_workq_zonep, entryp );
@@ -1917,9 +1938,11 @@ static int
 aio_queue_async_request(proc_t procp, user_addr_t aiocbp, int kindOfIO )
 {
 	aio_workq_entry	*entryp;
-	int		result;
-	int		old_count;
-
+	int		 result;
+	int		 old_count;
+    uint32_t *paio_offset;
+    uint32_t *paio_nbytes;
+    
 	old_count = aio_increment_total_count();
 	if (old_count >= aio_max_requests) {
 		result = EAGAIN;
@@ -1952,10 +1975,16 @@ aio_queue_async_request(proc_t procp, user_addr_t aiocbp, int kindOfIO )
 	aio_enqueue_work(procp, entryp, 1);
 	
 	aio_proc_unlock(procp);
-	
-	KERNEL_DEBUG( (BSDDBG_CODE(DBG_BSD_AIO, AIO_work_queued)) | DBG_FUNC_NONE,
-		     	  (int)procp, (int)aiocbp, 0, 0, 0 );
-
+    
+    paio_offset = (uint32_t*) &entryp->aiocb.aio_offset;
+    paio_nbytes = (uint32_t*) &entryp->aiocb.aio_nbytes;
+    KERNEL_DEBUG_CONSTANT( (BSDDBG_CODE(DBG_BSD_AIO, AIO_work_queued)) | DBG_FUNC_START,
+                 (int)procp, (int)aiocbp, entryp->flags, entryp->aiocb.aio_fildes, 0 );
+    KERNEL_DEBUG_CONSTANT( (BSDDBG_CODE(DBG_BSD_AIO, AIO_work_queued)) | DBG_FUNC_END,
+                          paio_offset[0], (sizeof(entryp->aiocb.aio_offset) == sizeof(uint64_t) ? paio_offset[1] : 0),
+                          paio_nbytes[0], (sizeof(entryp->aiocb.aio_nbytes) == sizeof(uint64_t) ? paio_nbytes[1] : 0),
+                          0 );
+    
 	return( 0 );
 	
 error_exit:
@@ -2056,6 +2085,11 @@ aio_free_request(aio_workq_entry *entryp)
 		vm_map_deallocate(entryp->aio_map);
 	}
 
+	/* remove our reference to thread which enqueued the request */
+	if ( NULL != entryp->thread ) {
+		thread_deallocate( entryp->thread );
+	}
+
 	entryp->aio_refcount = -1; /* A bit of poisoning in case of bad refcounting. */
 	
 	zfree( aio_workq_zonep, entryp );
@@ -2143,7 +2177,7 @@ aio_validate( aio_workq_entry *entryp )
 			/* we don't have read or write access */
 			result = EBADF;
 		}
-		else if ( fp->f_fglob->fg_type != DTYPE_VNODE ) {
+		else if ( FILEGLOB_DTYPE(fp->f_fglob) != DTYPE_VNODE ) {
 			/* this is not a file */
 			result = ESPIPE;
 		} else
@@ -2352,11 +2386,7 @@ do_aio_read( aio_workq_entry *entryp )
 		return(EBADF);
 	}
 
-	/*
-	 * <rdar://4714366>
-	 * Needs vfs_context_t from vfs_context_create() in entryp!
-	 */
-	context.vc_thread = proc_thread(entryp->procp);	/* XXX */
+	context.vc_thread = entryp->thread;	/* XXX */
 	context.vc_ucred = fp->f_fglob->fg_cred;
 
 	error = dofileread(&context, fp, 
@@ -2393,11 +2423,7 @@ do_aio_write( aio_workq_entry *entryp )
 		flags |= FOF_OFFSET;
 	}
 
-	/*
-	 * <rdar://4714366>
-	 * Needs vfs_context_t from vfs_context_create() in entryp!
-	 */
-	context.vc_thread = proc_thread(entryp->procp);	/* XXX */
+	context.vc_thread = entryp->thread;	/* XXX */
 	context.vc_ucred = fp->f_fglob->fg_cred;
 
 	/* NB: tell dofilewrite the offset, and to use the proc cred */
@@ -2408,8 +2434,11 @@ do_aio_write( aio_workq_entry *entryp )
 				entryp->aiocb.aio_offset,
 				flags,
 				&entryp->returnval);
-	
-	fp_drop(entryp->procp, entryp->aiocb.aio_fildes, fp, 0);
+
+	if (entryp->returnval)
+		fp_drop_written(entryp->procp, entryp->aiocb.aio_fildes, fp);
+	else
+		fp_drop(entryp->procp, entryp->aiocb.aio_fildes, fp, 0);
 
 	return( error );
 
@@ -2646,7 +2675,7 @@ do_munge_aiocb_user32_to_user( struct user32_aiocb *my_aiocbp, struct user_aiocb
 	the_user_aiocbp->aio_sigevent.sigev_notify = my_aiocbp->aio_sigevent.sigev_notify;
 	the_user_aiocbp->aio_sigevent.sigev_signo = my_aiocbp->aio_sigevent.sigev_signo;
 	the_user_aiocbp->aio_sigevent.sigev_value.size_equivalent.sival_int = 
-		my_aiocbp->aio_sigevent.sigev_value.size_equivalent.sival_int;
+		my_aiocbp->aio_sigevent.sigev_value.sival_int;
 	the_user_aiocbp->aio_sigevent.sigev_notify_function = 
 		CAST_USER_ADDR_T(my_aiocbp->aio_sigevent.sigev_notify_function);
 	the_user_aiocbp->aio_sigevent.sigev_notify_attributes = 

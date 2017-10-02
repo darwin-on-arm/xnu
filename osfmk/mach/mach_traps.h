@@ -87,6 +87,8 @@ __BEGIN_DECLS
 
 extern mach_port_name_t mach_reply_port(void);
 
+extern mach_port_name_t thread_get_special_reply_port(void);
+
 extern mach_port_name_t thread_self_trap(void);
 
 extern mach_port_name_t host_self_trap(void);
@@ -107,7 +109,7 @@ extern mach_msg_return_t mach_msg_overwrite_trap(
 				mach_msg_size_t rcv_size,
 				mach_port_name_t rcv_name,
 				mach_msg_timeout_t timeout,
-				mach_port_name_t notify,
+				mach_msg_priority_t override,
 				mach_msg_header_t *rcv_msg,
 				mach_msg_size_t rcv_limit);
 
@@ -168,6 +170,21 @@ extern kern_return_t _kernelrpc_mach_vm_protect_trap(
 				vm_prot_t new_protection
 );
 
+extern kern_return_t _kernelrpc_mach_vm_map_trap(
+				mach_port_name_t target,
+				mach_vm_offset_t *address,
+				mach_vm_size_t size,
+				mach_vm_offset_t mask,
+				int flags,
+				vm_prot_t cur_protection
+);
+
+extern kern_return_t _kernelrpc_mach_vm_purgable_control_trap(
+				mach_port_name_t target,
+				mach_vm_offset_t address,
+				vm_purgable_t control,
+				int *state);
+
 extern kern_return_t _kernelrpc_mach_port_allocate_trap(
 				mach_port_name_t target,
 				mach_port_right_t right,
@@ -217,6 +234,39 @@ extern kern_return_t _kernelrpc_mach_port_extract_member_trap(
 				mach_port_name_t pset
 );
 
+extern kern_return_t _kernelrpc_mach_port_construct_trap(
+				mach_port_name_t target,
+				mach_port_options_t *options,
+				uint64_t context,
+				mach_port_name_t *name
+);
+
+extern kern_return_t _kernelrpc_mach_port_destruct_trap(
+				mach_port_name_t target,
+				mach_port_name_t name,
+				mach_port_delta_t srdelta,
+				uint64_t guard
+);
+
+extern kern_return_t _kernelrpc_mach_port_guard_trap(
+				mach_port_name_t target,
+				mach_port_name_t name,
+				uint64_t guard,
+				boolean_t strict
+);
+
+extern kern_return_t _kernelrpc_mach_port_unguard_trap(
+				mach_port_name_t target,
+				mach_port_name_t name,
+				uint64_t guard
+);
+
+extern kern_return_t mach_generate_activity_id(
+				mach_port_name_t target,
+				int count,
+				uint64_t *activity_id
+);
+
 extern kern_return_t macx_swapon(
 				uint64_t filename,
 				int flags,
@@ -250,6 +300,18 @@ extern kern_return_t thread_switch(
 
 extern mach_port_name_t task_self_trap(void);
 
+extern kern_return_t host_create_mach_voucher_trap(
+				mach_port_name_t host,
+				mach_voucher_attr_raw_recipe_array_t recipes,
+				int recipes_size,
+				mach_port_name_t *voucher);
+
+extern kern_return_t mach_voucher_extract_attr_recipe_trap(
+				mach_port_name_t voucher_name,
+				mach_voucher_attr_key_t key,
+				mach_voucher_attr_raw_recipe_t recipe,
+				mach_msg_type_number_t *recipe_size);
+
 /*
  *	Obsolete interfaces.
  */
@@ -268,18 +330,6 @@ extern kern_return_t pid_for_task(
 				mach_port_name_t t,
 				int *x);
 
-#if		!defined(__LP64__) && !defined(__arm__)
-/* these should go away altogether - so no 64 legacy please */
-
-extern kern_return_t map_fd(
-				int fd,
-				vm_offset_t offset,
-				vm_offset_t *va,
-				boolean_t findspace,
-				vm_size_t size);
-
-#endif	/* !defined(__LP64__) && !defined(__arm__) */
-
 #else	/* KERNEL */
 
 #ifdef	XNU_KERNEL_PRIVATE
@@ -289,15 +339,18 @@ extern kern_return_t map_fd(
  * The kernel may support multiple userspace ABIs, and must use
  * argument structures with elements large enough for any of them.
  */
-#ifndef __arm__
+#if CONFIG_REQUIRES_U32_MUNGING
 #define	PAD_(t)	(sizeof(uint64_t) <= sizeof(t) \
  		? 0 : sizeof(uint64_t) - sizeof(t))
 #define PAD_ARG_8
 #else
 #define	PAD_(t)	(sizeof(uint32_t) <= sizeof(t) \
-        ? 0 : sizeof(uint32_t) - sizeof(t))
-#define PAD_ARG_8 \
-  char dummy_l_[PADL_(uint32_t)]; uint32_t dummy; char dummy_r_[PADR_(uint32_t)];
+ 		? 0 : sizeof(uint32_t) - sizeof(t))
+#if __arm__ && (__BIGGEST_ALIGNMENT__ > 4)
+#define PAD_ARG_8
+#else
+#define PAD_ARG_8 char arg8_pad_[sizeof(uint32_t)];
+#endif
 #endif
 
 #if BYTE_ORDER == LITTLE_ENDIAN
@@ -318,33 +371,6 @@ extern kern_return_t map_fd(
  * traps, without calling out to the BSD system call mungers.
  */
 
-#if 0 /* no active architectures use this */
-void munge_w(const void *, void *);  
-void munge_ww(const void *, void *);  
-void munge_www(const void *, void *);  
-void munge_wwww(const void *, void *);  
-void munge_wwwww(const void *, void *);  
-void munge_wwwwww(const void *, void *);  
-void munge_wwwwwww(const void *, void *);  
-void munge_wwwwwwww(const void *, void *);  
-void munge_d(const void *, void *);  
-void munge_dd(const void *, void *);  
-void munge_ddd(const void *, void *);  
-void munge_dddd(const void *, void *);  
-void munge_ddddd(const void *, void *);  
-void munge_dddddd(const void *, void *);  
-void munge_ddddddd(const void *, void *);  
-void munge_dddddddd(const void *, void *);
-void munge_l(const void *, void *);
-void munge_lw(const void *, void *);
-void munge_lwww(const void *, void *);
-void munge_wl(const void *, void *);  
-void munge_wlw(const void *, void *);  
-void munge_wwwl(const void *, void *);  
-void munge_wwwwl(const void *, void *);  
-void munge_wwwwwl(const void *, void *);  
-#endif /* 0 */
-
 struct kern_invalid_args {
 	int32_t dummy;
 };
@@ -356,6 +382,12 @@ struct mach_reply_port_args {
 };
 extern mach_port_name_t mach_reply_port(
 				struct mach_reply_port_args *args);
+
+struct thread_get_special_reply_port_args {
+	int32_t dummy;
+};
+extern mach_port_name_t thread_get_special_reply_port(
+				struct thread_get_special_reply_port_args *args);
 
 struct thread_self_trap_args {
 	int32_t dummy;
@@ -382,7 +414,7 @@ struct mach_msg_overwrite_trap_args {
 	PAD_ARG_(mach_msg_size_t, rcv_size);
 	PAD_ARG_(mach_port_name_t, rcv_name);
 	PAD_ARG_(mach_msg_timeout_t, timeout);
-	PAD_ARG_(mach_port_name_t, notify);
+	PAD_ARG_(mach_msg_priority_t, override);
 	PAD_ARG_8
 	PAD_ARG_(user_addr_t, rcv_msg);  /* Unused on mach_msg_trap */
 };
@@ -439,18 +471,6 @@ struct semaphore_timedwait_signal_trap_args {
 };
 extern kern_return_t semaphore_timedwait_signal_trap(
 				struct semaphore_timedwait_signal_trap_args *args);
-
-#if		!defined(CONFIG_EMBEDDED)
-struct map_fd_args {
-	PAD_ARG_(int, fd);
-	PAD_ARG_(vm_offset_t, offset);
-	PAD_ARG_(vm_offset_t *, va);
-	PAD_ARG_(boolean_t, findspace);
-	PAD_ARG_(vm_size_t, size);
-};
-extern kern_return_t map_fd(
-				struct map_fd_args *args);
-#endif	/* !defined(CONFIG_EMBEDDED) */
 
 struct task_for_pid_args {
 	PAD_ARG_(mach_port_name_t, target_tport);
@@ -579,6 +599,15 @@ struct mk_timer_arm_trap_args {
 extern kern_return_t mk_timer_arm_trap(
 				struct mk_timer_arm_trap_args *args);
 
+struct mk_timer_arm_leeway_trap_args {
+	PAD_ARG_(mach_port_name_t, name);
+	PAD_ARG_(uint64_t, mk_timer_flags);
+	PAD_ARG_(uint64_t, expire_time);
+	PAD_ARG_(uint64_t, mk_leeway);
+};
+extern kern_return_t mk_timer_arm_leeway_trap(
+				struct mk_timer_arm_leeway_trap_args *args);
+
 struct mk_timer_cancel_trap_args {
     PAD_ARG_(mach_port_name_t, name);
     PAD_ARG_(user_addr_t, result_time);
@@ -613,6 +642,28 @@ struct _kernelrpc_mach_vm_protect_args {
 };						/* Total: 7 */
 extern kern_return_t _kernelrpc_mach_vm_protect_trap(
 				struct _kernelrpc_mach_vm_protect_args *args);
+
+struct _kernelrpc_mach_vm_map_trap_args {
+	PAD_ARG_(mach_port_name_t, target);
+	PAD_ARG_(user_addr_t, addr);
+	PAD_ARG_(mach_vm_size_t, size);
+	PAD_ARG_(mach_vm_offset_t, mask);
+	PAD_ARG_(int, flags);
+	PAD_ARG_8
+	PAD_ARG_(vm_prot_t, cur_protection);
+};
+extern kern_return_t _kernelrpc_mach_vm_map_trap(
+				struct _kernelrpc_mach_vm_map_trap_args *args);
+
+struct _kernelrpc_mach_vm_purgable_control_trap_args {
+	PAD_ARG_(mach_port_name_t, target);	/* 1 word */
+	PAD_ARG_(mach_vm_offset_t, address);	/* 2 words */
+	PAD_ARG_(vm_purgable_t, control);	/* 1 word */
+	PAD_ARG_(user_addr_t, state);		/* 1 word */
+};						/* Total: 5 */
+
+extern kern_return_t _kernelrpc_mach_vm_purgable_control_trap(
+	struct _kernelrpc_mach_vm_purgable_control_trap_args *args);
 
 struct _kernelrpc_mach_port_allocate_args {
 	PAD_ARG_(mach_port_name_t, target);
@@ -678,6 +729,73 @@ struct _kernelrpc_mach_port_extract_member_args {
 };
 extern kern_return_t _kernelrpc_mach_port_extract_member_trap(
 				struct _kernelrpc_mach_port_extract_member_args *args);
+
+struct _kernelrpc_mach_port_construct_args {
+	PAD_ARG_(mach_port_name_t, target);
+	PAD_ARG_(user_addr_t, options);
+	PAD_ARG_(uint64_t, context);
+	PAD_ARG_(user_addr_t, name);
+};
+extern kern_return_t _kernelrpc_mach_port_construct_trap(
+				struct _kernelrpc_mach_port_construct_args *args);
+
+struct _kernelrpc_mach_port_destruct_args {
+	PAD_ARG_(mach_port_name_t, target);
+	PAD_ARG_(mach_port_name_t, name);
+	PAD_ARG_(mach_port_delta_t, srdelta);
+	PAD_ARG_(uint64_t, guard);
+};
+extern kern_return_t _kernelrpc_mach_port_destruct_trap(
+				struct _kernelrpc_mach_port_destruct_args *args);
+
+struct _kernelrpc_mach_port_guard_args {
+	PAD_ARG_(mach_port_name_t, target);
+	PAD_ARG_(mach_port_name_t, name);
+	PAD_ARG_(uint64_t, guard);
+	PAD_ARG_(boolean_t, strict);
+};
+extern kern_return_t _kernelrpc_mach_port_guard_trap(
+				struct _kernelrpc_mach_port_guard_args *args);
+
+struct _kernelrpc_mach_port_unguard_args {
+	PAD_ARG_(mach_port_name_t, target);
+	PAD_ARG_(mach_port_name_t, name);
+	PAD_ARG_(uint64_t, guard);
+};
+extern kern_return_t _kernelrpc_mach_port_unguard_trap(
+				struct _kernelrpc_mach_port_unguard_args *args);
+
+struct mach_generate_activity_id_args {
+	PAD_ARG_(mach_port_name_t, target);
+	PAD_ARG_(int, count);
+	PAD_ARG_(user_addr_t, activity_id);
+};
+extern kern_return_t mach_generate_activity_id(
+				struct mach_generate_activity_id_args *args);
+
+/*
+ * Voucher trap interfaces
+ */
+
+struct host_create_mach_voucher_args {
+	PAD_ARG_(mach_port_name_t, host);
+	PAD_ARG_(mach_voucher_attr_raw_recipe_array_t, recipes);
+	PAD_ARG_(int, recipes_size);
+	PAD_ARG_(user_addr_t, voucher);
+};
+extern kern_return_t host_create_mach_voucher_trap(
+				struct host_create_mach_voucher_args *args);
+
+struct mach_voucher_extract_attr_recipe_args {
+	PAD_ARG_(mach_port_name_t, voucher_name);
+	PAD_ARG_(mach_voucher_attr_key_t, key);
+	PAD_ARG_(mach_voucher_attr_raw_recipe_t, recipe);
+	PAD_ARG_(user_addr_t, recipe_size);
+};
+
+extern kern_return_t mach_voucher_extract_attr_recipe_trap(
+				struct mach_voucher_extract_attr_recipe_args *args);
+
 
 /* not published to LP64 clients yet */
 struct iokit_user_client_trap_args {

@@ -65,6 +65,8 @@
 #define _SYS_REBOOT_H_
 
 #include <sys/appleapiopts.h>
+#include <sys/cdefs.h>
+#include <stdint.h>
 
 /*
  * Arguments to reboot system call.
@@ -84,8 +86,14 @@
 #define RB_SAFEBOOT	0x100	/* booting safe */
 #define RB_UPSDELAY 0x200   /* Delays restart by 5 minutes */
 #define RB_QUICK	0x400	/* quick and ungraceful reboot with file system caches flushed*/
-#define RB_PANIC	0	/* reboot due to panic */
-#define RB_BOOT		1	/* reboot due to boot() */
+#define RB_PANIC	0x800   /* panic the kernel */
+
+#ifndef KERNEL
+__BEGIN_DECLS
+/* userspace reboot control */
+int usrctl(uint32_t flags);
+__END_DECLS
+#endif
 
 #endif /* __APPLE_API_PRIVATE */
 
@@ -131,11 +139,17 @@
 #include <machine/reboot.h>
 
 __BEGIN_DECLS
-int	boot(int, int, char *);
+int	reboot_kernel(int, char *);
 __END_DECLS
 
 #define PROC_SHUTDOWN_LOG "/var/log/kernel-shutdown.log"
 
 #endif /* BSD_KERNEL_PRIVATE */
+
+#if KERNEL_PRIVATE
+__BEGIN_DECLS
+int get_system_inshutdown(void);
+__END_DECLS
+#endif /* KERNEL_PRIVATE */
 
 #endif	/* _SYS_REBOOT_H_ */

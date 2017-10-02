@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2010 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2016 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -26,7 +26,6 @@
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
 #ifdef	MACH_BSD
-#include <mach_rt.h>
 #include <mach_debug.h>
 #include <mach_ldebug.h>
 
@@ -71,6 +70,7 @@
 
 #ifdef MACH_BSD
 extern void	mach_kauth_cred_uthread_update(void);
+extern void throttle_lowpri_io(int);
 #endif
 
 void * find_user_regs(thread_t);
@@ -80,8 +80,6 @@ unsigned int get_msr_exportmask(void);
 unsigned int get_msr_nbits(void);
 
 unsigned int get_msr_rbits(void);
-
-extern void throttle_lowpri_io(int);
 
 /*
  * thread_userstack:
@@ -96,7 +94,8 @@ thread_userstack(
     thread_state_t      tstate,
     __unused unsigned int        count,
     mach_vm_offset_t    *user_stack,
-	int					*customstack
+    int                 *customstack,
+    __unused boolean_t  is64bit
 )
 {
 	if (customstack)
@@ -154,10 +153,10 @@ thread_userstack(
  */
 kern_return_t
 thread_userstackdefault(
-	thread_t thread,
-	mach_vm_offset_t *default_user_stack)
+	mach_vm_offset_t *default_user_stack,
+	boolean_t is64bit)
 {
-	if (thread_is_64bit(thread)) {
+	if (is64bit) {
 		*default_user_stack = VM_USRSTACK64;
 	} else {
 		*default_user_stack = VM_USRSTACK32;
@@ -239,8 +238,7 @@ thread_set_child(thread_t child, int pid)
 
 extern long fuword(vm_offset_t);
 
-
-
+__attribute__((noreturn))
 void
 machdep_syscall(x86_saved_state_t *state)
 {
@@ -313,18 +311,22 @@ machdep_syscall(x86_saved_state_t *state)
 	default:
 		panic("machdep_syscall: too many args");
 	}
-	if (current_thread()->funnel_lock)
-		(void) thread_funnel_set(current_thread()->funnel_lock, FALSE);
 
 	DEBUG_KPRINT_SYSCALL_MDEP("machdep_syscall: retval=%u\n", regs->eax);
 
-	throttle_lowpri_io(TRUE);
+#if DEBUG || DEVELOPMENT
+	kern_allocation_name_t
+	prior __assert_only = thread_get_kernel_state(current_thread())->allocation_name;
+	assertf(prior == NULL, "thread_set_allocation_name(\"%s\") not cleared", kern_allocation_get_name(prior));
+#endif /* DEBUG || DEVELOPMENT */
+
+	throttle_lowpri_io(1);
 
 	thread_exception_return();
 	/* NOTREACHED */
 }
 
-
+__attribute__((noreturn))
 void
 machdep_syscall64(x86_saved_state_t *state)
 {
@@ -355,15 +357,22 @@ machdep_syscall64(x86_saved_state_t *state)
 	case 1:
 		regs->rax = (*entry->routine.args64_1)(regs->rdi);
 		break;
+	case 2:
+		regs->rax = (*entry->routine.args64_2)(regs->rdi, regs->rsi);
+		break;
 	default:
 		panic("machdep_syscall64: too many args");
 	}
-	if (current_thread()->funnel_lock)
-		(void) thread_funnel_set(current_thread()->funnel_lock, FALSE);
 
 	DEBUG_KPRINT_SYSCALL_MDEP("machdep_syscall: retval=%llu\n", regs->rax);
 
-	throttle_lowpri_io(TRUE);
+#if DEBUG || DEVELOPMENT
+	kern_allocation_name_t
+	prior __assert_only = thread_get_kernel_state(current_thread())->allocation_name;
+	assertf(prior == NULL, "thread_set_allocation_name(\"%s\") not cleared", kern_allocation_get_name(prior));
+#endif /* DEBUG || DEVELOPMENT */
+
+	throttle_lowpri_io(1);
 
 	thread_exception_return();
 	/* NOTREACHED */
@@ -387,50 +396,19 @@ struct mach_call_args {
 };
 
 static kern_return_t
-mach_call_arg_munger32(uint32_t sp, int nargs, int call_number, struct mach_call_args *args);
+mach_call_arg_munger32(uint32_t sp, struct mach_call_args *args, const mach_trap_t *trapp);
 
 
 static kern_return_t
-mach_call_arg_munger32(uint32_t sp, int nargs, int call_number, struct mach_call_args *args)
+mach_call_arg_munger32(uint32_t sp, struct mach_call_args *args, const mach_trap_t *trapp)
 {
-	unsigned int args32[9];
-
-	if (copyin((user_addr_t)(sp + sizeof(int)), (char *)args32, nargs * sizeof (int)))
+	if (copyin((user_addr_t)(sp + sizeof(int)), (char *)args, trapp->mach_trap_u32_words * sizeof (int)))
 		return KERN_INVALID_ARGUMENT;
-
-	switch (nargs) {
-	case 9: args->arg9 = args32[8];
-	case 8: args->arg8 = args32[7];
-	case 7: args->arg7 = args32[6];
-	case 6: args->arg6 = args32[5];
-	case 5: args->arg5 = args32[4];
-	case 4: args->arg4 = args32[3];
-	case 3: args->arg3 = args32[2];
-	case 2: args->arg2 = args32[1];
-	case 1: args->arg1 = args32[0];
-	}
-	if (call_number == 10) {
-		/* munge the mach_vm_size_t for  mach_vm_allocate() */
-		args->arg3 = (((uint64_t)(args32[2])) | ((((uint64_t)(args32[3]))<<32)));
-		args->arg4 = args32[4];
-	} else if (call_number == 12) {
-		/* munge the mach_vm_address_t and mach_vm_size_t for mach_vm_deallocate() */
-		args->arg2 = (((uint64_t)(args32[1])) | ((((uint64_t)(args32[2]))<<32)));
-		args->arg3 = (((uint64_t)(args32[3])) | ((((uint64_t)(args32[4]))<<32)));
-	} else if (call_number == 14) {
-		/* munge the mach_vm_address_t and mach_vm_size_t for  mach_vm_protect() */
-		args->arg2 = (((uint64_t)(args32[1])) | ((((uint64_t)(args32[2]))<<32)));
-		args->arg3 = (((uint64_t)(args32[3])) | ((((uint64_t)(args32[4]))<<32)));
-		args->arg4 = args32[5];
-		args->arg5 = args32[6];
-	} else if (call_number == 90) {
-		/* munge_l for mach_wait_until_trap() */
-		args->arg1 = (((uint64_t)(args32[0])) | ((((uint64_t)(args32[1]))<<32)));
-	} else if (call_number == 93) {
-		/* munge_wl for mk_timer_arm_trap() */
-		args->arg2 = (((uint64_t)(args32[1])) | ((((uint64_t)(args32[2]))<<32)));
-	}
-
+#if CONFIG_REQUIRES_U32_MUNGING
+	trapp->mach_trap_arg_munge32(args);
+#else
+#error U32 mach traps on x86_64 kernel requires munging
+#endif
 	return KERN_SUCCESS;
 }
 
@@ -439,6 +417,7 @@ __private_extern__ void mach_call_munger(x86_saved_state_t *state);
 
 extern const char *mach_syscall_name_table[];
 
+__attribute__((noreturn))
 void
 mach_call_munger(x86_saved_state_t *state)
 {
@@ -448,6 +427,9 @@ mach_call_munger(x86_saved_state_t *state)
 	kern_return_t retval;
 	struct mach_call_args args = { 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 	x86_saved_state32_t	*regs;
+
+	struct uthread *ut = get_bsdthread_info(current_thread());
+	uthread_reset_proc_refcount(ut);
 
 	assert(is_saved_state32(state));
 	regs = saved_state32(state);
@@ -476,7 +458,7 @@ mach_call_munger(x86_saved_state_t *state)
 
 	argc = mach_trap_table[call_number].mach_trap_arg_count;
 	if (argc) {
-		retval = mach_call_arg_munger32(regs->uesp, argc, call_number, &args);
+		retval = mach_call_arg_munger32(regs->uesp, &args,  &mach_trap_table[call_number]);
 		if (retval != KERN_SUCCESS) {
 			regs->eax = retval;
 
@@ -506,7 +488,19 @@ mach_call_munger(x86_saved_state_t *state)
 
 	regs->eax = retval;
 
-	throttle_lowpri_io(TRUE);
+#if DEBUG || DEVELOPMENT
+	kern_allocation_name_t
+	prior __assert_only = thread_get_kernel_state(current_thread())->allocation_name;
+	assertf(prior == NULL, "thread_set_allocation_name(\"%s\") not cleared", kern_allocation_get_name(prior));
+#endif /* DEBUG || DEVELOPMENT */
+
+	throttle_lowpri_io(1);
+
+#if PROC_REF_DEBUG
+	if (__improbable(uthread_get_proc_refcount(ut) != 0)) {
+		panic("system call returned with uu_proc_refcount != 0");
+	}
+#endif
 
 	thread_exception_return();
 	/* NOTREACHED */
@@ -515,13 +509,18 @@ mach_call_munger(x86_saved_state_t *state)
 
 __private_extern__ void mach_call_munger64(x86_saved_state_t *regs);
 
+__attribute__((noreturn))
 void
 mach_call_munger64(x86_saved_state_t *state)
 {
 	int call_number;
 	int argc;
 	mach_call_t mach_call;
+	struct mach_call_args args = { 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 	x86_saved_state64_t	*regs;
+
+	struct uthread *ut = get_bsdthread_info(current_thread());
+	uthread_reset_proc_refcount(ut);
 
 	assert(is_saved_state64(state));
 	regs = saved_state64(state);
@@ -547,17 +546,23 @@ mach_call_munger64(x86_saved_state_t *state)
 		/* NOTREACHED */
 	}
 	argc = mach_trap_table[call_number].mach_trap_arg_count;
+	if (argc) {
+		int args_in_regs = MIN(6, argc);
 
-	if (argc > 6) {
+		memcpy(&args.arg1, &regs->rdi, args_in_regs * sizeof(syscall_arg_t));
+
+		if (argc > 6) {
 	        int copyin_count;
 
-		copyin_count = (argc - 6) * (int)sizeof(uint64_t);
+			assert(argc <= 9);
+			copyin_count = (argc - 6) * (int)sizeof(syscall_arg_t);
 
-	        if (copyin((user_addr_t)(regs->isf.rsp + sizeof(user_addr_t)), (char *)&regs->v_arg6, copyin_count)) {
+	        if (copyin((user_addr_t)(regs->isf.rsp + sizeof(user_addr_t)), (char *)&args.arg7, copyin_count)) {
 		        regs->rax = KERN_INVALID_ARGUMENT;
 			
-			thread_exception_return();
-			/* NOTREACHED */
+				thread_exception_return();
+				/* NOTREACHED */
+			}
 		}
 	}
 
@@ -565,7 +570,7 @@ mach_call_munger64(x86_saved_state_t *state)
 	mach_kauth_cred_uthread_update();
 #endif
 
-	regs->rax = (uint64_t)mach_call((void *)(&regs->rdi));
+	regs->rax = (uint64_t)mach_call((void *)&args);
 	
 	DEBUG_KPRINT_SYSCALL_MACH( "mach_call_munger64: retval=0x%llx\n", regs->rax);
 
@@ -573,7 +578,19 @@ mach_call_munger64(x86_saved_state_t *state)
 		MACHDBG_CODE(DBG_MACH_EXCP_SC,(call_number)) | DBG_FUNC_END, 
 		regs->rax, 0, 0, 0, 0);
 
-	throttle_lowpri_io(TRUE);
+#if DEBUG || DEVELOPMENT
+	kern_allocation_name_t
+	prior __assert_only = thread_get_kernel_state(current_thread())->allocation_name;
+	assertf(prior == NULL, "thread_set_allocation_name(\"%s\") not cleared", kern_allocation_get_name(prior));
+#endif /* DEBUG || DEVELOPMENT */
+
+	throttle_lowpri_io(1);
+
+#if PROC_REF_DEBUG
+	if (__improbable(uthread_get_proc_refcount(ut) != 0)) {
+		panic("system call returned with uu_proc_refcount != 0");
+	}
+#endif
 
 	thread_exception_return();
 	/* NOTREACHED */
@@ -695,21 +712,17 @@ thread_setsinglestep(thread_t thread, int on)
 	return (KERN_SUCCESS);
 }
 
-
-
-/* XXX this should be a struct savearea so that CHUD will work better on x86 */
-void *
-find_user_regs(thread_t thread)
-{
-	pal_register_cache_state(thread, DIRTY);
-	return USER_STATE(thread);
-}
-
 void *
 get_user_regs(thread_t th)
 {
 	pal_register_cache_state(th, DIRTY);
 	return(USER_STATE(th));
+}
+
+void *
+find_user_regs(thread_t thread)
+{
+	return get_user_regs(thread);
 }
 
 #if CONFIG_DTRACE

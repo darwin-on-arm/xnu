@@ -80,6 +80,7 @@
 #include <sys/mount_internal.h>
 #include <sys/sysproto.h>
 #include <sys/signalvar.h>
+#include <sys/protosw.h> /* for net_uptime2timeval() */
 
 #include <kern/clock.h>
 #include <kern/task.h>
@@ -87,6 +88,8 @@
 #if CONFIG_MACF
 #include <security/mac_framework.h>
 #endif
+#include <IOKit/IOBSD.h>
+#include <sys/time.h>
 
 #define HZ	100	/* XXX */
 
@@ -99,9 +102,9 @@ lck_grp_attr_t	*tz_slock_grp_attr;
 static void		setthetime(
 					struct timeval	*tv);
 
-void time_zone_slock_init(void) __attribute__((section("__TEXT, initcode")));
+void time_zone_slock_init(void);
 
-/* 
+/*
  * Time of day and interval timer support.
  *
  * These routines provide the kernel entry points to get and set
@@ -113,31 +116,51 @@ void time_zone_slock_init(void) __attribute__((section("__TEXT, initcode")));
 /* ARGSUSED */
 int
 gettimeofday(
-__unused	struct proc	*p,
-			struct gettimeofday_args *uap, 
-			int32_t *retval)
+			struct proc	*p,
+			struct gettimeofday_args *uap,
+			__unused int32_t *retval)
 {
 	int error = 0;
 	struct timezone ltz; /* local copy */
+	clock_sec_t secs;
+	clock_usec_t usecs;
+	uint64_t mach_time;
+
+	if (uap->tp || uap->mach_absolute_time) {
+		clock_gettimeofday_and_absolute_time(&secs, &usecs, &mach_time);
+	}
 
 	if (uap->tp) {
-		clock_sec_t		secs;
-		clock_usec_t	usecs;
-
-		clock_gettimeofday(&secs, &usecs);
-		retval[0] = secs;
-		retval[1] = usecs;
+		/* Casting secs through a uint32_t to match arm64 commpage */
+		if (IS_64BIT_PROCESS(p)) {
+			struct user64_timeval user_atv = {};
+			user_atv.tv_sec = (uint32_t)secs;
+			user_atv.tv_usec = usecs;
+			error = copyout(&user_atv, uap->tp, sizeof(user_atv));
+		} else {
+			struct user32_timeval user_atv = {};
+			user_atv.tv_sec = (uint32_t)secs;
+			user_atv.tv_usec = usecs;
+			error = copyout(&user_atv, uap->tp, sizeof(user_atv));
+		}
+		if (error) {
+			return error;
+		}
 	}
-	
+
 	if (uap->tzp) {
 		lck_spin_lock(tz_slock);
 		ltz = tz;
 		lck_spin_unlock(tz_slock);
 
-		error = copyout((caddr_t)&ltz, CAST_USER_ADDR_T(uap->tzp), sizeof (tz));
+		error = copyout((caddr_t)&ltz, CAST_USER_ADDR_T(uap->tzp), sizeof(tz));
 	}
 
-	return (error);
+	if (error == 0 && uap->mach_absolute_time) {
+		error = copyout(&mach_time, uap->mach_absolute_time, sizeof(mach_time));
+	}
+
+	return error;
 }
 
 /*
@@ -153,15 +176,20 @@ settimeofday(__unused struct proc *p, struct settimeofday_args  *uap, __unused i
 
 	bzero(&atv, sizeof(atv));
 
+	/* Check that this task is entitled to set the time or it is root */
+	if (!IOTaskHasEntitlement(current_task(), SETTIME_ENTITLEMENT)) {
+
 #if CONFIG_MACF
-	error = mac_system_check_settime(kauth_cred_get());
-	if (error)
-		return (error);
+		error = mac_system_check_settime(kauth_cred_get());
+		if (error)
+			return (error);
 #endif
 #ifndef CONFIG_EMBEDDED
-	if ((error = suser(kauth_cred_get(), &p->p_acflag)))
-		return (error);
+		if ((error = suser(kauth_cred_get(), &p->p_acflag)))
+			return (error);
 #endif
+	}
+
 	/* Verify all parameters before changing time */
 	if (uap->tv) {
 		if (IS_64BIT_PROCESS(p)) {
@@ -202,59 +230,6 @@ setthetime(
 }
 
 /*
- * XXX Y2038 bug because of clock_adjtime() first argument
- */
-/* ARGSUSED */
-int
-adjtime(struct proc *p, struct adjtime_args *uap, __unused int32_t *retval)
-{
-	struct timeval atv;
-	int error;
-
-#if CONFIG_MACF
-	error = mac_system_check_settime(kauth_cred_get());
-	if (error)
-		return (error);
-#endif
-	if ((error = priv_check_cred(kauth_cred_get(), PRIV_ADJTIME, 0)))
-		return (error);
-	if (IS_64BIT_PROCESS(p)) {
-		struct user64_timeval user_atv;
-		error = copyin(uap->delta, &user_atv, sizeof(user_atv));
-		atv.tv_sec = user_atv.tv_sec;
-		atv.tv_usec = user_atv.tv_usec;
-	} else {
-		struct user32_timeval user_atv;
-		error = copyin(uap->delta, &user_atv, sizeof(user_atv));
-		atv.tv_sec = user_atv.tv_sec;
-		atv.tv_usec = user_atv.tv_usec;
-	}
-	if (error)
-		return (error);
-		
-	/*
-	 * Compute the total correction and the rate at which to apply it.
-	 */
-	clock_adjtime(&atv.tv_sec, &atv.tv_usec);
-
-	if (uap->olddelta) {
-		if (IS_64BIT_PROCESS(p)) {
-			struct user64_timeval user_atv;
-			user_atv.tv_sec = atv.tv_sec;
-			user_atv.tv_usec = atv.tv_usec;
-			error = copyout(&user_atv, uap->olddelta, sizeof(user_atv));
-		} else {
-			struct user32_timeval user_atv;
-			user_atv.tv_sec = atv.tv_sec;
-			user_atv.tv_usec = atv.tv_usec;
-			error = copyout(&user_atv, uap->olddelta, sizeof(user_atv));
-		}
-	}
-
-	return (0);
-}
-
-/*
  *	Verify the calendar value.  If negative,
  *	reset to zero (the epoch).
  */
@@ -291,6 +266,18 @@ boottime_sec(void)
 
 	clock_get_boottime_nanotime(&secs, &nanosecs);
 	return (secs);
+}
+
+void
+boottime_timeval(struct timeval *tv)
+{
+	clock_sec_t		secs;
+	clock_usec_t	microsecs;
+
+	clock_get_boottime_microtime(&secs, &microsecs);
+
+	tv->tv_sec = secs;
+	tv->tv_usec = microsecs;
 }
 
 /*
@@ -364,6 +351,7 @@ getitimer(struct proc *p, struct getitimer_args *uap, __unused int32_t *retval)
 
 	if (IS_64BIT_PROCESS(p)) {
 		struct user64_itimerval user_itv;
+		bzero(&user_itv, sizeof (user_itv));
 		user_itv.it_interval.tv_sec = aitv.it_interval.tv_sec;
 		user_itv.it_interval.tv_usec = aitv.it_interval.tv_usec;
 		user_itv.it_value.tv_sec = aitv.it_value.tv_sec;
@@ -371,6 +359,7 @@ getitimer(struct proc *p, struct getitimer_args *uap, __unused int32_t *retval)
 		return (copyout((caddr_t)&user_itv, uap->itv, sizeof (user_itv)));
 	} else {
 		struct user32_itimerval user_itv;
+		bzero(&user_itv, sizeof (user_itv));		
 		user_itv.it_interval.tv_sec = aitv.it_interval.tv_sec;
 		user_itv.it_interval.tv_usec = aitv.it_interval.tv_usec;
 		user_itv.it_value.tv_sec = aitv.it_value.tv_sec;
@@ -432,7 +421,8 @@ setitimer(struct proc *p, struct setitimer_args *uap, int32_t *retval)
 			microuptime(&p->p_rtime);
 			timevaladd(&p->p_rtime, &aitv.it_value);
 			p->p_realtimer = aitv;
-			if (!thread_call_enter_delayed(p->p_rcall, tvtoabstime(&p->p_rtime)))
+			if (!thread_call_enter_delayed_with_leeway(p->p_rcall, NULL,
+					         tvtoabstime(&p->p_rtime), 0, THREAD_CALL_DELAY_USER_NORMAL))
 				p->p_ractive++;
 		} else  {
 			timerclear(&p->p_rtime);
@@ -481,24 +471,34 @@ setitimer(struct proc *p, struct setitimer_args *uap, int32_t *retval)
  */
 void
 realitexpire(
-	struct proc	*p)
+	struct proc *p)
 {
 	struct proc *r;
-	struct timeval	t;
+	struct timeval t;
 
 	r = proc_find(p->p_pid);
 
 	proc_spinlock(p);
 
+	assert(p->p_ractive > 0);
+
 	if (--p->p_ractive > 0 || r != p) {
+		/*
+		 * bail, because either proc is exiting
+		 * or there's another active thread call
+		 */
 		proc_spinunlock(p);
 
 		if (r != NULL)
 			proc_rele(r);
 		return;
 	}
-	
+
 	if (!timerisset(&p->p_realtimer.it_interval)) {
+		/*
+		 * p_realtimer was cleared while this call was pending,
+		 * send one last SIGALRM, but don't re-arm
+		 */
 		timerclear(&p->p_rtime);
 		proc_spinunlock(p);
 
@@ -507,8 +507,29 @@ realitexpire(
 		return;
 	}
 
+	proc_spinunlock(p);
+
+	/*
+	 * Send the signal before re-arming the next thread call,
+	 * so in case psignal blocks, we won't create yet another thread call.
+	 */
+
+	psignal(p, SIGALRM);
+
+	proc_spinlock(p);
+
+	/* Should we still re-arm the next thread call? */
+	if (!timerisset(&p->p_realtimer.it_interval)) {
+		timerclear(&p->p_rtime);
+		proc_spinunlock(p);
+
+		proc_rele(p);
+		return;
+	}
+
 	microuptime(&t);
 	timevaladd(&p->p_rtime, &p->p_realtimer.it_interval);
+
 	if (timercmp(&p->p_rtime, &t, <=)) {
 		if ((p->p_rtime.tv_sec + 2) >= t.tv_sec) {
 			for (;;) {
@@ -516,19 +537,60 @@ realitexpire(
 				if (timercmp(&p->p_rtime, &t, >))
 					break;
 			}
-		}
-		else {
+		} else {
 			p->p_rtime = p->p_realtimer.it_interval;
 			timevaladd(&p->p_rtime, &t);
 		}
 	}
 
-	if (!thread_call_enter_delayed(p->p_rcall, tvtoabstime(&p->p_rtime)))
+	assert(p->p_rcall != NULL);
+
+	if (!thread_call_enter_delayed_with_leeway(p->p_rcall, NULL, tvtoabstime(&p->p_rtime), 0,
+	                                           THREAD_CALL_DELAY_USER_NORMAL)) {
 		p->p_ractive++;
+	}
+
 	proc_spinunlock(p);
 
-	psignal(p, SIGALRM);
 	proc_rele(p);
+}
+
+/*
+ * Called once in proc_exit to clean up after an armed or pending realitexpire
+ *
+ * This will only be called after the proc refcount is drained,
+ * so realitexpire cannot be currently holding a proc ref.
+ * i.e. it will/has gotten PROC_NULL from proc_find.
+ */
+void
+proc_free_realitimer(proc_t p)
+{
+	proc_spinlock(p);
+
+	assert(p->p_rcall != NULL);
+	assert(p->p_refcount == 0);
+
+	timerclear(&p->p_realtimer.it_interval);
+
+	if (thread_call_cancel(p->p_rcall)) {
+		assert(p->p_ractive > 0);
+		p->p_ractive--;
+	}
+
+	while (p->p_ractive > 0) {
+		proc_spinunlock(p);
+
+		delay(1);
+
+		proc_spinlock(p);
+	}
+
+	thread_call_t call = p->p_rcall;
+	p->p_rcall = NULL;
+
+	proc_spinunlock(p);
+
+	thread_call_free(call);
 }
 
 /*
@@ -544,6 +606,18 @@ itimerfix(
 	    tv->tv_usec < 0 || tv->tv_usec >= 1000000)
 		return (EINVAL);
 	return (0);
+}
+
+int
+timespec_is_valid(const struct timespec *ts)
+{
+	/* The INT32_MAX limit ensures the timespec is safe for clock_*() functions
+	 * which accept 32-bit ints. */
+	if (ts->tv_sec < 0 || ts->tv_sec > INT32_MAX ||
+			ts->tv_nsec < 0 || (unsigned long long)ts->tv_nsec > NSEC_PER_SEC) {
+		return 0;
+	}
+	return 1;
 }
 
 /*
@@ -655,6 +729,19 @@ microtime(
 }
 
 void
+microtime_with_abstime(
+	struct timeval	*tvp, uint64_t *abstime)
+{
+	clock_sec_t		tv_sec;
+	clock_usec_t	tv_usec;
+
+	clock_get_calendar_absolute_and_microtime(&tv_sec, &tv_usec, abstime);
+
+	tvp->tv_sec = tv_sec;
+	tvp->tv_usec = tv_usec;
+}
+
+void
 microuptime(
 	struct timeval	*tvp)
 {
@@ -709,6 +796,95 @@ tvtoabstime(
 
 	return (result + usresult);
 }
+
+uint64_t
+tstoabstime(struct timespec *ts)
+{
+	uint64_t abstime_s, abstime_ns;
+	clock_interval_to_absolutetime_interval(ts->tv_sec, NSEC_PER_SEC, &abstime_s);
+	clock_interval_to_absolutetime_interval(ts->tv_nsec, 1, &abstime_ns);
+	return abstime_s + abstime_ns;
+}
+
+#if NETWORKING
+/*
+ * ratecheck(): simple time-based rate-limit checking.
+ */
+int
+ratecheck(struct timeval *lasttime, const struct timeval *mininterval)
+{
+	struct timeval tv, delta;
+	int rv = 0;
+
+	net_uptime2timeval(&tv);
+	delta = tv;
+	timevalsub(&delta, lasttime);
+
+	/*
+	 * check for 0,0 is so that the message will be seen at least once,
+	 * even if interval is huge.
+	 */
+	if (timevalcmp(&delta, mininterval, >=) ||
+	    (lasttime->tv_sec == 0 && lasttime->tv_usec == 0)) {
+		*lasttime = tv;
+		rv = 1;
+	}
+
+	return (rv);
+}
+
+/*
+ * ppsratecheck(): packets (or events) per second limitation.
+ */
+int
+ppsratecheck(struct timeval *lasttime, int *curpps, int maxpps)
+{
+	struct timeval tv, delta;
+	int rv;
+
+	net_uptime2timeval(&tv);
+
+	timersub(&tv, lasttime, &delta);
+
+	/*
+	 * Check for 0,0 so that the message will be seen at least once.
+	 * If more than one second has passed since the last update of
+	 * lasttime, reset the counter.
+	 *
+	 * we do increment *curpps even in *curpps < maxpps case, as some may
+	 * try to use *curpps for stat purposes as well.
+	 */
+	if ((lasttime->tv_sec == 0 && lasttime->tv_usec == 0) ||
+	    delta.tv_sec >= 1) {
+		*lasttime = tv;
+		*curpps = 0;
+		rv = 1;
+	} else if (maxpps < 0)
+		rv = 1;
+	else if (*curpps < maxpps)
+		rv = 1;
+	else
+		rv = 0;
+
+#if 1 /* DIAGNOSTIC? */
+	/* be careful about wrap-around */
+	if (*curpps + 1 > 0)
+		*curpps = *curpps + 1;
+#else
+	/*
+	 * assume that there's not too many calls to this function.
+	 * not sure if the assumption holds, as it depends on *caller's*
+	 * behavior, not the behavior of this function.
+	 * IMHO it is wrong to make assumption on the caller's behavior,
+	 * so the above #if is #if 1, not #ifdef DIAGNOSTIC.
+	 */
+	*curpps = *curpps + 1;
+#endif
+
+	return (rv);
+}
+#endif /* NETWORKING */
+
 void
 time_zone_slock_init(void)
 {

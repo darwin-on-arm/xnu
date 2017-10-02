@@ -1,8 +1,8 @@
 /*
- * Copyright (c) 2008-2011 Apple Inc. All rights reserved.
+ * Copyright (c) 2008-2017 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
- * 
+ *
  * This file contains Original Code and/or Modifications of Original Code
  * as defined in and that are subject to the Apple Public Source License
  * Version 2.0 (the 'License'). You may not use this file except in
@@ -11,10 +11,10 @@
  * unlawful or unlicensed copies of an Apple operating system, or to
  * circumvent, violate, or enable the circumvention or violation of, any
  * terms of an Apple operating system software license agreement.
- * 
+ *
  * Please obtain a copy of the License at
  * http://www.opensource.apple.com/apsl/ and read it before using this file.
- * 
+ *
  * The Original Code and all software distributed under the License are
  * distributed on an 'AS IS' basis, WITHOUT WARRANTY OF ANY KIND, EITHER
  * EXPRESS OR IMPLIED, AND APPLE HEREBY DISCLAIMS ALL SUCH WARRANTIES,
@@ -22,7 +22,7 @@
  * FITNESS FOR A PARTICULAR PURPOSE, QUIET ENJOYMENT OR NON-INFRINGEMENT.
  * Please see the License for the specific language governing rights and
  * limitations under the License.
- * 
+ *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
 
@@ -119,7 +119,7 @@ static int esp_output(struct mbuf *, u_char *, struct mbuf *,
 	int, struct secasvar *sav);
 
 extern int	esp_udp_encap_port;
-extern u_int32_t natt_now;
+extern u_int64_t natt_now;
 
 extern lck_mtx_t *sadb_mutex;
 
@@ -127,16 +127,15 @@ extern lck_mtx_t *sadb_mutex;
  * compute ESP header size.
  */
 size_t
-esp_hdrsiz(isr)
-	struct ipsecrequest *isr;
+esp_hdrsiz(__unused struct ipsecrequest *isr)
 {
 
+#if 0
 	/* sanity check */
 	if (isr == NULL)
 		panic("esp_hdrsiz: NULL was passed.\n");
 
 
-#if 0
 	lck_mtx_lock(sadb_mutex);
 	{
 		struct secasvar *sav;
@@ -231,12 +230,12 @@ estimate:
  *	<-----------------> espoff
  */
 static int
-esp_output(m, nexthdrp, md, af, sav)
-	struct mbuf *m;
-	u_char *nexthdrp;
-	struct mbuf *md;
-	int af;
-	struct secasvar *sav;
+esp_output(
+	struct mbuf *m,
+	u_char *nexthdrp,
+	struct mbuf *md,
+	int af,
+	struct secasvar *sav)
 {
 	struct mbuf *n;
 	struct mbuf *mprev;
@@ -247,13 +246,14 @@ esp_output(m, nexthdrp, md, af, sav)
 	u_int8_t nxt = 0;
 	size_t plen;	/*payload length to be encrypted*/
 	size_t espoff;
+	size_t esphlen;	/* sizeof(struct esp/newesp) + ivlen */
 	int ivlen;
 	int afnumber;
 	size_t extendsiz;
 	int error = 0;
 	struct ipsecstat *stat;
 	struct udphdr *udp = NULL;
-	int	udp_encapsulate = (sav->flags & SADB_X_EXT_NATT && af == AF_INET &&
+	int	udp_encapsulate = (sav->flags & SADB_X_EXT_NATT && (af == AF_INET || af == AF_INET6) &&
 			(esp_udp_encap_port & 0xFFFF) != 0);
 
 	KERNEL_DEBUG(DBG_FNC_ESPOUT | DBG_FUNC_START, sav->ivlen,0,0,0,0);
@@ -339,7 +339,6 @@ esp_output(m, nexthdrp, md, af, sav)
 	struct ip6_hdr *ip6 = NULL;
 #endif
 	size_t esplen;	/* sizeof(struct esp/newesp) */
-	size_t esphlen;	/* sizeof(struct esp/newesp) + ivlen */
 	size_t hlen = 0;	/* ip header len */
 
 	if (sav->flags & SADB_X_EXT_OLD) {
@@ -717,6 +716,21 @@ esp_output(m, nexthdrp, md, af, sav)
 	/*
 	 * calculate ICV if required.
 	 */
+	size_t siz = 0;
+	u_char authbuf[AH_MAXSUMSIZE] __attribute__((aligned(4)));
+
+        if (algo->finalizeencrypt) {
+		siz = algo->icvlen;
+		if ((*algo->finalizeencrypt)(sav, authbuf, siz)) {
+		        ipseclog((LOG_ERR, "packet encryption ICV failure\n"));
+			IPSEC_STAT_INCREMENT(stat->out_inval);
+			error = EINVAL;
+			KERNEL_DEBUG(DBG_FNC_ENCRYPT | DBG_FUNC_END, 1,error,0,0,0);
+			goto fail;
+		}
+		goto fill_icv;
+	}
+
 	if (!sav->replay)
 		goto noantireplay;
 	if (!sav->key_auth)
@@ -726,12 +740,6 @@ esp_output(m, nexthdrp, md, af, sav)
 
     {
 		const struct ah_algorithm *aalgo;
-		u_char authbuf[AH_MAXSUMSIZE] __attribute__((aligned(4)));
-		u_char *p;
-		size_t siz;
-	#if INET
-		struct ip *ip;
-	#endif
 	
 		aalgo = ah_algorithm_lookup(sav->alg_auth);
 		if (!aalgo)
@@ -747,7 +755,13 @@ esp_output(m, nexthdrp, md, af, sav)
 			IPSEC_STAT_INCREMENT(stat->out_inval);
 			goto fail;
 		}
-	
+    }
+
+ fill_icv:
+    {
+	        struct ip *ip;
+		u_char *p;
+
 		n = m;
 		while (n->m_next)
 			n = n->m_next;
@@ -803,10 +817,22 @@ esp_output(m, nexthdrp, md, af, sav)
     
 	if (udp_encapsulate) {
 		struct ip *ip;
-		ip = mtod(m, struct ip *);
-		udp->uh_ulen = htons(ntohs(ip->ip_len) - (IP_VHL_HL(ip->ip_vhl) << 2));
-	}
+		struct ip6_hdr *ip6;
 
+		switch (af) {
+		case AF_INET:
+		    ip = mtod(m, struct ip *);
+		    udp->uh_ulen = htons(ntohs(ip->ip_len) - (IP_VHL_HL(ip->ip_vhl) << 2));
+		    break;
+		case AF_INET6:
+		    ip6 = mtod(m, struct ip6_hdr *);
+		    udp->uh_ulen = htons(plen + siz + extendsiz + esphlen);
+		    udp->uh_sum = in6_pseudo(&ip6->ip6_src, &ip6->ip6_dst, htonl(ntohs(udp->uh_ulen) + IPPROTO_UDP));
+		    m->m_pkthdr.csum_flags = (CSUM_UDPIPV6|CSUM_ZERO_INVERT);
+		    m->m_pkthdr.csum_data = offsetof(struct udphdr, uh_sum);
+		    break;
+		}
+	}
 
 noantireplay:
 	lck_mtx_lock(sadb_mutex);
@@ -832,9 +858,9 @@ fail:
 
 #if INET
 int
-esp4_output(m, sav)
-	struct mbuf *m;
-	struct secasvar *sav;
+esp4_output(
+	struct mbuf *m,
+	struct secasvar *sav)
 {
 	struct ip *ip;
 	if (m->m_len < sizeof(struct ip)) {
@@ -850,11 +876,11 @@ esp4_output(m, sav)
 
 #if INET6
 int
-esp6_output(m, nexthdrp, md, sav)
-	struct mbuf *m;
-	u_char *nexthdrp;
-	struct mbuf *md;
-	struct secasvar *sav;
+esp6_output(
+	struct mbuf *m,
+	u_char *nexthdrp,
+	struct mbuf *md,
+	struct secasvar *sav)
 {
 	if (m->m_len < sizeof(struct ip6_hdr)) {
 		ipseclog((LOG_DEBUG, "esp6_output: first mbuf too short\n"));

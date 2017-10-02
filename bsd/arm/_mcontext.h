@@ -29,20 +29,35 @@
 #ifndef __ARM_MCONTEXT_H_
 #define __ARM_MCONTEXT_H_
 
+#include <sys/cdefs.h> /* __DARWIN_UNIX03 */
 #include <sys/appleapiopts.h>
-#include <mach/arm/_structs.h>
+#include <mach/machine/_structs.h>
 
-#ifndef _STRUCT_MCONTEXT
+#ifndef _STRUCT_MCONTEXT32
 #if __DARWIN_UNIX03
-#if !defined(__LP64__)
-#define _STRUCT_MCONTEXT        struct __darwin_mcontext
-_STRUCT_MCONTEXT
+#define _STRUCT_MCONTEXT32        struct __darwin_mcontext32
+_STRUCT_MCONTEXT32
 {
 	_STRUCT_ARM_EXCEPTION_STATE	__es;
 	_STRUCT_ARM_THREAD_STATE	__ss;
 	_STRUCT_ARM_VFP_STATE		__fs;
 };
-#else
+
+#else /* !__DARWIN_UNIX03 */
+#define _STRUCT_MCONTEXT32        struct mcontext32
+_STRUCT_MCONTEXT32
+{
+	_STRUCT_ARM_EXCEPTION_STATE	es;
+	_STRUCT_ARM_THREAD_STATE	ss;
+	_STRUCT_ARM_VFP_STATE		fs;
+};
+
+#endif /* __DARWIN_UNIX03 */
+#endif /* _STRUCT_MCONTEXT32 */
+
+
+#ifndef _STRUCT_MCONTEXT64
+#if __DARWIN_UNIX03
 #define _STRUCT_MCONTEXT64	struct __darwin_mcontext64
 _STRUCT_MCONTEXT64
 {
@@ -50,17 +65,8 @@ _STRUCT_MCONTEXT64
 	_STRUCT_ARM_THREAD_STATE64	__ss;
 	_STRUCT_ARM_NEON_STATE64	__ns;
 };
-#endif /* !__LP64__ */
+
 #else /* !__DARWIN_UNIX03 */
-#if !defined(__PL64__)
-#define _STRUCT_MCONTEXT        struct mcontext
-_STRUCT_MCONTEXT
-{
-	_STRUCT_ARM_EXCEPTION_STATE	es;
-	_STRUCT_ARM_THREAD_STATE	ss;
-	_STRUCT_ARM_VFP_STATE		fs;
-};
-#else
 #define _STRUCT_MCONTEXT64	struct mcontext64
 _STRUCT_MCONTEXT64
 {
@@ -68,15 +74,18 @@ _STRUCT_MCONTEXT64
 	_STRUCT_ARM_THREAD_STATE64	ss;
 	_STRUCT_ARM_NEON_STATE64	ns;
 };
-#endif /* !__LP64__ */
 #endif /* __DARWIN_UNIX03 */
-#endif /* _STRUCT_MCONTEXT */
+#endif /* _STRUCT_MCONTEXT32 */
 
-
-#if !defined(_POSIX_C_SOURCE) || defined(_DARWIN_C_SOURCE)
-#ifndef ARM_MCONTEXT_SIZE
-#define ARM_MCONTEXT_SIZE       (ARM_THREAD_STATE_COUNT + ARM_VFP_STATE_COUNT + ARM_EXCEPTION_STATE_COUNT) * sizeof(int)
-#endif /* ARM_MCONTEXT_SIZE */
-#endif /* (_POSIX_C_SOURCE && !_DARWIN_C_SOURCE) */
+#ifndef _MCONTEXT_T
+#define _MCONTEXT_T
+#if defined(__LP64__)
+typedef _STRUCT_MCONTEXT64	*mcontext_t;
+#define _STRUCT_MCONTEXT _STRUCT_MCONTEXT64
+#else
+typedef _STRUCT_MCONTEXT32	*mcontext_t;
+#define _STRUCT_MCONTEXT	_STRUCT_MCONTEXT32
+#endif
+#endif /* _MCONTEXT_T */
 
 #endif /* __ARM_MCONTEXT_H_ */

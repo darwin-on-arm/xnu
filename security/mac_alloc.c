@@ -84,6 +84,7 @@ mac_kfree(void * data, vm_size_t size)
 void *
 mac_mbuf_alloc(int len, int wait)
 {
+#if CONFIG_MACF_SOCKET_SUBSET
 	struct m_tag *t;
 
 	t = m_tag_alloc(KERNEL_MODULE_TAG_ID, KERNEL_TAG_TYPE_MAC_POLICY_LABEL,
@@ -92,15 +93,23 @@ mac_mbuf_alloc(int len, int wait)
 		return (NULL);
 
 	return ((void *)(t + 1));
+#else
+#pragma unused(len, wait)
+	return NULL;
+#endif
 }
 
 void
 mac_mbuf_free(void *data)
 {
+#if CONFIG_MACF_SOCKET_SUBSET
 	struct m_tag *t;
 
 	t = (struct m_tag *)((char *)data - sizeof(struct m_tag));
 	m_tag_free(t);
+#else
+#pragma unused(data)
+#endif
 }
 
 /*
@@ -113,8 +122,8 @@ int
 mac_wire(void *start, void *end)
 {
 
-	return (vm_map_wire(kalloc_map, CAST_USER_ADDR_T(start),
-		CAST_USER_ADDR_T(end), VM_PROT_READ|VM_PROT_WRITE, FALSE));
+	return (vm_map_wire_kernel(kalloc_map, CAST_USER_ADDR_T(start),
+		CAST_USER_ADDR_T(end), VM_PROT_READ|VM_PROT_WRITE, VM_KERN_MEMORY_SECURITY, FALSE));
 }
 
 int

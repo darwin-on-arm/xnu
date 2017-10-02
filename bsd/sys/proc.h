@@ -1,8 +1,8 @@
 /*
- * Copyright (c) 2000-2006 Apple Computer, Inc. All rights reserved.
+ * Copyright (c) 2000-2016 Apple Computer, Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
- * 
+ *
  * This file contains Original Code and/or Modifications of Original Code
  * as defined in and that are subject to the Apple Public Source License
  * Version 2.0 (the 'License'). You may not use this file except in
@@ -11,10 +11,10 @@
  * unlawful or unlicensed copies of an Apple operating system, or to
  * circumvent, violate, or enable the circumvention or violation of, any
  * terms of an Apple operating system software license agreement.
- * 
+ *
  * Please obtain a copy of the License at
  * http://www.opensource.apple.com/apsl/ and read it before using this file.
- * 
+ *
  * The Original Code and all software distributed under the License are
  * distributed on an 'AS IS' basis, WITHOUT WARRANTY OF ANY KIND, EITHER
  * EXPRESS OR IMPLIED, AND APPLE HEREBY DISCLAIMS ALL SUCH WARRANTIES,
@@ -22,7 +22,7 @@
  * FITNESS FOR A PARTICULAR PURPOSE, QUIET ENJOYMENT OR NON-INFRINGEMENT.
  * Please see the License for the specific language governing rights and
  * limitations under the License.
- * 
+ *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
 /* Copyright (c) 1995, 1997 Apple Computer, Inc. All Rights Reserved */
@@ -76,12 +76,18 @@
 #include <sys/lock.h>
 #include <sys/param.h>
 #include <sys/event.h>
+#include <sys/time.h>
 #ifdef KERNEL
 #include <sys/kernel_types.h>
+#include <uuid/uuid.h>
 #endif
 #include <mach/boolean.h>
 
-#if defined(XNU_KERNEL_PRIVATE) || !defined(KERNEL) 
+#ifdef XNU_KERNEL_PRIVATE
+#include <mach/coalition.h>		/* COALITION_NUM_TYPES */
+#endif
+
+#if defined(XNU_KERNEL_PRIVATE) || !defined(KERNEL)
 
 struct session;
 struct pgrp;
@@ -177,22 +183,18 @@ struct extern_proc {
 #define	P_AFFINITY	0x00010000	/* xxx */
 #define	P_TRANSLATED	0x00020000	/* xxx */
 #define	P_CLASSIC	P_TRANSLATED	/* xxx */
-/*
-#define	P_FSTRACE	0x10000	/ * tracing via file system (elsewhere?) * /
-#define	P_SSTEP		0x20000	/ * process needs single-step fixup ??? * /
-*/
 
 #define	P_DELAYIDLESLEEP 0x00040000	/* Process is marked to delay idle sleep on disk IO */
 #define	P_CHECKOPENEVT 	0x00080000	/* check if a vnode has the OPENEVT flag set on open */
 
 #define	P_DEPENDENCY_CAPABLE	0x00100000	/* process is ok to call vfs_markdependency() */
 #define	P_REBOOT	0x00200000	/* Process called reboot() */
-#define	P_TBE		0x00400000	/* Process is TBE */
+#define	P_RESV6		0x00400000	/* used to be P_TBE */
 #define	P_RESV7		0x00800000	/* (P_SIGEXC)signal exceptions */
 
 #define	P_THCWD		0x01000000	/* process has thread cwd  */
 #define	P_RESV9		0x02000000	/* (P_VFORK)process has vfork children */
-#define	P_RESV10 	0x04000000	/* used to be P_NOATTACH */
+#define	P_ADOPTPERSONA	0x04000000	/* process adopted a persona (used to be P_NOATTACH) */
 #define	P_RESV11	0x08000000	/* (P_INVFORK) proc in vfork */
 
 #define	P_NOSHLIB	0x10000000	/* no shared libs are in use for proc */
@@ -209,13 +211,17 @@ struct extern_proc {
 
 #define P_DIRTY_TRACK                           0x00000001      /* track dirty state */
 #define P_DIRTY_ALLOW_IDLE_EXIT                 0x00000002      /* process can be idle-exited when clean */
-#define P_DIRTY                                 0x00000004      /* process is dirty */
-#define P_DIRTY_SHUTDOWN                        0x00000008      /* process is dirty during shutdown */
-#define P_DIRTY_TERMINATED                      0x00000010      /* process has been marked for termination */
-#define P_DIRTY_BUSY                            0x00000020      /* serialization flag */
+#define P_DIRTY_DEFER                           0x00000004      /* defer initial opt-in to idle-exit */
+#define P_DIRTY                                 0x00000008      /* process is dirty */
+#define P_DIRTY_SHUTDOWN                        0x00000010      /* process is dirty during shutdown */
+#define P_DIRTY_TERMINATED                      0x00000020      /* process has been marked for termination */
+#define P_DIRTY_BUSY                            0x00000040      /* serialization flag */
+#define P_DIRTY_MARKED                          0x00000080      /* marked dirty previously */
+#define P_DIRTY_AGING_IN_PROGRESS               0x00000100      /* aging in one of the 'aging bands' */
+#define P_DIRTY_LAUNCH_IN_PROGRESS              0x00000200      /* launch is in progress */
 
-#define P_DIRTY_CAN_IDLE_EXIT                   (P_DIRTY_TRACK | P_DIRTY_ALLOW_IDLE_EXIT)
 #define P_DIRTY_IS_DIRTY                        (P_DIRTY | P_DIRTY_SHUTDOWN)
+#define P_DIRTY_IDLE_EXIT_ENABLED               (P_DIRTY_TRACK|P_DIRTY_ALLOW_IDLE_EXIT)
 
 #endif /* XNU_KERNEL_PRIVATE || !KERNEL */
 
@@ -236,15 +242,17 @@ extern void wakeup_one(caddr_t chan);
 extern int proc_selfpid(void);
 /* this routine returns the pid of the parent of the current process */
 extern int proc_selfppid(void);
+/* this routine returns the csflags of the current process */
+extern int proc_selfcsflags(void);
 /* this routine returns sends a signal signum to the process identified by the pid */
 extern void proc_signal(int pid, int signum);
 /* this routine checks whether any signal identified by the mask are pending in the  process identified by the pid. The check is  on all threads of the process. */
 extern int proc_issignal(int pid, sigset_t mask);
 /* this routine returns 1 if the pid1 is inferior of pid2 */
 extern int proc_isinferior(int pid1, int pid2);
-/* this routine copies the process's name of the executable to the passed in buffer. It 
- * is always null terminated. The size of the buffer is to be passed in as well. This 
- * routine is to be used typically for debugging 
+/* this routine copies the process's name of the executable to the passed in buffer. It
+ * is always null terminated. The size of the buffer is to be passed in as well. This
+ * routine is to be used typically for debugging
  */
 void proc_name(int pid, char * buf, int size);
 /* This routine is simillar to proc_name except it returns for current process */
@@ -264,6 +272,8 @@ extern int proc_ppid(proc_t);
 extern int proc_noremotehang(proc_t);
 /* returns 1 if the process is marked for force quota */
 extern int proc_forcequota(proc_t);
+/* returns 1 if the process is chrooted */
+extern int proc_chrooted(proc_t);
 
 /* this routine returns 1 if the process is running with 64bit address space, else 0 */
 extern int proc_is64bit(proc_t);
@@ -289,30 +299,76 @@ pid_t proc_selfpgrpid(void);
  @param p Process whose pgrpid to grab.
  @return pgrpid for "p".
  */
-pid_t proc_pgrpid(proc_t);
+pid_t proc_pgrpid(proc_t p);
 
 #ifdef KERNEL_PRIVATE
 // mark a process as being allowed to call vfs_markdependency()
 void bsd_set_dependency_capable(task_t task);
+#ifdef	__arm__
+static inline int IS_64BIT_PROCESS(__unused proc_t p) { return 0; }
+#else
 extern int IS_64BIT_PROCESS(proc_t);
+#endif /* __arm__ */
 
 extern int	tsleep(void *chan, int pri, const char *wmesg, int timo);
 extern int	msleep1(void *chan, lck_mtx_t *mtx, int pri, const char *wmesg, u_int64_t timo);
 
 task_t proc_task(proc_t);
 extern int proc_pidversion(proc_t);
+extern uint32_t proc_persona_id(proc_t);
+extern uint32_t proc_getuid(proc_t);
+extern uint32_t proc_getgid(proc_t);
 extern int proc_getcdhash(proc_t, unsigned char *);
-#endif /* KERNEL_PRIVATE */
-#ifdef XNU_KERNEL_PRIVATE
-/* 
- * This returns an unique 64bit id of a given process. 
- * Caller needs to hold proper reference on the 
+
+/*!
+ @function    proc_pidbackgrounded
+ @abstract    KPI to determine if a process is currently backgrounded.
+ @discussion  The process may move into or out of background state at any time,
+              so be prepared for this value to be outdated immediately.
+ @param pid   PID of the process to be queried.
+ @param state Pointer to a value which will be set to 1 if the process
+              is currently backgrounded, 0 otherwise.
+ @return      ESRCH if pid cannot be found or has started exiting.
+
+              EINVAL if state is NULL.
+ */
+extern int proc_pidbackgrounded(pid_t pid, uint32_t* state);
+
+/*
+ * This returns an unique 64bit id of a given process.
+ * Caller needs to hold proper reference on the
  * passed in process strucutre.
  */
 extern uint64_t proc_uniqueid(proc_t);
-extern uint64_t proc_selfuniqueid(void);
+
+extern void proc_set_responsible_pid(proc_t target_proc, pid_t responsible_pid);
+
+/* return 1 if process is forcing case-sensitive HFS+ access, 0 for default */
+extern int proc_is_forcing_hfs_case_sensitivity(proc_t);
+
+#endif /* KERNEL_PRIVATE */
+
+#ifdef XNU_KERNEL_PRIVATE
+
+/* unique 64bit id for process's original parent */
+extern uint64_t proc_puniqueid(proc_t);
+
 extern void proc_getexecutableuuid(proc_t, unsigned char *, unsigned long);
+extern int proc_get_originatorbgstate(uint32_t *is_backgrounded);
+
+/* Kernel interface to get the uuid of the originator of the work.*/
+extern int proc_pidoriginatoruuid(uuid_t uuid_buf, uint32_t buffersize);
+
+extern uint64_t proc_was_throttled(proc_t);
+extern uint64_t proc_did_throttle(proc_t);
+
+extern void proc_coalitionids(proc_t, uint64_t [COALITION_NUM_TYPES]);
+
 #endif /* XNU_KERNEL_PRIVATE*/
+
+#ifdef KERNEL_PRIVATE
+extern vnode_t proc_getexecutablevnode(proc_t); /* Returned with iocount, use vnode_put() to drop */
+#endif
 
 __END_DECLS
 
@@ -321,11 +377,14 @@ __END_DECLS
 #ifdef PRIVATE
 
 /* Values for pid_shutdown_sockets */
+#define SHUTDOWN_SOCKET_LEVEL_DISCONNECT_SVC		0x00000001
+#define SHUTDOWN_SOCKET_LEVEL_DISCONNECT_ALL		0x00000002
+
 #ifdef KERNEL
-#define SHUTDOWN_SOCKET_LEVEL_DISCONNECT_INTERNAL	0x0
-#endif /* KERNEL */
-#define SHUTDOWN_SOCKET_LEVEL_DISCONNECT_SVC		0x1
-#define SHUTDOWN_SOCKET_LEVEL_DISCONNECT_ALL		0x2
+#define SHUTDOWN_SOCKET_LEVEL_DISCONNECT_INTERNAL	0x10000000
+#define SHUTDOWN_SOCKET_LEVEL_NECP			0x20000000
+#define SHUTDOWN_SOCKET_LEVEL_CONTENT_FILTER		0x40000000
+#endif
 
 #ifndef KERNEL
 
@@ -334,7 +393,11 @@ __BEGIN_DECLS
 int pid_suspend(int pid);
 int pid_resume(int pid);
 
-
+#if defined(__arm__) || defined(__arm64__)
+int pid_hibernate(int pid);
+#endif /* defined(__arm__) || defined(__arm64__)  */
+int pid_shutdown_sockets(int pid, int level);
+int pid_shutdown_networking(int pid, int level);
 __END_DECLS
 
 #endif /* !KERNEL */

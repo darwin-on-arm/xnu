@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010 Apple Inc. All rights reserved.
+ * Copyright (c) 2010-2014 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -29,26 +29,60 @@
 #ifndef __LIBKERNEL_INIT_H
 #define __LIBKERNEL_INIT_H
 
+#include <sys/types.h>
 #include <mach/mach.h>
+#include <mach/message.h>
+#include <mach/mach_types.h>
 
-typedef struct _libkernel_functions {
-	/* for mach dependencies on libc */
-	mach_port_t (*get_reply_port)(void);
-	void (*set_reply_port)(mach_port_t);
-	
-	/* dlsym() for looking up catch_exception_raise */
+#ifndef __OS_VOUCHER_PRIVATE__
+// We cannot include the actual os/voucher_private.h definition of voucher_t
+// here, as that also marks the voucher_XXX functions as exported, which causes
+// a compile error when we attempt to mark them hidden in the .c file.
+//
+// The Libsystem init.c file does include os/voucher_private.h though, as well
+// as this file, and this typedef causes an error if it is unguarded.
+struct voucher_s;
+typedef struct voucher_s *voucher_t;
+#endif
+
+typedef const struct _libkernel_functions {
+	/* The following functions are included in version 1 of this structure */
+	unsigned long version;
 	void* (*dlsym)(void*, const char*);
+	void* (*malloc)(size_t);
+	void  (*free)(void*);
+	void* (*realloc)(void*, size_t);
+	void  (*_pthread_exit_if_canceled)(int);
 
-	/* placeholders for struct layout compatibility with Libsystem */
-	void *_placeholder_1;
-	void *_placeholder_2;
-	
-	/* for setting errno in libc */
-	void (*set_errno)(int);
-	int* (*get_errno)(void);
+	/* The following functions are included in version 2 of this structure */
+	void *reserved1;
+	void *reserved2;
+	void *reserved3;
+	void *reserved4;
+	void *reserved5;
 
-} _libkernel_functions_t;
+	/* The following functions are included in version 3 of this structure */
+	void (*pthread_clear_qos_tsd)(mach_port_t);
 
-void _libkernel_init(_libkernel_functions_t fns);
+	/* Subsequent versions must only add pointers! */
+} *_libkernel_functions_t;
 
-#endif // __LIBKERNEL_INIT_H`
+typedef const struct _libkernel_voucher_functions {
+	/* The following functions are included in version 1 of this structure */
+	unsigned long version;
+	boolean_t (*voucher_mach_msg_set)(mach_msg_header_t*);
+	void (*voucher_mach_msg_clear)(mach_msg_header_t*);
+	voucher_mach_msg_state_t (*voucher_mach_msg_adopt)(mach_msg_header_t*);
+	void (*voucher_mach_msg_revert)(voucher_mach_msg_state_t);
+
+	/* Subsequent versions must only add pointers! */
+} *_libkernel_voucher_functions_t;
+
+struct ProgramVars; /* forward reference */
+
+void __libkernel_init(_libkernel_functions_t fns, const char *envp[],
+		const char *apple[], const struct ProgramVars *vars);
+
+kern_return_t __libkernel_voucher_init(_libkernel_voucher_functions_t fns);
+
+#endif // __LIBKERNEL_INIT_H

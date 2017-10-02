@@ -121,9 +121,12 @@ extern int ipc_pset_max;
  */
 
 /* IPC initialization needed before creation of kernel task */
-extern void ipc_bootstrap(void) __attribute__((section("__TEXT, initcode")));
+extern void ipc_bootstrap(void);
 
-/* Remaining IPC initialization */
-extern void ipc_init(void) __attribute__((section("__TEXT, initcode")));
+/* Remaining IPC initialization (not thread based) */
+extern void ipc_init(void);
+
+/* IPC initialization dependent on thread call support */
+extern void ipc_thread_call_init(void);
 
 #endif	/* _IPC_IPC_INIT_H_ */

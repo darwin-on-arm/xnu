@@ -1,6 +1,5 @@
-
 /*
- * Copyright (c) 2000-2002 Apple Computer, Inc. All rights reserved.
+ * Copyright (c) 2000-2016 Apple Computer, Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -100,7 +99,7 @@ extern struct vnodeop_desc vnop_compound_mkdir_desc;
 extern struct vnodeop_desc vnop_compound_rmdir_desc;
 #endif /* KERNEL_PRIVATE */
 extern struct vnodeop_desc vnop_create_desc;
-extern struct vnodeop_desc vnop_whiteout_desc;
+extern struct vnodeop_desc vnop_whiteout_desc; // obsolete
 extern struct vnodeop_desc vnop_mknod_desc;
 extern struct vnodeop_desc vnop_open_desc;
 extern struct vnodeop_desc vnop_close_desc;
@@ -119,11 +118,13 @@ extern struct vnodeop_desc vnop_fsync_desc;
 extern struct vnodeop_desc vnop_remove_desc;
 extern struct vnodeop_desc vnop_link_desc;
 extern struct vnodeop_desc vnop_rename_desc;
+extern struct vnodeop_desc vnop_renamex_desc;
 extern struct vnodeop_desc vnop_mkdir_desc;
 extern struct vnodeop_desc vnop_rmdir_desc;
 extern struct vnodeop_desc vnop_symlink_desc;
 extern struct vnodeop_desc vnop_readdir_desc;
 extern struct vnodeop_desc vnop_readdirattr_desc;
+extern struct vnodeop_desc vnop_getattrlistbulk_desc;
 extern struct vnodeop_desc vnop_readlink_desc;
 extern struct vnodeop_desc vnop_inactive_desc;
 extern struct vnodeop_desc vnop_reclaim_desc;
@@ -136,6 +137,7 @@ extern struct vnodeop_desc vnop_pagein_desc;
 extern struct vnodeop_desc vnop_pageout_desc;
 extern struct vnodeop_desc vnop_searchfs_desc;
 extern struct vnodeop_desc vnop_copyfile_desc;
+extern struct vnodeop_desc vnop_clonefile_desc;
 extern struct vnodeop_desc vnop_blktooff_desc;
 extern struct vnodeop_desc vnop_offtoblk_desc;
 extern struct vnodeop_desc vnop_blockmap_desc;
@@ -150,6 +152,32 @@ extern struct vnodeop_desc vnop_makenamedstream_desc;
 extern struct vnodeop_desc vnop_removenamedstream_desc;
 #endif
 
+#endif
+
+#ifdef KERNEL_PRIVATE
+/*
+ * This pair of functions register and unregister callout with
+ * buffer_cache_gc() code path. This callout enables underlying
+ * fs to kick off any memory reclamation that would be otherwise
+ * satisfied by buffer_cache_gc(). callout() will be called in the
+ * vm_pageout code path, so precautions should be taken to not
+ * allocate memory or take any locks which might have memory
+ * allocation behind them. callout() can be called with first parameter
+ * set to false, in which case memory reclamation should be
+ * limited in scope. In case of the first parameter set to true, fs
+ * MUST free some memory if possible. Second parameter to the
+ * register function will be passed as a second parameter to the
+ * callout() as is.
+ * fs_buffer_cache_gc_unregister() second parameter will be used
+ * to distinguish between same callout() and this parameter should
+ * match the one passed during registration. It will unregister all
+ * instances of the matching callout() and argument from the callout
+ * list.
+ */
+
+
+extern int fs_buffer_cache_gc_register(void (* callout)(int, void *), void *);
+extern int fs_buffer_cache_gc_unregister(void (* callout)(int, void *), void *);
 #endif
 
 __BEGIN_DECLS
@@ -214,7 +242,7 @@ struct vnop_whiteout_args {
 
 /*!
  @function VNOP_WHITEOUT
- @abstract Call down to a filesystem to create a whiteout.
+ @abstract Obsolete - no longer supported.
  @discussion Whiteouts are used to support the union filesystem, whereby one filesystem is mounted "transparently"
  on top of another.  A whiteout in the upper layer of a union mount is a "deletion" of a file in the lower layer;
  lookups will catch the whiteout and fail, setting ISWHITEOUT in the componentname structure, even if an underlying 
@@ -294,9 +322,6 @@ struct vnop_compound_open_args {
 
 	void *a_reserved;
 };
-
-/* Control flags */
-#define VNOP_COMPOUND_OPEN_DO_CREATE   0x00000001
 
 /* Results */
 #define COMPOUND_OPEN_STATUS_DID_CREATE 0x00000001
@@ -439,7 +464,7 @@ struct vnop_read_args {
  @return 0 for success or a filesystem-specific error.  VNOP_READ() can return success even if less data was 
  read than originally requested; returning an error value should indicate that something actually went wrong.
  */
-extern errno_t VNOP_READ(vnode_t, struct uio *, int, vfs_context_t);
+extern errno_t VNOP_READ(vnode_t vp, struct uio *uio, int, vfs_context_t ctx);
 
 struct vnop_write_args {
 	struct vnodeop_desc *a_desc;
@@ -463,7 +488,7 @@ struct vnop_write_args {
  @return 0 for success or a filesystem-specific error.  VNOP_WRITE() can return success even if less data was 
  written than originally requested; returning an error value should indicate that something actually went wrong.
  */
-extern errno_t VNOP_WRITE(vnode_t, struct uio *, int, vfs_context_t);
+extern errno_t VNOP_WRITE(vnode_t vp, struct uio *uio, int ioflag, vfs_context_t ctx);
 
 struct vnop_ioctl_args {
 	struct vnodeop_desc *a_desc;
@@ -491,7 +516,7 @@ struct vnop_ioctl_args {
  @param ctx Context against which to authenticate ioctl request.
  @return 0 for success or a filesystem-specific error.  
  */
-extern errno_t VNOP_IOCTL(vnode_t, u_long, caddr_t, int, vfs_context_t);
+extern errno_t VNOP_IOCTL(vnode_t vp, u_long command, caddr_t data, int fflag, vfs_context_t ctx);
 
 struct vnop_select_args {
 	struct vnodeop_desc *a_desc;
@@ -622,7 +647,7 @@ struct vnop_fsync_args {
  @param ctx Context to authenticate for fsync request.
  @return 0 for success, else an error code.
  */
-extern errno_t VNOP_FSYNC(vnode_t, int, vfs_context_t);
+extern errno_t VNOP_FSYNC(vnode_t vp, int waitfor, vfs_context_t ctx);
 
 struct vnop_remove_args {
 	struct vnodeop_desc *a_desc;
@@ -718,6 +743,49 @@ struct vnop_rename_args {
  */
 #ifdef XNU_KERNEL_PRIVATE
 extern errno_t VNOP_RENAME(vnode_t, vnode_t, struct componentname *, vnode_t, vnode_t, struct componentname *, vfs_context_t);
+#endif /* XNU_KERNEL_PRIVATE */
+
+typedef unsigned int vfs_rename_flags_t;
+
+// Must match sys/stdio.h
+enum {
+	VFS_RENAME_SECLUDE	 	= 0x00000001,
+	VFS_RENAME_SWAP			= 0x00000002,
+	VFS_RENAME_EXCL			= 0x00000004,
+
+	VFS_RENAME_FLAGS_MASK	= (VFS_RENAME_SECLUDE | VFS_RENAME_SWAP
+							   | VFS_RENAME_EXCL),
+};
+
+struct vnop_renamex_args {
+	struct vnodeop_desc *a_desc;
+	vnode_t a_fdvp;
+	vnode_t a_fvp;
+	struct componentname *a_fcnp;
+	vnode_t a_tdvp;
+	vnode_t a_tvp;
+	struct componentname *a_tcnp;
+	struct vnode_attr *a_vap;		// Reserved for future use
+	vfs_rename_flags_t a_flags;
+	vfs_context_t a_context;
+};
+
+/*!
+ @function VNOP_RENAMEX
+ @abstract Call down to a filesystem to rename a file.
+ @discussion VNOP_RENAMEX() will only be called with a source and target on the same volume.
+ @param fdvp Directory in which source file resides.
+ @param fvp File being renamed.
+ @param fcnp Name information for source file.
+ @param tdvp Directory file is being moved to.
+ @param tvp Existing file with same name as target, should one exist.
+ @param tcnp Name information for target path.
+ @param flags Control certain rename semantics.
+ @param ctx Context to authenticate for rename request.
+ @return 0 for success, else an error code.
+ */
+#ifdef XNU_KERNEL_PRIVATE
+extern errno_t VNOP_RENAMEX(vnode_t, vnode_t, struct componentname *, vnode_t, vnode_t, struct componentname *, vfs_rename_flags_t, vfs_context_t);
 #endif /* XNU_KERNEL_PRIVATE */
 
 #ifdef KERNEL_PRIVATE
@@ -955,6 +1023,38 @@ struct vnop_readdirattr_args {
 extern errno_t VNOP_READDIRATTR(vnode_t, struct attrlist *, struct uio *, uint32_t, uint32_t, uint32_t *, int *, uint32_t *, vfs_context_t);
 #endif /* XNU_KERNEL_PRIVATE */
 
+struct vnop_getattrlistbulk_args {
+	struct vnodeop_desc *a_desc;
+	vnode_t a_vp;
+	struct attrlist *a_alist;
+	struct vnode_attr *a_vap;
+	struct uio *a_uio;
+	void *a_private;
+	uint64_t a_options;
+	int32_t *a_eofflag;
+	int32_t *a_actualcount;
+	vfs_context_t a_context;
+};
+
+/*!
+ @function VNOP_GETATTRLISTBULK
+ @abstract Call down to get file attributes for many files in a directory at once.
+ @discussion VNOP_GETATTRLISTBULK() packs a buffer  with file attributes, as if the results of many "getattrlist" calls.
+ @param vp Directory in which to enumerate entries' attributes.
+ @param alist Which attributes are wanted for each directory entry.
+ @param uio Destination information for resulting attributes.
+ @param vap initialised vnode_attr structure pointer. This structure also has memory allocated (MAXPATHLEN bytes) and assigned to the va_name field for filesystems to use.
+ @param private reserved for future use.
+ @param options
+ @param eofflag Should be set to 1 if the end of the directory has been reached.
+ @param actualcount Should be set to number of files whose attributes were  written into buffer.
+ @param ctx Context to authenticate for getattrlistbulk request.
+ @return 0 for success, else an error code.
+ */
+#ifdef XNU_KERNEL_PRIVATE
+extern errno_t VNOP_GETATTRLISTBULK(vnode_t, struct attrlist *, struct vnode_attr *, uio_t,  void *, uint64_t, int32_t *, int32_t *, vfs_context_t);
+#endif /* XNU_KERNEL_PRIVATE */
+
 struct vnop_readlink_args {
 	struct vnodeop_desc *a_desc;
 	vnode_t a_vp;
@@ -1051,6 +1151,7 @@ struct vnop_advlock_args {
 	struct flock *a_fl;
 	int a_flags;
 	vfs_context_t a_context;
+	struct timespec *a_timeout;
 };
 
 /*!
@@ -1069,10 +1170,11 @@ struct vnop_advlock_args {
  @param flags F_FLOCK: use flock() semantics. F_POSIX: use POSIX semantics.  F_WAIT: sleep if necessary.  
  F_PROV: Non-coelesced provisional lock (unused in xnu).
  @param ctx Context to authenticate for advisory locking request.
+ @param timeout Timespec for timeout in case of F_SETLKWTIMEOUT.
  @return 0 for success, or an error code.  
  */
 #ifdef XNU_KERNEL_PRIVATE
-extern errno_t VNOP_ADVLOCK(vnode_t, caddr_t, int, struct flock *, int, vfs_context_t);
+extern errno_t VNOP_ADVLOCK(vnode_t, caddr_t, int, struct flock *, int, vfs_context_t, struct timespec *);
 #endif /* XNU_KERNEL_PRIVATE */
 
 struct vnop_allocate_args {
@@ -1250,6 +1352,52 @@ struct vnop_copyfile_args {
 extern errno_t VNOP_COPYFILE(vnode_t, vnode_t, vnode_t, struct componentname *, int, int, vfs_context_t);
 #endif /* XNU_KERNEL_PRIVATE */
 
+typedef enum dir_clone_authorizer_op {
+	OP_AUTHORIZE = 0,           /* request authorization of action */
+	OP_VATTR_SETUP = 1,         /* query for attributes that are required for OP_AUTHORIZE */
+	OP_VATTR_CLEANUP = 2        /* request to cleanup any state or free any memory allocated in OP_AUTHORIZE */
+} dir_clone_authorizer_op_t;
+
+struct vnop_clonefile_args {
+	struct vnodeop_desc *a_desc;
+	vnode_t a_fvp;
+	vnode_t a_dvp;
+	vnode_t *a_vpp;
+	struct componentname *a_cnp;
+	struct vnode_attr *a_vap;
+	uint32_t a_flags;
+	vfs_context_t a_context;
+	int (*a_dir_clone_authorizer)(	/* Authorization callback */
+			struct vnode_attr *vap, /* attribute to be authorized */
+			kauth_action_t action, /* action for which attribute is to be authorized */
+			struct vnode_attr *dvap, /* target directory attributes */
+			vnode_t sdvp, /* source directory vnode pointer (optional) */
+			mount_t mp, /* mount point of filesystem */
+			dir_clone_authorizer_op_t vattr_op, /* specific operation requested : setup, authorization or cleanup  */
+			uint32_t flags, /* needs to have the value passed to a_flags */
+			vfs_context_t ctx, 		/* As passed to VNOP */
+			void *reserved);		/* Always NULL */
+	void *a_reserved;		/* Currently unused */
+};
+
+/*!
+ @function VNOP_CLONEFILE
+ @abstract Call down to a filesystem to clone a filesystem object (regular file, directory or symbolic link.)
+ @discussion If file creation succeeds, "vpp" should be returned with an iocount to be dropped by the caller.
+ @param dvp Directory in which to clone object.
+ @param vpp Destination for vnode for newly cloned object.
+ @param cnp Description of name of object to clone.
+ @param vap File creation properties, as seen in vnode_getattr().  Manipulated with VATTR_ISACTIVE, VATTR_RETURN,
+ VATTR_SET_SUPPORTED, and so forth. All attributes not set here should either be copied
+ from the source object
+ or set to values which are used for creating new filesystem objects
+ @param ctx Context against which to authenticate file creation.
+ @return 0 for success or a filesystem-specific error.
+ */
+#ifdef XNU_KERNEL_PRIVATE
+extern errno_t VNOP_CLONEFILE(vnode_t, vnode_t, vnode_t *, struct componentname *, struct vnode_attr *, uint32_t, vfs_context_t);
+#endif /* XNU_KERNEL_PRIVATE */
+
 struct vnop_getxattr_args {
 	struct vnodeop_desc *a_desc;
 	vnode_t a_vp;
@@ -1272,7 +1420,7 @@ extern struct vnodeop_desc vnop_getxattr_desc;
  @param ctx Context to authenticate for getxattr request.
  @return 0 for success, or an error code.
  */
-extern errno_t VNOP_GETXATTR(vnode_t, const char *, uio_t, size_t *, int, vfs_context_t);
+extern errno_t VNOP_GETXATTR(vnode_t vp, const char *name, uio_t uio, size_t *size, int options, vfs_context_t ctx);
 
 struct vnop_setxattr_args {
 	struct vnodeop_desc *a_desc;
@@ -1295,7 +1443,7 @@ extern struct vnodeop_desc vnop_setxattr_desc;
  @param ctx Context to authenticate for setxattr request.
  @return 0 for success, or an error code.
  */
-extern errno_t VNOP_SETXATTR(vnode_t, const char *, uio_t, int, vfs_context_t);
+extern errno_t VNOP_SETXATTR(vnode_t vp, const char *name, uio_t uio, int options, vfs_context_t ctx);
 
 struct vnop_removexattr_args {
 	struct vnodeop_desc *a_desc;
@@ -1448,7 +1596,7 @@ struct vnop_bwrite_args {
  @param bp The buffer to write.
  @return 0 for success, else an error code.
  */
-extern errno_t VNOP_BWRITE(buf_t);
+extern errno_t VNOP_BWRITE(buf_t bp);
 
 struct vnop_kqfilt_add_args {
 	struct vnodeop_desc *a_desc;
@@ -1513,7 +1661,7 @@ extern struct vnodeop_desc vnop_monitor_desc;
  Each BEGIN will be matched with an END with the same handle.  Note that vnode_ismonitored() can
  be used to see if there are currently watchers for a file.
  */
-errno_t VNOP_MONITOR(vnode_t , uint32_t, uint32_t, void*, vfs_context_t);
+errno_t VNOP_MONITOR(vnode_t vp, uint32_t events, uint32_t flags, void *handle, vfs_context_t ctx);
 #endif /* XNU_KERNEL_PRIVATE */
 
 struct label;
@@ -1543,6 +1691,9 @@ errno_t VNOP_SETLABEL(vnode_t, struct label *, vfs_context_t);
 
 enum nsoperation	{ NS_OPEN, NS_CREATE, NS_DELETE };
 
+/* a_flags for vnop_getnamedstream_args: */
+#define NS_GETRAWENCRYPTED 0x00000001
+
 struct vnop_getnamedstream_args {
 	struct vnodeop_desc *a_desc;
 	vnode_t a_vp;
@@ -1565,7 +1716,7 @@ struct vnop_getnamedstream_args {
  @param operation Operation to perform.  In HFS and AFP, this parameter is only considered as follows:
  if the resource fork has not been opened and the operation is not NS_OPEN, fail with ENOATTR.  Currently
  only passed as NS_OPEN by VFS.
- @param flags Currently unused.
+ @param flags Flags used to control getnamedstream behavior. Currently only used for raw-encrypted-requests.
  @param ctx Context to authenticate for getting named stream.
  @return 0 for success, else an error code.
  */
@@ -1623,9 +1774,10 @@ struct vnop_removenamedstream_args {
 #ifdef XNU_KERNEL_PRIVATE
 extern errno_t VNOP_REMOVENAMEDSTREAM(vnode_t, vnode_t, const char *, int flags, vfs_context_t);
 #endif /* XNU_KERNEL_PRIVATE */
-#endif
 
-#endif
+#endif // NAMEDSTREAMS
+
+#endif // defined(__APPLE_API_UNSTABLE)
 
 __END_DECLS
 

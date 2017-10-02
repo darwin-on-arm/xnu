@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2012 Apple Inc. All rights reserved.
+ * Copyright (c) 2011-2014 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -58,7 +58,7 @@ struct if_llreach_info {
 
 #ifdef XNU_KERNEL_PRIVATE
 #include <sys/tree.h>
-#include <kern/lock.h>
+#include <kern/locks.h>
 #include <net/ethernet.h>
 #include <netinet/in.h>
 #if INET6
@@ -67,16 +67,7 @@ struct if_llreach_info {
 #endif /* INET6 */
 
 /*
- * Link-layer reachability is based off node constants in RFC4861.
- */
-#if INET6
-#define	LL_BASE_REACHABLE	REACHABLE_TIME
-#else
-#define	LL_BASE_REACHABLE	30000	/* msec */
-#endif /* !INET6 */
-
-/*
- * Per-interface link-layer reachability.  (Currently only for ARP/Ethernet.)
+ * Per-interface link-layer reachability.  (Currently only for ARP/NDP/Ethernet.)
  */
 #define	IF_LLREACH_MAXLEN	ETHER_ADDR_LEN
 
@@ -106,10 +97,10 @@ RB_PROTOTYPE_SC_PREV(__private_extern__, ll_reach_tree, if_llreach,
     ls_link, ifllr_cmp);
 
 #define	IFLR_LOCK_ASSERT_HELD(_iflr)					\
-	lck_mtx_assert(&(_iflr)->lr_lock, LCK_MTX_ASSERT_OWNED)
+	LCK_MTX_ASSERT(&(_iflr)->lr_lock, LCK_MTX_ASSERT_OWNED)
 
 #define	IFLR_LOCK_ASSERT_NOTHELD(_iflr)				\
-	lck_mtx_assert(&(_iflr)->lr_lock, LCK_MTX_ASSERT_NOTOWNED)
+	LCK_MTX_ASSERT(&(_iflr)->lr_lock, LCK_MTX_ASSERT_NOTOWNED)
 
 #define	IFLR_LOCK(_iflr)						\
 	lck_mtx_lock(&(_iflr)->lr_lock)

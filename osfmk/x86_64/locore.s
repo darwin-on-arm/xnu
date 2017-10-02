@@ -54,8 +54,7 @@
  * the rights to redistribute these changes.
  */
 
-#include <mach_rt.h>
-#include <platforms.h>
+#include <debug.h>
 #include <mach_kdp.h>
 #include <mach_assert.h>
 
@@ -63,6 +62,7 @@
 #include <i386/asm.h>
 #include <i386/cpuid.h>
 #include <i386/eflags.h>
+#include <i386/postcode.h>
 #include <i386/proc_reg.h>
 #include <i386/trap.h>
 #include <assym.s>
@@ -72,8 +72,6 @@
 #define _ARCH_I386_ASM_HELP_H_          /* Prevent inclusion of user header */
 #include <mach/i386/syscall_sw.h>
 
-#include <i386/mp.h>
-
 /*
  * Fault recovery.
  */
@@ -81,7 +79,6 @@
 #ifdef	__MACHO__
 #define	RECOVERY_SECTION	.section	__VECTORS, __recover 
 #else
-#define	RECOVERY_SECTION	.text
 #define	RECOVERY_SECTION	.text
 #endif
 
@@ -127,7 +124,6 @@ ENTRY(rdmsr_carefully)
 rdmsr_fail:
 	movq	$1, %rax
 	ret
-
 /*
  * int rdmsr64_carefully(uint32_t msr, uint64_t *val);
  */
@@ -162,14 +158,22 @@ wrmsr_fail:
 	movl	$1, %eax
 	ret
 
+#if DEBUG
+.globl	EXT(thread_exception_return_internal)
+#else
 .globl	EXT(thread_exception_return)
+#endif
 .globl	EXT(thread_bootstrap_return)
 LEXT(thread_bootstrap_return)
 #if CONFIG_DTRACE
 	call EXT(dtrace_thread_bootstrap)
 #endif
 
+#if DEBUG
+LEXT(thread_exception_return_internal)
+#else
 LEXT(thread_exception_return)
+#endif
 	cli
 	xorl	%ecx, %ecx		/* don't check if we're in the PFZ */
 	jmp	EXT(return_from_trap)
@@ -178,22 +182,21 @@ LEXT(thread_exception_return)
  * Copyin/out from user/kernel address space.
  * rdi:	source address
  * rsi:	destination address
- * rdx:	byte count
+ * rdx:	byte count (in fact, always < 64MB -- see copyio)
  */
 Entry(_bcopy)
-// TODO not pop regs; movq; think about 32 bit or 64 bit byte count
-	xchgq	%rdi, %rsi		/* source %rsi, dest %rdi */
+	xchg	%rdi, %rsi		/* source %rsi, dest %rdi */
 
 	cld				/* count up */
-	movl	%edx,%ecx		/* move by longwords first */
-	shrl	$3,%ecx
+	mov	%rdx, %rcx		/* move by longwords first */
+	shr	$3, %rcx
 	RECOVERY_SECTION
 	RECOVER(_bcopy_fail)
 	rep
 	movsq				/* move longwords */
 
-	movl	%edx,%ecx		/* now move remaining bytes */
-	andl	$7,%ecx
+	movl	%edx, %ecx		/* now move remaining bytes */
+	andl	$7, %ecx
 	RECOVERY_SECTION
 	RECOVER(_bcopy_fail)
 	rep
@@ -216,6 +219,54 @@ Entry(pmap_safe_read)
 _pmap_safe_read_fail:
 	xor	%eax, %eax
 	ret
+
+/*
+ * 2-byte copy used by ml_copy_phys().
+ * rdi:	source address
+ * rsi:	destination address
+ */
+Entry(_bcopy2)
+	RECOVERY_SECTION
+	RECOVER(_bcopy_fail)
+	movw	(%rdi), %cx
+	RECOVERY_SECTION
+	RECOVER(_bcopy_fail)
+	movw	%cx, (%rsi)
+
+	xorl	%eax,%eax		/* return 0 for success */
+	ret				/* and return */
+
+/*
+ * 4-byte copy used by ml_copy_phys().
+ * rdi:	source address
+ * rsi:	destination address
+ */
+Entry(_bcopy4)
+	RECOVERY_SECTION
+	RECOVER(_bcopy_fail)
+	movl	(%rdi), %ecx
+	RECOVERY_SECTION
+	RECOVER(_bcopy_fail)
+	mov	%ecx, (%rsi)
+
+	xorl	%eax,%eax		/* return 0 for success */
+	ret				/* and return */
+
+/*
+ * 8-byte copy used by ml_copy_phys().
+ * rdi:	source address
+ * rsi:	destination address
+ */
+Entry(_bcopy8)
+	RECOVERY_SECTION
+	RECOVER(_bcopy_fail)
+	movq	(%rdi), %rcx
+	RECOVERY_SECTION
+	RECOVER(_bcopy_fail)
+	mov	%rcx, (%rsi)
+
+	xorl	%eax,%eax		/* return 0 for success */
+	ret				/* and return */
 
 
 	
@@ -262,8 +313,52 @@ _bcopystr_fail:
 	ret
 
 /*
+ * Copyin 32 or 64 bit aligned word as a single transaction
+ * rdi: source address (user)
+ * rsi: destination address (kernel)
+ * rdx: size (4 or 8)
+ */
+Entry(_copyin_word)
+	pushq	%rbp			/* Save registers */
+	movq	%rsp, %rbp
+	cmpl	$0x4, %edx		/* If size = 4 */
+	je	L_copyin_word_4		/* 	handle 32-bit load */
+	movl	$(EINVAL), %eax		/* Set up error status */
+	cmpl	$0x8, %edx		/* If size != 8 */
+	jne	L_copyin_word_exit	/*	exit with error */
+	RECOVERY_SECTION
+	RECOVER(L_copyin_word_fail)	/* Set up recovery handler for next instruction*/
+	movq	(%rdi), %rax		/* Load quad from user */
+	jmp	L_copyin_word_store
+L_copyin_word_4:
+	RECOVERY_SECTION
+	RECOVER(L_copyin_word_fail)	/* Set up recovery handler for next instruction */
+	movl	(%rdi), %eax		/* Load long from user */
+L_copyin_word_store:
+	movq	%rax, (%rsi)		/* Store to kernel */
+	xorl	%eax, %eax		/* Return success */
+L_copyin_word_exit:
+	popq	%rbp			/* Restore registers */
+	retq				/* Return */
+
+L_copyin_word_fail:
+	movl	$(EFAULT), %eax		/* Return error for failure */
+	popq	%rbp			/* Restore registers */
+	retq				/* Return */
+
+
+/*
  * Done with recovery table.
  */
 	RECOVERY_SECTION
 	RECOVER_TABLE_END
+
+
+/*
+ * Vector here on any exception at startup prior to switching to
+ * the kernel's idle page-tables and installing the kernel master IDT.
+ */
+Entry(vstart_trap_handler)
+	POSTCODE(BOOT_TRAP_HLT)
+	hlt
 

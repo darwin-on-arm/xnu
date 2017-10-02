@@ -6,24 +6,22 @@ export MakeInc_dir=${SRCROOT}/makedefs/MakeInc.dir
 include $(MakeInc_cmd)
 include $(MakeInc_def)
 
-VPATH+=$(SOURCE)/../../arm:
+VPATH := $(VPATH):$(SOURCE)/../../arm
 
 DATAFILES = \
-	boolean.h exception.h \
-	processor_info.h kern_return.h ndr_def.h \
-	thread_status.h thread_state.h vm_param.h \
-	vm_types.h rpc.h syscall_sw.h \
-	machine_types.defs  _structs.h  sdt_isa.h
-
+	boolean.h exception.h kern_return.h ndr_def.h \
+	processor_info.h rpc.h thread_state.h thread_status.h \
+	vm_param.h vm_types.h \
+	syscall_sw.h _structs.h sdt_isa.h
 
 INSTALL_MD_LIST = ${DATAFILES}
 
 INSTALL_MD_GEN_LIST = \
-	asm.h 
+	asm.h
 
 INSTALL_MD_DIR = mach/arm
 
-EXPORT_MD_LIST = ${DATAFILES} 
+EXPORT_MD_LIST = ${DATAFILES}
 
 EXPORT_MD_GEN_LIST = \
 	asm.h
@@ -32,5 +30,3 @@ EXPORT_MD_DIR = mach/arm
 
 include $(MakeInc_rule)
 include $(MakeInc_dir)
-
-

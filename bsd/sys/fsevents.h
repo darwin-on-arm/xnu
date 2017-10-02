@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2006 Apple Computer, Inc. All rights reserved.
+ * Copyright (c) 2000-2014 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -41,8 +41,12 @@
 #define FSE_CHOWN                8
 #define FSE_XATTR_MODIFIED       9
 #define FSE_XATTR_REMOVED       10
+#define FSE_DOCID_CREATED       11
+#define FSE_DOCID_CHANGED       12
+#define FSE_UNMOUNT_PENDING     13 // iOS-only: client must respond via FSEVENTS_UNMOUNT_PENDING_ACK
+#define FSE_CLONE               14
 
-#define FSE_MAX_EVENTS          11
+#define FSE_MAX_EVENTS          15
 #define FSE_ALL_EVENTS         998
 
 #define FSE_EVENTS_DROPPED     999
@@ -96,57 +100,38 @@
 #define FSE_MODE_LAST_HLINK    (1 << 30)    // link count == 0 on a hard-link delete 
 #define FSE_REMOTE_DIR_EVENT   (1 << 29)    // this is a remotely generated directory-level granularity event
 #define FSE_TRUNCATED_PATH     (1 << 28)    // the path for this item had to be truncated
+#define FSE_MODE_CLONE         (1 << 27)    // notification is for a clone
 
 // ioctl's on /dev/fsevents
-#if __LP64__
 typedef struct fsevent_clone_args {
     int8_t  *event_list;
     int32_t  num_events;
     int32_t  event_queue_depth;
     int32_t *fd;
 } fsevent_clone_args;
-#else
-typedef struct fsevent_clone_args {
-    int8_t  *event_list;
-    int32_t  pad1;
-    int32_t  num_events;
-    int32_t  event_queue_depth;
-    int32_t *fd;
-    int32_t  pad2;
-} fsevent_clone_args;
-#endif
 
 #define	FSEVENTS_CLONE		_IOW('s', 1, fsevent_clone_args)
 
 
 // ioctl's on the cloned fd
-#if __LP64__
 #pragma pack(push, 4)
 typedef struct fsevent_dev_filter_args {
     uint32_t  num_devices;
     dev_t    *devices;
 } fsevent_dev_filter_args;
 #pragma pack(pop)
-#else
-typedef struct fsevent_dev_filter_args {
-    uint32_t  num_devices;
-    dev_t    *devices;
-    int32_t   pad1;
-} fsevent_dev_filter_args;
-#endif
 
 #define	FSEVENTS_DEVICE_FILTER		_IOW('s', 100, fsevent_dev_filter_args)
 #define	FSEVENTS_WANT_COMPACT_EVENTS	_IO('s', 101)
 #define	FSEVENTS_WANT_EXTENDED_INFO	_IO('s', 102)
 #define	FSEVENTS_GET_CURRENT_ID		_IOR('s', 103, uint64_t)
+#define	FSEVENTS_UNMOUNT_PENDING_ACK	_IOW('s', 104, dev_t)
 
 
-#ifdef KERNEL
+#ifdef BSD_KERNEL_PRIVATE
 
 void fsevents_init(void);
-int  need_fsevent(int type, vnode_t vp);
-int  add_fsevent(int type, vfs_context_t, ...);
-void fsevent_unmount(struct mount *mp);
+void fsevent_unmount(struct mount *mp, vfs_context_t ctx);
 struct vnode_attr;
 void create_fsevent_from_kevent(vnode_t vp, uint32_t kevents, struct vnode_attr *vap);
 
@@ -166,6 +151,13 @@ int   vnode_get_fse_info_from_vap(vnode_t vp, fse_info *fse, struct vnode_attr *
 char *get_pathbuff(void);
 void  release_pathbuff(char *path);
 
-#endif /* KERNEL */
+#endif /* BSD_KERNEL_PRIVATE */
+
+#ifdef KERNEL_PRIVATE
+
+int  need_fsevent(int type, vnode_t vp);
+int  add_fsevent(int type, vfs_context_t, ...);
+
+#endif /* KERNEL_PRIVATE */
 
 #endif /* FSEVENT_H */

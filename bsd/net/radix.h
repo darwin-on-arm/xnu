@@ -101,7 +101,16 @@ struct radix_node {
 	struct radix_node *rn_twin;
 	struct radix_node *rn_ybro;
 #endif
+
+#if __arm__ && (__BIGGEST_ALIGNMENT__ > 4)
+/* For the newer ARMv7k ABI where 64-bit types are 64-bit aligned, but pointers
+ * are 32-bit:
+ * Aligned to 64-bit since this is cast to rtentry, which is 64-bit aligned.
+ */
+} __attribute__ ((aligned(8)));
+#else
 };
+#endif
 
 #define	rn_dupedkey	rn_u.rn_leaf.rn_Dupedkey
 #define	rn_key		rn_u.rn_leaf.rn_Key
@@ -195,7 +204,7 @@ struct radix_node_head {
 #define R_Free(p) FREE((caddr_t)p, M_RTABLE);
 #endif /*KERNEL*/
 
-void	 rn_init(void) __attribute__((section("__TEXT, initcode")));
+void	 rn_init(void);
 int	 rn_inithead(void **, int);
 int	 rn_refines(void *, void *);
 struct radix_node

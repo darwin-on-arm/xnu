@@ -35,6 +35,9 @@ extern "C" {
 #ifdef KERNEL
 #include <libkern/crypto/aes.h>
 #include <uuid/uuid.h>
+#include <kern/debug.h>
+
+extern int kdb_printf(const char *format, ...) __printflike(1,2);
 #endif
 
 #ifndef __IOKIT_IOHIBERNATEPRIVATE_H
@@ -102,10 +105,21 @@ struct IOHibernateImageHeader
     uint32_t	sleepTime;
     uint32_t    compression;
 
-    uint32_t	reserved[68];		// make sizeof == 512
+    uint32_t	reserved[58];		// make sizeof == 512
+    uint32_t	booterTime0;
+    uint32_t	booterTime1;
+    uint32_t	booterTime2;
+
+    uint32_t	booterStart;
+    uint32_t	smcStart;
+    uint32_t	connectDisplayTime;
+    uint32_t	splashTime;
+    uint32_t	booterTime;
+    uint32_t	trampolineTime;
 
     uint64_t	encryptEnd __attribute__ ((packed));
     uint64_t	deviceBase __attribute__ ((packed));
+    uint32_t	deviceBlockSize;
 
     uint32_t		fileExtentMapSize;
     IOPolledFileExtent	fileExtentMap[2];
@@ -207,7 +221,7 @@ enum
 
 struct hibernate_graphics_t
 {
-    uint32_t physicalAddress;	// Base address of video memory
+    uint64_t physicalAddress;	// Base address of video memory
     int32_t  gfxStatus;         // EFI config restore status
     uint32_t rowBytes;   		// Number of bytes per pixel row
     uint32_t width;      		// Width
@@ -252,6 +266,39 @@ struct hibernate_preview_t
 };
 typedef struct hibernate_preview_t hibernate_preview_t;
 
+struct hibernate_statistics_t
+{
+    uint64_t image1Size;
+    uint64_t imageSize;
+    uint32_t image1Pages;
+    uint32_t imagePages;
+    uint32_t booterStart;
+    uint32_t smcStart;
+    uint32_t booterDuration;
+    uint32_t booterConnectDisplayDuration;
+    uint32_t booterSplashDuration;
+    uint32_t booterDuration0;
+    uint32_t booterDuration1;
+    uint32_t booterDuration2;
+    uint32_t trampolineDuration;
+    uint32_t kernelImageReadDuration;
+
+    uint32_t graphicsReadyTime;
+    uint32_t wakeNotificationTime;
+    uint32_t lockScreenReadyTime;
+    uint32_t hidReadyTime;
+
+    uint32_t wakeCapability;
+    uint32_t resvA[15];
+};
+typedef struct hibernate_statistics_t hibernate_statistics_t;
+
+#define kIOSysctlHibernateStatistics	"kern.hibernatestatistics"
+#define kIOSysctlHibernateGraphicsReady	"kern.hibernategraphicsready"
+#define kIOSysctlHibernateWakeNotify	"kern.hibernatewakenotification"
+#define kIOSysctlHibernateScreenReady	"kern.hibernatelockscreenready"
+#define kIOSysctlHibernateHIDReady	"kern.hibernatehidready"
+
 #ifdef KERNEL
 
 #ifdef __cplusplus
@@ -259,56 +306,46 @@ typedef struct hibernate_preview_t hibernate_preview_t;
 void     IOHibernateSystemInit(IOPMrootDomain * rootDomain);
 
 IOReturn IOHibernateSystemSleep(void);
+void     IOOpenDebugDataFile(const char *fname, uint64_t size);
+void     IOCloseDebugDataFile();
 IOReturn IOHibernateIOKitSleep(void);
 IOReturn IOHibernateSystemHasSlept(void);
 IOReturn IOHibernateSystemWake(void);
-IOReturn IOHibernateSystemPostWake(void);
-bool     IOHibernateWasScreenLocked(void);
+IOReturn IOHibernateSystemPostWake(bool now);
+uint32_t IOHibernateWasScreenLocked(void);
 void     IOHibernateSetScreenLocked(uint32_t lockState);
+void     IOHibernateSetWakeCapabilities(uint32_t capability);
 void     IOHibernateSystemRestart(void);
 
 #endif /* __cplusplus */
 
-#ifdef _SYS_CONF_H_
-typedef void (*kern_get_file_extents_callback_t)(void * ref, uint64_t start, uint64_t size);
-
-struct kern_direct_file_io_ref_t *
-kern_open_file_for_direct_io(const char * name, 
-			     kern_get_file_extents_callback_t callback, 
-			     void * callback_ref,
-
-                             off_t set_file_size,
-
-                             off_t write_file_offset,
-                             caddr_t write_file_addr,
-                             vm_size_t write_file_len,
-
-			     dev_t * partition_device_result,
-			     dev_t * image_device_result,
-                             uint64_t * partitionbase_result,
-                             uint64_t * maxiocount_result,
-                             uint32_t * oflags);
 void
-kern_close_file_for_direct_io(struct kern_direct_file_io_ref_t * ref,
-			      off_t write_offset, caddr_t addr, vm_size_t write_length,
-			      off_t discard_offset, off_t discard_end);
-#endif /* _SYS_CONF_H_ */
+vm_compressor_do_warmup(void);
+
 
 hibernate_page_list_t *
 hibernate_page_list_allocate(boolean_t log);
 
 kern_return_t 
+hibernate_alloc_page_lists(
+		hibernate_page_list_t ** page_list_ret,
+		hibernate_page_list_t ** page_list_wired_ret,
+		hibernate_page_list_t ** page_list_pal_ret);
+
+kern_return_t 
 hibernate_setup(IOHibernateImageHeader * header,
-                        uint32_t  free_page_ratio,
-                        uint32_t  free_page_time,
                         boolean_t vmflush,
-			hibernate_page_list_t ** page_list_ret,
-			hibernate_page_list_t ** page_list_wired_ret,
-			hibernate_page_list_t ** page_list_pal_ret);
+			hibernate_page_list_t * page_list,
+			hibernate_page_list_t * page_list_wired,
+			hibernate_page_list_t * page_list_pal);
+
 kern_return_t 
 hibernate_teardown(hibernate_page_list_t * page_list,
                     hibernate_page_list_t * page_list_wired,
                     hibernate_page_list_t * page_list_pal);
+
+kern_return_t 
+hibernate_pin_swap(boolean_t begin);
 
 kern_return_t 
 hibernate_processor_setup(IOHibernateImageHeader * header);
@@ -327,13 +364,18 @@ void
 hibernate_vm_lock(void);
 void
 hibernate_vm_unlock(void);
+void
+hibernate_vm_lock_end(void);
+boolean_t
+hibernate_vm_locks_are_safe(void);
 
 // mark pages not to be saved, based on VM system accounting
 void
 hibernate_page_list_setall(hibernate_page_list_t * page_list,
 			   hibernate_page_list_t * page_list_wired,
 			   hibernate_page_list_t * page_list_pal,
-			   boolean_t preflight,
+			   boolean_t preflight, 
+			   boolean_t discard_all,
 			   uint32_t * pagesOut);
 
 // mark pages to be saved, or pages not to be saved but available 
@@ -394,15 +436,20 @@ extern uint32_t    gIOHibernateState;
 extern uint32_t    gIOHibernateMode;
 extern uint32_t    gIOHibernateDebugFlags;
 extern uint32_t    gIOHibernateFreeTime;	// max time to spend freeing pages (ms)
+extern boolean_t   gIOHibernateStandbyDisabled;
 extern uint8_t     gIOHibernateRestoreStack[];
 extern uint8_t     gIOHibernateRestoreStackEnd[];
 extern IOHibernateImageHeader *    gIOHibernateCurrentHeader;
 
+#define HIBLOGFROMPANIC(fmt, args...) \
+    { if (kernel_debugger_entry_count) { kdb_printf(fmt, ## args); } }
+
 #define HIBLOG(fmt, args...)	\
-    { kprintf(fmt, ## args); printf(fmt, ## args); }
+    { if (kernel_debugger_entry_count) { kdb_printf(fmt, ## args); } else { kprintf(fmt, ## args); printf(fmt, ## args); } }
 
 #define HIBPRINT(fmt, args...)	\
-    { kprintf(fmt, ## args); }
+    { if (kernel_debugger_entry_count) { kdb_printf(fmt, ## args); } else { kprintf(fmt, ## args); } }
+
 
 #endif /* KERNEL */
 
@@ -432,7 +479,9 @@ enum
 enum
 {
     kIOHibernateHeaderSignature        = 0x73696d65,
-    kIOHibernateHeaderInvalidSignature = 0x7a7a7a7a
+    kIOHibernateHeaderInvalidSignature = 0x7a7a7a7a,
+    kIOHibernateHeaderOpenSignature    = 0xf1e0be9d,
+    kIOHibernateHeaderDebugDataSignature = 0xfcddfcdd
 };
 
 // kind for hibernate_set_page_state()
@@ -502,7 +551,8 @@ enum
 	kIOScreenLockFileVaultDialog = 4,
 };	
 
-#define kIOScreenLockStateKey      "IOScreenLockState"
+#define kIOScreenLockStateKey       "IOScreenLockState"
+#define kIOBooterScreenLockStateKey "IOBooterScreenLockState"
 
 #endif /* ! __IOKIT_IOHIBERNATEPRIVATE_H */
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2003 Apple Computer, Inc. All rights reserved.
+ * Copyright (c) 2000-2012 Apple Computer, Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -85,10 +85,17 @@
 
 #ifdef BSD_KERNEL_PRIVATE
 
+#include <kern/locks.h>
+
 struct klist;
+struct kqlist;
 
 struct filedesc {
 	struct	fileproc **fd_ofiles;	/* file structures for open files */
+	lck_mtx_t fd_kqhashlock;        /* lock for dynamic kqueue hash */
+	u_long  fd_kqhashmask;          /* size of dynamic kqueue hash */
+	struct  kqlist *fd_kqhash;      /* hash table for dynamic kqueues */
+	struct  kqueue *fd_wqkqueue;    /* the workq kqueue */
 	char	*fd_ofileflags;		/* per-process open file flags */
 	struct	vnode *fd_cdir;		/* current directory */
 	struct	vnode *fd_rdir;		/* root directory */
@@ -96,13 +103,12 @@ struct filedesc {
 	int	fd_lastfile;		/* high-water mark of fd_ofiles */
 	int	fd_freefile;		/* approx. next free file */
 	u_short	fd_cmask;		/* mask for file creation */
-	uint32_t	fd_refcnt;		/* reference count */
-
+        int	fd_flags;
 	int     fd_knlistsize;          /* size of knlist */
 	struct  klist *fd_knlist;       /* list of attached knotes */
 	u_long  fd_knhashmask;          /* size of knhash */
 	struct  klist *fd_knhash;       /* hash table for attached knotes */
-        int	fd_flags;
+	lck_mtx_t fd_knhashlock;	/* lock for hash table for attached knotes */
 };
 
 /*
@@ -115,15 +121,18 @@ struct filedesc {
 /*
  * Per-process open flags.
  */
-#define	UF_EXCLOSE 	0x01		/* auto-close on exec */
+#define UF_EXCLOSE	0x01		/* auto-close on exec */
+#define UF_FORKCLOSE	0x02		/* auto-close on fork */
 #define UF_RESERVED	0x04		/* open pending / in progress */
 #define UF_CLOSING	0x08		/* close in progress */
 
 #ifdef KERNEL
 #define UF_RESVWAIT	0x10		/* close in progress */
 #define	UF_INHERIT	0x20		/* "inherit-on-exec" */
+
 #define UF_VALID_FLAGS	\
-	(UF_EXCLOSE | UF_RESERVED | UF_CLOSING | UF_RESVWAIT | UF_INHERIT)
+	(UF_EXCLOSE | UF_FORKCLOSE | UF_RESERVED | UF_CLOSING |\
+	UF_RESVWAIT | UF_INHERIT)
 #endif /* KERNEL */
 
 /*
@@ -144,13 +153,27 @@ extern int	fdavail(proc_t p, int n);
 			(&(p)->p_fd->fd_ofiles[(fd)])
 #define		fdflags(p, fd)					\
 			(&(p)->p_fd->fd_ofileflags[(fd)])
+
+/*
+ * Accesor macros for fd flags
+ */
+#define FDFLAGS_GET(p, fd) (*fdflags(p, fd) & (UF_EXCLOSE|UF_FORKCLOSE))
+#define FDFLAGS_SET(p, fd, bits) \
+	   (*fdflags(p, fd) |= ((bits) & (UF_EXCLOSE|UF_FORKCLOSE)))
+#define FDFLAGS_CLR(p, fd, bits) \
+	   (*fdflags(p, fd) &= ~((bits) & (UF_EXCLOSE|UF_FORKCLOSE)))
+
 extern int	falloc(proc_t p, struct fileproc **resultfp, int *resultfd, vfs_context_t ctx);
-extern void	ffree(struct file *fp);
 
 #ifdef __APPLE_API_PRIVATE
+typedef struct fileproc *(*fp_allocfn_t)(void *);
+extern int	falloc_withalloc(proc_t p, struct fileproc **resultfp,
+    int *resultfd, vfs_context_t ctx,
+    fp_allocfn_t fp_zalloc, void *crarg);
+
 extern struct	filedesc *fdcopy(proc_t p, struct vnode *uth_cdir);
 extern void	fdfree(proc_t p);
-extern void	fdexec(proc_t p, short flags);
+extern void	fdexec(proc_t p, short flags, int self_exec);
 #endif /* __APPLE_API_PRIVATE */
 
 #endif /* KERNEL */

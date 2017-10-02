@@ -21,7 +21,6 @@
  * @APPLE_LICENSE_HEADER_END@
  */
 
-#ifndef __arm__
 #ifndef NO_SYSCALL_LEGACY
 
 #define _NONSTD_SOURCE
@@ -30,4 +29,3 @@
 #include "../select-base.c"
 
 #endif /* NO_SYSCALL_LEGACY */
-#endif

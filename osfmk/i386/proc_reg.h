@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2010 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2012 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -145,6 +145,8 @@
 /*
  * CR4
  */
+#define CR4_SEE		0x00008000	/* Secure Enclave Enable XXX */
+#define CR4_SMAP	0x00200000	/* Supervisor-Mode Access Protect */
 #define CR4_SMEP	0x00100000	/* Supervisor-Mode Execute Protect */
 #define CR4_OSXSAVE	0x00040000	/* OS supports XSAVE */
 #define CR4_PCIDE	0x00020000	/* PCID Enable */
@@ -166,18 +168,36 @@
 /*
  * XCR0 - XFEATURE_ENABLED_MASK (a.k.a. XFEM) register
  */
-#define	XCR0_YMM 0x0000000000000004ULL /* YMM state available */
-#define	XFEM_YMM XCR0_YMM
-#define XCR0_SSE 0x0000000000000002ULL	/* SSE supported by XSAVE/XRESTORE */
-#define XCR0_X87 0x0000000000000001ULL	/* x87, FPU/MMX (always set) */
-#define XFEM_SSE XCR0_SSE
-#define XFEM_X87 XCR0_X87
+#define XCR0_X87 	(1ULL << 0)	/* x87, FPU/MMX (always set) */
+#define XCR0_SSE	(1ULL << 1)	/* SSE supported by XSAVE/XRESTORE */
+#define	XCR0_YMM	(1ULL << 2)	/* YMM state available */
+#define	XCR0_BNDREGS	(1ULL << 3)	/* MPX Bounds register state */
+#define	XCR0_BNDCSR	(1ULL << 4)	/* MPX Bounds configuration/state  */
+#if !defined(RC_HIDE_XNU_J137)
+#define	XCR0_OPMASK	(1ULL << 5)	/* Opmask register state */
+#define	XCR0_ZMM_HI256	(1ULL << 6)	/* ZMM upper 256-bit state */
+#define	XCR0_HI16_ZMM	(1ULL << 7)	/* ZMM16..ZMM31 512-bit state */
+#endif /* not RC_HIDE_XNU_J137 */
+#define XFEM_X87	XCR0_X87
+#define XFEM_SSE	XCR0_SSE
+#define	XFEM_YMM	XCR0_YMM
+#define	XFEM_BNDREGS	XCR0_BNDREGS
+#define	XFEM_BNDCSR	XCR0_BNDCSR
+#if !defined(XNU_HODE_J137)
+#define	XFEM_OPMASK	XCR0_OPMASK
+#define	XFEM_ZMM_HI256	XCR0_ZMM_HI256
+#define	XFEM_HI16_ZMM	XCR0_HI16_ZMM
+#define	XFEM_ZMM	(XFEM_ZMM_HI256 | XFEM_HI16_ZMM | XFEM_OPMASK)
+#endif /* not XNU_HODE_J137 */
 #define XCR0 (0)
 
 #define	PMAP_PCID_PRESERVE (1ULL << 63)
 #define	PMAP_PCID_MASK (0xFFF)
 
-#define RDRAND_RAX 	.byte 0x48, 0x0f, 0xc7, 0xf0
+/*
+ * If thread groups are needed for x86, set this to 1
+ */
+#define CONFIG_THREAD_GROUPS 0
 
 #ifndef	ASSEMBLER
 
@@ -269,7 +289,7 @@ static inline uintptr_t get_cr2(void)
 
 static inline uintptr_t get_cr3_raw(void)
 {
-	register uintptr_t cr3;
+	uintptr_t cr3;
 	__asm__ volatile("mov %%cr3, %0" : "=r" (cr3));
 	return(cr3);
 }
@@ -279,22 +299,9 @@ static inline void set_cr3_raw(uintptr_t value)
 	__asm__ volatile("mov %0, %%cr3" : : "r" (value));
 }
 
-#if	defined(__i386__)
-static inline uintptr_t get_cr3(void)
-{
-	register uintptr_t cr3;
-	__asm__ volatile("mov %%cr3, %0" : "=r" (cr3));
-	return(cr3);
-}
-
-static inline void set_cr3(uintptr_t value)
-{
-	__asm__ volatile("mov %0, %%cr3" : : "r" (value));
-}
-#else
 static inline uintptr_t get_cr3_base(void)
 {
-	register uintptr_t cr3;
+	uintptr_t cr3;
 	__asm__ volatile("mov %%cr3, %0" : "=r" (cr3));
 	return(cr3 & ~(0xFFFULL));
 }
@@ -304,7 +311,6 @@ static inline void set_cr3_composed(uintptr_t base, uint16_t pcid, uint32_t pres
 	__asm__ volatile("mov %0, %%cr3" : : "r" (base | pcid | ( ( (uint64_t)preserve) << 63) ) );
 }
 
-#endif
 static inline uintptr_t get_cr4(void)
 {
 	uintptr_t cr4;
@@ -368,35 +374,17 @@ static inline void swapgs(void)
 	__asm__ volatile("swapgs");
 }
 
+static inline void hlt(void)
+{
+	__asm__ volatile("hlt");
+}
+
 #ifdef MACH_KERNEL_PRIVATE
 
-#ifdef __i386__
-
-#include <i386/cpu_data.h>
-
-extern void cpuid64(uint32_t);
-extern void flush_tlb64(void);
-extern uint64_t get64_cr3(void);
-extern void set64_cr3(uint64_t);
-static inline void flush_tlb(void)
-{
-	if (cpu_mode_is64bit()) {
-		flush_tlb64();
-	} else {
-		set_cr3(get_cr3());
-	}
-}
-static inline void flush_tlb_raw(void)
-{
-	flush_tlb();
-}
-
-#elif defined(__x86_64__)
 static inline void flush_tlb_raw(void)
 {
 	set_cr3_raw(get_cr3_raw());
 }
-#endif
 extern int rdmsr64_carefully(uint32_t msr, uint64_t *val);
 extern int wrmsr64_carefully(uint32_t msr, uint64_t val);
 #endif	/* MACH_KERNEL_PRIVATE */
@@ -409,6 +397,16 @@ static inline void wbinvd(void)
 static inline void invlpg(uintptr_t addr)
 {
 	__asm__  volatile("invlpg (%0)" :: "r" (addr) : "memory");
+}
+
+static inline void clac(void)
+{
+	__asm__  volatile("clac");
+}
+
+static inline void stac(void)
+{
+	__asm__  volatile("stac");
 }
 
 /*
@@ -426,43 +424,26 @@ static inline void invlpg(uintptr_t addr)
 #define rdtsc(lo,hi) \
 	__asm__ volatile("lfence; rdtsc; lfence" : "=a" (lo), "=d" (hi))
 
+#define rdtsc_nofence(lo,hi) \
+	__asm__ volatile("rdtsc" : "=a" (lo), "=d" (hi))
+
 #define write_tsc(lo,hi) wrmsr(0x10, lo, hi)
 
 #define rdpmc(counter,lo,hi) \
 	__asm__ volatile("rdpmc" : "=a" (lo), "=d" (hi) : "c" (counter))
 
-#ifdef __i386__
+#ifdef XNU_KERNEL_PRIVATE
+extern void do_mfence(void);
+#define mfence() do_mfence()
+#endif
 
-static inline uint64_t rdmsr64(uint32_t msr)
+#ifdef __LP64__
+static inline uint64_t rdpmc64(uint32_t pmc)
 {
-	uint64_t ret;
-	__asm__ volatile("rdmsr" : "=A" (ret) : "c" (msr));
-	return ret;
+	uint32_t lo=0, hi=0;
+	rdpmc(pmc, lo, hi);
+	return (((uint64_t)hi) << 32) | ((uint64_t)lo);
 }
-
-static inline void wrmsr64(uint32_t msr, uint64_t val)
-{
-	__asm__ volatile("wrmsr" : : "c" (msr), "A" (val));
-}
-
-static inline uint64_t rdtsc64(void)
-{
-	uint64_t ret;
-	__asm__ volatile("lfence; rdtsc; lfence" : "=A" (ret));
-	return ret;
-}
-
-static inline uint64_t rdtscp64(uint32_t *aux)
-{
-	uint64_t ret;
-	__asm__ volatile("rdtscp; mov %%ecx, %1"
-				: "=A" (ret), "=m" (*aux)
-				:
-				: "ecx");
-	return ret;
-}
-
-#elif defined(__x86_64__)
 
 static inline uint64_t rdmsr64(uint32_t msr)
 {
@@ -492,10 +473,7 @@ static inline uint64_t rdtscp64(uint32_t *aux)
 					 : "ecx");
 	return ((hi) << 32) | (lo);
 }
-
-#else
-#error Unsupported architecture
-#endif
+#endif /* __LP64__ */
 
 /*
  * rdmsr_carefully() returns 0 when the MSR has been read successfully,
@@ -533,6 +511,8 @@ __END_DECLS
 
 #define MSR_IA32_PERFCTR0			0xc1
 #define MSR_IA32_PERFCTR1			0xc2
+#define MSR_IA32_PERFCTR3			0xc3
+#define MSR_IA32_PERFCTR4			0xc4
 
 #define MSR_PLATFORM_INFO			0xce
 
@@ -551,6 +531,8 @@ __END_DECLS
 
 #define MSR_IA32_EVNTSEL0			0x186
 #define MSR_IA32_EVNTSEL1			0x187
+#define MSR_IA32_EVNTSEL2			0x188
+#define MSR_IA32_EVNTSEL3			0x189
 
 #define MSR_FLEX_RATIO				0x194
 #define MSR_IA32_PERF_STS			0x198
@@ -558,6 +540,7 @@ __END_DECLS
 #define MSR_IA32_CLOCK_MODULATION		0x19a
 
 #define MSR_IA32_MISC_ENABLE			0x1a0
+
 
 #define MSR_IA32_PACKAGE_THERM_STATUS		0x1b1
 #define MSR_IA32_PACKAGE_THERM_INTERRUPT	0x1b2
@@ -586,6 +569,13 @@ __END_DECLS
 #define MSR_IA32_MTRR_FIX4K_F0000		0x26e
 #define MSR_IA32_MTRR_FIX4K_F8000		0x26f
 
+#define MSR_IA32_PERF_FIXED_CTR0		0x309
+
+#define MSR_IA32_PERF_FIXED_CTR_CTRL		0x38D
+#define MSR_IA32_PERF_GLOBAL_STATUS		0x38E
+#define MSR_IA32_PERF_GLOBAL_CTRL		0x38F
+#define MSR_IA32_PERF_GLOBAL_OVF_CTRL	0x390
+
 #define MSR_IA32_PKG_C3_RESIDENCY		0x3F8
 #define MSR_IA32_PKG_C6_RESIDENCY		0x3F9
 #define MSR_IA32_PKG_C7_RESIDENCY		0x3FA
@@ -599,24 +589,32 @@ __END_DECLS
 #define MSR_IA32_MC0_ADDR			0x402
 #define MSR_IA32_MC0_MISC			0x403
 
-#define MSR_IA32_VMX_BASE			0x480
-#define MSR_IA32_VMX_BASIC			MSR_IA32_VMX_BASE
-#define MSR_IA32_VMXPINBASED_CTLS		MSR_IA32_VMX_BASE+1
-#define MSR_IA32_PROCBASED_CTLS			MSR_IA32_VMX_BASE+2
-#define MSR_IA32_VMX_EXIT_CTLS			MSR_IA32_VMX_BASE+3
-#define MSR_IA32_VMX_ENTRY_CTLS			MSR_IA32_VMX_BASE+4
-#define MSR_IA32_VMX_MISC			MSR_IA32_VMX_BASE+5
-#define MSR_IA32_VMX_CR0_FIXED0			MSR_IA32_VMX_BASE+6
-#define MSR_IA32_VMX_CR0_FIXED1			MSR_IA32_VMX_BASE+7
-#define MSR_IA32_VMX_CR4_FIXED0			MSR_IA32_VMX_BASE+8
-#define MSR_IA32_VMX_CR4_FIXED1			MSR_IA32_VMX_BASE+9
+#define MSR_IA32_VMX_BASE					0x480
+#define MSR_IA32_VMX_BASIC					MSR_IA32_VMX_BASE
+#define MSR_IA32_VMX_PINBASED_CTLS			MSR_IA32_VMX_BASE+1
+#define MSR_IA32_VMX_PROCBASED_CTLS			MSR_IA32_VMX_BASE+2
+#define MSR_IA32_VMX_EXIT_CTLS				MSR_IA32_VMX_BASE+3
+#define MSR_IA32_VMX_ENTRY_CTLS				MSR_IA32_VMX_BASE+4
+#define MSR_IA32_VMX_MISC					MSR_IA32_VMX_BASE+5
+#define MSR_IA32_VMX_CR0_FIXED0				MSR_IA32_VMX_BASE+6
+#define MSR_IA32_VMX_CR0_FIXED1				MSR_IA32_VMX_BASE+7
+#define MSR_IA32_VMX_CR4_FIXED0				MSR_IA32_VMX_BASE+8
+#define MSR_IA32_VMX_CR4_FIXED1				MSR_IA32_VMX_BASE+9
+#define MSR_IA32_VMX_VMCS_ENUM				MSR_IA32_VMX_BASE+10
+#define MSR_IA32_VMX_PROCBASED_CTLS2		MSR_IA32_VMX_BASE+11
+#define MSR_IA32_VMX_EPT_VPID_CAP			MSR_IA32_VMX_BASE+12
+#define		MSR_IA32_VMX_EPT_VPID_CAP_AD_SHIFT	21
+#define MSR_IA32_VMX_TRUE_PINBASED_CTLS		MSR_IA32_VMX_BASE+13
+#define MSR_IA32_VMX_TRUE_PROCBASED_CTLS	MSR_IA32_VMX_BASE+14
+#define MSR_IA32_VMX_TRUE_VMEXIT_CTLS		MSR_IA32_VMX_BASE+15
+#define MSR_IA32_VMX_TRUE_VMENTRY_CTLS		MSR_IA32_VMX_BASE+16
+#define MSR_IA32_VMX_VMFUNC					MSR_IA32_VMX_BASE+17
 
 #define MSR_IA32_DS_AREA			0x600
 
 #define MSR_IA32_PKG_POWER_SKU_UNIT		0x606
 #define MSR_IA32_PKG_C2_RESIDENCY		0x60D
 #define MSR_IA32_PKG_ENERGY_STATUS		0x611
-
 #define MSR_IA32_DDR_ENERGY_STATUS		0x619
 #define MSR_IA32_LLC_FLUSHED_RESIDENCY_TIMER	0x61D
 #define MSR_IA32_RING_PERF_STATUS		0x621
@@ -627,6 +625,8 @@ __END_DECLS
 
 #define MSR_IA32_PP0_ENERGY_STATUS		0x639
 #define MSR_IA32_PP1_ENERGY_STATUS		0x641
+#define MSR_IA32_IA_PERF_LIMIT_REASONS_SKL	0x64F
+
 #define MSR_IA32_IA_PERF_LIMIT_REASONS		0x690
 #define MSR_IA32_GT_PERF_LIMIT_REASONS		0x6B0
 
@@ -647,5 +647,10 @@ __END_DECLS
 #define MSR_IA32_GS_BASE			0xC0000101
 #define MSR_IA32_KERNEL_GS_BASE			0xC0000102
 #define MSR_IA32_TSC_AUX			0xC0000103
+
+#define HV_VMX_EPTP_MEMORY_TYPE_UC  		0x0
+#define HV_VMX_EPTP_MEMORY_TYPE_WB		0x6
+#define HV_VMX_EPTP_WALK_LENGTH(wl)    		(0ULL | ((((wl) - 1) & 0x7) << 3))
+#define HV_VMX_EPTP_ENABLE_AD_FLAGS    		(1ULL << 6)
 
 #endif	/* _I386_PROC_REG_H_ */

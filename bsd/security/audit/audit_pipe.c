@@ -646,6 +646,7 @@ audit_pipe_free(struct audit_pipe *ap)
 	audit_pipe_flush(ap);
 	cv_destroy(&ap->ap_cv);
 	AUDIT_PIPE_SX_LOCK_DESTROY(ap);
+	AUDIT_PIPE_UNLOCK(ap);
 	AUDIT_PIPE_LOCK_DESTROY(ap);
 #ifndef  __APPLE__
 	knlist_destroy(&ap->ap_selinfo.si_note);
@@ -693,7 +694,7 @@ audit_pipe_open(dev_t dev, __unused int flags,  __unused int devtype,
 	int u;
 
 	u = minor(dev);
-	if (u < 0 || u > MAX_AUDIT_PIPES)
+	if (u < 0 || u >= MAX_AUDIT_PIPES)
 		return (ENXIO);
 
 	AUDIT_PIPE_LIST_WLOCK();
@@ -1006,7 +1007,7 @@ audit_pipe_read(dev_t dev, struct uio *uio, __unused int flag)
 
 		KASSERT(ape->ape_record_len > ap->ap_qoffset,
 		    ("audit_pipe_read: record_len > qoffset (1)"));
-		toread = MIN(ape->ape_record_len - ap->ap_qoffset,
+		toread = MIN((int)(ape->ape_record_len - ap->ap_qoffset),
 		    uio_resid(uio));
 		AUDIT_PIPE_UNLOCK(ap);
 		error = uiomove((char *)ape->ape_record + ap->ap_qoffset,

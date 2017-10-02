@@ -34,7 +34,6 @@
 #include <i386/trap.h>
 #include <i386/mp.h>
 #include <kdp/kdp_internal.h>
-#include <kdp/kdp_callout.h>
 #include <mach-o/loader.h>
 #include <mach-o/nlist.h>
 #include <IOKit/IOPlatformExpert.h> /* for PE_halt_restart */
@@ -57,24 +56,17 @@
 extern cpu_type_t cpuid_cputype(void);
 extern cpu_subtype_t cpuid_cpusubtype(void);
 
+extern vm_offset_t machine_trace_thread_get_kva(vm_offset_t cur_target_addr, vm_map_t map, uint32_t *thread_trace_flags);
+extern void machine_trace_thread_clear_validation_cache(void);
+extern vm_map_t kernel_map;
+
 void		print_saved_state(void *);
 void		kdp_call(void);
 int		kdp_getc(void);
-boolean_t	kdp_call_kdb(void);
 void		kdp_getstate(x86_thread_state64_t *);
 void		kdp_setstate(x86_thread_state64_t *);
-void		kdp_print_phys(int);
-
-int
-machine_trace_thread(thread_t thread, char *tracepos, char *tracebound, int nframes, boolean_t user_p);
-
-int
-machine_trace_thread64(thread_t thread, char *tracepos, char *tracebound, int nframes, boolean_t user_p);
-
-unsigned
-machine_read64(addr64_t srcaddr, caddr_t dstaddr, uint32_t len);
-
-static void	kdp_callouts(kdp_event_t event);
+void kdp_print_phys(int);
+unsigned machine_read64(addr64_t srcaddr, caddr_t dstaddr, uint32_t len);
 
 void
 kdp_exception(
@@ -289,18 +281,6 @@ kdp_panic(
     __asm__ volatile("hlt");	
 }
 
-
-void
-kdp_machine_reboot(void)
-{
-	printf("Attempting system restart...");
-	/* Call the platform specific restart*/
-	if (PE_halt_restart)
-		(*PE_halt_restart)(kPERestartCPU);
-	/* If we do reach this, give up */
-	halt_all_cpus(TRUE);
-}
-
 int
 kdp_intr_disbl(void)
 {
@@ -387,7 +367,8 @@ kdp_i386_trap(
     vm_offset_t		va
 )
 {
-    unsigned int exception, subcode = 0, code;
+    unsigned int exception, code, subcode = 0;
+    boolean_t prev_interrupts_state;
 
     if (trapno != T_INT3 && trapno != T_DEBUG) {
     	kprintf("Debugger: Unexpected kernel trap number: "
@@ -395,10 +376,10 @@ kdp_i386_trap(
 		trapno, saved_state->isf.rip, saved_state->cr2);
 	if (!kdp.is_conn)
 	    return FALSE;
-    }	
+    }
 
-    mp_kdp_enter();
-    kdp_callouts(KDP_EVENT_ENTER);
+    prev_interrupts_state = ml_set_interrupts_enabled(FALSE);
+    disable_preemption();
 
     if (saved_state->isf.rflags & EFL_TF) {
 	    enable_preemption_no_check();
@@ -472,24 +453,18 @@ kdp_i386_trap(
 	    saved_state = current_cpu_datap()->cpu_fatal_trap_state;
     }
 
-    kdp_raise_exception(exception, code, subcode, saved_state);
+    handle_debugger_trap(exception, code, subcode, saved_state);
+
+    enable_preemption();
+    ml_set_interrupts_enabled(prev_interrupts_state);
+
     /* If the instruction single step bit is set, disable kernel preemption
      */
     if (saved_state->isf.rflags & EFL_TF) {
 	    disable_preemption();
     }
 
-    kdp_callouts(KDP_EVENT_EXIT);
-    mp_kdp_exit();
-
     return TRUE;
-}
-
-boolean_t 
-kdp_call_kdb(
-        void) 
-{       
-        return(FALSE);
 }
 
 void
@@ -502,46 +477,52 @@ kdp_machine_get_breakinsn(
 	*size = 1;
 }
 
-extern pmap_t kdp_pmap;
-
 #define RETURN_OFFSET 4
 
 int
-machine_trace_thread(thread_t thread, char *tracepos, char *tracebound, int nframes, boolean_t user_p)
+machine_trace_thread(thread_t thread,
+                     char * tracepos,
+                     char * tracebound,
+                     int nframes,
+                     boolean_t user_p,
+                     boolean_t trace_fp,
+                     uint32_t * thread_trace_flags)
 {
-	uint32_t *tracebuf = (uint32_t *)tracepos;
-	uint32_t fence = 0;
-	uint32_t stackptr = 0;
-	uint32_t stacklimit = 0xfc000000;
-	int framecount = 0;
-	uint32_t init_eip = 0;
-	uint32_t prevsp = 0;
-	uint32_t framesize = 2 * sizeof(vm_offset_t);
-	
+	uint32_t * tracebuf = (uint32_t *)tracepos;
+	uint32_t framesize  = (trace_fp ? 2 : 1) * sizeof(uint32_t);
+
+	uint32_t fence             = 0;
+	uint32_t stackptr          = 0;
+	uint32_t stacklimit        = 0xfc000000;
+	int framecount             = 0;
+	uint32_t prev_eip          = 0;
+	uint32_t prevsp            = 0;
+	vm_offset_t kern_virt_addr = 0;
+	vm_map_t bt_vm_map         = VM_MAP_NULL;
+
+	nframes = (tracebound > tracepos) ? MIN(nframes, (int)((tracebound - tracepos) / framesize)) : 0;
+
 	if (user_p) {
-	        x86_saved_state32_t	*iss32;
+		    x86_saved_state32_t	*iss32;
 		
 		iss32 = USER_REGS32(thread);
-		init_eip = iss32->eip;
+		prev_eip = iss32->eip;
 		stackptr = iss32->ebp;
 
 		stacklimit = 0xffffffff;
-		kdp_pmap = thread->task->map->pmap;
+		bt_vm_map = thread->task->map;
 	}
 	else
 		panic("32-bit trace attempted on 64-bit kernel");
 
-	*tracebuf++ = init_eip;
-
 	for (framecount = 0; framecount < nframes; framecount++) {
 
-		if ((tracebound - ((char *)tracebuf)) < (4 * framesize)) {
-			tracebuf--;
-			break;
+		*tracebuf++ = prev_eip;
+		if (trace_fp) {
+			*tracebuf++ = stackptr;
 		}
 
-		*tracebuf++ = stackptr;
-/* Invalid frame, or hit fence */
+		/* Invalid frame, or hit fence */
 		if (!stackptr || (stackptr == fence)) {
 			break;
 		}
@@ -559,19 +540,32 @@ machine_trace_thread(thread_t thread, char *tracepos, char *tracebound, int nfra
 			break;
 		}
 
-		if (kdp_machine_vm_read((mach_vm_address_t)(stackptr + RETURN_OFFSET), (caddr_t) tracebuf, sizeof(*tracebuf)) != sizeof(*tracebuf)) {
+		kern_virt_addr = machine_trace_thread_get_kva(stackptr + RETURN_OFFSET, bt_vm_map, thread_trace_flags);
+
+		if (!kern_virt_addr) {
+			if (thread_trace_flags) {
+				*thread_trace_flags |= kThreadTruncatedBT;
+			}
 			break;
 		}
-		tracebuf++;
+
+		prev_eip = *(uint32_t *)kern_virt_addr;
 		
 		prevsp = stackptr;
-		if (kdp_machine_vm_read((mach_vm_address_t)stackptr, (caddr_t) &stackptr, sizeof(stackptr)) != sizeof(stackptr)) {
-			*tracebuf++ = 0;
-			break;
+
+		kern_virt_addr = machine_trace_thread_get_kva(stackptr, bt_vm_map, thread_trace_flags);
+
+		if (kern_virt_addr) {
+			stackptr = *(uint32_t *)kern_virt_addr;
+		} else {
+			stackptr = 0;
+			if (thread_trace_flags) {
+				*thread_trace_flags |= kThreadTruncatedBT;
+			}
 		}
 	}
-
-	kdp_pmap = 0;
+    
+	machine_trace_thread_clear_validation_cache();
 
 	return (uint32_t) (((char *) tracebuf) - tracepos);
 }
@@ -586,118 +580,88 @@ machine_read64(addr64_t srcaddr, caddr_t dstaddr, uint32_t len)
 }
 
 int
-machine_trace_thread64(thread_t thread, char *tracepos, char *tracebound, int nframes, boolean_t user_p)
+machine_trace_thread64(thread_t thread,
+                       char * tracepos,
+                       char * tracebound,
+                       int nframes,
+                       boolean_t user_p,
+                       boolean_t trace_fp,
+                       uint32_t * thread_trace_flags)
 {
-	uint64_t *tracebuf = (uint64_t *)tracepos;
-	uint32_t fence = 0;
-	addr64_t stackptr = 0;
-	int	 framecount = 0;
-	addr64_t init_rip = 0;
-	addr64_t prevsp = 0;
-	unsigned framesize = 2 * sizeof(addr64_t);
+	uint64_t * tracebuf = (uint64_t *)tracepos;
+	unsigned framesize  = (trace_fp ? 2 : 1) * sizeof(addr64_t);
+
+	uint32_t fence             = 0;
+	addr64_t stackptr          = 0;
+	int framecount             = 0;
+	addr64_t prev_rip          = 0;
+	addr64_t prevsp            = 0;
+	vm_offset_t kern_virt_addr = 0;
+	vm_map_t bt_vm_map         = VM_MAP_NULL;
+
+	nframes = (tracebound > tracepos) ? MIN(nframes, (int)((tracebound - tracepos) / framesize)) : 0;
 
 	if (user_p) {
 		x86_saved_state64_t	*iss64;
 		iss64 = USER_REGS64(thread);
-		init_rip = iss64->isf.rip;
+		prev_rip = iss64->isf.rip;
 		stackptr = iss64->rbp;
-		kdp_pmap = thread->task->map->pmap;
+		bt_vm_map = thread->task->map;
 	}
 	else {
 		stackptr = STACK_IKS(thread->kernel_stack)->k_rbp;
-		init_rip = STACK_IKS(thread->kernel_stack)->k_rip;
-		init_rip = VM_KERNEL_UNSLIDE(init_rip);
-		kdp_pmap = 0;
+		prev_rip = STACK_IKS(thread->kernel_stack)->k_rip;
+		prev_rip = VM_KERNEL_UNSLIDE(prev_rip);
+		bt_vm_map = kernel_map;
 	}
-
-	*tracebuf++ = init_rip;
 
 	for (framecount = 0; framecount < nframes; framecount++) {
 
-		if ((uint32_t)(tracebound - ((char *)tracebuf)) < (4 * framesize)) {
-			tracebuf--;
-			break;
+		*tracebuf++ = prev_rip;
+		if (trace_fp) {
+			*tracebuf++ = stackptr;
 		}
 
-		*tracebuf++ = stackptr;
-
-		if (!stackptr || (stackptr == fence)){
+		if (!stackptr || (stackptr == fence)) {
 			break;
 		}
-
-		if (stackptr & 0x0000003) {
+		if (stackptr & 0x0000007) {
 			break;
 		}
-
 		if (stackptr <= prevsp) {
 			break;
 		}
 
-		if (machine_read64(stackptr + RETURN_OFFSET64, (caddr_t) tracebuf, sizeof(addr64_t)) != sizeof(addr64_t)) {
+		kern_virt_addr = machine_trace_thread_get_kva(stackptr + RETURN_OFFSET64, bt_vm_map, thread_trace_flags);
+		if (!kern_virt_addr) {
+			if (thread_trace_flags) {
+				*thread_trace_flags |= kThreadTruncatedBT;
+			}
 			break;
 		}
-		if (!user_p)
-			*tracebuf = VM_KERNEL_UNSLIDE(*tracebuf);
 
-		tracebuf++;
+		prev_rip = *(uint64_t *)kern_virt_addr;
+		if (!user_p) {
+			prev_rip = VM_KERNEL_UNSLIDE(prev_rip);
+		}
 
 		prevsp = stackptr;
-		if (machine_read64(stackptr, (caddr_t) &stackptr, sizeof(addr64_t)) != sizeof(addr64_t)) {
-			*tracebuf++ = 0;
-			break;
+
+		kern_virt_addr = machine_trace_thread_get_kva(stackptr, bt_vm_map, thread_trace_flags);
+
+		if (kern_virt_addr) {
+			stackptr = *(uint64_t *)kern_virt_addr;
+		} else {
+			stackptr = 0;
+			if (thread_trace_flags) {
+				*thread_trace_flags |= kThreadTruncatedBT;
+			}
 		}
 	}
 
-	kdp_pmap = NULL;
+	machine_trace_thread_clear_validation_cache();
 
 	return (uint32_t) (((char *) tracebuf) - tracepos);
-}
-
-static struct kdp_callout {
-	struct kdp_callout	*callout_next;
-	kdp_callout_fn_t	callout_fn;
-	void			*callout_arg;
-} *kdp_callout_list = NULL;
-
-
-/*
- * Called from kernel context to register a kdp event callout.
- */
-void
-kdp_register_callout(
-	kdp_callout_fn_t	fn,
-	void			*arg)
-{
-	struct kdp_callout	*kcp;
-	struct kdp_callout	*list_head;
-
-	kcp = kalloc(sizeof(*kcp));
-	if (kcp == NULL)
-		panic("kdp_register_callout() kalloc failed");
-
-	kcp->callout_fn  = fn;
-	kcp->callout_arg = arg;
-
-	/* Lock-less list insertion using compare and exchange. */
-	do {
-		list_head = kdp_callout_list;
-		kcp->callout_next = list_head;
-	} while (!OSCompareAndSwapPtr(list_head, kcp, (void * volatile *)&kdp_callout_list));
-}
-
-/*
- * Called at exception/panic time when extering or exiting kdp.  
- * We are single-threaded at this time and so we don't use locks.
- */
-static void
-kdp_callouts(kdp_event_t event)
-{
-	struct kdp_callout	*kcp = kdp_callout_list;
-
-	while (kcp) {
-		kcp->callout_fn(kcp->callout_arg, event); 
-		kcp = kcp->callout_next;
-	}	
 }
 
 void

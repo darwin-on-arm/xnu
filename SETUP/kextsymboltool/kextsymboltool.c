@@ -20,16 +20,11 @@
  * 
  * @APPLE_LICENSE_HEADER_END@
  */
-
-#include <stdio.h>
-#include <unistd.h>
-#include <string.h>
-#include <stdlib.h>
-#include <time.h>
-#include <stdarg.h>
-
+#include <libc.h>
 #include <errno.h>
 #include <ctype.h>
+
+#include <mach/mach_init.h>
 
 #include <sys/stat.h>
 #include <sys/file.h>
@@ -42,7 +37,6 @@
 #include <mach-o/swap.h>
 
 #include <uuid/uuid.h>
-
 #include <stdbool.h>
 
 #pragma mark Typedefs, Enums, Constants
@@ -67,6 +61,9 @@ readFile(const char *path, vm_offset_t * objAddr, vm_size_t * objSize);
 __private_extern__ ToolError
 writeFile(int fd, const void * data, size_t length);
 
+__private_extern__ ToolError
+seekFile(int fd, off_t offset);
+
 extern char* __cxa_demangle (const char* mangled_name,
 				   char* buf,
 				   size_t* n,
@@ -81,6 +78,24 @@ writeFile(int fd, const void * data, size_t length)
     ToolError err;
 
     if (length != (size_t)write(fd, data, length))
+        err = kErrorDiskFull;
+    else
+        err = kErrorNone;
+
+    if (kErrorNone != err)
+        perror("couldn't write output");
+
+    return( err );
+}
+
+ /*********************************************************************
+ *********************************************************************/
+__private_extern__ ToolError
+seekFile(int fd, off_t offset)
+{
+    ToolError err;
+
+    if (offset != lseek(fd, offset, SEEK_SET))
         err = kErrorDiskFull;
     else
         err = kErrorNone;
@@ -449,6 +464,28 @@ store_symbols(char * file, vm_size_t file_size, struct symbol * symbols, uint32_
     return strtabsize;
 }
 
+static const NXArchInfo *
+lookup_arch(const char *archstring)
+{
+	/*
+	 * As new architectures are supported by xnu, add a mapping function
+	 * without relying on host libraries.
+	 */
+	static const NXArchInfo archlist[] = {
+		{ "x86_64", 0x01000007 /* CPU_TYPE_X86_64 */, 3 /* CPU_SUBTYPE_X86_64_ALL */, NX_LittleEndian, NULL },
+		{ "x86_64h", 0x01000007 /* CPU_TYPE_X86_64 */, 8 /* CPU_SUBTYPE_X86_64_H */, NX_LittleEndian, NULL },
+	};
+	unsigned long i;
+
+	for (i=0; i < sizeof(archlist)/sizeof(archlist[0]); i++) {
+		if (0 == strcmp(archstring, archlist[i].name)) {
+			return &archlist[i];
+		}
+	}
+
+	return NULL;
+}
+
 /*********************************************************************
 *********************************************************************/
 int main(int argc, char * argv[])
@@ -508,7 +545,7 @@ int main(int argc, char * argv[])
 
         if (!strcmp("-arch", argv[i]))
         {
-            target_arch = NXGetArchInfoFromName(argv[i + 1]);
+            target_arch = lookup_arch(argv[i + 1]);
 	    if (!target_arch)
 	    {
 		fprintf(stderr, "unknown architecture name: %s\n", argv[i+1]);
@@ -559,11 +596,6 @@ int main(int argc, char * argv[])
 	    num_import_syms += files[filenum].nsyms;
 	else
 	    num_export_syms += files[filenum].nsyms;
-    }
-    if (!num_export_syms)
-    {
-	fprintf(stderr, "no export names\n");
-	exit(1);
     }
 
     import_symbols = calloc(num_import_syms, sizeof(struct symbol));
@@ -706,10 +738,10 @@ int main(int argc, char * argv[])
 
     struct symtab_command symcmd;
     struct uuid_command uuidcmd;
+    off_t  symsoffset;
 
     symcmd.cmd		= LC_SYMTAB;
     symcmd.cmdsize	= sizeof(symcmd);
-    symcmd.symoff	= sizeof(symcmd) + sizeof(uuidcmd);
     symcmd.nsyms	= result_count;
     symcmd.strsize	= strtabpad;
 
@@ -719,41 +751,83 @@ int main(int argc, char * argv[])
 
     if (CPU_ARCH_ABI64 & target_arch->cputype)
     {
-	struct mach_header_64 hdr;
+	struct mach_header_64     hdr;
+	struct segment_command_64 segcmd;
+
 	hdr.magic	= MH_MAGIC_64;
 	hdr.cputype	= target_arch->cputype;
 	hdr.cpusubtype	= target_arch->cpusubtype;
 	hdr.filetype	= MH_KEXT_BUNDLE;
-	hdr.ncmds	= 2;
-	hdr.sizeofcmds	= sizeof(symcmd) + sizeof(uuidcmd);
+	hdr.ncmds	= 3;
+	hdr.sizeofcmds	= sizeof(segcmd) + sizeof(symcmd) + sizeof(uuidcmd);
 	hdr.flags	= MH_INCRLINK;
+	symsoffset      = mach_vm_round_page(hdr.sizeofcmds);
 
-	symcmd.symoff	+= sizeof(hdr);
+        segcmd.cmd      = LC_SEGMENT_64;
+        segcmd.cmdsize  = sizeof(segcmd);
+	strncpy(segcmd.segname, SEG_LINKEDIT, sizeof(segcmd.segname));
+        segcmd.vmaddr   = 0;
+        segcmd.vmsize   = result_count * sizeof(struct nlist_64) + strtabpad;
+        segcmd.fileoff  = symsoffset;
+        segcmd.filesize = segcmd.vmsize;
+        segcmd.maxprot  = PROT_READ;
+        segcmd.initprot = PROT_READ;
+        segcmd.nsects   = 0;
+        segcmd.flags    = SG_NORELOC;
+
+	symcmd.symoff	= symsoffset;
 	symcmd.stroff	= result_count * sizeof(struct nlist_64) 
 				+ symcmd.symoff;
 
 	if (target_arch->byteorder != host_arch->byteorder)
+	{
 	    swap_mach_header_64(&hdr, target_arch->byteorder);
+	    swap_segment_command_64(&segcmd, target_arch->byteorder);
+	}
 	err = writeFile(fd, &hdr, sizeof(hdr));
+        if (kErrorNone != err)
+            goto finish;
+	err = writeFile(fd, &segcmd, sizeof(segcmd));
     }
     else
     {
-	struct mach_header    hdr;
+	struct mach_header     hdr;
+	struct segment_command segcmd;
+
 	hdr.magic	= MH_MAGIC;
 	hdr.cputype	= target_arch->cputype;
 	hdr.cpusubtype	= target_arch->cpusubtype;
-	hdr.filetype	= (target_arch->cputype == CPU_TYPE_I386) ? MH_OBJECT : MH_KEXT_BUNDLE;
-	hdr.ncmds	= 2;
-	hdr.sizeofcmds	= sizeof(symcmd) + sizeof(uuidcmd);
+	hdr.filetype	= MH_KEXT_BUNDLE;
+	hdr.ncmds	= 3;
+	hdr.sizeofcmds	= sizeof(segcmd) + sizeof(symcmd) + sizeof(uuidcmd);
 	hdr.flags	= MH_INCRLINK;
+        symsoffset      = mach_vm_round_page(hdr.sizeofcmds);
 
-	symcmd.symoff	+= sizeof(hdr);
+        segcmd.cmd      = LC_SEGMENT;
+        segcmd.cmdsize  = sizeof(segcmd);
+	strncpy(segcmd.segname, SEG_LINKEDIT, sizeof(segcmd.segname));
+        segcmd.vmaddr   = 0;
+        segcmd.vmsize   = result_count * sizeof(struct nlist) + strtabpad;
+        segcmd.fileoff  = symsoffset;
+        segcmd.filesize = segcmd.vmsize;
+        segcmd.maxprot  = PROT_READ;
+        segcmd.initprot = PROT_READ;
+        segcmd.nsects   = 0;
+        segcmd.flags    = SG_NORELOC;
+
+	symcmd.symoff	= symsoffset;
 	symcmd.stroff	= result_count * sizeof(struct nlist) 
 				+ symcmd.symoff;
 
 	if (target_arch->byteorder != host_arch->byteorder)
+	{
 	    swap_mach_header(&hdr, target_arch->byteorder);
+	    swap_segment_command(&segcmd, target_arch->byteorder);
+	}
 	err = writeFile(fd, &hdr, sizeof(hdr));
+        if (kErrorNone != err)
+            goto finish;
+	err = writeFile(fd, &segcmd, sizeof(segcmd));
     }
 
     if (kErrorNone != err)
@@ -767,6 +841,10 @@ int main(int argc, char * argv[])
     if (kErrorNone != err)
 	goto finish;
     err = writeFile(fd, &uuidcmd, sizeof(uuidcmd));
+    if (kErrorNone != err)
+        goto finish;
+
+    err = seekFile(fd, symsoffset);
     if (kErrorNone != err)
         goto finish;
 
@@ -908,7 +986,7 @@ finish:
 
     if (kErrorNone != err)
     {
-	if (output_name)
+	if (output_name && strncmp(output_name, "/dev/", 5))
 	    unlink(output_name);
         exit(1);
     }

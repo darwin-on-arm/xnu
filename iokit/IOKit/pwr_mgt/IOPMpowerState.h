@@ -25,6 +25,10 @@
  * 
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
+
+#ifndef _IOKIT_IOPMPOWERSTATE_H
+#define _IOKIT_IOPMPOWERSTATE_H
+
 #include <IOKit/pwr_mgt/IOPM.h>
 
 /*! @header IOPMpowerState.h
@@ -39,7 +43,7 @@
     @field	outputPowerCharacter Describes the power provided in this state.
     @field	inputPowerRequirement Describes the input power required in this state.
     @field	staticPower Describes average consumption in milliwatts. Unused; drivers may specify 0.
-    @field	unbudgetedPower Describes additional consumption from separate power supply (milliWatts). Unused; drivers may specify 0.
+    @field	stateOrder Valid in version kIOPMPowerStateVersion2 or greater of this structure. Defines ordering of power states independently of the power state ordinal.
     @field	powerToAttain Describes dditional power to attain this state from next lower state (in milliWatts). Unused; drivers may specify 0.
     @field	timeToAttain Describes time required to enter this state from next lower state (in microseconds). Unused; drivers may specify 0.
     @field	settleUpTime Describes settle time required after entering this state from next lower state (microseconds). Unused; drivers may specify 0.
@@ -56,7 +60,7 @@ struct IOPMPowerState
     IOPMPowerFlags	outputPowerCharacter;
     IOPMPowerFlags	inputPowerRequirement;
     unsigned long	staticPower;
-    unsigned long	unbudgetedPower;
+    unsigned long	stateOrder;
     unsigned long	powerToAttain;
     unsigned long	timeToAttain;
     unsigned long	settleUpTime;
@@ -68,5 +72,8 @@ struct IOPMPowerState
 typedef struct IOPMPowerState IOPMPowerState;
 
 enum {
-    kIOPMPowerStateVersion1 = 1
+    kIOPMPowerStateVersion1 = 1,
+    kIOPMPowerStateVersion2 = 2
 };
+
+#endif /* _IOKIT_IOPMPOWERSTATE_H */

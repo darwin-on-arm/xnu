@@ -56,7 +56,6 @@
 /*
  */
 
-#include <platforms.h>
 #include <debug.h>
 
 #include <i386/asm.h>
@@ -64,7 +63,6 @@
 #include <i386/postcode.h>
 #include <assym.s>
 
-#include <i386/mp.h>
 #include <i386/cpuid.h>
 #include <i386/acpi.h>
 
@@ -120,9 +118,8 @@ EXT(mc_task_stack_end):
 	movl	%cr0,%eax					;\
 	orl	$(CR0_PG|CR0_WP),%eax	/* enable paging */	;\
 	movl	%eax,%cr0					;\
-	/* "The Aussie Maneuver" ("Myria" variant) */ 		;\
-	pushl $(0xcb<<24)|KERNEL64_CS /* reload CS with 0x08 */ ;\
-	call .-1						;\
+	ljmpl	$KERNEL64_CS,$64f				;\
+64:								;\
 	.code64
 
 /*
@@ -213,7 +210,7 @@ L_pstart_common:
 	cpuid
 	test	$(1 << 30), %ecx
 	jz	Lnon_rdrand
-	RDRAND_RAX		/* RAX := 64 bits of DRBG entropy */
+	rdrand	%rax		/* RAX := 64 bits of DRBG entropy */
 	jnc	Lnon_rdrand	/* TODO: complain if DRBG fails at this stage */
 
 Lstore_random_guard:

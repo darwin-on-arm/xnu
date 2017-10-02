@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998-2000 Apple Inc. All rights reserved.
+ * Copyright (c) 1998-2016 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -81,12 +81,12 @@ public:
         @function free
         @abstract Cleans up the database and deallocates memory allocated at initialization.  This is never called in normal operation of the system.
     */
-    void free( void );
+    void free( void ) APPLE_KEXT_OVERRIDE;
     
     /*!
         @function findDrivers
         @abstract This is the primary entry point for IOService.
-        @param service
+        @param service The service
         @param generationCount  Returns a reference to the generation count of the database. The generation count increases only when personalities are added to the database *and* IOService matching has been initiated.
         @result Returns an ordered set of driver personalities ranked on probe-scores.  The ordered set must be released by the receiver.
     */
@@ -105,7 +105,7 @@ public:
         @function addDrivers
         @abstract Adds an array of driver personalities to the database.
         @param array Array of driver personalities to be added to the database.
-        @param doNubMatchng Start matching process after personalities have been added.
+        @param doNubMatching Start matching process after personalities have been added.
         @result Returns true if driver personality was added to the database successfully. Failure is due to a memory allocation failure.
     */
     bool addDrivers( OSArray * array, bool doNubMatching = true );
@@ -114,7 +114,7 @@ public:
         @function removeDrivers
         @abstract Remove driver personalities from the database based on matching information provided.
         @param matching  A dictionary whose keys and values are used for matching personalities in the database.  For example, a matching dictionary containing a 'IOProviderClass' key with the value 'IOPCIDevice' will remove all personalities which have the key 'IOProviderClass' equal to 'IOPCIDevice'.
-        @param doNubMatchng Start matching process after personalities have been removed.  Matching criteria is based on IOProviderClass of those personalities which were removed.  This is to allow drivers which haven't been matched to match against NUB's which were blocked by the previous personalities. 
+        @param doNubMatching Start matching process after personalities have been removed.  Matching criteria is based on IOProviderClass of those personalities which were removed.  This is to allow drivers which haven't been matched to match against NUB's which were blocked by the previous personalities. 
         @result Returns true if personality was removed successfully. Failure is due to a memory allocation failure.
     */
     bool removeDrivers( OSDictionary * matching, bool doNubMatching = true );
@@ -215,49 +215,13 @@ public:
         @param s The serializer object.
         @result Returns false if unable to serialize database, most likely due to memory shortage.
      */
-    virtual bool serialize(OSSerialize * s) const;
+    virtual bool serialize(OSSerialize * s) const APPLE_KEXT_OVERRIDE;
 
     bool serializeData(IOOptionBits kind, OSSerialize * s) const;
 
 /* This stuff is no longer used at all we keep it around for i386
  * binary compatibility only. Symbols are no longer exported.
  */
-#if __i386__
-    /*!
-        @function recordStartupExtensions
-        @abstract Records extensions made available by the primary booter.
-            <p>
-            This function is for internal use by the kernel startup linker.
-            Kernel extensions should never call it.
-        @result Returns true if startup extensions were successfully recorded,
-            false if not.
-    */
-    virtual bool recordStartupExtensions(void);
-
-    /*!
-        @function addExtensionsFromArchive()
-        @abstract Records an archive of extensions, as from device ROM.
-            <p>
-            This function is currently for internal use.
-            Kernel extensions should never call it.
-        @param mkext An OSData object containing a multikext archive.
-        @result Returns true if mkext was properly unserialized and its
-                contents recorded, false if not.
-    */
-    virtual bool addExtensionsFromArchive(OSData * mkext);
-
-
-    /*!
-        @function removeKernelLinker
-        @abstract Removes from memory all code and data related to
-            boot-time loading of kernel extensions. kextd triggers
-            this when it first starts in order to pass responsibility
-            for loading extensions from the kernel itself to kextd.
-        @result Returns KERN_SUCCESS if the kernel linker is successfully
-            removed or wasn't present, KERN_FAILURE otherwise.
-    */
-    virtual kern_return_t removeKernelLinker(void);
-#endif /* __i386__ */
 
 private:
 

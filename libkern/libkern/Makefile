@@ -3,7 +3,6 @@ export MakeInc_def=${SRCROOT}/makedefs/MakeInc.def
 export MakeInc_rule=${SRCROOT}/makedefs/MakeInc.rule
 export MakeInc_dir=${SRCROOT}/makedefs/MakeInc.dir
 
-
 include $(MakeInc_cmd)
 include $(MakeInc_def)
 
@@ -11,74 +10,67 @@ INSTINC_SUBDIRS = \
         machine \
 	c++ \
 	crypto
-INSTINC_SUBDIRS_I386 = ${INSTINC_SUBDIRS} \
+INSTINC_SUBDIRS_X86_64 = \
         i386
-INSTINC_SUBDIRS_X86_64 = ${INSTINC_SUBDIRS} \
+INSTINC_SUBDIRS_X86_64H = \
         i386
-INSTINC_SUBDIRS_ARM = ${INSTINC_SUBDIRS} \
+INSTINC_SUBDIRS_ARM = \
         arm
-INSTINC_SUBDIRS_ARM64 = ${INSTINC_SUBDIRS} \
+INSTINC_SUBDIRS_ARM64 = \
         arm
-
 
 EXPINC_SUBDIRS = ${INSTINC_SUBDIRS}
-EXPINC_SUBDIRS_I386 = ${INSTINC_SUBDIRS_I386}
-EXPINC_SUBDIRS_ARM = ${INSTINC_SUBDIRS_ARM}
-EXPINC_SUBDIRS_ARM64 = ${INSTINC_SUBDIRS_ARM}
 EXPINC_SUBDIRS_X86_64 = ${INSTINC_SUBDIRS_X86_64}
+EXPINC_SUBDIRS_X86_64H = ${INSTINC_SUBDIRS_X86_64H}
+EXPINC_SUBDIRS_ARM = ${INSTINC_SUBDIRS_ARM}
+EXPINC_SUBDIRS_ARM64 = ${INSTINC_SUBDIRS_ARM64}
 
 DATAFILES = \
-	OSAtomic.h	\
-        OSBase.h	\
-        OSByteOrder.h	\
-        _OSByteOrder.h	\
-        OSDebug.h	\
-	OSKextLib.h     \
-        OSMalloc.h	\
-        OSReturn.h	\
-        OSTypes.h	\
-	locks.h		\
-	sysctl.h	\
-	tree.h		\
-	zconf.h		\
+	OSByteOrder.h \
+	_OSByteOrder.h \
+	OSDebug.h \
+	OSKextLib.h \
+	OSReturn.h \
+	OSTypes.h
+
+KERNELFILES = \
+	${DATAFILES} \
+	OSAtomic.h \
+	OSBase.h \
+	OSMalloc.h \
+	locks.h	\
+	sysctl.h \
+	tree.h \
+	zconf.h	\
 	zlib.h
 
-PRIVATE_DATAFILES =         \
-	OSKextLibPrivate.h  \
+PRIVATE_KERNELFILES = \
+	OSKextLibPrivate.h \
+	OSSerializeBinary.h \
 	kext_request_keys.h \
-	mkext.h		    \
-	prelink.h	    \
-	WKdm.h
+	mkext.h \
+	prelink.h \
+	section_keywords.h
 
-INSTALL_MI_LIST	=       \
-	OSByteOrder.h   \
-	_OSByteOrder.h  \
-	OSDebug.h       \
-	OSKextLib.h     \
-	OSReturn.h      \
-	OSTypes.h
+PRIVATE_DATAFILES = \
+	${PRIVATE_KERNELFILES} \
+	tree.h
+
+INSTALL_MI_LIST	= ${DATAFILES}
 
 INSTALL_MI_DIR = libkern
 
 INSTALL_MI_LCL_LIST =        \
-	${INSTALL_MI_LIST}   \
 	${PRIVATE_DATAFILES} \
-	tree.h		     \
 	kext_panic_report.h  \
 	OSCrossEndian.h
 
+INSTALL_KF_MI_LIST = ${KERNELFILES}
 
+INSTALL_KF_MI_LCL_LIST = ${KERNELFILES} ${PRIVATE_KERNELFILES}
 
-INSTALL_KF_MI_LIST =       \
-	${DATAFILES}
-
-INSTALL_KF_MI_LCL_LIST =   \
-	${DATAFILES}       \
-	${PRIVATE_DATAFILES}
-
-EXPORT_MI_LIST	=              \
-	${DATAFILES}           \
-	${PRIVATE_DATAFILES}   \
+EXPORT_MI_LIST = \
+	$(sort ${KERNELFILES} ${PRIVATE_DATAFILES}) \
 	kernel_mach_header.h   \
 	kxld.h                 \
 	kxld_types.h           \
@@ -89,7 +81,7 @@ EXPORT_MI_GEN_LIST = version.h
 EXPORT_MI_DIR = libkern
 
 version.h: version.h.template $(SRCROOT)/config/MasterVersion
-	@echo "Generating libkern/$@ from $<";
+	@echo "[$(CMD_MC)] $(ColorH)GENERATING$(Color0) $(ColorLF)libkern/$@$(Color0) from $(ColorF)$<$(Color0)";
 	$(_v)install $(DATA_INSTALL_FLAGS) $< $@
 	$(_v)$(NEWVERS) $@ > /dev/null;
 

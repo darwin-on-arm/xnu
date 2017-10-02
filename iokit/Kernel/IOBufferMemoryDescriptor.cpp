@@ -66,213 +66,32 @@ enum
 {
     kInternalFlagPhysical      = 0x00000001,
     kInternalFlagPageSized     = 0x00000002,
-    kInternalFlagPageAllocated = 0x00000004
+    kInternalFlagPageAllocated = 0x00000004,
+    kInternalFlagInit          = 0x00000008
 };
-
-/* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
-
-#if 0
-#undef assert
-#define assert(ex)  \
-	((ex) ? (void)0 : Assert(__FILE__, __LINE__, # ex))
-#endif
-
-enum
-{
-    kIOPageAllocChunkBytes = (PAGE_SIZE / 64),
-    kIOPageAllocSignature  = 'iopa'
-};
-
-struct io_pagealloc_t
-{
-    queue_chain_t link;
-    uint64_t      avail;
-    uint32_t      signature;
-};
-typedef struct io_pagealloc_t io_pagealloc_t;
-
-typedef char io_pagealloc_t_assert[(sizeof(io_pagealloc_t) <= kIOPageAllocChunkBytes) ? 1 : -1];
-
-IOSimpleLock * gIOPageAllocLock;
-queue_head_t   gIOPageAllocList;
-vm_size_t      gIOPageAllocCount;
-vm_size_t      gIOPageAllocBytes;
-
-static io_pagealloc_t * 
-iopa_allocpage(void)
-{
-    kern_return_t    kr;
-    io_pagealloc_t * pa;
-    vm_address_t     vmaddr = 0;
-
-    int options = 0; // KMA_LOMEM;
-    kr = kernel_memory_allocate(kernel_map, &vmaddr,
-				page_size, 0, options);
-    if (KERN_SUCCESS != kr) return (0);
-
-    bzero((void *) vmaddr, page_size);
-    pa = (typeof(pa)) (vmaddr + page_size - kIOPageAllocChunkBytes);
-
-    pa->signature = kIOPageAllocSignature;
-    pa->avail     = -2ULL;
-
-    return (pa);
-}
-
-static void 
-iopa_freepage(io_pagealloc_t * pa)
-{
-    kmem_free( kernel_map, trunc_page((uintptr_t) pa), page_size);
-}
-
-static uintptr_t
-iopa_allocinpage(io_pagealloc_t * pa, uint32_t count, uint64_t align)
-{
-    uint32_t n, s;
-    uint64_t avail = pa->avail;
-
-    assert(avail);
-
-    // find strings of count 1 bits in avail
-    for (n = count; n > 1; n -= s)
-    {
-    	s = n >> 1;
-    	avail = avail & (avail << s);
-    }
-    // and aligned
-    avail &= align;
-
-    if (avail)
-    {
-	n = __builtin_clzll(avail);
-	pa->avail &= ~((-1ULL << (64 - count)) >> n);
-	if (!pa->avail && pa->link.next)
-	{
-	    remque(&pa->link);
-	    pa->link.next = 0;
-	}
-	return (n * kIOPageAllocChunkBytes + trunc_page((uintptr_t) pa));
-    }
-
-    return (0);
-}
-
-static uint32_t 
-log2up(uint32_t size)
-{
-    if (size <= 1) size = 0;
-    else size = 32 - __builtin_clz(size - 1);
-    return (size);
-}
-
-static uintptr_t 
-iopa_alloc(vm_size_t bytes, uint32_t balign)
-{
-    static const uint64_t align_masks[] = {
-	0xFFFFFFFFFFFFFFFF,
-	0xAAAAAAAAAAAAAAAA,
-	0x8888888888888888,
-	0x8080808080808080,
-	0x8000800080008000,
-	0x8000000080000000,
-	0x8000000000000000,
-    };
-    io_pagealloc_t * pa;
-    uintptr_t        addr = 0;
-    uint32_t         count;
-    uint64_t         align;
-
-    if (!bytes) bytes = 1;
-    count = (bytes + kIOPageAllocChunkBytes - 1) / kIOPageAllocChunkBytes;
-    align = align_masks[log2up((balign + kIOPageAllocChunkBytes - 1) / kIOPageAllocChunkBytes)];
-
-    IOSimpleLockLock(gIOPageAllocLock);
-    pa = (typeof(pa)) queue_first(&gIOPageAllocList);
-    while (!queue_end(&gIOPageAllocList, &pa->link))
-    {
-	addr = iopa_allocinpage(pa, count, align);
-	if (addr)
-	{
-	    gIOPageAllocBytes += bytes;
-	    break;
-	}
-	pa = (typeof(pa)) queue_next(&pa->link);
-    }
-    IOSimpleLockUnlock(gIOPageAllocLock);
-    if (!addr)
-    {
-        pa = iopa_allocpage();
-	if (pa)
-	{
-	    addr = iopa_allocinpage(pa, count, align);
-	    IOSimpleLockLock(gIOPageAllocLock);
-	    if (pa->avail) enqueue_head(&gIOPageAllocList, &pa->link);
-	    gIOPageAllocCount++;
-	    if (addr) gIOPageAllocBytes += bytes;
-	    IOSimpleLockUnlock(gIOPageAllocLock);
-	}
-    }
-
-    if (addr)
-    {
-        assert((addr & ((1 << log2up(balign)) - 1)) == 0);
-    	IOStatisticsAlloc(kIOStatisticsMallocAligned, bytes);
-#if IOALLOCDEBUG
-	debug_iomalloc_size += bytes;
-#endif
-    }
-
-    return (addr);
-}
-
-static void 
-iopa_free(uintptr_t addr, vm_size_t bytes)
-{
-    io_pagealloc_t * pa;
-    uint32_t         count;
-    uintptr_t        chunk;
-
-    if (!bytes) bytes = 1;
-
-    chunk = (addr & page_mask);
-    assert(0 == (chunk & (kIOPageAllocChunkBytes - 1)));
-
-    pa = (typeof(pa)) (addr | (page_size - kIOPageAllocChunkBytes));
-    assert(kIOPageAllocSignature == pa->signature);
-
-    count = (bytes + kIOPageAllocChunkBytes - 1) / kIOPageAllocChunkBytes;
-    chunk /= kIOPageAllocChunkBytes;
-
-    IOSimpleLockLock(gIOPageAllocLock);
-    if (!pa->avail)
-    {
-	assert(!pa->link.next);
-	enqueue_tail(&gIOPageAllocList, &pa->link);
-    }
-    pa->avail |= ((-1ULL << (64 - count)) >> chunk);
-    if (pa->avail != -2ULL) pa = 0;
-    else
-    {
-        remque(&pa->link);
-        pa->link.next = 0;
-        pa->signature = 0;
-	gIOPageAllocCount--;
-    }
-    gIOPageAllocBytes -= bytes;
-    IOSimpleLockUnlock(gIOPageAllocLock);
-    if (pa) iopa_freepage(pa);
-
-#if IOALLOCDEBUG
-    debug_iomalloc_size -= bytes;
-#endif
-    IOStatisticsAlloc(kIOStatisticsFreeAligned, bytes);
-}
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
 #define super IOGeneralMemoryDescriptor
 OSDefineMetaClassAndStructors(IOBufferMemoryDescriptor,
 				IOGeneralMemoryDescriptor);
+
+/* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
+
+static uintptr_t IOBMDPageProc(iopa_t * a)
+{
+    kern_return_t kr;
+    vm_address_t  vmaddr  = 0;
+    int           options = 0; // KMA_LOMEM;
+
+    kr = kernel_memory_allocate(kernel_map, &vmaddr,
+				page_size, 0, options, VM_KERN_MEMORY_IOKIT);
+
+    if (KERN_SUCCESS != kr) vmaddr = 0;
+    else 		    bzero((void *) vmaddr, page_size);
+
+    return ((uintptr_t) vmaddr);
+}
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
@@ -295,7 +114,6 @@ bool IOBufferMemoryDescriptor::initWithPhysicalMask(
 				mach_vm_address_t alignment,
 				mach_vm_address_t physicalMask)
 {
-    kern_return_t 	  kr;
     task_t		  mapTask = NULL;
     vm_map_t 		  vmmap = NULL;
     mach_vm_address_t     highestMask = 0;
@@ -304,8 +122,7 @@ bool IOBufferMemoryDescriptor::initWithPhysicalMask(
     bool                  mapped = false;
     bool                  needZero;
 
-    if (!capacity)
-        return false;
+    if (!capacity) return false;
 
     _options   	      = options;
     _capacity         = capacity;
@@ -329,7 +146,7 @@ bool IOBufferMemoryDescriptor::initWithPhysicalMask(
 	IOMapper::checkForSystemMapper();
 	mapped = (0 != IOMapper::gSystem);
     }
-    needZero = mapped;
+    needZero = (mapped || (0 != (kIOMemorySharingTypeMask & options)));
 
     if (physicalMask && (alignment <= 1))
     {
@@ -351,6 +168,8 @@ bool IOBufferMemoryDescriptor::initWithPhysicalMask(
 
     _alignment = alignment;
 
+    if ((capacity + alignment) < _capacity) return (false);
+
     if ((inTask != kernel_task) && !(options & kIOMemoryPageable))
 	return false;
 
@@ -366,53 +185,15 @@ bool IOBufferMemoryDescriptor::initWithPhysicalMask(
 	highestMask = 0;
     }
 
-    // set flags for entry + object create
-    vm_prot_t memEntryCacheMode = VM_PROT_READ | VM_PROT_WRITE;
-
-    // set memory entry cache mode
-    switch (options & kIOMapCacheMask)
-    {
-	case kIOMapInhibitCache:
-	    SET_MAP_MEM(MAP_MEM_IO, memEntryCacheMode);
-	    break;
-
-	case kIOMapWriteThruCache:
-	    SET_MAP_MEM(MAP_MEM_WTHRU, memEntryCacheMode);
-	    break;
-
-	case kIOMapWriteCombineCache:
-	    SET_MAP_MEM(MAP_MEM_WCOMB, memEntryCacheMode);
-	    break;
-
-	case kIOMapCopybackCache:
-	    SET_MAP_MEM(MAP_MEM_COPYBACK, memEntryCacheMode);
-	    break;
-
-	case kIOMapCopybackInnerCache:
-	    SET_MAP_MEM(MAP_MEM_INNERWBACK, memEntryCacheMode);
-	    break;
-
-	case kIOMapDefaultCache:
-	default:
-	    SET_MAP_MEM(MAP_MEM_NOOP, memEntryCacheMode);
-	    break;
-    }
-
+    // set memory entry cache mode, pageable, purgeable
+    iomdOptions |= ((options & kIOMapCacheMask) >> kIOMapCacheShift) << kIOMemoryBufferCacheShift;
     if (options & kIOMemoryPageable)
     {
 	iomdOptions |= kIOMemoryBufferPageable;
-
-	// must create the entry before any pages are allocated
-
-	// set flags for entry + object create
-	memEntryCacheMode |= MAP_MEM_NAMED_CREATE;
-
-	if (options & kIOMemoryPurgeable)
-	    memEntryCacheMode |= MAP_MEM_PURGABLE;
+	if (options & kIOMemoryPurgeable) iomdOptions |= kIOMemoryBufferPurgeable;
     }
     else
     {
-	memEntryCacheMode |= MAP_MEM_NAMED_REUSE;
 	vmmap = kernel_map;
 
 	// Buffer shouldn't auto prepare they should be prepared explicitly
@@ -445,11 +226,18 @@ bool IOBufferMemoryDescriptor::initWithPhysicalMask(
             				capacity, highestMask, alignment, contig);
 	}
 	else if (needZero
-		  && ((capacity + alignment) <= (page_size - kIOPageAllocChunkBytes)))
+		  && ((capacity + alignment) <= (page_size - gIOPageAllocChunkBytes)))
 	{
             _internalFlags |= kInternalFlagPageAllocated;
             needZero        = false;
-            _buffer         = (void *) iopa_alloc(capacity, alignment);
+            _buffer         = (void *) iopa_alloc(&gIOBMDPageAllocator, &IOBMDPageProc, capacity, alignment);
+	    if (_buffer)
+	    {
+		IOStatisticsAlloc(kIOStatisticsMallocAligned, capacity);
+#if IOALLOCDEBUG
+		OSAddAtomic(capacity, &debug_iomalloc_size);
+#endif
+	    }
 	}
 	else if (alignment > 1)
 	{
@@ -467,26 +255,14 @@ bool IOBufferMemoryDescriptor::initWithPhysicalMask(
     }
 
     if( (options & (kIOMemoryPageable | kIOMapCacheMask))) {
-	ipc_port_t	sharedMem;
 	vm_size_t	size = round_page(capacity);
 
-	kr = mach_make_memory_entry(vmmap,
-				    &size, (vm_offset_t)_buffer,
-				    memEntryCacheMode, &sharedMem,
-				    NULL );
-
-	if( (KERN_SUCCESS == kr) && (size != round_page(capacity))) {
-	    ipc_port_release_send( sharedMem );
-	    kr = kIOReturnVMError;
-	}
-	if( KERN_SUCCESS != kr)
-	    return( false );
-
-	_memEntry = (void *) sharedMem;
+	// initWithOptions will create memory entry
+	iomdOptions |= kIOMemoryPersistent;
 
 	if( options & kIOMemoryPageable) {
 #if IOALLOCDEBUG
-	    debug_iomallocpageable_size += size;
+	    OSAddAtomicLong(size, &debug_iomallocpageable_size);
 #endif
 	    mapTask = inTask;
 	    if (NULL == inTask)
@@ -500,7 +276,8 @@ bool IOBufferMemoryDescriptor::initWithPhysicalMask(
 
 	    while (startAddr < endAddr)
 	    {
-		*startAddr;
+		UInt8 dummyVar = *startAddr;
+		(void) dummyVar;
 		startAddr += page_size;
  	    }
 	}
@@ -512,6 +289,11 @@ bool IOBufferMemoryDescriptor::initWithPhysicalMask(
     if (!super::initWithOptions(_ranges.v64, 1, 0,
 				inTask, iomdOptions, /* System mapper */ 0))
 	return false;
+
+    _internalFlags |= kInternalFlagInit;
+#if IOTRACKING
+    if (!(options & kIOMemoryPageable))	trackingAccumSize(capacity);
+#endif /* IOTRACKING */
 
     // give any system mapper the allocation params
     if (kIOReturnSuccess != dmaCommandOperation(kIOMDAddDMAMapSpec, 
@@ -526,7 +308,7 @@ bool IOBufferMemoryDescriptor::initWithPhysicalMask(
 		return( false );
 	}
 	reserved->map = createMappingInTask(mapTask, 0, 
-			    kIOMapAnywhere | (options & kIOMapCacheMask), 0, 0);
+			    kIOMapAnywhere | (options & kIOMapPrefault) | (options & kIOMapCacheMask), 0, 0);
 	if (!reserved->map)
 	{
 	    _buffer = 0;
@@ -712,26 +494,42 @@ void IOBufferMemoryDescriptor::free()
 	    map->release();
     }
 
+    if ((options & kIOMemoryPageable)
+        || (kInternalFlagPageSized & internalFlags)) size = round_page(size);
+
+#if IOTRACKING
+    if (!(options & kIOMemoryPageable)
+	&& buffer
+	&& (kInternalFlagInit & _internalFlags)) trackingAccumSize(-size);
+#endif /* IOTRACKING */
+
     /* super::free may unwire - deallocate buffer afterwards */
     super::free();
 
     if (options & kIOMemoryPageable)
     {
 #if IOALLOCDEBUG
-	debug_iomallocpageable_size -= round_page(size);
+	OSAddAtomicLong(-size, &debug_iomallocpageable_size);
 #endif
     }
     else if (buffer)
     {
-	if (kInternalFlagPageSized & internalFlags) size = round_page(size);
-
         if (kInternalFlagPhysical & internalFlags)
         {
             IOKernelFreePhysical((mach_vm_address_t) buffer, size);
 	}
 	else if (kInternalFlagPageAllocated & internalFlags)
 	{
-            iopa_free((uintptr_t) buffer, size);
+	    uintptr_t page;
+            page = iopa_free(&gIOBMDPageAllocator, (uintptr_t) buffer, size);
+	    if (page)
+	    {
+		kmem_free(kernel_map, page, page_size);
+	    }
+#if IOALLOCDEBUG
+		OSAddAtomic(-size, &debug_iomalloc_size);
+#endif
+	    IOStatisticsAlloc(kIOStatisticsFreeAligned, size);
 	}
         else if (alignment > 1)
 	{
@@ -769,6 +567,7 @@ vm_size_t IOBufferMemoryDescriptor::getCapacity() const
 void IOBufferMemoryDescriptor::setLength(vm_size_t length)
 {
     assert(length <= _capacity);
+    if (length > _capacity) return;
 
     _length = length;
     _ranges.v64->length = length;
@@ -840,6 +639,9 @@ void *
 IOBufferMemoryDescriptor::getBytesNoCopy(vm_size_t start, vm_size_t withLength)
 {
     IOVirtualAddress address;
+
+    if ((start + withLength) < start) return 0;
+
     if (kIOMemoryTypePhysical64 == (_flags & kIOMemoryTypeMask))
 	address = (IOVirtualAddress) _buffer;
     else

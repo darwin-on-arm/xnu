@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2004 Apple Computer, Inc. All rights reserved.
+ * Copyright (c) 2000-2016 Apple Computer, Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -81,10 +81,10 @@
 #include <sys/appleapiopts.h>
 
 #ifdef __APPLE_API_PRIVATE
-#if MACH_KERNEL_PRIVATE
+#ifdef MACH_KERNEL_PRIVATE
 #include <kern/macro_help.h>
 #include <kern/kern_types.h>
-#include <kern/lock.h>
+#include <kern/locks.h>
 #include <kern/task.h>
 #include <kern/zalloc.h>
 #include <ipc/ipc_entry.h>
@@ -114,14 +114,17 @@ struct ipc_space {
 	lck_spin_t	is_lock_data;
 	ipc_space_refs_t is_bits;	/* holds refs, active, growing */
 	ipc_entry_num_t is_table_size;	/* current size of table */
+	ipc_entry_num_t is_table_free;	/* count of free elements */
 	ipc_entry_t is_table;		/* an array of entries */
 	task_t is_task;                 /* associated task */
 	struct ipc_table_size *is_table_next; /* info for larger table */
 	ipc_entry_num_t is_low_mod;	/* lowest modified entry during growth */
 	ipc_entry_num_t is_high_mod;	/* highest modified entry during growth */
+	int is_node_id;			/* HOST_LOCAL_NODE, or remote node if proxy space */
 };
 
 #define	IS_NULL			((ipc_space_t) 0)
+#define	IS_INSPECT_NULL		((ipc_space_inspect_t) 0)
 
 #define is_active(is) 		(((is)->is_bits & IS_INACTIVE) != IS_INACTIVE)
 
@@ -199,6 +202,7 @@ is_release(ipc_space_t is) {
 
         /* If we just removed the last reference count */
 	if ( 1 == (OSDecrementAtomic(&(is->is_bits)) & IS_REFS_MAX)) {
+		assert(!is_active(is));
 		is_lock_destroy(is);
 		is_free(is);
 	}

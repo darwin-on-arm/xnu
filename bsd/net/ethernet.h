@@ -105,6 +105,7 @@ struct	ether_addr {
 #define ETHERTYPE_IPV6		0x86dd	/* IPv6 */
 #define ETHERTYPE_PAE		0x888e  /* EAPOL PAE/802.1x */
 #define ETHERTYPE_RSN_PREAUTH	0x88c7  /* 802.11i / RSN Pre-Authentication */
+#define ETHERTYPE_PTP		0x88f7  /* IEEE 1588 Precision Time Protocol */
 #define	ETHERTYPE_LOOPBACK	0x9000	/* used to test interfaces */
 /* XXX - add more useful types here */
 
@@ -129,6 +130,17 @@ struct	ether_addr *ether_aton(const char *);
 #ifdef BSD_KERNEL_PRIVATE
 extern u_char	etherbroadcastaddr[ETHER_ADDR_LEN];
 
+#if defined (__arm__)
+
+#include <string.h>
+
+static __inline__ int
+_ether_cmp(const void * a, const void * b)
+{
+	return (memcmp(a, b, ETHER_ADDR_LEN));
+}
+
+#else /* __arm__ */
 
 static __inline__ int
 _ether_cmp(const void * a, const void * b)
@@ -144,6 +156,7 @@ _ether_cmp(const void * a, const void * b)
 	return (0);
 }
 
+#endif /* __arm__ */
 #endif /* BSD_KERNEL_PRIVATE */
 
 #define ETHER_IS_MULTICAST(addr) (*(addr) & 0x01) /* is address mcast/bcast? */

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2007 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2012 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -68,7 +68,6 @@
 #define _VM_PMAP_H_
 
 #include <mach/kern_return.h>
-#include <mach/mach_types.h>
 #include <mach/vm_param.h>
 #include <mach/vm_types.h>
 #include <mach/vm_attributes.h>
@@ -111,7 +110,11 @@ extern kern_return_t 	copypv(
 #define cppvKmap       64	/* Use the kernel's vm_map */
 #define cppvKmapb      25
 
+extern boolean_t pmap_has_managed_page(ppnum_t first, ppnum_t last);
+
 #ifdef	MACH_KERNEL_PRIVATE
+
+#include <mach_assert.h>
 
 #include <machine/pmap.h>
 
@@ -142,7 +145,7 @@ extern void		pmap_startup(
 						 * use remaining physical pages
 						 * to allocate page frames.
 						 */
-extern void		pmap_init(void) __attribute__((section("__TEXT, initcode")));
+extern void		pmap_init(void);
 						/* Initialization,
 						 * after kernel runs
 						 * in virtual memory.
@@ -190,18 +193,26 @@ extern void		pmap_virtual_space(
 extern pmap_t		pmap_create(	/* Create a pmap_t. */
 				ledger_t	ledger,
 				vm_map_size_t	size,
-#ifdef __i386__
 				boolean_t	is_64bit);
-#else
-				__unused boolean_t	is_64bit);
+#if __x86_64__
+extern pmap_t		pmap_create_options(
+				ledger_t	ledger,
+				vm_map_size_t	size,
+				int		flags);
 #endif
+
 extern pmap_t		(pmap_kernel)(void);	/* Return the kernel's pmap */
 extern void		pmap_reference(pmap_t pmap);	/* Gain a reference. */
 extern void		pmap_destroy(pmap_t pmap); /* Release a reference. */
 extern void		pmap_switch(pmap_t);
 
+#if MACH_ASSERT
+extern void pmap_set_process(pmap_t pmap, 
+			     int pid,
+			     char *procname);
+#endif /* MACH_ASSERT */
 
-extern void		pmap_enter(	/* Enter a mapping */
+extern kern_return_t	pmap_enter(	/* Enter a mapping */
 				pmap_t		pmap,
 				vm_map_offset_t	v,
 				ppnum_t		pn,
@@ -218,11 +229,18 @@ extern kern_return_t	pmap_enter_options(
 					   vm_prot_t fault_type,
 					   unsigned int flags,
 					   boolean_t wired,
-					   unsigned int options);
+					   unsigned int options,
+					   void *arg);
 
 extern void		pmap_remove_some_phys(
 				pmap_t		pmap,
 				ppnum_t		pn);
+
+extern void		pmap_lock_phys_page(
+	                        ppnum_t		pn);
+
+extern void		pmap_unlock_phys_page(
+	                        ppnum_t		pn);
 
 
 /*
@@ -232,6 +250,12 @@ extern void		pmap_remove_some_phys(
 extern void		pmap_page_protect(	/* Restrict access to page. */
 				ppnum_t	phys,
 				vm_prot_t	prot);
+
+extern void		pmap_page_protect_options(	/* Restrict access to page. */
+				ppnum_t	phys,
+				vm_prot_t	prot,
+				unsigned int 	options,
+				void		*arg);
 
 extern void		(pmap_zero_page)(
 				ppnum_t		pn);
@@ -267,6 +291,11 @@ extern void		(pmap_copy_part_rpage)(
 extern unsigned int (pmap_disconnect)(	/* disconnect mappings and return reference and change */
 				ppnum_t		phys);
 
+extern unsigned int (pmap_disconnect_options)(	/* disconnect mappings and return reference and change */
+				ppnum_t		phys,
+				unsigned int	options,
+	                        void		*arg);
+
 extern kern_return_t	(pmap_attribute_cache_sync)(  /* Flush appropriate 
 						       * cache based on
 						       * page number sent */
@@ -284,6 +313,16 @@ extern unsigned int	(pmap_cache_attributes)(
 extern	void		pmap_set_cache_attributes(
 				ppnum_t,
 				unsigned int);
+#if defined(__arm__) || defined(__arm64__)
+/* ARM64_TODO */
+extern	boolean_t	pmap_batch_set_cache_attributes(
+				ppnum_t,
+				unsigned int,
+				unsigned int,
+				unsigned int,
+				boolean_t,
+				unsigned int*);
+#endif
 extern void pmap_sync_page_data_phys(ppnum_t pa);
 extern void pmap_sync_page_attributes_phys(ppnum_t pa);
 
@@ -296,6 +335,7 @@ extern boolean_t	pmap_verify_free(ppnum_t pn);
 /*
  *	Statistics routines
  */
+extern int		(pmap_compressed)(pmap_t pmap);
 extern int		(pmap_resident_count)(pmap_t pmap);
 extern int		(pmap_resident_max)(pmap_t pmap);
 
@@ -378,38 +418,60 @@ extern kern_return_t	(pmap_attribute)(	/* Get/Set special memory
 /*
  *	Macro to be used in place of pmap_enter()
  */
-#define PMAP_ENTER(pmap, virtual_address, page, protection, fault_type, flags, wired) \
+#define PMAP_ENTER(pmap, virtual_address, page, protection, fault_type,	\
+		   flags, wired, result)				\
 	MACRO_BEGIN							\
 	pmap_t		__pmap = (pmap);				\
 	vm_page_t	__page = (page);				\
+	int		__options = 0;					\
+	vm_object_t	__obj;						\
 									\
 	PMAP_ENTER_CHECK(__pmap, __page)				\
-	pmap_enter(__pmap,						\
-		(virtual_address),					\
-		__page->phys_page,					\
-		(protection),						\
-		(fault_type),						\
-		(flags),						\
-		(wired));						\
+	__obj = VM_PAGE_OBJECT(__page);					\
+	if (__obj->internal) {						\
+		__options |= PMAP_OPTIONS_INTERNAL;			\
+	}								\
+	if (__page->reusable || __obj->all_reusable) {			\
+		__options |= PMAP_OPTIONS_REUSABLE;			\
+	}								\
+	result = pmap_enter_options(__pmap,				\
+				    (virtual_address),			\
+				    VM_PAGE_GET_PHYS_PAGE(__page),	\
+				    (protection),				\
+				    (fault_type),				\
+				    (flags),				\
+				    (wired),				\
+				    __options,				\
+				    NULL);				\
 	MACRO_END
 #endif	/* !PMAP_ENTER */
 
 #ifndef	PMAP_ENTER_OPTIONS
-#define PMAP_ENTER_OPTIONS(pmap, virtual_address, page, protection, fault_type,	\
-				flags, wired, options, result) 		\
+#define PMAP_ENTER_OPTIONS(pmap, virtual_address, page, protection,	\
+			   fault_type, flags, wired, options, result)	\
 	MACRO_BEGIN							\
 	pmap_t		__pmap = (pmap);				\
 	vm_page_t	__page = (page);				\
+	int		__extra_options = 0;				\
+	vm_object_t	__obj;						\
 									\
 	PMAP_ENTER_CHECK(__pmap, __page)				\
+	__obj = VM_PAGE_OBJECT(__page);					\
+	if (__obj->internal) {						\
+		__extra_options |= PMAP_OPTIONS_INTERNAL;		\
+	}								\
+	if (__page->reusable || __obj->all_reusable) {			\
+		__extra_options |= PMAP_OPTIONS_REUSABLE;		\
+	}								\
 	result = pmap_enter_options(__pmap,				\
-		(virtual_address),					\
-		__page->phys_page,					\
-		(protection),						\
-		(fault_type),						\
-		(flags),						\
-		(wired),						\
-		options);						\
+				    (virtual_address),			\
+				    VM_PAGE_GET_PHYS_PAGE(__page),	\
+				    (protection),			\
+				    (fault_type),			\
+				    (flags),				\
+				    (wired),				\
+				    (options) | __extra_options,	\
+				    NULL);				\
 	MACRO_END
 #endif	/* !PMAP_ENTER_OPTIONS */
 
@@ -417,13 +479,55 @@ extern kern_return_t	(pmap_attribute)(	/* Get/Set special memory
 #define PMAP_SET_CACHE_ATTR(mem, object, cache_attr, batch_pmap_op)		\
 	MACRO_BEGIN								\
 		if (!batch_pmap_op) {						\
-			pmap_set_cache_attributes(mem->phys_page, cache_attr);	\
+			pmap_set_cache_attributes(VM_PAGE_GET_PHYS_PAGE(mem), cache_attr); \
 			object->set_cache_attr = TRUE;				\
 		}								\
 	MACRO_END							
 #endif	/* PMAP_SET_CACHE_ATTR */
 
 #ifndef PMAP_BATCH_SET_CACHE_ATTR
+#if	defined(__arm__) || defined(__arm64__)
+#define PMAP_BATCH_SET_CACHE_ATTR(object, user_page_list,			\
+					cache_attr, num_pages, batch_pmap_op)	\
+	MACRO_BEGIN								\
+		if ((batch_pmap_op)) {						\
+			unsigned int __page_idx=0;				\
+			unsigned int res=0;					\
+			boolean_t batch=TRUE;					\
+			while (__page_idx < (num_pages)) {			\
+				if (!pmap_batch_set_cache_attributes(		\
+					user_page_list[__page_idx].phys_addr,	\
+					(cache_attr),				\
+					(num_pages),				\
+					(__page_idx),				\
+					FALSE,					\
+					(&res))) {				\
+					batch = FALSE;				\
+					break;					\
+				}						\
+				__page_idx++;					\
+			}							\
+			__page_idx=0;						\
+			res=0;							\
+			while (__page_idx < (num_pages)) {			\
+				if (batch)					\
+					(void)pmap_batch_set_cache_attributes(	\
+					user_page_list[__page_idx].phys_addr,	\
+					(cache_attr),				\
+					(num_pages),				\
+					(__page_idx),				\
+					TRUE,					\
+					(&res));				\
+				else						\
+					pmap_set_cache_attributes(		\
+					user_page_list[__page_idx].phys_addr,	\
+					(cache_attr));				\
+					__page_idx++;				\
+			}							\
+			(object)->set_cache_attr = TRUE;			\
+		}								\
+	MACRO_END
+#else
 #define PMAP_BATCH_SET_CACHE_ATTR(object, user_page_list,			\
 					cache_attr, num_pages, batch_pmap_op)	\
 	MACRO_BEGIN								\
@@ -438,13 +542,11 @@ extern kern_return_t	(pmap_attribute)(	/* Get/Set special memory
 			(object)->set_cache_attr = TRUE;			\
 		}								\
 	MACRO_END
+#endif
 #endif	/* PMAP_BATCH_SET_CACHE_ATTR */
 
 #define PMAP_ENTER_CHECK(pmap, page)					\
 {									\
-	if ((pmap) != kernel_pmap) {					\
-		ASSERT_PAGE_DECRYPTED(page);				\
-	}								\
 	if ((page)->error) {						\
 		panic("VM page %p should not have an error\n",		\
 			(page));					\
@@ -456,6 +558,13 @@ extern kern_return_t	(pmap_attribute)(	/* Get/Set special memory
  *	physical addresses, simulating them if not provided
  *	by the hardware.
  */
+struct pfc {
+	long	pfc_cpus;
+	long	pfc_invalid_global;
+};
+
+typedef	struct pfc	pmap_flush_context;
+
 				/* Clear reference bit */
 extern void		pmap_clear_reference(ppnum_t	 pn);
 				/* Return reference bit */
@@ -472,6 +581,11 @@ extern unsigned int pmap_get_refmod(ppnum_t pn);
 extern void			pmap_clear_refmod(ppnum_t pn, unsigned int mask);
 #define VM_MEM_MODIFIED		0x01	/* Modified bit */
 #define VM_MEM_REFERENCED	0x02	/* Referenced bit */
+extern void			pmap_clear_refmod_options(ppnum_t pn, unsigned int mask, unsigned int options, void *);
+
+
+extern void pmap_flush_context_init(pmap_flush_context *);
+extern void pmap_flush(pmap_flush_context *);
 
 /*
  *	Routines that operate on ranges of virtual addresses.
@@ -481,6 +595,14 @@ extern void		pmap_protect(	/* Change protections. */
 				vm_map_offset_t	s,
 				vm_map_offset_t	e,
 				vm_prot_t	prot);
+
+extern void		pmap_protect_options(	/* Change protections. */
+				pmap_t		map,
+				vm_map_offset_t	s,
+				vm_map_offset_t	e,
+				vm_prot_t	prot,
+				unsigned int	options,
+				void 		*arg);
 
 extern void		(pmap_pageable)(
 				pmap_t		pmap,
@@ -500,7 +622,15 @@ extern kern_return_t pmap_nest(pmap_t,
 extern kern_return_t pmap_unnest(pmap_t,
 				 addr64_t,
 				 uint64_t);
+
+#define	PMAP_UNNEST_CLEAN	1
+
+extern kern_return_t pmap_unnest_options(pmap_t,
+				 addr64_t,
+				 uint64_t,
+				 unsigned int);
 extern boolean_t pmap_adjust_unnest_parameters(pmap_t, vm_map_offset_t *, vm_map_offset_t *);
+extern void		pmap_advise_pagezero_range(pmap_t, uint64_t);
 #endif	/* MACH_KERNEL_PRIVATE */
 
 extern boolean_t	pmap_is_noencrypt(ppnum_t);
@@ -529,12 +659,33 @@ extern pmap_t	kernel_pmap;			/* The kernel's map */
 #define VM_MEM_SUPERPAGE	0x100		/* map a superpage instead of a base page */
 #define VM_MEM_STACK		0x200
 
+#if __x86_64__
+#define PMAP_CREATE_64BIT	0x1
+#define PMAP_CREATE_EPT		0x2
+#define PMAP_CREATE_KNOWN_FLAGS (PMAP_CREATE_64BIT | PMAP_CREATE_EPT)
+#endif
+
 #define PMAP_OPTIONS_NOWAIT	0x1		/* don't block, return 
 						 * KERN_RESOURCE_SHORTAGE 
 						 * instead */
 #define PMAP_OPTIONS_NOENTER	0x2		/* expand pmap if needed
 						 * but don't enter mapping
 						 */
+#define PMAP_OPTIONS_COMPRESSOR 0x4		/* credit the compressor for
+						 * this operation */
+#define PMAP_OPTIONS_INTERNAL	0x8		/* page from internal object */
+#define PMAP_OPTIONS_REUSABLE	0x10		/* page is "reusable" */
+#define PMAP_OPTIONS_NOFLUSH	0x20		/* delay flushing of pmap */
+#define PMAP_OPTIONS_NOREFMOD	0x40		/* don't need ref/mod on disconnect */
+#define	PMAP_OPTIONS_ALT_ACCT	0x80		/* use alternate accounting scheme for page */
+#define PMAP_OPTIONS_REMOVE	0x100		/* removing a mapping */
+#define PMAP_OPTIONS_SET_REUSABLE   0x200	/* page is now "reusable" */
+#define PMAP_OPTIONS_CLEAR_REUSABLE 0x400	/* page no longer "reusable" */
+#define PMAP_OPTIONS_COMPRESSOR_IFF_MODIFIED 0x800 /* credit the compressor
+						    * iff page was modified */
+#define PMAP_OPTIONS_PROTECT_IMMEDIATE 0x1000	/* allow protections to be
+						 * be upgraded */
+
 
 #if	!defined(__LP64__)
 extern vm_offset_t	pmap_extract(pmap_t pmap,
@@ -551,6 +702,12 @@ extern void		pmap_remove(	/* Remove mappings. */
 				vm_map_offset_t	s,
 				vm_map_offset_t	e);
 
+extern void		pmap_remove_options(	/* Remove mappings. */
+				pmap_t		map,
+				vm_map_offset_t	s,
+				vm_map_offset_t	e,
+				int		options);
+
 extern void		fillPage(ppnum_t pa, unsigned int fill);
 
 extern void pmap_map_sharedpage(task_t task, pmap_t pmap);
@@ -558,6 +715,43 @@ extern void pmap_unmap_sharedpage(pmap_t pmap);
 
 #if defined(__LP64__)
 void pmap_pre_expand(pmap_t pmap, vm_map_offset_t vaddr);
+#endif
+
+mach_vm_size_t pmap_query_resident(pmap_t pmap,
+				   vm_map_offset_t s,
+				   vm_map_offset_t e,
+				   mach_vm_size_t *compressed_bytes_p);
+
+/* Inform the pmap layer that there is a JIT entry in this map. */
+extern void pmap_set_jit_entitled(pmap_t pmap);
+
+/*
+ * Indicates if any special policy is applied to this protection by the pmap
+ * layer.
+ */
+bool pmap_has_prot_policy(vm_prot_t prot);
+
+/*
+ * Causes the pmap to return any available pages that it can return cheaply to
+ * the VM.
+ */
+void pmap_release_pages_fast(void);
+
+#define PMAP_QUERY_PAGE_PRESENT			0x01
+#define PMAP_QUERY_PAGE_REUSABLE		0x02
+#define PMAP_QUERY_PAGE_INTERNAL		0x04
+#define PMAP_QUERY_PAGE_ALTACCT			0x08
+#define PMAP_QUERY_PAGE_COMPRESSED		0x10
+#define PMAP_QUERY_PAGE_COMPRESSED_ALTACCT	0x20
+extern kern_return_t pmap_query_page_info(
+	pmap_t		pmap,
+	vm_map_offset_t	va,
+	int		*disp);
+
+#if CONFIG_PGTRACE
+int pmap_pgtrace_add_page(pmap_t pmap, vm_map_offset_t start, vm_map_offset_t end);
+int pmap_pgtrace_delete_page(pmap_t pmap, vm_map_offset_t start, vm_map_offset_t end);
+kern_return_t pmap_pgtrace_fault(pmap_t pmap, vm_map_offset_t va, arm_saved_state_t *ss);
 #endif
 
 #endif  /* KERNEL_PRIVATE */

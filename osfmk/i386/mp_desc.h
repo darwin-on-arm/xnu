@@ -80,21 +80,11 @@ __BEGIN_DECLS
  * The descriptor tables are together in a structure
  * allocated one per processor (except for the boot processor).
  */
-typedef struct cpu_desc_table {
-	struct fake_descriptor	idt[IDTSZ] __attribute__ ((aligned (16)));
-	struct fake_descriptor	gdt[GDTSZ] __attribute__ ((aligned (16)));
-	struct i386_tss		ktss       __attribute__ ((aligned (16)));
-	struct sysenter_stack	sstk;
-} cpu_desc_table_t;
-
 typedef struct cpu_desc_table64 {
-#if !__x86_64__
-	struct fake_descriptor64 idt[IDTSZ]      __attribute__ ((aligned (16)));
-#endif
 	struct fake_descriptor	gdt[GDTSZ]       __attribute__ ((aligned (16)));
 	struct x86_64_tss	ktss             __attribute__ ((aligned (16)));
 	struct sysenter_stack	sstk	         __attribute__ ((aligned (16)));
-	uint8_t			dfstk[PAGE_SIZE] __attribute__ ((aligned (16)));
+	uint8_t			fstk[PAGE_SIZE]  __attribute__ ((aligned (16)));
 } cpu_desc_table64_t;
 
 #define	current_gdt()	(current_cpu_datap()->cpu_desc_index.cdi_gdt.ptr)
@@ -111,12 +101,10 @@ typedef struct cpu_desc_table64 {
 #define	ldt_desc_p(sel) \
 	(&((struct real_descriptor *)current_ldt())[sel_idx(sel)])
 
-extern void	cpu_mode_init(cpu_data_t *cdp);
+extern void	cpu_syscall_init(cpu_data_t *cdp);
 
 extern void	cpu_desc_init(cpu_data_t *cdp);
-extern void	cpu_desc_init64(cpu_data_t *cdp);
 extern void	cpu_desc_load(cpu_data_t *cdp);
-extern void	cpu_desc_load64(cpu_data_t *cdp);
 
 extern boolean_t
 valid_user_data_selector(uint16_t selector);

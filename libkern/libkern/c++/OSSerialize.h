@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000 Apple Computer, Inc. All rights reserved.
+ * Copyright (c) 2000-2016 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -32,8 +32,10 @@
 
 #include <libkern/c++/OSObject.h>
 
+class OSCollection;
 class OSSet;
 class OSDictionary;
+class OSArray;
 
 /*!
  * @header
@@ -42,6 +44,8 @@ class OSDictionary;
  * This header declares the OSSerialize class.
  */
  
+OSObject *
+OSUnserializeBinary(const void *buffer, size_t bufferSize);
  
 /*!
  * @class OSSerialize
@@ -76,24 +80,39 @@ class OSDictionary;
  * handle synchronization via defined member functions
  * for serializing properties.
  */
+ 
 class OSSerialize : public OSObject
 {
     OSDeclareDefaultStructors(OSSerialize)
+    friend class OSBoolean;
 
-protected:
+private:
     char         * data;               // container for serialized data
     unsigned int   length;             // of serialized data (counting NULL)
     unsigned int   capacity;           // of container
     unsigned int   capacityIncrement;  // of container
 
-    unsigned int   tag;
-    OSDictionary * tags;               // tags for all objects seen
+    OSArray * tags;               	   // tags for all objects seen
 
-    struct ExpansionData { };
-    
-    /* Reserved for future use. (Internal use only)  */
-    ExpansionData *reserved;
+#ifdef XNU_KERNEL_PRIVATE
+public:
+    typedef const OSMetaClassBase * (*Editor)(void                  * reference,
+					      OSSerialize           * s, 
+					      OSCollection          * container, 
+					      const OSSymbol        * name,
+					      const OSMetaClassBase * value);
+#else
+    typedef void * Editor;
+#endif
 
+    bool   binary;
+    bool   endCollection;
+    Editor editor;
+    void * editRef;
+
+    bool binarySerialize(const OSMetaClassBase *o);
+    bool addBinary(const void * data, size_t size);
+    bool addBinaryObject(const OSMetaClassBase * o, uint32_t key, const void * _bits, size_t size);
 
 public:
 
@@ -114,6 +133,8 @@ public:
     * The serializer will grow as needed to accommodate more data.
     */
     static OSSerialize * withCapacity(unsigned int capacity);
+
+    static OSSerialize * binaryWithCapacity(unsigned int inCapacity, Editor editor = 0, void * reference = 0);
 
    /*!
     * @function text
@@ -277,7 +298,7 @@ public:
     virtual unsigned int getCapacityIncrement() const;
     virtual unsigned int setCapacityIncrement(unsigned increment);
     virtual unsigned int ensureCapacity(unsigned int newCapacity);
-    virtual void free();
+    virtual void free() APPLE_KEXT_OVERRIDE;
 
     OSMetaClassDeclareReservedUnused(OSSerialize, 0);
     OSMetaClassDeclareReservedUnused(OSSerialize, 1);
@@ -309,7 +330,7 @@ public:
         OSSerializerCallback callback,
         void * ref = 0);
 
-    virtual bool serialize(OSSerialize * serializer) const;
+    virtual bool serialize(OSSerialize * serializer) const APPLE_KEXT_OVERRIDE;
 };
 
 #endif /* _OS_OSSERIALIZE_H */

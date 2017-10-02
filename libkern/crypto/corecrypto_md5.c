@@ -1,6 +1,3 @@
-#if defined(__arm__)
-#include "localcrypto_md5.c" /* We can't use corecrypto.kext yet, so use local version for now. */
-#else
 
 #include <libkern/crypto/crypto_internal.h>
 #include <libkern/crypto/md5.h>
@@ -66,4 +63,3 @@ void MD5Final(unsigned char digest[MD5_DIGEST_LENGTH], MD5_CTX *ctx)
 	ccdigest_final(di, di_ctx, digest);
 }
 
-#endif /* !__arm__ */

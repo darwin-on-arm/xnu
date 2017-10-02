@@ -193,6 +193,17 @@ mac_file_check_lock(struct ucred *cred, struct fileglob *fg, int op,
 	return (error);
 }
 
+int
+mac_file_check_library_validation(struct proc *proc,
+	struct fileglob *fg, off_t slice_offset,
+	user_long_t error_message, size_t error_message_size)
+{
+	int error;
+
+	MAC_CHECK(file_check_library_validation, proc, fg, slice_offset, error_message, error_message_size);
+	return (error);
+}
+
 /*
  * On some platforms, VM_PROT_READ implies VM_PROT_EXECUTE. If that is true,
  * both prot and maxprot will have VM_PROT_EXECUTE set after file_check_mmap
@@ -204,13 +215,13 @@ mac_file_check_lock(struct ucred *cred, struct fileglob *fg, int op,
  */
 int
 mac_file_check_mmap(struct ucred *cred, struct fileglob *fg, int prot,
-    int flags, int *maxprot)
+    int flags, uint64_t offset, int *maxprot)
 {
 	int error;
 	int maxp;
 
 	maxp = *maxprot;
-	MAC_CHECK(file_check_mmap, cred, fg, fg->fg_label, prot, flags, &maxp);
+	MAC_CHECK(file_check_mmap, cred, fg, fg->fg_label, prot, flags, offset, &maxp);
 	if ((maxp | *maxprot) != *maxprot)
 		panic("file_check_mmap increased max protections");
 	*maxprot = maxp;
@@ -227,4 +238,46 @@ mac_file_check_mmap_downgrade(struct ucred *cred, struct fileglob *fg,
 	    &result);
 
 	*prot = result;
+}
+
+
+/*
+ * fileglob XATTR helpers.
+ */
+
+int
+mac_file_setxattr(struct fileglob *fg, const char *name, char *buf, size_t len) {
+	struct vnode *vp = NULL;
+
+	if (!fg || FILEGLOB_DTYPE(fg) != DTYPE_VNODE) {
+		return EFTYPE;
+	}
+
+	vp = (struct vnode *)fg->fg_data;
+	return mac_vnop_setxattr(vp, name, buf, len);
+}
+
+int
+mac_file_getxattr(struct fileglob *fg, const char *name, char *buf, size_t len,
+		size_t *attrlen) {
+	struct vnode *vp = NULL;
+
+	if (!fg || FILEGLOB_DTYPE(fg) != DTYPE_VNODE) {
+		return EFTYPE;
+	}
+
+	vp = (struct vnode *)fg->fg_data;
+	return mac_vnop_getxattr(vp, name, buf, len, attrlen);
+}
+
+int
+mac_file_removexattr(struct fileglob *fg, const char *name) {
+	struct vnode *vp = NULL;
+
+	if (!fg || FILEGLOB_DTYPE(fg) != DTYPE_VNODE) {
+		return EFTYPE;
+	}
+
+	vp = (struct vnode *)fg->fg_data;
+	return mac_vnop_removexattr(vp, name);
 }

@@ -25,127 +25,230 @@
  * 
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
-#include <mach/mach_types.h>
+#include <kern/ipc_tt.h> /* port_name_to_task */
 #include <kern/thread.h>
 #include <kern/machine.h>
 #include <kern/kalloc.h>
+#include <mach/mach_types.h>
 #include <sys/errno.h>
+#include <sys/ktrace.h>
 
-#include <kperf/filter.h>
-#include <kperf/sample.h>
-#include <kperf/kperfbsd.h>
-#include <kperf/pet.h>
 #include <kperf/action.h>
+#include <kperf/buffer.h>
+#include <kperf/kdebug_trigger.h>
 #include <kperf/kperf.h>
-#include <kperf/timetrigger.h>
+#include <kperf/kperf_timer.h>
+#include <kperf/pet.h>
+#include <kperf/sample.h>
 
-/** misc functions **/
-#include <chud/chud_xnu.h> /* XXX: should bust this out */
+/* from libkern/libkern.h */
+extern uint64_t strtouq(const char *, char **, int);
 
-static struct kperf_sample *intr_samplev = NULL;
-static unsigned intr_samplec = 0;
+lck_grp_t kperf_lck_grp;
+
+/* IDs of threads on CPUs before starting the PET thread */
+uint64_t *kperf_tid_on_cpus = NULL;
+
+/* one wired sample buffer per CPU */
+static struct kperf_sample *intr_samplev;
+static unsigned int intr_samplec = 0;
+
+/* current sampling status */
 static unsigned sampling_status = KPERF_SAMPLING_OFF;
-static unsigned kperf_initted = 0;
 
+/* only init once */
+static boolean_t kperf_initted = FALSE;
 
-extern void (*chudxnu_thread_ast_handler)(thread_t);
+/* whether or not to callback to kperf on context switch */
+boolean_t kperf_on_cpu_active = FALSE;
 
-struct kperf_sample*
+struct kperf_sample *
 kperf_intr_sample_buffer(void)
 {
-	unsigned ncpu = chudxnu_cpu_number();
+	unsigned ncpu = cpu_number();
 
-	// XXX: assert?
-	if( ncpu >= intr_samplec )
-		return NULL;
+	assert(ml_get_interrupts_enabled() == FALSE);
+	assert(ncpu < intr_samplec);
 
-	return &intr_samplev[ncpu];
+	return &(intr_samplev[ncpu]);
 }
 
 /* setup interrupt sample buffers */
 int
 kperf_init(void)
 {
+	static lck_grp_attr_t lck_grp_attr;
+
 	unsigned ncpus = 0;
+	int err;
 
-	if( kperf_initted )
+	if (kperf_initted) {
 		return 0;
+	}
 
-	/* get number of cpus */
+	lck_grp_attr_setdefault(&lck_grp_attr);
+	lck_grp_init(&kperf_lck_grp, "kperf", &lck_grp_attr);
+
 	ncpus = machine_info.logical_cpu_max;
 
-	/* make the CPU array 
-	 * FIXME: cache alignment
-	 */
-	intr_samplev = kalloc( ncpus * sizeof(*intr_samplev));
+	/* create buffers to remember which threads don't need to be sampled by PET */
+	kperf_tid_on_cpus = kalloc_tag(ncpus * sizeof(*kperf_tid_on_cpus),
+	                                  VM_KERN_MEMORY_DIAG);
+	if (kperf_tid_on_cpus == NULL) {
+		err = ENOMEM;
+		goto error;
+	}
+	bzero(kperf_tid_on_cpus, ncpus * sizeof(*kperf_tid_on_cpus));
 
-	if( intr_samplev == NULL )
-		return ENOMEM;
-
-	/* clear it */
-	bzero( intr_samplev, ncpus * sizeof(*intr_samplev) );
-	
-	chudxnu_thread_ast_handler = kperf_thread_ast_handler;
-
-	/* we're done */
+	/* create the interrupt buffers */
 	intr_samplec = ncpus;
-	kperf_initted = 1;
+	intr_samplev = kalloc_tag(ncpus * sizeof(*intr_samplev),
+	                          VM_KERN_MEMORY_DIAG);
+	if (intr_samplev == NULL) {
+		err = ENOMEM;
+		goto error;
+	}
+	bzero(intr_samplev, ncpus * sizeof(*intr_samplev));
 
+	/* create kdebug trigger filter buffers */
+	if ((err = kperf_kdebug_init())) {
+		goto error;
+	}
+
+	kperf_initted = TRUE;
 	return 0;
+
+error:
+	if (intr_samplev) {
+		kfree(intr_samplev, ncpus * sizeof(*intr_samplev));
+		intr_samplev = NULL;
+		intr_samplec = 0;
+	}
+
+	if (kperf_tid_on_cpus) {
+		kfree(kperf_tid_on_cpus, ncpus * sizeof(*kperf_tid_on_cpus));
+		kperf_tid_on_cpus = NULL;
+	}
+
+	return err;
 }
 
-
-/** kext start/stop functions **/
-kern_return_t kperf_start (kmod_info_t * ki, void * d);
-
-kern_return_t
-kperf_start (kmod_info_t * ki, void * d)
+void
+kperf_reset(void)
 {
-	(void) ki;
-	(void) d;
+	/* turn off sampling first */
+	(void)kperf_sampling_disable();
 
-	/* say hello */
-	printf( "aprof: kext starting\n" );
+	/* cleanup miscellaneous configuration first */
+	(void)kperf_kdbg_cswitch_set(0);
+	(void)kperf_set_lightweight_pet(0);
+	kperf_kdebug_reset();
 
-	/* register modules */
-	// kperf_action_init();
-	kperf_filter_init();
-	kperf_pet_init();
-
-	/* register the sysctls */
-	//kperf_register_profiling();
-
-	return KERN_SUCCESS;
+	/* timers, which require actions, first */
+	kperf_timer_reset();
+	kperf_action_reset();
 }
 
+void
+kperf_kernel_configure(const char *config)
+{
+	int pairs = 0;
+	char *end;
+	bool pet = false;
+
+	assert(config != NULL);
+
+	ktrace_start_single_threaded();
+
+	ktrace_kernel_configure(KTRACE_KPERF);
+
+	if (config[0] == 'p') {
+		pet = true;
+		config++;
+	}
+
+	do {
+		uint32_t action_samplers;
+		uint64_t timer_period;
+
+		pairs += 1;
+		kperf_action_set_count(pairs);
+		kperf_timer_set_count(pairs);
+
+		action_samplers = (uint32_t)strtouq(config, &end, 0);
+		if (config == end) {
+			kprintf("kperf: unable to parse '%s' as action sampler\n", config);
+			goto out;
+		}
+		config = end;
+
+		kperf_action_set_samplers(pairs, action_samplers);
+
+		if (config[0] == '\0') {
+			kprintf("kperf: missing timer period in config\n");
+			goto out;
+		}
+		config++;
+
+		timer_period = strtouq(config, &end, 0);
+		if (config == end) {
+			kprintf("kperf: unable to parse '%s' as timer period\n", config);
+			goto out;
+		}
+		config = end;
+
+		kperf_timer_set_period(pairs - 1, timer_period);
+		kperf_timer_set_action(pairs - 1, pairs);
+
+		if (pet) {
+			kperf_timer_set_petid(pairs - 1);
+			kperf_set_lightweight_pet(1);
+			pet = false;
+		}
+	} while (*(config++) == ',');
+
+	kperf_sampling_enable();
+
+out:
+	ktrace_end_single_threaded();
+}
+
+void
+kperf_on_cpu_internal(thread_t thread, thread_continue_t continuation,
+                      uintptr_t *starting_fp)
+{
+	if (kperf_kdebug_cswitch) {
+		/* trace the new thread's PID for Instruments */
+		int pid = task_pid(get_threadtask(thread));
+
+		BUF_DATA(PERF_TI_CSWITCH, thread_tid(thread), pid);
+	}
+	if (kperf_lightweight_pet_active) {
+		kperf_pet_on_cpu(thread, continuation, starting_fp);
+	}
+}
+
+void
+kperf_on_cpu_update(void)
+{
+	kperf_on_cpu_active = kperf_kdebug_cswitch ||
+	                      kperf_lightweight_pet_active;
+}
 
 /* random misc-ish functions */
 uint32_t
-kperf_get_thread_bits( thread_t thread )
+kperf_get_thread_flags(thread_t thread)
 {
-	return thread->t_chud;
+	return thread->kperf_flags;
 }
 
 void
-kperf_set_thread_bits( thread_t thread, uint32_t bits )
+kperf_set_thread_flags(thread_t thread, uint32_t flags)
 {
-	thread->t_chud = bits;
+	thread->kperf_flags = flags;
 }
 
-/* mark an AST to fire on a thread */
-void
-kperf_set_thread_ast( thread_t thread )
-{
-	/* FIXME: only call this on current thread from an interrupt
-	 * handler for now... 
-	 */
-	if( thread != current_thread() )
-		panic( "unsafe AST set" );
-
-	act_set_kperf(thread);
-}
-
-unsigned
+unsigned int
 kperf_sampling_status(void)
 {
 	return sampling_status;
@@ -154,20 +257,22 @@ kperf_sampling_status(void)
 int
 kperf_sampling_enable(void)
 {
-	/* already running! */
-	if( sampling_status == KPERF_SAMPLING_ON )
+	if (sampling_status == KPERF_SAMPLING_ON) {
 		return 0;
+	}
 
-	if ( sampling_status != KPERF_SAMPLING_OFF )
-		panic( "kperf: sampling wasn't off" );
+	if (sampling_status != KPERF_SAMPLING_OFF) {
+		panic("kperf: sampling was %d when asked to enable", sampling_status);
+	}
 
 	/* make sure interrupt tables and actions are initted */
-	if( !kperf_initted
-	    || (kperf_action_get_count() == 0) )
+	if (!kperf_initted || (kperf_action_get_count() == 0)) {
 		return ECANCELED;
+	}
 
 	/* mark as running */
 	sampling_status = KPERF_SAMPLING_ON;
+	kperf_lightweight_pet_active_update();
 
 	/* tell timers to enable */
 	kperf_timer_go();
@@ -178,8 +283,9 @@ kperf_sampling_enable(void)
 int
 kperf_sampling_disable(void)
 {
-	if( sampling_status != KPERF_SAMPLING_ON )
+	if (sampling_status != KPERF_SAMPLING_ON) {
 		return 0;
+	}
 
 	/* mark a shutting down */
 	sampling_status = KPERF_SAMPLING_SHUTDOWN;
@@ -189,6 +295,46 @@ kperf_sampling_disable(void)
 
 	/* mark as off */
 	sampling_status = KPERF_SAMPLING_OFF;
+	kperf_lightweight_pet_active_update();
 
 	return 0;
+}
+
+boolean_t
+kperf_thread_get_dirty(thread_t thread)
+{
+	return (thread->c_switch != thread->kperf_c_switch);
+}
+
+void
+kperf_thread_set_dirty(thread_t thread, boolean_t dirty)
+{
+	if (dirty) {
+		thread->kperf_c_switch = thread->c_switch - 1;
+	} else {
+		thread->kperf_c_switch = thread->c_switch;
+	}
+}
+
+int
+kperf_port_to_pid(mach_port_name_t portname)
+{
+	task_t task;
+	int pid;
+
+	if (!MACH_PORT_VALID(portname)) {
+		return -1;
+	}
+
+	task = port_name_to_task(portname);
+
+	if (task == TASK_NULL) {
+		return -1;
+	}
+
+	pid = task_pid(task);
+
+	task_deallocate_internal(task);
+
+	return pid;
 }

@@ -25,18 +25,15 @@
  * 
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
-/*
- * Copyright 1995 NeXT Computer, Inc. All rights reserved.
- */
-#ifndef _BSD_MACHINE_ENDIAN_H_
-#define _BSD_MACHINE_ENDIAN_H_
+#ifndef _MACHINE_ENDIAN_H
+#define _MACHINE_ENDIAN_H
 
-#if defined (__i386__) || defined(__x86_64__)
+#if defined (__i386__) || defined (__x86_64__)
 #include "i386/endian.h"
-#elif defined (__arm__)
+#elif defined (__arm__) || defined (__arm64__)
 #include "arm/endian.h"
 #else
 #error architecture not supported
 #endif
 
-#endif /* _BSD_MACHINE_ENDIAN_H_ */
+#endif /* _MACHINE_ENDIAN_H */

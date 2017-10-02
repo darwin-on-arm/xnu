@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998-2011 Apple Computer, Inc. All rights reserved.
+ * Copyright (c) 1998-2016 Apple Computer, Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -80,7 +80,7 @@ typedef void (*IOThreadFunc)(void *argument);
     @param size Size of the memory requested.
     @result Pointer to the allocated memory, or zero on failure. */
 
-void * IOMalloc(vm_size_t size);
+void * IOMalloc(vm_size_t size)  __attribute__((alloc_size(1)));
 
 /*! @function IOFree
     @abstract Frees memory allocated with IOMalloc.
@@ -99,7 +99,7 @@ void   IOFree(void * address, vm_size_t size);
     @param alignment Byte count of the alignment for the memory. For example, pass 256 to get memory allocated at an address with bit 0-7 zero.
     @result Pointer to the allocated memory, or zero on failure. */
 
-void * IOMallocAligned(vm_size_t size, vm_offset_t alignment);
+void * IOMallocAligned(vm_size_t size, vm_offset_t alignment) __attribute__((alloc_size(1)));
 
 /*! @function IOFreeAligned
     @abstract Frees memory allocated with IOMallocAligned.
@@ -118,7 +118,7 @@ void   IOFreeAligned(void * address, vm_size_t size);
     @result Virtual address of the allocated memory, or zero on failure. */
 
 void * IOMallocContiguous(vm_size_t size, vm_size_t alignment,
-			   IOPhysicalAddress * physicalAddress) __attribute__((deprecated));
+			   IOPhysicalAddress * physicalAddress) __attribute__((deprecated)) __attribute__((alloc_size(1)));
 
 /*! @function IOFreeContiguous
     @abstract Deprecated - use IOBufferMemoryDescriptor. Frees memory allocated with IOMallocContiguous.
@@ -136,7 +136,7 @@ void   IOFreeContiguous(void * address, vm_size_t size) __attribute__((deprecate
     @param alignment Byte count of the alignment for the memory. For example, pass 256 to get memory allocated at an address with bits 0-7 zero.
     @result Pointer to the allocated memory, or zero on failure. */
 
-void * IOMallocPageable(vm_size_t size, vm_size_t alignment);
+void * IOMallocPageable(vm_size_t size, vm_size_t alignment) __attribute__((alloc_size(1)));
 
 /*! @function IOFreePageable
     @abstract Frees memory allocated with IOMallocPageable.
@@ -149,7 +149,11 @@ void IOFreePageable(void * address, vm_size_t size);
 /*
  * Typed memory allocation macros. Both may block.
  */
-#define IONew(type,number)        (type*)IOMalloc(sizeof(type) * (number) )
+#define IONew(type,number) \
+( ((number) != 0 && ((vm_size_t) ((sizeof(type) * (number) / (number))) != sizeof(type)) /* overflow check 20847256 */ \
+  ? 0 \
+  : ((type*)IOMalloc(sizeof(type) * (number)))) )
+
 #define IODelete(ptr,type,number) IOFree( (ptr) , sizeof(type) * (number) )
 
 /////////////////////////////////////////////////////////////////////////////
@@ -268,6 +272,14 @@ void IOExitThread(void) __attribute__((deprecated));
 
 void IOSleep(unsigned milliseconds);
 
+/*! @function IOSleepWithLeeway
+    @abstract Sleep the calling thread for a number of milliseconds, with a specified leeway the kernel may use for timer coalescing.
+    @discussion This function blocks the calling thread for at least the number of specified milliseconds, giving time to other processes.  The kernel may also coalesce any timers involved in the delay, using the leeway given as a guideline.
+    @param intervalMilliseconds The integer number of milliseconds to wait.
+    @param leewayMilliseconds The integer number of milliseconds to use as a timer coalescing guideline. */
+
+void IOSleepWithLeeway(unsigned intervalMilliseconds, unsigned leewayMilliseconds);
+
 /*! @function IODelay
     @abstract Spin delay for a number of microseconds.
     @discussion This function spins to delay for at least the number of specified microseconds. Since the CPU is busy spinning no time is made available to other processes; this method of delay should be used only for short periods. Also, the AbsoluteTime based APIs of kern/clock.h provide finer grained and lower cost delays.
@@ -278,7 +290,7 @@ void IODelay(unsigned microseconds);
 /*! @function IOPause
     @abstract Spin delay for a number of nanoseconds.
     @discussion This function spins to delay for at least the number of specified nanoseconds. Since the CPU is busy spinning no time is made available to other processes; this method of delay should be used only for short periods.
-    @param microseconds The integer number of nanoseconds to spin wait. */
+    @param nanoseconds The integer number of nanoseconds to spin wait. */
 
 void IOPause(unsigned nanoseconds);
 
@@ -286,7 +298,7 @@ void IOPause(unsigned nanoseconds);
     @abstract Log a message to console in text mode, and /var/log/system.log.
     @discussion This function allows a driver to log diagnostic information to the screen during verbose boots, and to a log file found at /var/log/system.log. IOLog should not be called from interrupt context.
     @param format A printf() style format string (see printf(3) documentation).
-    @param other arguments described by the format string. */
+    */
 
 void IOLog(const char *format, ...)
 __attribute__((format(printf, 1, 2)));
@@ -297,7 +309,8 @@ __attribute__((format(printf, 1, 2)));
     @param format A printf() style format string (see printf(3) documentation).
     @param ap stdarg(3) style variable arguments. */
 
-void IOLogv(const char *format, va_list ap);
+void IOLogv(const char *format, va_list ap)
+__attribute__((format(printf, 1, 0)));
 
 #ifndef _FN_KPRINTF
 #define	_FN_KPRINTF
@@ -403,6 +416,11 @@ extern mach_timespec_t IOZeroTvalspec;
 #endif /* !defined(__LP64__) */
 
 #endif /* __APPLE_API_OBSOLETE */
+
+#if XNU_KERNEL_PRIVATE
+vm_tag_t
+IOMemoryTag(vm_map_t map);
+#endif
 
 __END_DECLS
 

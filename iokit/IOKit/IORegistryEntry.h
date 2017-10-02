@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998-2000 Apple Computer, Inc. All rights reserved.
+ * Copyright (c) 1998-2016 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -43,6 +43,7 @@
 extern const OSSymbol * gIONameKey;
 extern const OSSymbol * gIOLocationKey;
 extern const OSSymbol * gIORegistryEntryIDKey;
+extern const OSSymbol * gIORegistryEntryPropertyKeysKey;
 
 class IORegistryEntry;
 class IORegistryPlane;
@@ -52,8 +53,8 @@ typedef void (*IORegistryEntryApplierFunction)(IORegistryEntry * entry,
                                                void * context);
 
 enum {
-    kIORegistryIterateRecursively	= 0x00000001,
-    kIORegistryIterateParents		= 0x00000002
+    kIORegistryIterateRecursively   = 0x00000001,
+    kIORegistryIterateParents       = 0x00000002,
 };
 
 /*! @class IORegistryEntry : public OSObject
@@ -71,10 +72,7 @@ protected:
 /*! @struct ExpansionData
     @discussion This structure will be used to expand the capablilties of this class in the future.
     */    
-    struct ExpansionData
-    {
-	uint64_t	fRegistryEntryID;
-    };
+    struct ExpansionData;
 
 /*! @var reserved
     Reserved for future use.  (Internal use only)  */
@@ -252,7 +250,7 @@ public:
 /*! @function init
     @abstract Standard init method for all IORegistryEntry subclasses.
     @discussion A registry entry must be initialized with this method before it can be used. A property dictionary may passed and will be retained by this method for use as the registry entry's property table, or an empty one will be created.
-    @param A dictionary that will become the registry entry's property table (retaining it), or zero which will cause an empty property table to be created.
+    @param dictionary A dictionary that will become the registry entry's property table (retaining it), or zero which will cause an empty property table to be created.
     @result true on success, or false on a resource failure. */
 
     virtual bool init( OSDictionary * dictionary = 0 );
@@ -261,7 +259,7 @@ public:
     @abstract Standard free method for all IORegistryEntry subclasses.
     @discussion This method will release any resources of the entry, in particular its property table. Note that the registry entry must always be detached from the registry before free may be called, and subclasses (namely IOService) will have additional protocols for removing registry entries. free should never need be called directly. */
 
-    virtual void free( void );
+    virtual void free( void ) APPLE_KEXT_OVERRIDE;
 
 /*! @function setPropertyTable
     @abstract Replace a registry entry's property table.
@@ -518,6 +516,11 @@ public:
     virtual OSIterator * getChildIterator( const IORegistryPlane * plane )
 									const;
 
+#if XNU_KERNEL_PRIVATE
+    uint32_t getChildCount( const IORegistryPlane * plane ) const;
+    OSArray * copyPropertyKeys(void) const;
+#endif
+
     virtual void applyToChildren( IORegistryEntryApplierFunction applier,
                                   void * context,
                                   const IORegistryPlane * plane ) const;
@@ -604,7 +607,7 @@ public:
 /*! @function detachFromChild
     @abstract Detaches a child entry from its parent in a plane.
     @discussion This method is called in the parent entry when a child detaches, to make overrides possible. It is a no-op if the entry is not a child of the parent. Detaching the entry will release both the child and parent. This method will call detachFromParent in the child entry if it is not being called from detachFromParent.
-    @param parent The registry entry to detach.
+    @param child The registry entry to detach.
     @param plane The plane object. */
 
     virtual void detachFromChild( IORegistryEntry * child,
@@ -797,6 +800,10 @@ private:
 #endif
     static IORegistryEntry * initialize( void );
 
+#ifdef XNU_KERNEL_PRIVATE
+    SInt32 getRegistryEntryGenerationCount( void ) const;
+#endif
+
 private:
     inline bool arrayMember( OSArray * set,
                             const IORegistryEntry * member,
@@ -854,7 +861,7 @@ private:
     const IORegistryPlane *	plane;
     IOOptionBits		options;
 
-    virtual void free( void );
+    virtual void free( void ) APPLE_KEXT_OVERRIDE;
 
 public:
 /*! @function iterateOver
@@ -884,7 +891,7 @@ public:
     @discussion This method calls either getNextObjectFlat or getNextObjectRecursive depending on the options the iterator was created with. This implements the OSIterator defined getNextObject method. The object returned is retained while the iterator is pointing at it (its the current entry), or recursing into it. The caller should not release it.
     @result The next registry entry in the iteration (the current entry), or zero if the iteration has finished at this level of recursion. The entry returned is retained while the iterator is pointing at it (its the current entry), or recursing into it. The caller should not release it. */
 
-    virtual IORegistryEntry * getNextObject( void );
+    virtual IORegistryEntry * getNextObject( void ) APPLE_KEXT_OVERRIDE;
 
 /*! @function getNextObjectFlat
     @abstract Return the next object in the registry iteration, ignoring the kIORegistryIterateRecursively option.
@@ -931,18 +938,18 @@ public:
     @abstract Exits all levels of recursion, restoring the iterator to its state at creation.
     @discussion This method exits all levels of recursion, and restores the iterator to its state at creation. */
 
-    virtual void reset( void );
+    virtual void reset( void ) APPLE_KEXT_OVERRIDE;
 
 /*! @function isValid
     @abstract Checks that no registry changes have invalidated the iteration.
     @discussion If a registry iteration is invalidated by changes to the registry, it will be made invalid, the currentEntry will be considered zero, and further calls to getNextObject et al. will return zero. The iterator should be reset to restart the iteration when this happens.
     @result false if the iterator has been invalidated by changes to the registry, true otherwise. */
 
-    virtual bool isValid( void );
+    virtual bool isValid( void ) APPLE_KEXT_OVERRIDE;
 
 /*! @function iterateAll
     @abstract Iterates all entries (with getNextObject) and returns a set of all returned entries.
-    @discussion This method will reset, then iterate all entries in the iteration (with getNextObject) until successful (ie. the iterator is valid at the end of the iteration).
+    @discussion This method will reset, then iterate all entries in the iteration (with getNextObject).
     @result A set of entries returned by the iteration. The caller should release the set when it has finished with it. Zero is returned on a resource failure. */
 
     virtual OSOrderedSet * iterateAll( void );

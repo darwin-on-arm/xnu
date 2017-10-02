@@ -40,8 +40,9 @@
 #include <sys/appleapiopts.h>
 
 #include <net/pfkeyv2.h>
-#ifdef KERNEL_PRIVATE
+#ifdef BSD_KERNEL_PRIVATE
 #include <netkey/keydb.h>
+#include <netinet/ip_var.h>
 
 /* lock for IPSec stats */
 extern lck_grp_t         *sadb_stat_mutex_grp;
@@ -51,8 +52,12 @@ extern lck_mtx_t         *sadb_stat_mutex;
 
 
 #define IPSEC_STAT_INCREMENT(x)	\
-	{lck_mtx_lock(sadb_stat_mutex); (x)++; lck_mtx_unlock(sadb_stat_mutex);}
+	OSIncrementAtomic64((SInt64 *)&x)
 
+struct secpolicyaddrrange {
+	struct sockaddr_storage start;	/* Start (low values) of address range */
+	struct sockaddr_storage end;	/* End (high values) of address range */
+};
 
 /*
  * Security Policy Index
@@ -67,6 +72,9 @@ struct secpolicyindex {
 	u_int8_t prefs;			/* prefix length in bits for src */
 	u_int8_t prefd;			/* prefix length in bits for dst */
 	u_int16_t ul_proto;		/* upper layer Protocol */
+	ifnet_t internal_if; /* Interface a matching packet is bound to */
+	struct secpolicyaddrrange src_range;	/* IP src address range for SP */
+	struct secpolicyaddrrange dst_range;	/* IP dst address range for SP */
 #ifdef notyet
 	uid_t uids;
 	uid_t uidd;
@@ -91,6 +99,11 @@ struct secpolicy {
 				/* pointer to the ipsec request tree, */
 				/* if policy == IPSEC else this value == NULL.*/
 
+	ifnet_t ipsec_if; /* IPSec interface to use */
+	ifnet_t outgoing_if; /* Outgoing interface for encrypted traffic */
+    
+	char disabled; /* Set to ignore policy */
+    
 	/*
 	 * lifetime handler.
 	 * the policy can be used without limitiation if both lifetime and
@@ -133,7 +146,7 @@ struct secspacq {
 	int count;		/* for lifetime */
 	/* XXX: here is mbuf place holder to be sent ? */
 };
-#endif /* KERNEL_PRIVATE */
+#endif /* BSD_KERNEL_PRIVATE */
 
 /* according to IANA assignment, port 0x0000 and proto 0xff are reserved. */
 #define IPSEC_PORT_ANY		0
@@ -191,35 +204,35 @@ struct secspacq {
 
 /* statistics for ipsec processing */
 struct ipsecstat {
-	u_quad_t in_success;  /* succeeded inbound process */
-	u_quad_t in_polvio;
+	u_quad_t in_success __attribute__ ((aligned (8))); /* succeeded inbound process */
+	u_quad_t in_polvio __attribute__ ((aligned (8)));
 			/* security policy violation for inbound process */
-	u_quad_t in_nosa;     /* inbound SA is unavailable */
-	u_quad_t in_inval;    /* inbound processing failed due to EINVAL */
-	u_quad_t in_nomem;    /* inbound processing failed due to ENOBUFS */
-	u_quad_t in_badspi;   /* failed getting a SPI */
-	u_quad_t in_ahreplay; /* AH replay check failed */
-	u_quad_t in_espreplay; /* ESP replay check failed */
-	u_quad_t in_ahauthsucc; /* AH authentication success */
-	u_quad_t in_ahauthfail; /* AH authentication failure */
-	u_quad_t in_espauthsucc; /* ESP authentication success */
-	u_quad_t in_espauthfail; /* ESP authentication failure */
-	u_quad_t in_esphist[256];
-	u_quad_t in_ahhist[256];
-	u_quad_t in_comphist[256];
-	u_quad_t out_success; /* succeeded outbound process */
-	u_quad_t out_polvio;
+	u_quad_t in_nosa __attribute__ ((aligned (8)));     /* inbound SA is unavailable */
+	u_quad_t in_inval __attribute__ ((aligned (8)));    /* inbound processing failed due to EINVAL */
+	u_quad_t in_nomem __attribute__ ((aligned (8)));    /* inbound processing failed due to ENOBUFS */
+	u_quad_t in_badspi __attribute__ ((aligned (8)));   /* failed getting a SPI */
+	u_quad_t in_ahreplay __attribute__ ((aligned (8))); /* AH replay check failed */
+	u_quad_t in_espreplay __attribute__ ((aligned (8))); /* ESP replay check failed */
+	u_quad_t in_ahauthsucc __attribute__ ((aligned (8))); /* AH authentication success */
+	u_quad_t in_ahauthfail __attribute__ ((aligned (8))); /* AH authentication failure */
+	u_quad_t in_espauthsucc __attribute__ ((aligned (8))); /* ESP authentication success */
+	u_quad_t in_espauthfail __attribute__ ((aligned (8))); /* ESP authentication failure */
+	u_quad_t in_esphist[256] __attribute__ ((aligned (8)));
+	u_quad_t in_ahhist[256] __attribute__ ((aligned (8)));
+	u_quad_t in_comphist[256] __attribute__ ((aligned (8)));
+	u_quad_t out_success __attribute__ ((aligned (8))); /* succeeded outbound process */
+	u_quad_t out_polvio __attribute__ ((aligned (8)));
 			/* security policy violation for outbound process */
-	u_quad_t out_nosa;    /* outbound SA is unavailable */
-	u_quad_t out_inval;   /* outbound process failed due to EINVAL */
-	u_quad_t out_nomem;    /* inbound processing failed due to ENOBUFS */
-	u_quad_t out_noroute; /* there is no route */
-	u_quad_t out_esphist[256];
-	u_quad_t out_ahhist[256];
-	u_quad_t out_comphist[256];
+	u_quad_t out_nosa __attribute__ ((aligned (8)));    /* outbound SA is unavailable */
+	u_quad_t out_inval __attribute__ ((aligned (8)));   /* outbound process failed due to EINVAL */
+	u_quad_t out_nomem __attribute__ ((aligned (8)));    /* inbound processing failed due to ENOBUFS */
+	u_quad_t out_noroute __attribute__ ((aligned (8))); /* there is no route */
+	u_quad_t out_esphist[256] __attribute__ ((aligned (8)));
+	u_quad_t out_ahhist[256] __attribute__ ((aligned (8)));
+	u_quad_t out_comphist[256] __attribute__ ((aligned (8)));
 };
 
-#ifdef KERNEL_PRIVATE
+#ifdef BSD_KERNEL_PRIVATE
 /*
  * Definitions for IPsec & Key sysctl operations.
  */
@@ -277,16 +290,20 @@ struct ipsecstat {
 	{ "esp_randpad", CTLTYPE_INT }, \
 }
 
-#ifdef KERNEL
-
+#if defined(__ARM__)
+#define IPSEC_IS_P2ALIGNED(p)        IS_P2ALIGNED(p, sizeof (u_int32_t))
+#define IPSEC_GET_P2UNALIGNED_OFS(p) (sizeof(u_int32_t) - (((uintptr_t)(p)) & ((uintptr_t)(sizeof(u_int32_t)) - 1)))
+#else
 #define IPSEC_IS_P2ALIGNED(p)        1
 #define IPSEC_GET_P2UNALIGNED_OFS(p) 0
+#endif
 
 struct ipsec_output_state {
-    int tunneled;
+	int tunneled;
 	struct mbuf *m;
 	struct route ro;
 	struct sockaddr *dst;
+	u_int outgoing_if;
 };
 
 struct ipsec_history {
@@ -314,6 +331,10 @@ extern struct secpolicy *ipsec4_getpolicybysock(struct mbuf *, u_int,
 						struct socket *, int *);
 extern struct secpolicy *ipsec4_getpolicybyaddr(struct mbuf *, u_int, int,
 						int *);
+extern int ipsec4_getpolicybyinterface(struct mbuf *, u_int, int *,
+                        struct ip_out_args *, struct secpolicy **);
+
+extern u_int ipsec_get_reqlevel(struct ipsecrequest *);
 
 struct inpcb;
 extern int ipsec_init_policy(struct socket *so, struct inpcbpolicy **);
@@ -321,9 +342,7 @@ extern int ipsec_copy_policy(struct inpcbpolicy *, struct inpcbpolicy *);
 extern u_int ipsec_get_reqlevel(struct ipsecrequest *);
 
 extern int ipsec4_set_policy(struct inpcb *inp, int optname,
-	caddr_t request, size_t len, int priv);
-extern int ipsec4_get_policy(struct inpcb *inpcb, caddr_t request,
-	size_t len, struct mbuf **mp);
+						caddr_t request, size_t len, int priv);
 extern int ipsec4_delete_pcbpolicy(struct inpcb *);
 extern int ipsec4_in_reject_so(struct mbuf *, struct socket *);
 extern int ipsec4_in_reject(struct mbuf *, struct inpcb *);
@@ -343,16 +362,15 @@ extern const char *ipsec_logsastr(struct secasvar *);
 
 extern void ipsec_dumpmbuf(struct mbuf *);
 
+extern int ipsec4_interface_output(struct ipsec_output_state *state, ifnet_t interface);
 extern int ipsec4_output(struct ipsec_output_state *, struct secpolicy *, int);
 #if INET
 extern struct mbuf * ipsec4_splithdr(struct mbuf *);
 extern int ipsec4_encapsulate(struct mbuf *, struct secasvar *);
-extern int ipsec4_encapsulate_utun_esp_keepalive(struct mbuf **, struct secasvar *);
 #endif
 #if INET6
 extern struct mbuf * ipsec6_splithdr(struct mbuf *);
 extern int ipsec6_encapsulate(struct mbuf *, struct secasvar *);
-extern int ipsec6_encapsulate_utun_esp_keepalive(struct mbuf **, struct secasvar *);
 #endif
 extern int ipsec4_tunnel_validate(struct mbuf *, int, u_int, struct secasvar *, sa_family_t *);
 extern struct mbuf *ipsec_copypkt(struct mbuf *);
@@ -362,8 +380,7 @@ extern struct socket *ipsec_getsocket(struct mbuf *);
 extern int ipsec_addhist(struct mbuf *, int, u_int32_t); 
 extern struct ipsec_history *ipsec_gethist(struct mbuf *, int *);
 extern void ipsec_clearhist(struct mbuf *);
-#endif /* KERNEL */
-#endif /* KERNEL_PRIVATE */
+#endif /* BSD_KERNEL_PRIVATE */
 
 #ifndef KERNEL
 __BEGIN_DECLS

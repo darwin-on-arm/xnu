@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000 Apple Computer, Inc. All rights reserved.
+ * Copyright (c) 2000-2013 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -79,55 +79,8 @@
  */
 
 #ifdef KERNEL_PRIVATE
+/* sigh; some modules are lazy and thus rely on this */
 #include <sys/queue.h>
-
-/*
- * Driver callbacks for media status and change requests.
- */
-typedef	int (*ifm_change_cb_t)(struct ifnet *ifp);
-typedef	void (*ifm_stat_cb_t)(struct ifnet *ifp, struct ifmediareq *req);
-
-/*
- * In-kernel representation of a single supported media type.
- */
-struct ifmedia_entry {
-	LIST_ENTRY(ifmedia_entry) ifm_list;
-	int	ifm_media;	/* description of this media attachment */
-	int	ifm_data;	/* for driver-specific use */
-	void	*ifm_aux;	/* for driver-specific use */
-};
-
-/*
- * One of these goes into a network interface's softc structure.
- * It is used to keep general media state.
- */
-struct ifmedia {
-	int	ifm_mask;	/* mask of changes we don't care about */
-	int	ifm_media;	/* current user-set media word */
-	struct ifmedia_entry *ifm_cur;	/* currently selected media */
-	LIST_HEAD(, ifmedia_entry) ifm_list; /* list of all supported media */
-	ifm_change_cb_t	ifm_change;	/* media change driver callback */
-	ifm_stat_cb_t	ifm_status;	/* media status driver callback */
-};
-
-/* Initialize an interface's struct if_media field. */
-void	ifmedia_init(struct ifmedia *ifm, int dontcare_mask,
-	    ifm_change_cb_t change_callback, ifm_stat_cb_t status_callback);
-
-/* Add one supported medium to a struct ifmedia. */
-void	ifmedia_add(struct ifmedia *ifm, int mword, int data, void *aux);
-
-/* Add an array (of ifmedia_entry) media to a struct ifmedia. */
-void	ifmedia_list_add(struct ifmedia *mp, struct ifmedia_entry *lp,
-	    int count);
-
-/* Set default media type on initialization. */
-void	ifmedia_set(struct ifmedia *ifm, int mword);
-
-/* Common ioctl function for getting/setting media, called by driver. */
-int	ifmedia_ioctl(struct ifnet *ifp, struct ifreq *ifr,
-	    struct ifmedia *ifm, uint32_t cmd);
-
 #endif /* KERNEL_PRIVATE */
 
 /*
@@ -168,6 +121,8 @@ int	ifmedia_ioctl(struct ifnet *ifp, struct ifreq *ifr,
 #define	IFM_10G_LR	19		/* 10GbaseLR - single-mode fiber */
 #define	IFM_10G_CX4	20		/* 10GbaseCX4 - copper */
 #define	IFM_10G_T	21		/* 10GbaseT - 4 pair cat 6 */
+#define	IFM_2500_T	22		/* 2500baseT - 4 pair cat 5 */
+#define	IFM_5000_T	23		/* 5000baseT - 4 pair cat 5 */
 
 /*
  * Token ring
@@ -242,6 +197,7 @@ int	ifmedia_ioctl(struct ifnet *ifp, struct ifreq *ifr,
  */
 #define	IFM_AVALID	0x00000001	/* Active bit valid */
 #define	IFM_ACTIVE	0x00000002	/* Interface attached to working net */
+#define	IFM_WAKESAMENET	0x00000004	/* No link transition while asleep */
 
 /*
  * Macros to extract various bits of information from the media word.
@@ -300,6 +256,8 @@ struct ifmedia_description {
     { IFM_10G_LR,   "10GbaseLR"   },                \
     { IFM_10G_CX4,  "10GbaseCX4"  },                \
     { IFM_10G_T,    "10GbaseT"    },                \
+    { IFM_2500_T,   "2500baseT"   },                \
+    { IFM_5000_T,   "5000baseT"   },                \
     { 0, NULL },                                    \
 }
 

@@ -93,12 +93,6 @@ struct vnode;
 #define	D_TTY	3
 
 #ifdef KERNEL
-/*
- * Flags for d_type (squeezed into the top half of d_type).
- */
-#define	D_TYPEMASK	0xffff
-#define	D_TRACKCLOSE	0x00010000	/* track all closes */
-
 /* 
  * Device switch function types.
  */
@@ -204,11 +198,12 @@ struct cdevsw {
 };
 
 #ifdef BSD_KERNEL_PRIVATE
-void devsw_init(void);
 
 extern uint64_t cdevsw_flags[];
-#define CDEVSW_SELECT_KQUEUE	0x01
-#define CDEVSW_USE_OFFSET	0x02
+#define CDEVSW_SELECT_KQUEUE 0x01
+#define CDEVSW_USE_OFFSET    0x02
+#define CDEVSW_IS_PTC        0x04
+#define CDEVSW_IS_PTS        0x08
 
 struct thread;
 
@@ -263,7 +258,7 @@ struct linesw {
 
 
 extern struct linesw linesw[];
-extern int nlinesw;
+extern const int nlinesw;
  
 int ldisc_register(int , struct linesw *);
 void ldisc_deregister(int);
@@ -300,6 +295,7 @@ extern struct swdevt swdevt[];
  */
 __BEGIN_DECLS
 #ifdef KERNEL_PRIVATE
+void devsw_init(void);
 extern struct cdevsw cdevsw[];
 extern int cdevsw_setkqueueok(int, struct cdevsw*, int);
 #endif /* KERNEL_PRIVATE */

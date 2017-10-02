@@ -59,6 +59,13 @@
 #include <i386/asm.h>
 
 /*
+ * void *secure_memset(void * addr, int pattern, size_t length)
+ *
+ * It is important that this function remains defined in assembly to avoid
+ * compiler optimizations.
+ */
+ENTRY(secure_memset)
+/*
  * void *memset(void * addr, int pattern, size_t length)
  */
 
@@ -81,6 +88,28 @@ ENTRY(memset)
 	andq	$7,%rcx
 	rep
 	stosb
+	movq	%r8 ,%rax		/* returns its first argument */
+	ret
+
+/*
+ * void *memset_word(void * addr, int pattern, size_t length)
+ */
+
+ENTRY(memset_word)
+	movq	%rdi, %r8
+	movq	%rsi, %rax		/* move pattern (arg2) to rax */
+	mov	%eax, %ecx
+	shlq	$32,%rax
+	orq	%rcx, %rax 
+	cld				/* reset direction flag */
+	movq 	%rdx, %rcx		/* mov quads first */
+	shrq	$1, %rcx
+	rep
+	stosq
+	movq	%rdx,%rcx		/* if necessary, mov 32 bit word */
+	andq	$1,%rcx
+	rep
+	stosl
 	movq	%r8 ,%rax		/* returns its first argument */
 	ret
 

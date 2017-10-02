@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998-2009 Apple Inc. All rights reserved.
+ * Copyright (c) 1998-2012 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -37,6 +37,7 @@
 #endif
 
 #include <sys/appleapiopts.h>
+#include <sys/cdefs.h>
 
 #include <IOKit/system.h>
 
@@ -79,7 +80,7 @@ IOLock * IOLockAlloc( void );
 
 /*! @function IOLockFree
     @abstract Frees a mutex.
-    @discussion Frees a lock allocated with IOLockAlloc. Any blocked waiters will not be woken.
+    @discussion Frees a lock allocated with IOLockAlloc. Mutex should be unlocked with no waiters.
     @param lock Pointer to the allocated lock. */
 
 void	IOLockFree( IOLock * lock);
@@ -122,26 +123,22 @@ boolean_t IOLockTryLock( IOLock * lock);
 #ifdef	IOLOCKS_INLINE
 #define IOLockUnlock(l)	lck_mtx_unlock(l)
 #else
-#if	defined(__i386__)
-void	IOLockUnlock( IOLock * lock) __DARWIN10_ALIAS(IOLockUnlock);
-#else	/* !__i386__ */
 void	IOLockUnlock( IOLock * lock);
-#endif	/* __i386__ */
 #endif	/* !IOLOCKS_INLINE */
 
 /*! @function IOLockSleep
     @abstract Sleep with mutex unlock and relock
 @discussion Prepare to sleep,unlock the mutex, and re-acquire it on wakeup. Results are undefined if the caller has not locked the mutex. This function may block and so should not be called from interrupt level or while a spin lock is held. 
     @param lock Pointer to the locked lock. 
-    @param event The event to sleep on.
+    @param event The event to sleep on. Must be non-NULL.
     @param interType How can the sleep be interrupted.
 	@result The wait-result value indicating how the thread was awakened.*/
-int	IOLockSleep( IOLock * lock, void *event, UInt32 interType);
+int	IOLockSleep( IOLock * lock, void *event, UInt32 interType) __DARWIN14_ALIAS(IOLockSleep);
 
 int	IOLockSleepDeadline( IOLock * lock, void *event,
-				AbsoluteTime deadline, UInt32 interType);
+						 AbsoluteTime deadline, UInt32 interType) __DARWIN14_ALIAS(IOLockSleepDeadline);
 
-void	IOLockWakeup(IOLock * lock, void *event, bool oneThread);
+void	IOLockWakeup(IOLock * lock, void *event, bool oneThread) __DARWIN14_ALIAS(IOLockWakeup);
 
 #ifdef __APPLE_API_OBSOLETE
 
@@ -176,7 +173,7 @@ IORecursiveLock * IORecursiveLockAlloc( void );
 
 /*! @function IORecursiveLockFree
     @abstract Frees a recursive lock.
-    @discussion Frees a lock allocated with IORecursiveLockAlloc. Any blocked waiters will not be woken.
+    @discussion Frees a lock allocated with IORecursiveLockAlloc. Lock should be unlocked with no waiters. 
     @param lock Pointer to the allocated lock. */
 
 void		IORecursiveLockFree( IORecursiveLock * lock);
@@ -244,7 +241,7 @@ IORWLock * IORWLockAlloc( void );
 
 /*! @function IORWLockFree
    @abstract Frees a read/write lock.
-   @discussion Frees a lock allocated with IORWLockAlloc. Any blocked waiters will not be woken.
+   @discussion Frees a lock allocated with IORWLockAlloc. Lock should be unlocked with no waiters.
     @param lock Pointer to the allocated lock. */
 
 void	IORWLockFree( IORWLock * lock);

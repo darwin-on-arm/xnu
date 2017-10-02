@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2004-2011 Apple Inc. All rights reserved.
+ * Copyright (c) 2004-2016 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -117,7 +117,7 @@ struct kauth_scope {
 static TAILQ_HEAD(,kauth_scope)	kauth_scopes;
 
 static int kauth_add_callback_to_scope(kauth_scope_t sp, kauth_listener_t klp);
-static void	kauth_scope_init(void) __attribute__((section("__TEXT, initcode")));
+static void	kauth_scope_init(void);
 static kauth_scope_t kauth_alloc_scope(const char *identifier, kauth_scope_callback_t callback, void *idata);
 static kauth_listener_t kauth_alloc_listener(const char *identifier, kauth_scope_callback_t callback, void *idata);
 #if 0
@@ -596,7 +596,6 @@ kauth_authorize_generic_callback(kauth_cred_t credential, __unused void *idata, 
 		/* XXX == 0 ? */
 		return((kauth_cred_getuid(credential) == 0) ?
 		    KAUTH_RESULT_ALLOW : KAUTH_RESULT_DENY);
-		break;
 	}
 
 	/* no explicit result, so defer to others in the chain */
@@ -814,21 +813,8 @@ kauth_acl_inherit(vnode_t dvp, kauth_acl_t initial, kauth_acl_t *product, int is
 			KAUTH_DEBUG("    ERROR - could not get parent directory ACL for inheritance");
 			return(error);
 		}
-		if (VATTR_IS_SUPPORTED(&dva, va_acl)) {
+		if (VATTR_IS_SUPPORTED(&dva, va_acl))
 			inherit = dva.va_acl;
-			/*
-			 * If there is an ACL on the parent directory, then
-			 * there are potentially inheritable ACE entries, but
-			 * if the flags on the directory ACL say not to
-			 * inherit, then we don't inherit.  This allows for
-			 * per directory rerooting of the inheritable ACL
-			 * hierarchy.
-			 */
-			if (inherit != NULL && inherit->acl_flags & KAUTH_ACL_NO_INHERIT) {
-				kauth_acl_free(inherit);
-				inherit = NULL;
-			}
-		}
 	}
 
 	/*

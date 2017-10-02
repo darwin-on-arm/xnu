@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2010 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2012 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -33,12 +33,16 @@
 #include <mach/processor.h>
 #include <kern/processor.h>
 #include <kern/machine.h>
-#include <kern/cpu_data.h>
+
 #include <kern/cpu_number.h>
 #include <kern/thread.h>
+#include <kern/thread_call.h>
+#include <kern/policy_internal.h>
+
+#include <prng/random.h>
 #include <i386/machine_cpu.h>
 #include <i386/lapic.h>
-#include <i386/lock.h>
+#include <i386/bit_routines.h>
 #include <i386/mp_events.h>
 #include <i386/pmCPU.h>
 #include <i386/trap.h>
@@ -49,26 +53,43 @@
 #include <i386/pmap.h>
 #include <i386/pmap_internal.h>
 #include <i386/misc_protos.h>
-
+#include <kern/timer_queue.h>
+#if KPC
+#include <kern/kpc.h>
+#endif
+#include <architecture/i386/pio.h>
+#include <i386/cpu_data.h>
 #if DEBUG
 #define DBG(x...)	kprintf("DBG: " x)
 #else
 #define DBG(x...)
 #endif
 
+#if MONOTONIC
+#include <kern/monotonic.h>
+#endif /* MONOTONIC */
+
 extern void 	wakeup(void *);
 
 static int max_cpus_initialized = 0;
 
-unsigned int	LockTimeOut;
-unsigned int	LockTimeOutTSC;
-unsigned int	MutexSpin;
+uint64_t	LockTimeOut;
+uint64_t	TLBTimeOut;
+uint64_t	LockTimeOutTSC;
+uint32_t	LockTimeOutUsec;
+uint64_t	MutexSpin;
 uint64_t	LastDebuggerEntryAllowance;
 uint64_t	delay_spin_threshold;
 
 extern uint64_t panic_restart_timeout;
 
 boolean_t virtualized = FALSE;
+
+decl_simple_lock_data(static,  ml_timer_evaluation_slock);
+uint32_t ml_timer_eager_evaluations;
+uint64_t ml_timer_eager_evaluation_max;
+static boolean_t ml_timer_evaluation_in_progress = FALSE;
+
 
 #define MAX_CPUS_SET    0x1
 #define MAX_CPUS_WAIT   0x2
@@ -139,14 +160,17 @@ ml_static_mfree(
 			}
 			pmap_remove(kernel_pmap, vaddr_cur, vaddr_cur+PAGE_SIZE);
 			assert(pmap_valid_page(ppn));
-
 			if (IS_MANAGED_PAGE(ppn)) {
 				vm_page_create(ppn,(ppn+1));
-				vm_page_wire_count--;
 				freed_pages++;
 			}
 		}
 	}
+	vm_page_lockspin_queues();
+	vm_page_wire_count -= freed_pages;
+	vm_page_wire_count_initial -= freed_pages;
+	vm_page_unlock_queues();
+
 #if	DEBUG	
 	kprintf("ml_static_mfree: Released 0x%x pages at VA %p, size:0x%llx, last ppn: 0x%x\n", freed_pages, (void *)vaddr, (uint64_t)size, ppn);
 #endif
@@ -200,6 +224,38 @@ vm_size_t ml_nofault_copy(
 	return nbytes;
 }
 
+/*
+ *	Routine:        ml_validate_nofault
+ *	Function: Validate that ths address range has a valid translations
+ *			in the kernel pmap.  If translations are present, they are
+ *			assumed to be wired; i.e. no attempt is made to guarantee
+ *			that the translation persist after the check.
+ *  Returns: TRUE if the range is mapped and will not cause a fault,
+ *			FALSE otherwise.
+ */
+
+boolean_t ml_validate_nofault(
+	vm_offset_t virtsrc, vm_size_t size)
+{
+	addr64_t cur_phys_src;
+	uint32_t count;
+
+	while (size > 0) {
+		if (!(cur_phys_src = kvtophys(virtsrc)))
+			return FALSE;
+		if (!pmap_valid_page(i386_btop(cur_phys_src)))
+			return FALSE;
+		count = (uint32_t)(PAGE_SIZE - (cur_phys_src & PAGE_MASK));
+		if (count > size)
+			count = (uint32_t)size;
+
+		virtsrc += count;
+		size -= count;
+	}
+
+	return TRUE;
+}
+
 /* Interrupt handling */
 
 /* Initialize Interrupts */
@@ -226,13 +282,15 @@ boolean_t ml_set_interrupts_enabled(boolean_t enable)
 	
 	__asm__ volatile("pushf; pop	%0" :  "=r" (flags));
 
+	assert(get_interrupt_level() ? (enable == FALSE) : TRUE);
+
 	istate = ((flags & EFL_IF) != 0);
 
 	if (enable) {
 		__asm__ volatile("sti;nop");
 
 		if ((get_preemption_level() == 0) && (*ast_pending() & AST_URGENT))
-			__asm__ volatile ("int $0xff");
+			__asm__ volatile ("int %0" :: "N" (T_PREEMPT));
 	}
 	else {
 		if (istate)
@@ -263,20 +321,25 @@ void ml_cause_interrupt(void)
 	panic("ml_cause_interrupt not defined yet on Intel");
 }
 
+/*
+ * TODO: transition users of this to kernel_thread_start_priority
+ * ml_thread_policy is an unsupported KPI
+ */
 void ml_thread_policy(
 	thread_t thread,
 __unused	unsigned policy_id,
 	unsigned policy_info)
 {
 	if (policy_info & MACHINE_NETWORK_WORKLOOP) {
-		spl_t		s = splsched();
+		thread_precedence_policy_data_t info;
+		__assert_only kern_return_t kret;
 
-		thread_lock(thread);
+		info.importance = 1;
 
-		set_priority(thread, thread->priority + 1);
-
-		thread_unlock(thread);
-		splx(s);
+		kret = thread_policy_set_internal(thread, THREAD_PRECEDENCE_POLICY,
+		                                                (thread_policy_t)&info,
+		                                                THREAD_PRECEDENCE_POLICY_COUNT);
+		assert(kret == KERN_SUCCESS);
 	}
 }
 
@@ -290,7 +353,7 @@ void ml_install_interrupt_handler(
 {
 	boolean_t current_state;
 
-	current_state = ml_get_interrupts_enabled();
+	current_state = ml_set_interrupts_enabled(FALSE);
 
 	PE_install_interrupt_handler(nub, source, target,
 	                             (IOInterruptHandler) handler, refCon);
@@ -306,6 +369,20 @@ machine_signal_idle(
         processor_t processor)
 {
 	cpu_interrupt(processor->cpu_id);
+}
+
+void
+machine_signal_idle_deferred(
+	__unused processor_t processor)
+{
+	panic("Unimplemented");
+}
+
+void
+machine_signal_idle_cancel(
+	__unused processor_t processor)
+{
+	panic("Unimplemented");
 }
 
 static kern_return_t
@@ -340,6 +417,11 @@ register_cpu(
 	if (this_cpu_datap->cpu_chud == NULL)
 		goto failed;
 
+#if KPC
+	if (kpc_register_cpu(this_cpu_datap) != TRUE)
+		goto failed;
+#endif
+
 	if (!boot_cpu) {
 		cpu_thread_alloc(this_cpu_datap->cpu_number);
 		if (this_cpu_datap->lcpu.core == NULL)
@@ -372,6 +454,10 @@ failed:
 #endif
 	chudxnu_cpu_free(this_cpu_datap->cpu_chud);
 	console_cpu_free(this_cpu_datap->cpu_console_buf);
+#if KPC
+	kpc_unregister_cpu(this_cpu_datap);
+#endif
+
 	return KERN_FAILURE;
 }
 
@@ -420,6 +506,12 @@ ml_processor_register(
 
     /* fix the CPU id */
     this_cpu_datap->cpu_id = cpu_id;
+
+    /* allocate and initialize other per-cpu structures */
+    if (!boot_cpu) {
+	mp_cpus_call_cpu_init(cpunum);
+	prng_cpu_init(cpunum);
+    }
 
     /* output arg */
     *processor_out = this_cpu_datap->cpu_processor;
@@ -525,6 +617,23 @@ ml_get_max_cpus(void)
         return(machine_info.max_cpus);
 }
 
+boolean_t
+ml_wants_panic_trap_to_debugger(void)
+{
+	return FALSE;
+}
+
+void
+ml_panic_trap_to_debugger(__unused const char *panic_format_str,
+                          __unused va_list *panic_args,
+                          __unused unsigned int reason,
+                          __unused void *ctx,
+                          __unused uint64_t panic_options_mask,
+                          __unused unsigned long panic_caller)
+{
+	return;
+}
+
 /*
  *	Routine:        ml_init_lock_timeout
  *	Function:
@@ -534,17 +643,48 @@ ml_init_lock_timeout(void)
 {
 	uint64_t	abstime;
 	uint32_t	mtxspin;
+#if DEVELOPMENT || DEBUG
 	uint64_t	default_timeout_ns = NSEC_PER_SEC>>2;
+#else
+	uint64_t	default_timeout_ns = NSEC_PER_SEC>>1;
+#endif
 	uint32_t	slto;
 	uint32_t	prt;
 
 	if (PE_parse_boot_argn("slto_us", &slto, sizeof (slto)))
 		default_timeout_ns = slto * NSEC_PER_USEC;
 
-	/* LockTimeOut is absolutetime, LockTimeOutTSC is in TSC ticks */
+	/*
+	 * LockTimeOut is absolutetime, LockTimeOutTSC is in TSC ticks,
+	 * and LockTimeOutUsec is in microseconds and it's 32-bits.
+	 */
+	LockTimeOutUsec = (uint32_t) (default_timeout_ns / NSEC_PER_USEC);
 	nanoseconds_to_absolutetime(default_timeout_ns, &abstime);
-	LockTimeOut = (uint32_t) abstime;
-	LockTimeOutTSC = (uint32_t) tmrCvt(abstime, tscFCvtn2t);
+	LockTimeOut = abstime;
+	LockTimeOutTSC = tmrCvt(abstime, tscFCvtn2t);
+
+	/*
+	 * TLBTimeOut dictates the TLB flush timeout period. It defaults to
+	 * LockTimeOut but can be overriden separately. In particular, a
+	 * zero value inhibits the timeout-panic and cuts a trace evnt instead
+	 * - see pmap_flush_tlbs().
+	 */
+	if (PE_parse_boot_argn("tlbto_us", &slto, sizeof (slto))) {
+		default_timeout_ns = slto * NSEC_PER_USEC;
+		nanoseconds_to_absolutetime(default_timeout_ns, &abstime);
+		TLBTimeOut = (uint32_t) abstime;
+	} else {
+		TLBTimeOut = LockTimeOut;
+	}
+
+#if DEVELOPMENT || DEBUG
+	reportphyreaddelayabs = LockTimeOut >> 1;
+#endif
+	if (PE_parse_boot_argn("phyreadmaxus", &slto, sizeof (slto))) {
+		default_timeout_ns = slto * NSEC_PER_USEC;
+		nanoseconds_to_absolutetime(default_timeout_ns, &abstime);
+		reportphyreaddelayabs = abstime;
+	}
 
 	if (PE_parse_boot_argn("mtxspin", &mtxspin, sizeof (mtxspin))) {
 		if (mtxspin > USEC_PER_SEC>>4)
@@ -558,14 +698,47 @@ ml_init_lock_timeout(void)
 	nanoseconds_to_absolutetime(4ULL * NSEC_PER_SEC, &LastDebuggerEntryAllowance);
 	if (PE_parse_boot_argn("panic_restart_timeout", &prt, sizeof (prt)))
 		nanoseconds_to_absolutetime(prt * NSEC_PER_SEC, &panic_restart_timeout);
+
 	virtualized = ((cpuid_features() & CPUID_FEATURE_VMM) != 0);
+	if (virtualized) {
+		int	vti;
+		
+		if (!PE_parse_boot_argn("vti", &vti, sizeof (vti)))
+			vti = 6;
+		printf("Timeouts adjusted for virtualization (<<%d)\n", vti);
+		kprintf("Timeouts adjusted for virtualization (<<%d):\n", vti);
+#define VIRTUAL_TIMEOUT_INFLATE64(_timeout)			\
+MACRO_BEGIN							\
+	kprintf("%24s: 0x%016llx ", #_timeout, _timeout);	\
+	_timeout <<= vti;					\
+	kprintf("-> 0x%016llx\n",  _timeout);			\
+MACRO_END
+#define VIRTUAL_TIMEOUT_INFLATE32(_timeout)			\
+MACRO_BEGIN							\
+	kprintf("%24s:         0x%08x ", #_timeout, _timeout);	\
+	if ((_timeout <<vti) >> vti == _timeout)		\
+		_timeout <<= vti;				\
+	else							\
+		_timeout = ~0; /* cap rather than overflow */	\
+	kprintf("-> 0x%08x\n",  _timeout);			\
+MACRO_END
+		VIRTUAL_TIMEOUT_INFLATE32(LockTimeOutUsec);
+		VIRTUAL_TIMEOUT_INFLATE64(LockTimeOut);
+		VIRTUAL_TIMEOUT_INFLATE64(LockTimeOutTSC);
+		VIRTUAL_TIMEOUT_INFLATE64(TLBTimeOut);
+		VIRTUAL_TIMEOUT_INFLATE64(MutexSpin);
+		VIRTUAL_TIMEOUT_INFLATE64(reportphyreaddelayabs);
+	}
+
 	interrupt_latency_tracker_setup();
+	simple_lock_init(&ml_timer_evaluation_slock, 0);
 }
 
 /*
  * Threshold above which we should attempt to block
  * instead of spinning for clock_delay_until().
  */
+
 void
 ml_init_delay_spin_threshold(int threshold_us)
 {
@@ -647,17 +820,7 @@ void ml_cpu_set_ldt(int selector)
 	    current_cpu_datap()->cpu_ldt == KERNEL_LDT)
 		return;
 
-#if defined(__i386__)
-	/*
- 	 * If 64bit this requires a mode switch (and back). 
-	 */
-	if (cpu_mode_is64bit())
-		ml_64bit_lldt(selector);
-	else
-		lldt(selector);
-#else
 	lldt(selector);
-#endif
 	current_cpu_datap()->cpu_ldt = selector;
 }
 
@@ -681,6 +844,31 @@ vm_offset_t ml_stack_remaining(void)
 	    return (local - current_thread()->kernel_stack);
 	}
 }
+
+#if KASAN
+vm_offset_t ml_stack_base(void);
+vm_size_t ml_stack_size(void);
+
+vm_offset_t
+ml_stack_base(void)
+{
+	if (ml_at_interrupt_context()) {
+		return current_cpu_datap()->cpu_int_stack_top - INTSTACK_SIZE;
+	} else {
+	    return current_thread()->kernel_stack;
+	}
+}
+
+vm_size_t
+ml_stack_size(void)
+{
+	if (ml_at_interrupt_context()) {
+	    return INTSTACK_SIZE;
+	} else {
+	    return kernel_stack_size;
+	}
+}
+#endif
 
 void
 kernel_preempt_check(void)
@@ -708,5 +896,102 @@ kernel_preempt_check(void)
 }
 
 boolean_t machine_timeout_suspended(void) {
-	return (virtualized || pmap_tlb_flush_timeout || spinlock_timed_out || panic_active() || mp_recent_debugger_activity());
+	return (pmap_tlb_flush_timeout || spinlock_timed_out || panic_active() || mp_recent_debugger_activity() || ml_recent_wake());
+}
+
+/* Eagerly evaluate all pending timer and thread callouts
+ */
+void ml_timer_evaluate(void) {
+	KERNEL_DEBUG_CONSTANT(DECR_TIMER_RESCAN|DBG_FUNC_START, 0, 0, 0, 0, 0);
+
+	uint64_t te_end, te_start = mach_absolute_time();
+	simple_lock(&ml_timer_evaluation_slock);
+	ml_timer_evaluation_in_progress = TRUE;
+	thread_call_delayed_timer_rescan_all();
+	mp_cpus_call(CPUMASK_ALL, ASYNC, timer_queue_expire_rescan, NULL);
+	ml_timer_evaluation_in_progress = FALSE;
+	ml_timer_eager_evaluations++;
+	te_end = mach_absolute_time();
+	ml_timer_eager_evaluation_max = MAX(ml_timer_eager_evaluation_max, (te_end - te_start));
+	simple_unlock(&ml_timer_evaluation_slock);
+
+	KERNEL_DEBUG_CONSTANT(DECR_TIMER_RESCAN|DBG_FUNC_END, 0, 0, 0, 0, 0);
+}
+
+boolean_t
+ml_timer_forced_evaluation(void) {
+	return ml_timer_evaluation_in_progress;
+}
+
+/* 32-bit right-rotate n bits */
+static inline uint32_t ror32(uint32_t val, const unsigned int n)
+{	
+	__asm__ volatile("rorl %%cl,%0" : "=r" (val) : "0" (val), "c" (n));
+	return val;
+}
+
+void
+ml_entropy_collect(void)
+{
+	uint32_t	tsc_lo, tsc_hi;
+	uint32_t	*ep;
+
+	assert(cpu_number() == master_cpu);
+
+	/* update buffer pointer cyclically */
+	if (EntropyData.index_ptr - EntropyData.buffer == ENTROPY_BUFFER_SIZE)
+		ep = EntropyData.index_ptr = EntropyData.buffer;
+	else
+		ep = EntropyData.index_ptr++;
+
+	rdtsc_nofence(tsc_lo, tsc_hi);
+	*ep = ror32(*ep, 9) ^ tsc_lo;
+}
+
+uint64_t
+ml_energy_stat(__unused thread_t t) {
+	return 0;
+}
+
+void
+ml_gpu_stat_update(uint64_t gpu_ns_delta) {
+	current_thread()->machine.thread_gpu_ns += gpu_ns_delta;
+}
+
+uint64_t
+ml_gpu_stat(thread_t t) {
+	return t->machine.thread_gpu_ns;
+}
+
+int plctrace_enabled = 0;
+
+void _disable_preemption(void) {
+	disable_preemption_internal();
+}
+
+void _enable_preemption(void) {
+	enable_preemption_internal();
+}
+
+void plctrace_disable(void) {
+	plctrace_enabled = 0;
+}
+
+static boolean_t ml_quiescing;
+
+void ml_set_is_quiescing(boolean_t quiescing)
+{
+    assert(FALSE == ml_get_interrupts_enabled());
+    ml_quiescing = quiescing;
+}
+
+boolean_t ml_is_quiescing(void)
+{
+    assert(FALSE == ml_get_interrupts_enabled());
+    return (ml_quiescing);
+}
+
+uint64_t ml_get_booter_memory_size(void)
+{
+    return (0);
 }

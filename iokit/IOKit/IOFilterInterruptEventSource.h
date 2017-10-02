@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998-2000 Apple Computer, Inc. All rights reserved.
+ * Copyright (c) 1998-2016 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -60,7 +60,7 @@ public:
     @param owner Pointer to the owning/client instance.
     @param sender Where is the interrupt comming from.
     @result false if this interrupt can be ignored. */
-    typedef bool (*Filter)(OSObject *, IOFilterInterruptEventSource *);
+    typedef bool (*Filter)(OSObject *owner, IOFilterInterruptEventSource *sender);
 
 /*! @defined IOFilterInterruptAction
     @discussion Backward compatibilty define for the old non-class scoped type definition.  See $link IOFilterInterruptSource::Filter */
@@ -71,7 +71,7 @@ private:
     virtual bool init(OSObject *inOwner,
 		      IOInterruptEventSource::Action inAction = 0,
 		      IOService *inProvider = 0,
-		      int inIntIndex = 0);
+		      int inIntIndex = 0) APPLE_KEXT_OVERRIDE;
 
     static IOInterruptEventSource *
 	interruptEventSource(OSObject *inOwner,
@@ -136,11 +136,11 @@ successfully.  */
 
 /*! @function normalInterruptOccurred
     @abstract Override $link IOInterruptEventSource::normalInterruptOccured to make a filter callout. */
-    virtual void normalInterruptOccurred(void *self, IOService *prov, int ind);
+    virtual void normalInterruptOccurred(void *self, IOService *prov, int ind) APPLE_KEXT_OVERRIDE;
 
 /*! @function disableInterruptOccurred
     @abstract Override $link IOInterruptEventSource::disableInterruptOccurred to make a filter callout. */
-    virtual void disableInterruptOccurred(void *self, IOService *prov, int ind);
+    virtual void disableInterruptOccurred(void *self, IOService *prov, int ind) APPLE_KEXT_OVERRIDE;
 
 private:
     OSMetaClassDeclareReservedUnused(IOFilterInterruptEventSource, 0);

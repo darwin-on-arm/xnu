@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2010 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2012 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -39,7 +39,6 @@
  *			the cpu clock counted by the timestamp MSR.
  */
 
-#include <platforms.h>
 
 #include <mach/mach_types.h>
 
@@ -51,7 +50,7 @@
 #include <kern/misc_protos.h>
 #include <kern/spl.h>
 #include <kern/assert.h>
-#include <kern/etimer.h>
+#include <kern/timer_queue.h>
 #include <mach/vm_prot.h>
 #include <vm/pmap.h>
 #include <vm/vm_kern.h>		/* for kernel_map */
@@ -70,10 +69,7 @@
 #include <sys/kdebug.h>
 #include <i386/tsc.h>
 #include <i386/rtclock_protos.h>
-
 #define UI_CPUFREQ_ROUNDING_FACTOR	10000000
-
-int		rtclock_config(void);
 
 int		rtclock_init(void);
 
@@ -88,60 +84,26 @@ rtc_timer_start(void)
 	/*
 	 * Force a complete re-evaluation of timer deadlines.
 	 */
-	etimer_resync_deadlines();
+	x86_lcpu()->rtcDeadline = EndOfAllTime;
+	timer_resync_deadlines();
 }
 
 static inline uint32_t
 _absolutetime_to_microtime(uint64_t abstime, clock_sec_t *secs, clock_usec_t *microsecs)
 {
 	uint32_t remain;
-#if defined(__i386__)
-	asm volatile(
-			"divl %3"
-				: "=a" (*secs), "=d" (remain)
-				: "A" (abstime), "r" (NSEC_PER_SEC));
-	asm volatile(
-			"divl %3"
-				: "=a" (*microsecs)
-				: "0" (remain), "d" (0), "r" (NSEC_PER_USEC));
-#elif defined(__x86_64__)
 	*secs = abstime / (uint64_t)NSEC_PER_SEC;
 	remain = (uint32_t)(abstime % (uint64_t)NSEC_PER_SEC);
 	*microsecs = remain / NSEC_PER_USEC;
-#else
-#error Unsupported architecture
-#endif
 	return remain;
 }
 
 static inline void
 _absolutetime_to_nanotime(uint64_t abstime, clock_sec_t *secs, clock_usec_t *nanosecs)
 {
-#if defined(__i386__)
-	asm volatile(
-			"divl %3"
-			: "=a" (*secs), "=d" (*nanosecs)
-			: "A" (abstime), "r" (NSEC_PER_SEC));
-#elif defined(__x86_64__)
 	*secs = abstime / (uint64_t)NSEC_PER_SEC;
 	*nanosecs = (clock_usec_t)(abstime % (uint64_t)NSEC_PER_SEC);
-#else
-#error Unsupported architecture
-#endif
 }
-
-/*
- * Configure the real-time clock device. Return success (1)
- * or failure (0).
- */
-
-int
-rtclock_config(void)
-{
-	/* nothing to do */
-	return (1);
-}
-
 
 /*
  * Nanotime/mach_absolutime_time
@@ -183,7 +145,7 @@ _rtc_nanotime_init(pal_rtc_nanotime_t *rntp, uint64_t base)
 	_pal_rtc_nanotime_store(tsc, base, rntp->scale, rntp->shift, rntp);
 }
 
-static void
+void
 rtc_nanotime_init(uint64_t base)
 {
 	_rtc_nanotime_init(&pal_rtc_nanotime_info, base);
@@ -245,7 +207,6 @@ rtc_clock_napped(uint64_t base, uint64_t tsc_base)
 	if (oldnsecs < newnsecs) {
 	    _pal_rtc_nanotime_store(tsc_base, base, rntp->scale, rntp->shift, rntp);
 	    rtc_nanotime_set_commpage(rntp);
-		trace_set_timebases(tsc_base, base);
 	}
 }
 
@@ -294,7 +255,7 @@ rtc_sleep_wakeup(
 	uint64_t		base)
 {
     	/* Set fixed configuration for lapic timers */
-	rtc_timer->config();
+	rtc_timer->rtc_config();
 
 	/*
 	 * Reset nanotime.
@@ -302,6 +263,21 @@ rtc_sleep_wakeup(
 	 * but nanotime (uptime) marches onward.
 	 */
 	rtc_nanotime_init(base);
+}
+
+void
+rtc_decrementer_configure(void) {
+	rtc_timer->rtc_config();
+}
+/*
+ * rtclock_early_init() is called very early at boot to
+ * establish mach_absolute_time() and set it to zero.
+ */
+void
+rtclock_early_init(void)
+{
+	assert(tscFreq);
+	rtc_set_timescale(tscFreq);
 }
 
 /*
@@ -318,7 +294,6 @@ rtclock_init(void)
 	if (cpu_number() == master_cpu) {
 
 		assert(tscFreq);
-		rtc_set_timescale(tscFreq);
 
 		/*
 		 * Adjust and set the exported cpu speed.
@@ -339,7 +314,7 @@ rtclock_init(void)
 	}
 
     	/* Set fixed configuration for lapic timers */
-	rtc_timer->config();
+	rtc_timer->rtc_config();
 	rtc_timer_start();
 
 	return (1);
@@ -361,15 +336,19 @@ rtc_set_timescale(uint64_t cycles)
 		cycles <<= 1;
 	}
 	
-	if ( shift != 0 )
-		printf("Slow TSC, rtc_nanotime.shift == %d\n", shift);
-    
 	rntp->scale = (uint32_t)(((uint64_t)NSEC_PER_SEC << 32) / cycles);
 
 	rntp->shift = shift;
 
+	/*
+	 * On some platforms, the TSC is not reset at warm boot. But the
+	 * rebase time must be relative to the current boot so we can't use
+	 * mach_absolute_time(). Instead, we convert the TSC delta since boot
+	 * to nanoseconds.
+	 */
 	if (tsc_rebase_abs_time == 0)
-		tsc_rebase_abs_time = mach_absolute_time();
+		tsc_rebase_abs_time = _rtc_tsc_to_nanoseconds(
+						rdtsc64() - tsc_at_boot, rntp);
 
 	rtc_nanotime_init(0);
 }
@@ -377,8 +356,12 @@ rtc_set_timescale(uint64_t cycles)
 static uint64_t
 rtc_export_speed(uint64_t cyc_per_sec)
 {
+	pal_rtc_nanotime_t	*rntp = &pal_rtc_nanotime_info;
 	uint64_t	cycles;
 
+	if (rntp->shift != 0 )
+		printf("Slow TSC, rtc_nanotime.shift == %d\n", rntp->shift);
+    
 	/* Round: */
         cycles = ((cyc_per_sec + (UI_CPUFREQ_ROUNDING_FACTOR/2))
 			/ UI_CPUFREQ_ROUNDING_FACTOR)
@@ -419,21 +402,9 @@ clock_get_system_nanotime(
 }
 
 void
-clock_gettimeofday_set_commpage(
-	uint64_t				abstime,
-	uint64_t				epoch,
-	uint64_t				offset,
-	clock_sec_t				*secs,
-	clock_usec_t			*microsecs)
+clock_gettimeofday_set_commpage(uint64_t abstime, uint64_t sec, uint64_t frac, uint64_t scale, uint64_t tick_per_sec)
 {
-	uint64_t	now = abstime + offset;
-	uint32_t	remain;
-
-	remain = _absolutetime_to_microtime(now, secs, microsecs);
-
-	*secs += (clock_sec_t)epoch;
-
-	commpage_set_timestamp(abstime - remain, *secs);
+	commpage_set_timestamp(abstime, sec, frac, scale, tick_per_sec);
 }
 
 void
@@ -475,7 +446,7 @@ rtclock_intr(
 	}
 
 	/* call the generic etimer */
-	etimer_intr(user_mode, rip);
+	timer_intr(user_mode, rip);
 }
 
 
@@ -484,8 +455,7 @@ rtclock_intr(
  */
 
 uint64_t
-setPop(
-	uint64_t time)
+setPop(uint64_t time)
 {
 	uint64_t	now;
 	uint64_t	pop;
@@ -494,10 +464,10 @@ setPop(
 	if (time == 0 || time == EndOfAllTime ) {
 		time = EndOfAllTime;
 		now = 0;
-		pop = rtc_timer->set(0, 0);
+		pop = rtc_timer->rtc_set(0, 0);
 	} else {
 		now = rtc_nanotime_read();	/* The time in nanoseconds */
-		pop = rtc_timer->set(time, now);
+		pop = rtc_timer->rtc_set(time, now);
 	}
 
 	/* Record requested and actual deadlines set */
@@ -509,6 +479,12 @@ setPop(
 
 uint64_t
 mach_absolute_time(void)
+{
+	return rtc_nanotime_read();
+}
+
+uint64_t
+mach_approximate_time(void)
 {
 	return rtc_nanotime_read();
 }
@@ -529,15 +505,6 @@ absolutetime_to_microtime(
 	clock_usec_t		*microsecs)
 {
 	_absolutetime_to_microtime(abstime, secs, microsecs);
-}
-
-void
-absolutetime_to_nanotime(
-	uint64_t			abstime,
-	clock_sec_t			*secs,
-	clock_nsec_t		*nanosecs)
-{
-	_absolutetime_to_nanotime(abstime, secs, nanosecs);
 }
 
 void
@@ -567,11 +534,11 @@ nanoseconds_to_absolutetime(
 
 void
 machine_delay_until(
-        uint64_t interval,
-        uint64_t                deadline)
+	uint64_t interval,
+	uint64_t		deadline)
 {
-        (void)interval;
-        while (mach_absolute_time() < deadline) {
-                cpu_pause();
-        }
+	(void)interval;
+	while (mach_absolute_time() < deadline) {
+		cpu_pause();
+	} 
 }

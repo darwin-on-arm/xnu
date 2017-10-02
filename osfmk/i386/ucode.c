@@ -1,4 +1,31 @@
 /*
+ * Copyright (c) 2017 Apple Inc. All rights reserved.
+ *
+ * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
+ *
+ * This file contains Original Code and/or Modifications of Original Code
+ * as defined in and that are subject to the Apple Public Source License
+ * Version 2.0 (the 'License'). You may not use this file except in
+ * compliance with the License. The rights granted to you under the License
+ * may not be used to create, or enable the creation or redistribution of,
+ * unlawful or unlicensed copies of an Apple operating system, or to
+ * circumvent, violate, or enable the circumvention or violation of, any
+ * terms of an Apple operating system software license agreement.
+ *
+ * Please obtain a copy of the License at
+ * http://www.opensource.apple.com/apsl/ and read it before using this file.
+ *
+ * The Original Code and all software distributed under the License are
+ * distributed on an 'AS IS' basis, WITHOUT WARRANTY OF ANY KIND, EITHER
+ * EXPRESS OR IMPLIED, AND APPLE HEREBY DISCLAIMS ALL SUCH WARRANTIES,
+ * INCLUDING WITHOUT LIMITATION, ANY WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE, QUIET ENJOYMENT OR NON-INFRINGEMENT.
+ * Please see the License for the specific language governing rights and
+ * limitations under the License.
+ *
+ * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
+ */
+/*
  *  ucode.c
  *
  *  Microcode updater interface sysctl
@@ -12,6 +39,7 @@
 #include <vm/vm_kern.h>
 #include <i386/mp.h>			// mp_broadcast
 #include <machine/cpu_number.h> // cpu_number
+#include <pexpert/pexpert.h>  // boot-args
 
 #define IA32_BIOS_UPDT_TRIG (0x79) /* microcode update trigger MSR */
 
@@ -108,7 +136,7 @@ copyin_update(uint64_t inaddr)
 	 * It need only be aligned to 16-bytes, according to the SDM.
 	 * This also wires it down
 	 */
-	ret = kmem_alloc_kobject(kernel_map, (vm_offset_t *)&update, size);
+	ret = kmem_alloc_kobject(kernel_map, (vm_offset_t *)&update, size, VM_KERN_MEMORY_OSFMK);
 	if (ret != KERN_SUCCESS)
 		return ENOMEM;
 
@@ -134,7 +162,7 @@ ucode_update_wake()
 	if (global_update) {
 		kprintf("ucode: Re-applying update after wake (CPU #%d)\n", cpu_number());
 		update_microcode();
-#ifdef DEBUG
+#if DEBUG
 	} else {
 		kprintf("ucode: No update to apply (CPU #%d)\n", cpu_number());
 #endif
@@ -150,10 +178,6 @@ cpu_update(__unused void *arg)
 	/* execute the update */
 	update_microcode();
 
-	/* if CPU #0, update global CPU information */
-	if (!cpu_number())
-		cpuid_set_info();
-
 	/* release the lock */
 	lck_spin_unlock(ucode_slock);
 }
@@ -167,6 +191,10 @@ xcpu_update(void)
 
 	/* Get all CPUs to perform the update */
 	mp_broadcast(cpu_update, NULL);
+
+	/* Update the cpuid info */
+	cpuid_set_info();
+
 }
 
 /*
@@ -177,6 +205,12 @@ int
 ucode_interface(uint64_t addr)
 {
 	int error;
+	char arg[16]; 
+
+	if (PE_parse_boot_argn("-x", arg, sizeof (arg))) {
+		printf("ucode: no updates in safe mode\n");
+		return EPERM;
+	}
 
 #if !DEBUG
 	/*

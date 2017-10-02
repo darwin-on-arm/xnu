@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997-2012 Apple Computer, Inc. All rights reserved.
+ * Copyright (c) 1997-2017 Apple Computer, Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -47,7 +47,6 @@
 /* Prototypes that should be elsewhere: */
 extern dev_t	chrtoblk(dev_t dev);
 extern int	chrtoblk_set(int cdev, int bdev);
-extern int	iskmemdev(dev_t dev);
 
 struct bdevsw	bdevsw[] =
 {
@@ -92,7 +91,7 @@ struct bdevsw	bdevsw[] =
 	NO_BDEVICE,							/*23*/
 };
 
-int	nblkdev = sizeof (bdevsw) / sizeof (bdevsw[0]);
+const int nblkdev = sizeof(bdevsw) / sizeof(bdevsw[0]);
 
 extern struct tty *km_tty[];
 extern d_open_t		cnopen;
@@ -121,7 +120,6 @@ extern d_ioctl_t	volioctl;
 #endif
 
 extern d_open_t		cttyopen;
-extern d_close_t	cttyclose;
 extern d_read_t		cttyread;
 extern d_write_t	cttywrite;
 extern d_ioctl_t	cttyioctl;
@@ -135,12 +133,12 @@ extern d_ioctl_t	mmioctl;
 
 #include <pty.h>
 #if NPTY > 0
-extern struct tty *pt_tty[];
 extern d_open_t		ptsopen;
 extern d_close_t	ptsclose;
 extern d_read_t		ptsread;
 extern d_write_t	ptswrite;
 extern d_stop_t		ptsstop;
+extern d_select_t	ptsselect;
 extern d_open_t		ptcopen;
 extern d_close_t	ptcclose;
 extern d_read_t		ptcread;
@@ -167,11 +165,17 @@ extern d_close_t	logclose;
 extern d_read_t		logread;
 extern d_ioctl_t	logioctl;
 extern d_select_t	logselect;
-extern d_open_t		fdesc_open;
-extern d_read_t		fdesc_read;
-extern d_write_t	fdesc_write;
-extern d_ioctl_t	fdesc_ioctl;
-extern d_select_t	fdesc_select;
+
+extern d_open_t 	oslog_streamopen;
+extern d_close_t	oslog_streamclose;
+extern d_read_t 	oslog_streamread;
+extern d_ioctl_t	oslog_streamioctl;
+extern d_select_t	oslog_streamselect;
+
+extern d_open_t 	oslogopen;
+extern d_close_t	oslogclose;
+extern d_select_t	oslogselect;
+extern d_ioctl_t	oslogioctl;
 
 #define nullopen	(d_open_t *)&nulldev
 #define nullclose	(d_close_t *)&nulldev
@@ -182,114 +186,68 @@ extern d_select_t	fdesc_select;
 #define nullstop	(d_stop_t *)&nulldev
 #define nullreset	(d_reset_t *)&nulldev
 
-struct cdevsw	cdevsw[] =
-{
+struct cdevsw cdevsw[] = {
 	/*
-	 *	For character devices, every other block of 16 slots is
-	 *	reserved for Apple.  The other slots are available for
-	 *	the user.  This way we can both add new entries without
-	 *	running into each other.  Be sure to fill in Apple's
-	 *	16 reserved slots when you jump over us -- we'll do the
-	 *	same for you.
+	 * To add character devices to this table dynamically, use cdevsw_add.
 	 */
 
-	/* 0 - 15 are reserved for Apple */
-
-    {
-	cnopen,		cnclose,	cnread,		cnwrite,	/* 0*/
-	cnioctl,	nullstop,	nullreset,	0,		cnselect,
-	eno_mmap,	eno_strat,	eno_getc,	eno_putc, 	D_TTY
-    },
-    NO_CDEVICE,								/* 1*/
-    {
-	cttyopen,	cttyclose,	cttyread,	cttywrite,	/* 2*/
-	cttyioctl,	nullstop,	nullreset,	0,		cttyselect,
-	eno_mmap,	eno_strat,	eno_getc,	eno_putc,	D_TTY | D_TRACKCLOSE
-    },
-    {
-	nullopen,	nullclose,	mmread,		mmwrite,	/* 3*/
-	mmioctl,	nullstop,	nullreset,	0,		mmselect,
-	mmmmap,		eno_strat,	eno_getc,	eno_putc,	D_DISK
-    },
-    {
-	ptsopen,	ptsclose,	ptsread,	ptswrite,	/* 4*/
-	ptyioctl,	ptsstop,	nullreset,	pt_tty,		ttselect,
-	eno_mmap,	eno_strat,	eno_getc,	eno_putc,	D_TTY
-    },
-    {
-	ptcopen,	ptcclose,	ptcread,	ptcwrite,	/* 5*/
-	ptyioctl,	nullstop,	nullreset,	0,		ptcselect,
-	eno_mmap,	eno_strat,	eno_getc,	eno_putc,	D_TTY
-    },
-    {
-	logopen,	logclose,	logread,	eno_rdwrt,	/* 6*/
-	logioctl,	eno_stop,	nullreset,	0,		logselect,
-	eno_mmap,	eno_strat,	eno_getc,	eno_putc,	0
-    },
-    NO_CDEVICE,								/* 7*/
-    NO_CDEVICE,								/* 8*/
-    NO_CDEVICE,								/* 9*/
-    NO_CDEVICE,								/*10*/
-    NO_CDEVICE,								/*11*/
-    {
-	kmopen,		kmclose,	kmread,		kmwrite,	/*12*/
-	kmioctl,	nullstop,	nullreset,	km_tty,		ttselect,
-	eno_mmap,	eno_strat,	eno_getc,	eno_putc,	0
-    },
-    NO_CDEVICE,								/*13*/
-    NO_CDEVICE,								/*14*/
-    NO_CDEVICE,								/*15*/
-
-	/* 16 - 31 are reserved to the user */
-    NO_CDEVICE,								/*16*/
-    NO_CDEVICE,								/*17*/
-    NO_CDEVICE,								/*18*/
-    NO_CDEVICE,								/*19*/
-    NO_CDEVICE,								/*20*/
-    NO_CDEVICE,								/*21*/
-    NO_CDEVICE,								/*22*/
-    NO_CDEVICE,								/*23*/
-    NO_CDEVICE,								/*24*/
-    NO_CDEVICE,								/*25*/
-    NO_CDEVICE,								/*26*/
-    NO_CDEVICE,								/*27*/
-    NO_CDEVICE,								/*28*/
-    NO_CDEVICE,								/*29*/
-    NO_CDEVICE,								/*30*/
-    NO_CDEVICE,								/*31*/
-
-	/* 32 - 47 are reserved to NeXT */
-    {
-	fdesc_open,	eno_opcl,	fdesc_read,	fdesc_write,	/*32*/
-	fdesc_ioctl,	eno_stop,	eno_reset,	0,		fdesc_select,
-	eno_mmap,	eno_strat,	eno_getc,	eno_putc,	0
-    },
-#if 1
-   NO_CDEVICE,
-#else
-    {
-	sgopen,		sgclose,	eno_rdwrt,	eno_rdwrt,	/*33*/
-	sgioctl,	eno_stop,	eno_reset,	0,		eno_select,
-	eno_mmap,	eno_strat,	eno_getc,	eno_putc,	D_TAPE
-    },
-#endif
-    NO_CDEVICE,								/*34*/
-    NO_CDEVICE,								/*35*/
-    NO_CDEVICE,								/*36*/
-    NO_CDEVICE,								/*37*/
-    NO_CDEVICE,								/*38*/
-    NO_CDEVICE,								/*39*/
-    NO_CDEVICE,								/*40*/
-    NO_CDEVICE,								/*41*/
-    {
-	volopen,	volclose,	eno_rdwrt,	eno_rdwrt,	/*42*/
-	volioctl,	eno_stop,	eno_reset,	0,		(select_fcn_t *)seltrue,
-	eno_mmap,	eno_strat,	eno_getc,	eno_putc,	0
-    },
+	[0] = {
+		cnopen, cnclose, cnread, cnwrite,
+		cnioctl, nullstop, nullreset, 0, cnselect,
+		eno_mmap, eno_strat, eno_getc, eno_putc, D_TTY
+	},
+	[1] = NO_CDEVICE,
+	[2] = {
+		cttyopen, nullclose, cttyread, cttywrite,
+		cttyioctl, nullstop, nullreset, 0, cttyselect,
+		eno_mmap, eno_strat, eno_getc, eno_putc, D_TTY
+	},
+	[3] = {
+		nullopen, nullclose, mmread, mmwrite,
+		mmioctl, nullstop, nullreset, 0, mmselect,
+		mmmmap, eno_strat, eno_getc, eno_putc, D_DISK
+	},
+	[PTC_MAJOR] = {
+		ptsopen, ptsclose, ptsread, ptswrite,
+		ptyioctl, ptsstop, nullreset, 0, ptsselect,
+		eno_mmap, eno_strat, eno_getc, eno_putc, D_TTY
+	},
+	[PTS_MAJOR] = {
+		ptcopen, ptcclose, ptcread, ptcwrite,
+		ptyioctl, nullstop, nullreset, 0, ptcselect,
+		eno_mmap, eno_strat, eno_getc, eno_putc, D_TTY
+	},
+	[6] = {
+		logopen, logclose, logread, eno_rdwrt,
+		logioctl, eno_stop, nullreset, 0, logselect,
+		eno_mmap, eno_strat, eno_getc, eno_putc, 0
+	},
+	[7] = {
+		oslogopen, oslogclose, eno_rdwrt, eno_rdwrt,
+		oslogioctl, eno_stop, nullreset, 0, oslogselect,
+		eno_mmap, eno_strat, eno_getc, eno_putc, 0
+	},
+	[8] = {
+		oslog_streamopen, oslog_streamclose, oslog_streamread, eno_rdwrt,
+		oslog_streamioctl, eno_stop, nullreset, 0, oslog_streamselect,
+		eno_mmap, eno_strat, eno_getc, eno_putc, 0
+	},
+	[9 ... 11] = NO_CDEVICE,
+	[12] = {
+		kmopen, kmclose, kmread, kmwrite,
+		kmioctl, nullstop, nullreset, km_tty, ttselect,
+		eno_mmap, eno_strat, eno_getc, eno_putc, 0
+	},
+	[13 ... 41] = NO_CDEVICE,
+	[42] = {
+		volopen, volclose, eno_rdwrt, eno_rdwrt,
+		volioctl, eno_stop, eno_reset, 0, (select_fcn_t *) seltrue,
+		eno_mmap, eno_strat, eno_getc, eno_putc, 0
+	}
 };
-int	nchrdev = sizeof (cdevsw) / sizeof (cdevsw[0]);
+const int nchrdev = sizeof(cdevsw) / sizeof(cdevsw[0]);
 
-uint64_t cdevsw_flags[sizeof (cdevsw) / sizeof (cdevsw[0])];
+uint64_t cdevsw_flags[sizeof(cdevsw) / sizeof(cdevsw[0])];
 
 #include	<sys/vnode.h> /* for VCHR and VBLK */
 /*
@@ -308,7 +266,7 @@ isdisk(dev_t dev, int type)
 		}
 		/* FALL THROUGH */
 	case VBLK:
-		if ((D_TYPEMASK & bdevsw[maj].d_type) == D_DISK) {
+		if (bdevsw[maj].d_type == D_DISK) {
 			return (1);
 		}
 		break;
@@ -370,10 +328,3 @@ chrtoblk_set(int cdev, int bdev)
 	return 0;
 }
 
-/*
- * Returns true if dev is /dev/mem or /dev/kmem.
- */
-int iskmemdev(dev_t dev)
-{
-	return (major(dev) == 3 && minor(dev) < 2);
-}

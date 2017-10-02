@@ -130,91 +130,10 @@ main(int argc, char *argv[])
 	opt = 0;
 	if (yyparse())
 		exit(3);
-	switch (machine) {
 
-	case MACHINE_VAX:
-		vax_ioconf();		/* Print ioconf.c */
-		ubglue();		/* Create ubglue.s */
-		break;
-
-	case MACHINE_SUN:
-		sun_ioconf();
-		break;
-
-	case MACHINE_SUN2:
-	case MACHINE_SUN3:
-	case MACHINE_SUN4:
-		sun_ioconf();           /* Print ioconf.c */
-		mbglue();               /* Create mbglue.s */
-		break;
-
-	case MACHINE_ROMP:
-		romp_ioconf();
-		break;
-
-	case MACHINE_MMAX:
-		mmax_ioconf();
-		break;
-
-	case MACHINE_SQT:
-		sqt_ioconf();
-		break;
-
-	case MACHINE_I386:
-	case MACHINE_IX:
-		i386_ioconf();
-		break;
-
-	case MACHINE_MIPSY:
-	case MACHINE_MIPS:
-		mips_ioconf();
-		break;
-
-	case MACHINE_I860:
-		/* i860_ioconf(); */
-		break;
-
-	case MACHINE_M68K:
-		m68k_ioconf();
-  		break;
-
-	case MACHINE_M88K:
-		m88k_ioconf();
-  		break;
-
-	case MACHINE_M98K:
-		m98k_ioconf();
-  		break;
-
-	case MACHINE_HPPA:
-		hppa_ioconf();
-		break;
-
-	case MACHINE_SPARC:
-		sparc_ioconf();
-		break;
-
-	case MACHINE_PPC:
-		ppc_ioconf();
-		break;
-
-	case MACHINE_ARM:
-	case MACHINE_ARM64:
-		arm_ioconf();
-		break;
-
-	case MACHINE_X86_64:
-		x86_64_ioconf();
-		break;
-
-	default:
-		printf("Specify machine type, e.g. ``machine vax''\n");
-		exit(1);
-	}
-
+	mkioconf();			/* ioconf.c */
 	makefile();			/* build Makefile */
 	headers();			/* make a lot of .h files */
-	swapconf();			/* swap config files */
 
 	return 0;
 }
@@ -229,8 +148,8 @@ const char *
 get_word(FILE *fp)
 {
 	static char line[80];
-	register int ch;
-	register char *cp;
+	int ch;
+	char *cp;
 
 	while ((ch = getc(fp)) != EOF)
 		if (ch != ' ' && ch != '\t')
@@ -265,8 +184,8 @@ char *
 get_rest(FILE *fp)
 {
 	static char line[80];
-	register int ch;
-	register char *cp;
+	int ch;
+	char *cp;
 
 	cp = line;
 	while ((ch = getc(fp)) != EOF) {
@@ -286,7 +205,7 @@ get_rest(FILE *fp)
 char *
 path(const char *file)
 {
-	register char *cp;
+	char *cp;
 
 	cp = malloc((unsigned)(strlen(build_directory)+
 			       strlen(file)+

@@ -77,10 +77,7 @@
 #define NeXTBSD4_0 0		/* NeXTBSD 4.0 */
 
 #include <sys/_types.h>
-
-#ifndef NULL
-#define	NULL	__DARWIN_NULL
-#endif /* ! NULL */
+#include <sys/_types/_null.h>
 
 #ifndef LOCORE
 #include <sys/types.h>
@@ -188,7 +185,7 @@
  * primarily determines the size of buffers in the buffer pool.  It may be
  * made larger than MAXPHYS without any effect on existing file systems;
  * however making it smaller may make some file systems unmountable.
- * We set this to track the value of (MAX_UPL_TRANSFER*PAGE_SIZE) from
+ * We set this to track the value of MAX_UPL_TRANSFER_BYTES from
  * osfmk/mach/memory_object_types.h to bound it at the maximum UPL size.
  */
 #define	MAXBSIZE	(256 * 4096)
@@ -219,7 +216,8 @@
 #ifndef howmany
 #define	howmany(x, y)	((((x) % (y)) == 0) ? ((x) / (y)) : (((x) / (y)) + 1))
 #endif
-#define	roundup(x, y)	((((x)+((y)-1))/(y))*(y))
+#define	roundup(x, y)	((((x) % (y)) == 0) ? \
+			(x) : ((x) + ((y) - ((x) % (y)))))
 #define powerof2(x)	((((x)-1)&(x))==0)
 
 /* Macros for min/max. */

@@ -1,7 +1,7 @@
 /*	$NetBSD: bridgestp.c,v 1.5 2003/11/28 08:56:48 keihan Exp $	*/
 
 /*
- * Copyright (c) 2009-2010 Apple Inc. All rights reserved.
+ * Copyright (c) 2009-2012 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -121,7 +121,7 @@ static void bstp_task_drain(struct bstp_task *);
 #define	BSTP_LOCK_DESTROY(_bs)	lck_mtx_free((_bs)->bs_mtx, bstp_lock_grp)
 #define	BSTP_LOCK(_bs)			lck_mtx_lock((_bs)->bs_mtx)
 #define	BSTP_UNLOCK(_bs)		lck_mtx_unlock((_bs)->bs_mtx)
-#define	BSTP_LOCK_ASSERT(_bs)	lck_mtx_assert((_bs)->bs_mtx, LCK_MTX_ASSERT_OWNED)
+#define	BSTP_LOCK_ASSERT(_bs)	LCK_MTX_ASSERT((_bs)->bs_mtx, LCK_MTX_ASSERT_OWNED)
 
 
 #ifdef	BRIDGESTP_DEBUG
@@ -310,7 +310,7 @@ bstp_transmit_tcn(struct bstp_state *bs, struct bstp_port *bp)
 
 	eh = mtod(m, struct ether_header *);
 
-	memcpy(eh->ether_shost, ifnet_lladdr(ifp), ETHER_ADDR_LEN);
+	memcpy(eh->ether_shost, IF_LLADDR(ifp), ETHER_ADDR_LEN);
 	memcpy(eh->ether_dhost, bstp_etheraddr, ETHER_ADDR_LEN);
 	eh->ether_type = htons(sizeof(bpdu));
 
@@ -424,7 +424,7 @@ bstp_send_bpdu(struct bstp_state *bs, struct bstp_port *bp,
 	bpdu->cbu_ctl = LLC_UI;
 	bpdu->cbu_protoid = htons(BSTP_PROTO_ID);
 
-	memcpy(eh->ether_shost, ifnet_lladdr(ifp), ETHER_ADDR_LEN);
+	memcpy(eh->ether_shost, IF_LLADDR(ifp), ETHER_ADDR_LEN);
 	memcpy(eh->ether_dhost, bstp_etheraddr, ETHER_ADDR_LEN);
 
 	switch (bpdu->cbu_bpdutype) {
@@ -2114,14 +2114,14 @@ bstp_reinit(struct bstp_state *bs)
 		if (ifp->if_type != IFT_ETHER)
 			continue;
 
-		if (bstp_addr_cmp(ifnet_lladdr(ifp), llzero) == 0)
+		if (bstp_addr_cmp(IF_LLADDR(ifp), llzero) == 0)
 			continue;
 
 		if (mif == NULL) {
 			mif = ifp;
 			continue;
 		}
-		if (bstp_addr_cmp(ifnet_lladdr(ifp), ifnet_lladdr(mif)) < 0) {
+		if (bstp_addr_cmp(IF_LLADDR(ifp), IF_LLADDR(mif)) < 0) {
 			mif = ifp;
 			continue;
 		}
@@ -2143,7 +2143,7 @@ bstp_reinit(struct bstp_state *bs)
 		return;
 	}
 
-	e_addr = ifnet_lladdr(mif);
+	e_addr = IF_LLADDR(mif);
 	bs->bs_bridge_pv.pv_dbridge_id =
 	    (((uint64_t)bs->bs_bridge_priority) << 48) |
 	    (((uint64_t)e_addr[0]) << 40) |

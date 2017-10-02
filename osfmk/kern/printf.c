@@ -141,7 +141,7 @@
  *	+	print '+' if positive
  *	blank	print ' ' if positive
  *
- *	z	signed hexadecimal
+ *	z	set length equal to size_t
  *	r	signed, 'radix'
  *	n	unsigned, 'radix'
  *
@@ -156,11 +156,10 @@
 
 #include <debug.h>
 #include <mach_kdp.h>
-#include <platforms.h>
 #include <mach/boolean.h>
 #include <kern/cpu_number.h>
-#include <kern/lock.h>
 #include <kern/thread.h>
+#include <kern/debug.h>
 #include <kern/sched_prim.h>
 #include <kern/misc_protos.h>
 #include <stdarg.h>
@@ -170,6 +169,15 @@
 #include <sys/msgbuf.h>
 #endif
 #include <console/serial_protos.h>
+#include <os/log_private.h>
+
+#ifdef __x86_64__
+#include <i386/cpu_data.h>
+#endif /* __x86_64__ */
+
+#if __arm__ || __arm64__
+#include <arm/cpu_data_internal.h>
+#endif
 
 #define isdigit(d) ((d) >= '0' && (d) <= '9')
 #define Ctod(c) ((c) - '0')
@@ -216,6 +224,12 @@ printnum(
 
 boolean_t	_doprnt_truncates = FALSE;
 
+#if (DEVELOPMENT || DEBUG) 
+boolean_t	doprnt_hide_pointers = FALSE;
+#else
+boolean_t	doprnt_hide_pointers = TRUE;
+#endif
+
 int
 __doprnt(
 	const char	*fmt,
@@ -223,7 +237,8 @@ __doprnt(
 						/* character output routine */
 	void			(*putc)(int, void *arg),
 	void                    *arg,
-	int			radix)		/* default radix - for '%r' */
+	int			radix,		/* default radix - for '%r' */
+	int			is_log)
 {
 	int		length;
 	int		prec;
@@ -325,7 +340,14 @@ __doprnt(
 	    } else if (c == 'q' || c == 'L') {
 	    	long_long = 1;
 		c = *++fmt;
-	    } 
+	    }
+
+	    if (c == 'z' || c == 'Z') {
+		    c = *++fmt;
+		    if (sizeof(size_t) == sizeof(unsigned long)){
+			    long_long = 1;
+		    }
+	    }
 
 	    truncate = FALSE;
 	    capitals=0;		/* Assume lower case printing */
@@ -334,9 +356,9 @@ __doprnt(
 		case 'b':
 		case 'B':
 		{
-		    register char *p;
+		    char *p;
 		    boolean_t	  any;
-		    register int  i;
+		    int  i;
 
 		    if (long_long) {
 			u = va_arg(argp, unsigned long long);
@@ -358,7 +380,7 @@ __doprnt(
 			    /*
 			     * Bit field
 			     */
-			    register int j;
+			    int j;
 			    if (any)
 				(*putc)(',', arg);
 			    else {
@@ -409,8 +431,8 @@ __doprnt(
 
 		case 's':
 		{
-		    register const char *p;
-		    register const char *p2;
+		    const char *p;
+		    const char *p2;
 
 		    if (prec == -1)
 			prec = 0x7fffffff;	/* MAXINT */
@@ -512,17 +534,7 @@ __doprnt(
 		    base = 16;
 		    capitals=16;	/* Print in upper case */
 		    goto print_unsigned;
-
-		case 'z':
-		    truncate = _doprnt_truncates;
-		    base = 16;
-		    goto print_signed;
 			
-		case 'Z':
-		    base = 16;
-		    capitals=16;	/* Print in upper case */
-		    goto print_signed;
-
 		case 'r':
 		    truncate = _doprnt_truncates;
 		case 'R':
@@ -562,11 +574,26 @@ __doprnt(
 		print_num:
 		{
 		    char	buf[MAXBUF];	/* build number here */
-		    register char *	p = &buf[MAXBUF-1];
+		    char *	p = &buf[MAXBUF-1];
 		    static char digits[] = "0123456789abcdef0123456789ABCDEF";
 		    const char *prefix = NULL;
 
 		    if (truncate) u = (long long)((int)(u));
+
+		    if (doprnt_hide_pointers && is_log) {
+			const char str[] = "<ptr>";
+			const char* strp = str;
+			int strl = sizeof(str) - 1;
+
+			if (u >= VM_MIN_KERNEL_AND_KEXT_ADDRESS && u <= VM_MAX_KERNEL_ADDRESS) {
+			    while(*strp != '\0') {
+				(*putc)(*strp, arg);
+				strp++;
+			    }
+			    nprinted += strl;
+			    break;
+			}
+		    }
 
 		    if (u != 0 && altfmt) {
 			if (base == 8)
@@ -647,43 +674,48 @@ dummy_putc(int ch, void *arg)
     real_putc(ch);
 }
 
-int enable_timing = 1;
-
 void 
 _doprnt(
-	register const char	*fmt,
+	const char	*fmt,
 	va_list			*argp,
 						/* character output routine */
 	void			(*putc)(char),
 	int			radix)		/* default radix - for '%r' */
 {
-#if 0
-	/* timing information */
-	if(enable_timing) {
-		char tbuf[50], *tp;
-		uint64_t t = mach_absolute_time();
-		uint64_t ns; absolutetime_to_nanoseconds(t, &ns);
-		/* truncate the end of the timing information */
-		int tlen = sprintf(tbuf, "[%5llu.%06llu] ", (uint64_t)(ns / NSEC_PER_SEC), (uint64_t)((ns % NSEC_PER_SEC) / 1000));
-		for(tp = tbuf; tp < tbuf + tlen; tp++) 
-			putc(*tp);
-	}
-#endif
-    __doprnt(fmt, *argp, dummy_putc, putc, radix);
+    __doprnt(fmt, *argp, dummy_putc, putc, radix, FALSE);
+}
+
+void 
+_doprnt_log(
+	const char	*fmt,
+	va_list			*argp,
+						/* character output routine */
+	void			(*putc)(char),
+	int			radix)		/* default radix - for '%r' */
+{
+    __doprnt(fmt, *argp, dummy_putc, putc, radix, TRUE);
 }
 
 #if	MP_PRINTF 
 boolean_t	new_printf_cpu_number = FALSE;
 #endif	/* MP_PRINTF */
 
-
 decl_simple_lock_data(,printf_lock)
 decl_simple_lock_data(,bsd_log_spinlock)
+
+/*
+ * Defined here to allow lock group to be statically allocated.
+ */
+static lck_grp_t oslog_stream_lock_grp;
+decl_lck_spin_data(,oslog_stream_lock)
+void oslog_lock_init(void);
+
 extern void bsd_log_init(void);
 void bsd_log_lock(void);
 void bsd_log_unlock(void);
 
 void
+
 printf_init(void)
 {
 	/*
@@ -706,14 +738,21 @@ bsd_log_unlock(void)
 	simple_unlock(&bsd_log_spinlock);
 }
 
+void
+oslog_lock_init(void)
+{
+	lck_grp_init(&oslog_stream_lock_grp, "oslog stream", LCK_GRP_ATTR_NULL);
+	lck_spin_init(&oslog_stream_lock, &oslog_stream_lock_grp, LCK_ATTR_NULL);
+}
+
 /* derived from boot_gets */
 void
 safe_gets(
 	char	*str,
 	int	maxlen)
 {
-	register char *lp;
-	register int c;
+	char *lp;
+	int c;
 	char *strmax = str + maxlen - 1; /* allow space for trailing 0 */
 
 	lp = str;
@@ -761,11 +800,11 @@ void
 conslog_putc(
 	char c)
 {
-	if ((debug_mode && !disable_debug_output) || !disableConsoleOutput)
+	if (!disableConsoleOutput)
 		cnputc(c);
 
 #ifdef	MACH_BSD
-	if (debug_mode == 0)
+	if (!kernel_debugger_entry_count)
 		log_putc(c);
 #endif
 }
@@ -774,48 +813,83 @@ void
 cons_putc_locked(
 	char c)
 {
-	if ((debug_mode && !disable_debug_output) || !disableConsoleOutput)
+	if (!disableConsoleOutput)
 		cnputc(c);
 }
 
+static int
+vprintf_internal(const char *fmt, va_list ap_in, void *caller)
+{
+	cpu_data_t * cpu_data_p;
+	if (fmt) {
+		struct console_printbuf_state info_data;
+		cpu_data_p = current_cpu_datap();
+
+		va_list ap;
+		va_copy(ap, ap_in);
+		/*
+		 * for early boot printf()s console may not be setup,
+		 * fallback to good old cnputc
+		 */
+		if (cpu_data_p->cpu_console_buf != NULL) {
+			console_printbuf_state_init(&info_data, TRUE, TRUE);
+			__doprnt(fmt, ap, console_printbuf_putc, &info_data, 16, TRUE);
+			console_printbuf_clear(&info_data);
+		} else {
+			disable_preemption();
+			_doprnt_log(fmt, &ap, cons_putc_locked, 16);
+			enable_preemption();
+		}
+
+		va_end(ap);
+
+		os_log_with_args(OS_LOG_DEFAULT, OS_LOG_TYPE_DEFAULT, fmt, ap_in, caller);
+	}
+	return 0;
+}
+
+__attribute__((noinline,not_tail_called))
 int
 printf(const char *fmt, ...)
 {
-	va_list	listp;
+	int ret;
 
-	if (fmt) {
-		disable_preemption();
-		va_start(listp, fmt);
-		_doprnt(fmt, &listp, conslog_putc, 16);
-		va_end(listp);
-		enable_preemption();
-	}
-	return 0;
+	va_list ap;
+	va_start(ap, fmt);
+	ret = vprintf_internal(fmt, ap, __builtin_return_address(0));
+	va_end(ap);
+
+	return ret;
+}
+
+__attribute__((noinline,not_tail_called))
+int
+vprintf(const char *fmt, va_list ap)
+{
+	return vprintf_internal(fmt, ap, __builtin_return_address(0));
 }
 
 void
 consdebug_putc(char c)
 {
-	if ((debug_mode && !disable_debug_output) || !disableConsoleOutput)
+	if (!disableConsoleOutput)
 		cnputc(c);
 
 	debug_putc(c);
 
-	if (!console_is_serial())
-		if (!disable_serial_output)
-			PE_kputc(c);
+	if (!console_is_serial() && !disable_serial_output)
+		PE_kputc(c);
 }
 
 void
 consdebug_putc_unbuffered(char c)
 {
-	if ((debug_mode && !disable_debug_output) || !disableConsoleOutput)
+	if (!disableConsoleOutput)
 		cnputc_unbuffered(c);
 
 	debug_putc(c);
 
-	if (!console_is_serial())
-		if (!disable_serial_output)
+	if (!console_is_serial() && !disable_serial_output)
 			PE_kputc(c);
 }
 
@@ -825,14 +899,37 @@ consdebug_log(char c)
 	debug_putc(c);
 }
 
+/*
+ * Append contents to the paniclog buffer but don't flush
+ * it. This is mainly used for writing the actual paniclog
+ * contents since flushing once for every line written
+ * would be prohibitively expensive for the paniclog
+ */
+int
+paniclog_append_noflush(const char *fmt, ...)
+{
+	va_list	listp;
+
+	va_start(listp, fmt);
+	_doprnt_log(fmt, &listp, consdebug_putc, 16);
+	va_end(listp);
+
+	return 0;
+}
+
 int
 kdb_printf(const char *fmt, ...)
 {
 	va_list	listp;
 
 	va_start(listp, fmt);
-	_doprnt(fmt, &listp, consdebug_putc, 16);
+	_doprnt_log(fmt, &listp, consdebug_putc, 16);
 	va_end(listp);
+
+#if CONFIG_EMBEDDED
+	paniclog_flush();
+#endif
+
 	return 0;
 }
 
@@ -844,6 +941,11 @@ kdb_log(const char *fmt, ...)
 	va_start(listp, fmt);
 	_doprnt(fmt, &listp, consdebug_log, 16);
 	va_end(listp);
+
+#if CONFIG_EMBEDDED
+	paniclog_flush();
+#endif
+
 	return 0;
 }
 
@@ -855,13 +957,13 @@ kdb_printf_unbuffered(const char *fmt, ...)
 	va_start(listp, fmt);
 	_doprnt(fmt, &listp, consdebug_putc_unbuffered, 16);
 	va_end(listp);
+
+#if CONFIG_EMBEDDED
+	paniclog_flush();
+#endif
+
 	return 0;
 }
- 
-#ifdef __arm__  /* I don't want to rebuild my symbolsets. */
-#undef CONFIG_EMBEDDED
-#define CONFIG_EMBEDDED 0
-#endif
 
 #if !CONFIG_EMBEDDED
 
@@ -891,7 +993,7 @@ sprintf(char *buf, const char *fmt, ...)
 
         va_start(listp, fmt);
         copybyte_str = buf;
-        __doprnt(fmt, listp, copybyte, &copybyte_str, 16);
+        __doprnt(fmt, listp, copybyte, &copybyte_str, 16, FALSE);
         va_end(listp);
 	*copybyte_str = '\0';
         return (int)strlen(buf);

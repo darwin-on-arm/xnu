@@ -1,8 +1,8 @@
 /*
- * Copyright (c) 2000-2011 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2016 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
- * 
+ *
  * This file contains Original Code and/or Modifications of Original Code
  * as defined in and that are subject to the Apple Public Source License
  * Version 2.0 (the 'License'). You may not use this file except in
@@ -11,10 +11,10 @@
  * unlawful or unlicensed copies of an Apple operating system, or to
  * circumvent, violate, or enable the circumvention or violation of, any
  * terms of an Apple operating system software license agreement.
- * 
+ *
  * Please obtain a copy of the License at
  * http://www.opensource.apple.com/apsl/ and read it before using this file.
- * 
+ *
  * The Original Code and all software distributed under the License are
  * distributed on an 'AS IS' basis, WITHOUT WARRANTY OF ANY KIND, EITHER
  * EXPRESS OR IMPLIED, AND APPLE HEREBY DISCLAIMS ALL SUCH WARRANTIES,
@@ -22,7 +22,7 @@
  * FITNESS FOR A PARTICULAR PURPOSE, QUIET ENJOYMENT OR NON-INFRINGEMENT.
  * Please see the License for the specific language governing rights and
  * limitations under the License.
- * 
+ *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
 /*	$FreeBSD: src/sys/netinet/ip_encap.c,v 1.1.2.2 2001/07/03 11:01:46 ume Exp $	*/
@@ -90,6 +90,7 @@
 #include <sys/mbuf.h>
 #include <sys/mcache.h>
 #include <sys/errno.h>
+#include <sys/domain.h>
 #include <sys/protosw.h>
 #include <sys/queue.h>
 
@@ -101,9 +102,6 @@
 #include <netinet/ip.h>
 #include <netinet/ip_var.h>
 #include <netinet/ip_encap.h>
-#if MROUTING
-#include <netinet/ip_mroute.h>
-#endif /* MROUTING */
 
 #if INET6
 #include <netinet/ip6.h>
@@ -120,6 +118,7 @@
 MALLOC_DEFINE(M_NETADDR, "Export Host", "Export host address structure");
 #endif
 
+static void encap_init(struct protosw *, struct domain *);
 static void encap_add(struct encaptab *);
 static int mask_match(const struct encaptab *, const struct sockaddr *,
 		const struct sockaddr *);
@@ -132,14 +131,18 @@ LIST_HEAD(, encaptab) encaptab;
 LIST_HEAD(, encaptab) encaptab = LIST_HEAD_INITIALIZER(&encaptab);
 #endif
 
-void
-encap_init()
+static void
+encap_init(struct protosw *pp, struct domain *dp)
 {
-	static int initialized = 0;
+#pragma unused(dp)
+	static int encap_initialized = 0;
 
-	if (initialized)
+	VERIFY((pp->pr_flags & (PR_INITIALIZED|PR_ATTACHED)) == PR_ATTACHED);
+
+	/* This gets called by more than one protocols, so initialize once */
+	if (encap_initialized)
 		return;
-	initialized++;
+	encap_initialized = 1;
 #if 0
 	/*
 	 * we cannot use LIST_INIT() here, since drivers may want to call
@@ -152,11 +155,21 @@ encap_init()
 #endif
 }
 
+void
+encap4_init(struct protosw *pp, struct domain *dp)
+{
+	encap_init(pp, dp);
+}
+
+void
+encap6_init(struct ip6protosw *pp, struct domain *dp)
+{
+	encap_init((struct protosw *)pp, dp);
+}
+
 #if INET
 void
-encap4_input(m, off)
-	struct mbuf *m;
-	int off;
+encap4_input(struct mbuf *m, int off)
 {
 	int proto;
 	struct ip *ip;
@@ -244,18 +257,6 @@ encap4_input(m, off)
 		return;
 	}
 
-	/* for backward compatibility */
-# if MROUTING
-#  define COMPATFUNC	ipip_input
-# endif /*MROUTING*/
-
-#if COMPATFUNC
-	if (proto == IPPROTO_IPV4) {
-		COMPATFUNC(m, off);
-		return;
-	}
-#endif
-
 	/* last resort: inject to raw socket */
 	rip_input(m, off);
 }
@@ -330,10 +331,8 @@ encap6_input(struct mbuf **mp, int *offp, int proto)
 #endif
 
 static void
-encap_add(ep)
-	struct encaptab *ep;
+encap_add(struct encaptab *ep)
 {
-
 	LIST_INSERT_HEAD(&encaptab, ep, chain);
 }
 
@@ -343,13 +342,9 @@ encap_add(ep)
  * Return value will be necessary as input (cookie) for encap_detach().
  */
 const struct encaptab *
-encap_attach(af, proto, sp, sm, dp, dm, psw, arg)
-	int af;
-	int proto;
-	const struct sockaddr *sp, *sm;
-	const struct sockaddr *dp, *dm;
-	const struct protosw *psw;
-	void *arg;
+encap_attach(int af, int proto, const struct sockaddr *sp,
+	const struct sockaddr *sm, const struct sockaddr *dp,
+	const struct sockaddr *dm, const struct protosw *psw, void *arg)
 {
 	struct encaptab *ep;
 	int error;
@@ -387,12 +382,11 @@ encap_attach(af, proto, sp, sm, dp, dm, psw, arg)
 		goto fail;
 	}
 
-	ep = _MALLOC(sizeof(*ep), M_NETADDR, M_WAITOK);	/*XXX*/
+	ep = _MALLOC(sizeof(*ep), M_NETADDR, M_WAITOK | M_ZERO); /* XXX */
 	if (ep == NULL) {
 		error = ENOBUFS;
 		goto fail;
 	}
-	bzero(ep, sizeof(*ep));
 
 	ep->af = af;
 	ep->proto = proto;
@@ -413,12 +407,9 @@ fail:
 }
 
 const struct encaptab *
-encap_attach_func(af, proto, func, psw, arg)
-	int af;
-	int proto;
-	int (*func)(const struct mbuf *, int, int, void *);
-	const struct protosw *psw;
-	void *arg;
+encap_attach_func( int af, int proto,
+	int (*func)(const struct mbuf *, int, int, void *),
+	const struct protosw *psw, void *arg)
 {
 	struct encaptab *ep;
 	int error;
@@ -429,12 +420,11 @@ encap_attach_func(af, proto, func, psw, arg)
 		goto fail;
 	}
 
-	ep = _MALLOC(sizeof(*ep), M_NETADDR, M_WAITOK);	/*XXX*/
+	ep = _MALLOC(sizeof(*ep), M_NETADDR, M_WAITOK | M_ZERO); /* XXX */
 	if (ep == NULL) {
 		error = ENOBUFS;
 		goto fail;
 	}
-	bzero(ep, sizeof(*ep));
 
 	ep->af = af;
 	ep->proto = proto;
@@ -452,8 +442,7 @@ fail:
 }
 
 int
-encap_detach(cookie)
-	const struct encaptab *cookie;
+encap_detach(const struct encaptab *cookie)
 {
 	const struct encaptab *ep = cookie;
 	struct encaptab *p;
@@ -470,10 +459,8 @@ encap_detach(cookie)
 }
 
 static int
-mask_match(ep, sp, dp)
-	const struct encaptab *ep;
-	const struct sockaddr *sp;
-	const struct sockaddr *dp;
+mask_match(const struct encaptab *ep, const struct sockaddr *sp,
+	const struct sockaddr *dp)
 {
 	struct sockaddr_storage s;
 	struct sockaddr_storage d;
@@ -545,8 +532,7 @@ encap_fillarg(
 }
 
 void *
-encap_getarg(m)
-	struct mbuf *m;
+encap_getarg(struct mbuf *m)
 {
 	struct m_tag	*tag;
 	struct encaptabtag *et;

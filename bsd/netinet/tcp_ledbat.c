@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010-2011 Apple Inc. All rights reserved.
+ * Copyright (c) 2010-2014 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -58,7 +58,7 @@
 int tcp_ledbat_init(struct tcpcb *tp);
 int tcp_ledbat_cleanup(struct tcpcb *tp);
 void tcp_ledbat_cwnd_init(struct tcpcb *tp);
-void tcp_ledbat_inseq_ack_rcvd(struct tcpcb *tp, struct tcphdr *th);
+void tcp_ledbat_congestion_avd(struct tcpcb *tp, struct tcphdr *th);
 void tcp_ledbat_ack_rcvd(struct tcpcb *tp, struct tcphdr *th);
 void tcp_ledbat_pre_fr(struct tcpcb *tp);
 void tcp_ledbat_post_fr(struct tcpcb *tp, struct tcphdr *th);
@@ -72,7 +72,7 @@ struct tcp_cc_algo tcp_cc_ledbat = {
 	.init = tcp_ledbat_init,
 	.cleanup = tcp_ledbat_cleanup,
 	.cwnd_init = tcp_ledbat_cwnd_init,
-	.inseq_ack_rcvd = tcp_ledbat_inseq_ack_rcvd,
+	.congestion_avd = tcp_ledbat_congestion_avd,
 	.ack_rcvd = tcp_ledbat_ack_rcvd,
 	.pre_fr = tcp_ledbat_pre_fr,
 	.post_fr = tcp_ledbat_post_fr,
@@ -81,10 +81,6 @@ struct tcp_cc_algo tcp_cc_ledbat = {
 	.delay_ack = tcp_ledbat_delay_ack,
 	.switch_to = tcp_ledbat_switch_cc
 };
-
-extern int tcp_do_rfc3465;
-extern int tcp_do_rfc3465_lim2;
-extern uint32_t get_base_rtt(struct tcpcb *tp);
 
 /* Target queuing delay in milliseconds. This includes the processing 
  * and scheduling delay on both of the end-hosts. A LEDBAT sender tries 
@@ -95,9 +91,8 @@ extern uint32_t get_base_rtt(struct tcpcb *tp);
  * The LEDBAT draft says that target queue delay MUST be 100 ms for 
  * inter-operability.
  */
-int target_qdelay = 100;
-SYSCTL_INT(_net_inet_tcp, OID_AUTO, bg_target_qdelay, CTLFLAG_RW | CTLFLAG_LOCKED, 
-	&target_qdelay , 100, "Target queuing delay");
+SYSCTL_SKMEM_TCP_INT(OID_AUTO, bg_target_qdelay, CTLFLAG_RW | CTLFLAG_LOCKED,
+	int, target_qdelay, 100, "Target queuing delay");
 
 /* Allowed increase and tether are used to place an upper bound on
  * congestion window based on the amount of data that is outstanding.
@@ -116,30 +111,27 @@ SYSCTL_INT(_net_inet_tcp, OID_AUTO, bg_target_qdelay, CTLFLAG_RW | CTLFLAG_LOCKE
  * 'Tether' is also set to 2. We do not want this to limit the growth of cwnd
  * during slow-start.
  */ 
-int allowed_increase = 8;
-SYSCTL_INT(_net_inet_tcp, OID_AUTO, bg_allowed_increase, CTLFLAG_RW | CTLFLAG_LOCKED, 
-	&allowed_increase, 1, "Additive constant used to calculate max allowed congestion window");
+SYSCTL_SKMEM_TCP_INT(OID_AUTO, bg_allowed_increase, CTLFLAG_RW | CTLFLAG_LOCKED,
+					   int, allowed_increase, 8,
+					   "Additive constant used to calculate max allowed congestion window");
 
 /* Left shift for cwnd to get tether value of 2 */
-int tether_shift = 1;
-SYSCTL_INT(_net_inet_tcp, OID_AUTO, bg_tether_shift, CTLFLAG_RW | CTLFLAG_LOCKED, 
-	&tether_shift, 1, "Tether shift for max allowed congestion window");
+SYSCTL_SKMEM_TCP_INT(OID_AUTO, bg_tether_shift, CTLFLAG_RW | CTLFLAG_LOCKED,
+	int, tether_shift, 1, "Tether shift for max allowed congestion window");
 
 /* Start with an initial window of 2. This will help to get more accurate 
  * minimum RTT measurement in the beginning. It will help to probe
  * the path slowly and will not add to the existing delay if the path is
  * already congested. Using 2 packets will reduce the delay induced by delayed-ack.
  */
-uint32_t bg_ss_fltsz = 2;
-SYSCTL_INT(_net_inet_tcp, OID_AUTO, bg_ss_fltsz, CTLFLAG_RW | CTLFLAG_LOCKED,
-	&bg_ss_fltsz, 2, "Initial congestion window for background transport");
+SYSCTL_SKMEM_TCP_INT(OID_AUTO, bg_ss_fltsz, CTLFLAG_RW | CTLFLAG_LOCKED,
+	uint32_t, bg_ss_fltsz, 2, "Initial congestion window for background transport");
 
 extern int rtt_samples_per_slot;
 
 static void update_cwnd(struct tcpcb *tp, uint32_t incr) {
 	uint32_t max_allowed_cwnd = 0, flight_size = 0;
-	uint32_t qdelay, base_rtt;
-	int32_t off_target;
+	uint32_t base_rtt;
 
 	base_rtt = get_base_rtt(tp);
 
@@ -150,12 +142,10 @@ static void update_cwnd(struct tcpcb *tp, uint32_t incr) {
 		tp->snd_cwnd += incr;
 		goto check_max;
 	}
-		
-	qdelay = tp->t_rttcur - base_rtt;
-	off_target = (int32_t)(target_qdelay - qdelay);
 
-	if (off_target >= 0) {
-		/* Delay decreased or remained the same, we can increase 
+	if (tp->t_rttcur <= (base_rtt + target_qdelay)) {
+		/*
+		 * Delay decreased or remained the same, we can increase
 		 * the congestion window according to RFC 3465.
 		 *
 		 * Move background slow-start threshold to current
@@ -224,11 +214,11 @@ tcp_ledbat_cwnd_init(struct tcpcb *tp) {
  * This gets called only during congestion avoidance phase.
  */
 void
-tcp_ledbat_inseq_ack_rcvd(struct tcpcb *tp, struct tcphdr *th) {
+tcp_ledbat_congestion_avd(struct tcpcb *tp, struct tcphdr *th) {
 	int acked = 0;
 	u_int32_t incr = 0;
 
-	acked = th->th_ack - tp->snd_una;
+	acked = BYTES_ACKED(th, tp);
 	tp->t_bytes_acked += acked;
 	if (tp->t_bytes_acked > tp->snd_cwnd) {
 		tp->t_bytes_acked -= tp->snd_cwnd;
@@ -256,11 +246,11 @@ tcp_ledbat_ack_rcvd(struct tcpcb *tp, struct tcphdr *th) {
 	 * greater than or equal to the congestion window.
 	 */
 
-	register u_int cw = tp->snd_cwnd;
-	register u_int incr = tp->t_maxseg;
+	u_int cw = tp->snd_cwnd;
+	u_int incr = tp->t_maxseg;
 	int acked = 0;
 
-	acked = th->th_ack - tp->snd_una;
+	acked = BYTES_ACKED(th, tp);
 	tp->t_bytes_acked += acked;
 	if (cw >= tp->bg_ssthresh) {
 		/* congestion-avoidance */
@@ -318,9 +308,13 @@ tcp_ledbat_post_fr(struct tcpcb *tp, struct tcphdr *th) {
 	 * snd_ssthresh outstanding data.  But in case we
 	 * would be inclined to send a burst, better to do
 	 * it via the slow start mechanism.
+	 *
+	 * If the flight size is zero, then make congestion 
+	 * window to be worth at least 2 segments to avoid 
+	 * delayed acknowledgement (draft-ietf-tcpm-rfc3782-bis-05).
 	 */
 	if (ss < (int32_t)tp->snd_ssthresh)
-		tp->snd_cwnd = ss + tp->t_maxseg;
+		tp->snd_cwnd = max(ss, tp->t_maxseg) + tp->t_maxseg;
 	else
 		tp->snd_cwnd = tp->snd_ssthresh;
 	tp->t_bytes_acked = 0;
@@ -333,28 +327,6 @@ tcp_ledbat_post_fr(struct tcpcb *tp, struct tcphdr *th) {
  */
 void
 tcp_ledbat_after_idle(struct tcpcb *tp) {
-	int32_t n = N_RTT_BASE, i = (N_RTT_BASE - 1);
-
-	/* Decide how many base history entries have to be cleared 
-	 * based on how long the connection has been idle.
-	 */
-	
-	if (tp->t_rttcur > 0) {
-		int32_t nrtt, idle_time;
-
-		idle_time = tcp_now - tp->t_rcvtime;
-		nrtt = idle_time / tp->t_rttcur; 
-		n = nrtt / rtt_samples_per_slot;
-		if (n > N_RTT_BASE)
-			n = N_RTT_BASE;
-	}
-	for (i = (N_RTT_BASE - 1); n > 0; --i, --n) {
-		tp->rtt_hist[i] = 0;
-	}
-	for (n = (N_RTT_BASE - 1); i >= 0; --i, --n) {
-		tp->rtt_hist[n] = tp->rtt_hist[i];
-		tp->rtt_hist[i] = 0;
-	}
 	
 	/* Reset the congestion window */
 	tp->snd_cwnd = tp->t_maxseg * bg_ss_fltsz;
@@ -373,14 +345,12 @@ tcp_ledbat_after_timeout(struct tcpcb *tp) {
 		u_int win = min(tp->snd_wnd, tp->snd_cwnd) / 2 / tp->t_maxseg;
 		if (win < 2)
 			win = 2;
-		tp->snd_cwnd = tp->t_maxseg;
 		tp->snd_ssthresh = win * tp->t_maxseg;
-		tp->t_bytes_acked = 0;
-		tp->t_dupacks = 0;
 
 		if (tp->bg_ssthresh > tp->snd_ssthresh)
 			tp->bg_ssthresh = tp->snd_ssthresh;
 
+		tp->snd_cwnd = tp->t_maxseg;
 		tcp_cc_resize_sndbuf(tp);
 	}
 }
@@ -389,7 +359,7 @@ tcp_ledbat_after_timeout(struct tcpcb *tp) {
  * Indicate whether this ack should be delayed.
  * We can delay the ack if:
  *      - our last ack wasn't a 0-sized window.
- *      - the peer hasn't sent us a TH_PUSH data packet: if they did, take this 
+ *      - the peer hasn't sent us a TH_PUSH data packet: if he did, take this 
  * 	as a clue that we need to ACK without any delay. This helps higher 
  *	level protocols who won't send us more data even if the window is 
  * 	open because their last "segment" hasn't been ACKed
@@ -402,8 +372,7 @@ tcp_ledbat_after_timeout(struct tcpcb *tp) {
 int
 tcp_ledbat_delay_ack(struct tcpcb *tp, struct tcphdr *th) {
 	if ((tp->t_flags & TF_RXWIN0SENT) == 0 &&
-		(th->th_flags & TH_PUSH) == 0 &&
-		(tp->t_unacksegs == 1))
+		(th->th_flags & TH_PUSH) == 0 && (tp->t_unacksegs == 1))
 		return(1);
 	return(0);
 }

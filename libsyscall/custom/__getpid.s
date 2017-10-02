@@ -120,7 +120,7 @@ L1:	add	r3, pc, r3		// r3 = &__current_pid
 	cmp	r0, #0
 	bxgt	lr			// if positive, return it
 
-	SYSCALL_NONAME(getpid, 0)
+	SYSCALL_NONAME(getpid, 0, cerror_nocancel)
 
 #ifdef _ARM_ARCH_6
 	ldrex	r2, [r3]		// see if we can cache it
@@ -142,6 +142,32 @@ L1:	add	r3, pc, r3		// r3 = &__current_pid
 L__current_pid:	
 	.long	__current_pid - (L1+8)		
 
+#elif defined(__arm64__)
+	.data
+	.globl	__current_pid
+	.align 2
+__current_pid:
+	/* cached pid.  possible values:
+	 *	0:		no value cached
+	 *	> 0:		cached pid of current process
+	 *	< 0:		negative number of vforks in progress
+	 *	int_min:	for pre-armv6, "looking" value (0x80000000)
+	 */
+	.long 0
+
+MI_ENTRY_POINT(___getpid)
+	MI_GET_ADDRESS(x9, __current_pid)	// Get address of cached value
+	ldr		w0, [x9]					// Load it
+	cmp		w0, #0						// See if there's a cached value
+	b.ls	L_notcached					// If not, make syscall
+	ret									// Else, we're done
+L_notcached:
+	SYSCALL_NONAME(getpid, 0, cerror_nocancel)
+	ldxr	w10, [x9]					// Exclusive load
+	cbnz	w10, L_done					// Unless unset, don't even try
+	stxr	wzr, w0, [x9]				// Try to store, but don't care if we fail (someone will win, or not)
+L_done:
+	ret									// Done
 #else
 #error Unsupported architecture
 #endif

@@ -33,13 +33,11 @@
 #define _NETKEY_KEYDB_H_
 #include <sys/appleapiopts.h>
 
-#ifdef KERNEL
-#ifdef KERNEL_PRIVATE
+#ifdef BSD_KERNEL_PRIVATE
 
 #include <netkey/key_var.h>
-#include <net/if_utun.h>
 
-/* Security Assocciation Index */
+/* Security Association Index */
 /* NOTE: Ensure to be same address family */
 struct secasindex {
 	struct sockaddr_storage src;	/* srouce address for SA */
@@ -48,6 +46,7 @@ struct secasindex {
 	u_int8_t mode;			/* mode of protocol, see ipsec.h */
 	u_int32_t reqid;		/* reqid id who owned this SA */
 					/* see IPSEC_MANUAL_REQID_MAX. */
+	u_int ipsec_ifindex;
 };
 
 /* Security Association Data Base */
@@ -60,6 +59,8 @@ struct secashead {
 	struct sadb_ident *identd;	/* destination identity */
 					/* XXX I don't know how to use them. */
 
+	ifnet_t ipsec_if;
+	u_int outgoing_if;
 	u_int8_t dir;                   /* IPSEC_DIR_INBOUND or IPSEC_DIR_OUTBOUND */
 	u_int8_t state;			/* MATURE or DEAD. */
 	LIST_HEAD(_satree, secasvar) savtree[SADB_SASTATE_MAX+1];
@@ -68,9 +69,6 @@ struct secashead {
 
 	struct route sa_route;		/* route cache */
 };
-
-typedef int (*utun_is_keepalive_func) __P((void *, void *, u_int16_t, u_int32_t, size_t));
-typedef int (*utun_input_func) __P((void *, void *, protocol_family_t family));
 
 /* Security Association */
 struct secasvar {
@@ -83,6 +81,7 @@ struct secasvar {
 	u_int8_t alg_enc;		/* Cipher Algorithm Identifier */
 	u_int32_t spi;			/* SPI Value, network byte order */
 	u_int32_t flags;		/* holder for SADB_KEY_FLAGS */
+	u_int16_t flags2;		/* holder for SADB_SA2_KEY_FLAGS */
 
 	struct sadb_key *key_auth;	/* Key for Authentication */
 	struct sadb_key *key_enc;	/* Key for Encryption */
@@ -98,19 +97,21 @@ struct secasvar {
 	struct sadb_lifetime *lft_h;	/* HARD lifetime */
 	struct sadb_lifetime *lft_s;	/* SOFT lifetime */
 
+	struct socket *so; /* Associated socket */
+
 	u_int32_t seq;			/* sequence number */
 	pid_t pid;			/* message's pid */
 
 	struct secashead *sah;		/* back pointer to the secashead */
 	
 	/* Nat Traversal related bits */
-	u_int32_t	natt_last_activity;
+	u_int64_t	natt_last_activity;
 	u_int16_t	remote_ike_port;
 	u_int16_t	natt_encapsulated_src_port;	/* network byte order */
-
-	void              *utun_pcb;
-	utun_is_keepalive_func    utun_is_keepalive_fn;
-	utun_input_func    utun_in_fn;
+	u_int16_t	natt_interval; /* Interval in seconds */
+	u_int16_t	natt_offload_interval; /* Hardware Offload Interval in seconds */
+	
+	u_int8_t	always_expire; /* Send expire/delete messages even if unused */
 };
 
 /* replay prevention */
@@ -170,7 +171,6 @@ extern void keydb_delsecreplay(struct secreplay *);
 // extern struct secreg *keydb_newsecreg(void);			// not used
 // extern void keydb_delsecreg(struct secreg *);		// not used
 
-#endif /* KERNEL_PRIVATE */
-#endif /* KERNEL */
+#endif /* BSD_KERNEL_PRIVATE */
 
 #endif /* _NETKEY_KEYDB_H_ */

@@ -85,7 +85,7 @@
 
 
 #define f_flag f_fglob->fg_flag
-#define f_type f_fglob->fg_type
+#define f_type f_fglob->fg_ops->fo_type
 #define f_msgcount f_fglob->fg_msgcount
 #define f_cred f_fglob->fg_cred
 #define f_ops f_fglob->fg_ops
@@ -101,8 +101,9 @@ struct pseminfo {
 	gid_t		psem_gid;
 	char		psem_name[PSEMNAMLEN + 1];	/* segment name */
 	semaphore_t	psem_semobject;
-	proc_t		sem_proc;
 	struct label *	psem_label;
+	pid_t		psem_creator_pid;
+	uint64_t	psem_creator_uniqueid;
 };
 #define PSEMINFO_NULL (struct pseminfo *)0
 
@@ -122,6 +123,10 @@ struct	psemcache {
 	char	psem_name[PSEMNAMLEN + 1];	/* segment name */
 };
 #define PSEMCACHE_NULL (struct psemcache *)0
+
+#define PSEMCACHE_NOTFOUND (0)
+#define PSEMCACHE_FOUND    (-1)
+#define PSEMCACHE_NEGATIVE (ENOENT)
 
 struct	psemstats {
 	long	goodhits;		/* hits that we can really use */
@@ -163,23 +168,32 @@ struct psemstats psemstats;		/* cache effectiveness statistics */
 
 static int psem_access(struct pseminfo *pinfo, int mode, kauth_cred_t cred);
 static int psem_cache_search(struct pseminfo **,
-				struct psemname *, struct psemcache **);
+		struct psemname *, struct psemcache **);
 static int psem_delete(struct pseminfo * pinfo);
 
 static int psem_read (struct fileproc *fp, struct uio *uio,
-			    int flags, vfs_context_t ctx);
+		int flags, vfs_context_t ctx);
 static int psem_write (struct fileproc *fp, struct uio *uio,
-			    int flags, vfs_context_t ctx);
+		int flags, vfs_context_t ctx);
 static int psem_ioctl (struct fileproc *fp, u_long com,
-			    caddr_t data, vfs_context_t ctx);
+		caddr_t data, vfs_context_t ctx);
 static int psem_select (struct fileproc *fp, int which, void *wql, vfs_context_t ctx);
 static int psem_closefile (struct fileglob *fp, vfs_context_t ctx);
+static int psem_unlink_internal(struct pseminfo *pinfo, struct psemcache *pcache);
 
-static int psem_kqfilter (struct fileproc *fp, struct knote *kn, vfs_context_t ctx);
+static int psem_kqfilter (struct fileproc *fp, struct knote *kn,
+		struct kevent_internal_s *kev, vfs_context_t ctx);
 
-struct 	fileops psemops =
-	{ psem_read, psem_write, psem_ioctl, psem_select, psem_closefile, psem_kqfilter, NULL };
-
+static const struct fileops psemops = {
+	.fo_type = DTYPE_PSXSEM,
+	.fo_read = psem_read,
+	.fo_write = psem_write,
+	.fo_ioctl = psem_ioctl,
+	.fo_select = psem_select,
+	.fo_close = psem_closefile,
+	.fo_kqfilter = psem_kqfilter,
+	.fo_drain = NULL,
+};
 
 static lck_grp_t       *psx_sem_subsys_lck_grp;
 static lck_grp_attr_t  *psx_sem_subsys_lck_grp_attr;
@@ -188,9 +202,14 @@ static lck_mtx_t        psx_sem_subsys_mutex;
 
 #define PSEM_SUBSYS_LOCK() lck_mtx_lock(& psx_sem_subsys_mutex)
 #define PSEM_SUBSYS_UNLOCK() lck_mtx_unlock(& psx_sem_subsys_mutex)
+#define PSEM_SUBSYS_ASSERT_HELD() LCK_MTX_ASSERT(&psx_sem_subsys_mutex, LCK_MTX_ASSERT_OWNED)
 
 
 static int psem_cache_add(struct pseminfo *psemp, struct psemname *pnp, struct psemcache *pcp);
+static void psem_cache_delete(struct psemcache *pcp);
+int psem_cache_purge_all(proc_t);
+
+
 /* Initialize the mutex governing access to the posix sem subsystem */
 __private_extern__ void
 psem_lock_init( void )
@@ -223,7 +242,7 @@ psem_cache_search(struct pseminfo **psemp, struct psemname *pnp,
 
 	if (pnp->psem_namelen > PSEMNAMLEN) {
 		psemstats.longnames++;
-		return (0);
+		return PSEMCACHE_NOTFOUND;
 	}
 
 	pcpp = PSEMHASH(pnp);
@@ -236,7 +255,7 @@ psem_cache_search(struct pseminfo **psemp, struct psemname *pnp,
 
 	if (pcp == 0) {
 		psemstats.miss++;
-		return (0);
+		return PSEMCACHE_NOTFOUND;
 	}
 
 	/* We found a "positive" match, return the vnode */
@@ -245,7 +264,7 @@ psem_cache_search(struct pseminfo **psemp, struct psemname *pnp,
 		/* TOUCH(ncp); */
 		*psemp = pcp->pseminfo;
 		*pcache = pcp;
-		return (-1);
+		return PSEMCACHE_FOUND;
 	}
 
 	/*
@@ -253,7 +272,7 @@ psem_cache_search(struct pseminfo **psemp, struct psemname *pnp,
 	 * The nc_vpid field records whether this is a whiteout.
 	 */
 	psemstats.neghits++;
-	return (ENOENT);
+	return PSEMCACHE_NEGATIVE;
 }
 
 /*
@@ -273,11 +292,11 @@ psem_cache_add(struct pseminfo *psemp, struct psemname *pnp, struct psemcache *p
 
 
 	/*  if the entry has already been added by some one else return */
-	if (psem_cache_search(&dpinfo, pnp, &dpcp) == -1) {
-		return(EEXIST);
+	if (psem_cache_search(&dpinfo, pnp, &dpcp) == PSEMCACHE_FOUND) {
+		return EEXIST;
 	}
 	if (psemnument >= posix_sem_max)
-		return(ENOSPC);
+		return ENOSPC;
 	psemnument++;
 	/*
 	 * Fill in cache info, if vp is NULL this is a "negative" cache entry.
@@ -299,7 +318,7 @@ psem_cache_add(struct pseminfo *psemp, struct psemname *pnp, struct psemcache *p
 	}
 #endif
 	LIST_INSERT_HEAD(pcpp, pcp, psem_hash);
-	return(0);
+	return 0;
 }
 
 /*
@@ -325,27 +344,43 @@ psem_cache_delete(struct psemcache *pcp)
 	psemnument--;
 }
 
-#if NOT_USED
 /*
- * Invalidate a all entries to particular vnode.
- * 
- * We actually just increment the v_id, that will do it. The entries will
- * be purged by lookup as they get found. If the v_id wraps around, we
- * need to ditch the entire cache, to avoid confusion. No valid vnode will
- * ever have (v_id == 0).
+ * Remove all cached psem entries. Open semaphores (with a positive refcount)
+ * will continue to exist, but their cache entries tying them to a particular
+ * name/path will be removed making all future lookups on the name fail.
  */
-static void
-psem_cache_purge(void)
+int
+psem_cache_purge_all(__unused proc_t p)
 {
-	struct psemcache *pcp;
+	struct psemcache *pcp, *tmppcp;
 	struct psemhashhead *pcpp;
+	int error = 0;
 
+	if (kauth_cred_issuser(kauth_cred_get()) == 0)
+		return EPERM;
+
+	PSEM_SUBSYS_LOCK();
 	for (pcpp = &psemhashtbl[psemhash]; pcpp >= psemhashtbl; pcpp--) {
-		while ( (pcp = pcpp->lh_first) )
-			psem_cache_delete(pcp);
+		LIST_FOREACH_SAFE(pcp, pcpp, psem_hash, tmppcp) {
+			assert(pcp->psem_nlen);
+			/*
+			 * unconditionally unlink the cache entry
+			 */
+			error = psem_unlink_internal(pcp->pseminfo, pcp);
+			if (error)
+				goto out;
+		}
 	}
+	assert(psemnument == 0);
+
+out:
+	PSEM_SUBSYS_UNLOCK();
+
+	if (error)
+		printf("%s: Error %d removing all semaphores: %ld remain!\n",
+		       __func__, error, psemnument);
+	return error;
 }
-#endif	/* NOT_USED */
 
 int
 sem_open(proc_t p, struct sem_open_args *uap, user_addr_t *retval)
@@ -379,7 +414,7 @@ sem_open(proc_t p, struct sem_open_args *uap, user_addr_t *retval)
 	 * Preallocate everything we might need up front to avoid taking
 	 * and dropping the lock, opening us up to race conditions.
 	 */
-	MALLOC_ZONE(pnbuf, caddr_t, MAXPATHLEN, M_NAMEI, M_WAITOK);
+	MALLOC_ZONE(pnbuf, caddr_t, MAXPATHLEN, M_NAMEI, M_WAITOK | M_ZERO);
 	if (pnbuf == NULL) {
 		error = ENOSPC;
 		goto bad;
@@ -490,15 +525,15 @@ sem_open(proc_t p, struct sem_open_args *uap, user_addr_t *retval)
 	PSEM_SUBSYS_LOCK();
 	error = psem_cache_search(&pinfo, &nd, &pcache);
 
-	if (error == ENOENT) {
+	if (error == PSEMCACHE_NEGATIVE) {
 		error = EINVAL;
 		goto bad_locked;
-
 	}
-	if (!error) {
-		incache = 0;
-	} else
+
+	if (error == PSEMCACHE_FOUND)
 		incache = 1;
+	else
+		incache = 0;
 
 	cmode &=  ALLPERMS;
 
@@ -530,7 +565,8 @@ sem_open(proc_t p, struct sem_open_args *uap, user_addr_t *retval)
 		pinfo->psem_name[PSEMNAMLEN]= 0;
 		pinfo->psem_flags &= ~PSEM_DEFINED;
 		pinfo->psem_flags |= PSEM_ALLOCATED;
-		pinfo->sem_proc = p;
+		pinfo->psem_creator_pid = p->p_pid;
+		pinfo->psem_creator_uniqueid = p->p_uniqueid;
 		
 #if CONFIG_MACF
 		error = mac_posixsem_check_create(kauth_cred_get(), nameptr);
@@ -593,7 +629,6 @@ sem_open(proc_t p, struct sem_open_args *uap, user_addr_t *retval)
 
 	proc_fdlock(p);
 	fp->f_flag = fmode & FMASK;
-	fp->f_type = DTYPE_PSXSEM;
 	fp->f_ops = &psemops;
 	fp->f_data = (caddr_t)new_pnode;
 	procfdtbl_releasefd(p, indx, NULL);
@@ -653,6 +688,39 @@ psem_access(struct pseminfo *pinfo, int mode, kauth_cred_t cred)
 	return(posix_cred_access(cred, pinfo->psem_uid, pinfo->psem_gid, pinfo->psem_mode, mode_req));
 }
 
+static int
+psem_unlink_internal(struct pseminfo *pinfo, struct psemcache *pcache)
+{
+	PSEM_SUBSYS_ASSERT_HELD();
+
+	if (!pinfo || !pcache)
+		return EINVAL;
+
+	if ((pinfo->psem_flags & (PSEM_DEFINED | PSEM_ALLOCATED)) == 0)
+		return EINVAL;
+
+	if (pinfo->psem_flags & PSEM_INDELETE)
+		return 0;
+
+	AUDIT_ARG(posix_ipc_perm, pinfo->psem_uid, pinfo->psem_gid,
+		  pinfo->psem_mode);
+
+	pinfo->psem_flags |= PSEM_INDELETE;
+	pinfo->psem_usecount--;
+
+	if (!pinfo->psem_usecount) {
+		psem_delete(pinfo);
+		FREE(pinfo,M_SHM);
+	} else {
+		pinfo->psem_flags |= PSEM_REMOVED;
+	}
+
+	psem_cache_delete(pcache);
+	FREE(pcache, M_SHM);
+	return 0;
+}
+
+
 int
 sem_unlink(__unused proc_t p, struct sem_unlink_args *uap, __unused int32_t *retval)
 {
@@ -660,11 +728,10 @@ sem_unlink(__unused proc_t p, struct sem_unlink_args *uap, __unused int32_t *ret
 	int error=0;
 	struct psemname nd;
 	struct pseminfo *pinfo;
-	char * pnbuf;
 	char * nameptr;
 	char * cp;
-	size_t pathlen, plen;
-	int incache = 0;
+	char * pnbuf;
+	size_t pathlen;
 	struct psemcache *pcache = PSEMCACHE_NULL;
 
 	pinfo = PSEMINFO_NULL;
@@ -684,12 +751,12 @@ sem_unlink(__unused proc_t p, struct sem_unlink_args *uap, __unused int32_t *ret
 		goto bad;
 	}
 
+	nameptr = pnbuf;
 
 #ifdef PSXSEM_NAME_RESTRICT
-	nameptr = pnbuf;
 	if (*nameptr == '/') {
 		while (*(nameptr++) == '/') {
-			plen--;
+			pathlen--;
 			error = EINVAL;
 			goto bad;
 		}
@@ -699,31 +766,24 @@ sem_unlink(__unused proc_t p, struct sem_unlink_args *uap, __unused int32_t *ret
 	}
 #endif /* PSXSEM_NAME_RESTRICT */
 
-	plen = pathlen;
-	nameptr = pnbuf;
 	nd.psem_nameptr = nameptr;
-	nd.psem_namelen = plen;
+	nd.psem_namelen = pathlen;
 	nd. psem_hash =0;
 
-        for (cp = nameptr, i=1; *cp != 0 && i <= plen; i++, cp++) {
+        for (cp = nameptr, i=1; *cp != 0 && i <= pathlen; i++, cp++) {
                nd.psem_hash += (unsigned char)*cp * i;
 	}
 
 	PSEM_SUBSYS_LOCK();
 	error = psem_cache_search(&pinfo, &nd, &pcache);
 
-	if (error == ENOENT) {
+	if (error != PSEMCACHE_FOUND) {
 		PSEM_SUBSYS_UNLOCK();
 		error = EINVAL;
 		goto bad;
 
 	}
-	if (!error) {
-		PSEM_SUBSYS_UNLOCK();
-		error = EINVAL;
-		goto bad;
-	} else
-		incache = 1;
+
 #if CONFIG_MACF
 	error = mac_posixsem_check_unlink(kauth_cred_get(), pinfo, nameptr);
 	if (error) {
@@ -736,37 +796,12 @@ sem_unlink(__unused proc_t p, struct sem_unlink_args *uap, __unused int32_t *ret
 		goto bad;
 	}
 
-	if ((pinfo->psem_flags & (PSEM_DEFINED | PSEM_ALLOCATED))==0) {
-		PSEM_SUBSYS_UNLOCK();
-		error = EINVAL;
-		goto bad;
-	}
-
-	if ( (pinfo->psem_flags & PSEM_INDELETE) ) {
-		PSEM_SUBSYS_UNLOCK();
-		error = 0;
-		goto bad;
-	}
-
-	AUDIT_ARG(posix_ipc_perm, pinfo->psem_uid, pinfo->psem_gid,
-		  pinfo->psem_mode);
-
-	pinfo->psem_flags |= PSEM_INDELETE;
-	pinfo->psem_usecount--;
-
-	if (!pinfo->psem_usecount) {
-		psem_delete(pinfo);
-		FREE(pinfo,M_SHM);
-	} else
-		pinfo->psem_flags |= PSEM_REMOVED;
-
-	psem_cache_delete(pcache);
+	error = psem_unlink_internal(pinfo, pcache);
 	PSEM_SUBSYS_UNLOCK();
-	FREE(pcache, M_SHM);
-	error = 0;
+
 bad:
 	FREE_ZONE(pnbuf, MAXPATHLEN, M_NAMEI);
-	return (error);
+	return error;
 }
 
 int
@@ -788,7 +823,7 @@ sem_close(proc_t p, struct sem_close_args *uap, __unused int32_t *retval)
 	fileproc_drain(p, fp);
 	fdrelse(p, fd);
 	error = closef_locked(fp, fp->f_fglob, p);
-	FREE_ZONE(fp, sizeof *fp, M_FILEPROC);
+	fileproc_free(fp);
 	proc_fdunlock(p);
 	return(error);
 }
@@ -984,24 +1019,6 @@ out:
 	return(error);
 }
 
-int
-sem_init(__unused proc_t p, __unused struct sem_init_args *uap, __unused int32_t *retval)
-{
-	return(ENOSYS);
-}
-
-int
-sem_destroy(__unused proc_t p, __unused struct sem_destroy_args *uap, __unused int32_t *retval)
-{
-	return(ENOSYS);
-}
-
-int
-sem_getvalue(__unused proc_t p, __unused struct sem_getvalue_args *uap, __unused int32_t *retval)
-{
-	return(ENOSYS);
-}
-
 static int
 psem_close(struct psemnode *pnode, __unused int flags)
 {
@@ -1077,38 +1094,40 @@ psem_delete(struct pseminfo * pinfo)
 }
 
 static int
-psem_read(__unused struct fileproc *fp, __unused struct uio *uio, 
-		  __unused int flags, __unused vfs_context_t ctx)
+psem_read(__unused struct fileproc *fp, __unused struct uio *uio,
+		__unused int flags, __unused vfs_context_t ctx)
 {
 	return(ENOTSUP);
 }
 
 static int
-psem_write(__unused struct fileproc *fp, __unused struct uio *uio, 
-		   __unused int flags, __unused vfs_context_t ctx)
+psem_write(__unused struct fileproc *fp, __unused struct uio *uio,
+		__unused int flags, __unused vfs_context_t ctx)
 {
 	return(ENOTSUP);
 }
 
 static int
-psem_ioctl(__unused struct fileproc *fp, __unused u_long com, 
-			__unused caddr_t data, __unused vfs_context_t ctx)
+psem_ioctl(__unused struct fileproc *fp, __unused u_long com,
+		__unused caddr_t data, __unused vfs_context_t ctx)
 {
 	return(ENOTSUP);
 }
 
 static int
-psem_select(__unused struct fileproc *fp, __unused int which, 
-			__unused void *wql, __unused vfs_context_t ctx)
+psem_select(__unused struct fileproc *fp, __unused int which,
+		__unused void *wql, __unused vfs_context_t ctx)
 {
 	return(ENOTSUP);
 }
 
 static int
-psem_kqfilter(__unused struct fileproc *fp, __unused struct knote *kn, 
-				__unused vfs_context_t ctx)
+psem_kqfilter(__unused struct fileproc *fp, struct knote *kn,
+		__unused struct kevent_internal_s *kev, __unused vfs_context_t ctx)
 {
-	return (ENOTSUP);
+	kn->kn_flags = EV_ERROR;
+	kn->kn_data = ENOTSUP;
+	return 0;
 }
 
 int

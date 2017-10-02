@@ -30,8 +30,6 @@
 #ifndef _MACH_ARM_SDT_ISA_H
 #define	_MACH_ARM_SDT_ISA_H
 
-#include <arm/arch.h>
-
 /* #pragma ident	"@(#)sdt.h	1.7	05/06/08 SMI" */
 
 /*
@@ -43,9 +41,35 @@
 #define DTRACE_STRINGIFY(s) #s
 #define DTRACE_TOSTRING(s) DTRACE_STRINGIFY(s)
 
+#if defined(KERNEL)
+/*
+ * For the kernel, set an explicit global label so the symbol can be located
+ */
+#ifdef __arm__
+#define DTRACE_LAB(p, n)                                                                        \
+    "__dtrace_probe$" DTRACE_TOSTRING(%=__LINE__) DTRACE_STRINGIFY(_##p##___##n)
+
+#define DTRACE_LABEL(p, n)			\
+	".pushsection __DATA, __data\n\t"	\
+        ".globl " DTRACE_LAB(p, n) "\n\t"	\
+        DTRACE_LAB(p, n) ":" ".long 1f""\n\t"	\
+	".popsection" "\n\t"			\
+	"1:"
+#else /* __arm64__ */
+#define DTRACE_LAB(p, n)                                                                        \
+    "__dtrace_probe$" DTRACE_TOSTRING(%=__LINE__) DTRACE_STRINGIFY(_##p##___##n)
+
+#define DTRACE_LABEL(p, n)			\
+	".pushsection __DATA, __data\n\t"	\
+        ".globl " DTRACE_LAB(p, n) "\n\t"	\
+        DTRACE_LAB(p, n) ":" ".quad 1f""\n\t"	\
+	".popsection" "\n\t"			\
+	"1:"
+#endif
+#else	/* !KERNEL */
 #define DTRACE_LABEL(p, n)									\
-    ".align 4\n" \
 	"__dtrace_probe$" DTRACE_TOSTRING(%=__LINE__) DTRACE_STRINGIFY(_##p##___##n) ":"	"\n\t"
+#endif	/* !KERNEL */
 
 #ifdef DTRACE_CALL_TEST
 
@@ -61,22 +85,17 @@
 
 #endif	/* !DTRACE_CALL_TEST */
 
-#ifdef __arm__
+#if defined(__arm__)
 
-#ifdef _ARM_ARCH_7
 #define DTRACE_NOPS			\
 	"nop"			"\n\t"
-#else
-#define DTRACE_NOPS			\
-	""			"\n\t"
-#endif
 
 #define DTRACE_CALL_INSN(p,n)						\
 	"blx _dtracetest" DTRACE_STRINGIFY(_##p##_##n)	"\n\t"
 
 #ifdef __thumb__
 #define DTRACE_ALLOC_STACK(n)		\
-	"add sp, #-" #n		"\n\t"
+	"sub sp, #" #n		"\n\t"
 #define DTRACE_DEALLOC_STACK(n)		\
 	"add sp, #" #n		"\n\t"
 #else
@@ -96,8 +115,6 @@
 #define ARGS8_EXTENT	8
 #define ARGS9_EXTENT	9
 #define ARGS10_EXTENT	10	
-
-#ifndef __LP64__
 
 #define DTRACE_CALL0ARGS(provider, name)			\
 	asm volatile (						\
@@ -145,9 +162,14 @@
 		      : "memory", "r0", "r1", "r2", "r3"					\
 	);
 
+/*
+ * One of our ARM32 ABIs (armv7k) mandates that the stack be aligned to 16 bytes.
+ * We currently apply this constraint to all ARM32 DTRACE_CALL macros; hence the
+ * macros below will overallocate for some ABIs.
+ */
 #define DTRACE_CALL5ARGS(provider, name)			\
 	asm volatile (										\
-		      DTRACE_ALLOC_STACK(4)							\
+		      DTRACE_ALLOC_STACK(16)							\
 		      "ldr r0, [%0, #16]"						"\n\t"	\
 		      "str r0, [sp]"							"\n\t"	\
 		      "ldr r3, [%0, #12]"						"\n\t"	\
@@ -155,7 +177,7 @@
 		      "ldr r1, [%0, #4]"						"\n\t"	\
 		      "ldr r0, [%0]"							"\n\t"	\
 		      DTRACE_CALL(provider, name)						\
-		      DTRACE_DEALLOC_STACK(4)							\
+		      DTRACE_DEALLOC_STACK(16)							\
 		      :										\
 		      : "l" (__dtrace_args)							\
 		      : "memory", "r0", "r1", "r2", "r3"					\
@@ -163,7 +185,7 @@
 
 #define DTRACE_CALL6ARGS(provider, name)			\
 	asm volatile (										\
-		      DTRACE_ALLOC_STACK(8)							\
+		      DTRACE_ALLOC_STACK(16)							\
 		      "ldr r1, [%0, #20]"						"\n\t"	\
 		      "ldr r0, [%0, #16]"						"\n\t"	\
 		      "str r1, [sp, #4]"						"\n\t"	\
@@ -173,7 +195,7 @@
 		      "ldr r1, [%0, #4]"						"\n\t"	\
 		      "ldr r0, [%0]"							"\n\t"	\
 		      DTRACE_CALL(provider, name)						\
-		      DTRACE_DEALLOC_STACK(8)							\
+		      DTRACE_DEALLOC_STACK(16)							\
 		      :										\
 		      : "l" (__dtrace_args)							\
 		      : "memory", "r0", "r1", "r2", "r3"					\
@@ -181,7 +203,7 @@
 
 #define DTRACE_CALL7ARGS(provider, name)			\
 	asm volatile (										\
-		      DTRACE_ALLOC_STACK(12)							\
+		      DTRACE_ALLOC_STACK(16)							\
 		      "ldr r2, [%0, #24]"						"\n\t"	\
 		      "ldr r1, [%0, #20]"						"\n\t"	\
 		      "ldr r0, [%0, #16]"						"\n\t"	\
@@ -193,7 +215,7 @@
 		      "ldr r1, [%0, #4]"						"\n\t"	\
 		      "ldr r0, [%0]"							"\n\t"	\
 		      DTRACE_CALL(provider, name)						\
-		      DTRACE_DEALLOC_STACK(12)							\
+		      DTRACE_DEALLOC_STACK(16)							\
 		      :										\
 		      : "l" (__dtrace_args)							\
 		      : "memory", "r0", "r1", "r2", "r3"					\
@@ -223,7 +245,7 @@
 
 #define DTRACE_CALL9ARGS(provider, name)			\
 	asm volatile (										\
-		      DTRACE_ALLOC_STACK(20)							\
+		      DTRACE_ALLOC_STACK(32)							\
 		      "ldr r0, [%0, #32]"						"\n\t"	\
 		      "str r0, [sp, #16]"						"\n\t"	\
 		      "ldr r3, [%0, #28]"						"\n\t"	\
@@ -239,7 +261,7 @@
 		      "ldr r1, [%0, #4]"						"\n\t"	\
 		      "ldr r0, [%0]"							"\n\t"	\
 		      DTRACE_CALL(provider, name)						\
-		      DTRACE_DEALLOC_STACK(20)							\
+		      DTRACE_DEALLOC_STACK(32)							\
 		      :										\
 		      : "l" (__dtrace_args)							\
 		      : "memory", "r0", "r1", "r2", "r3"					\
@@ -247,7 +269,7 @@
 
 #define DTRACE_CALL10ARGS(provider, name)			\
 	asm volatile (										\
-		      DTRACE_ALLOC_STACK(24)							\
+		      DTRACE_ALLOC_STACK(32)							\
 		      "ldr r1, [%0, #36]"						"\n\t"	\
 		      "ldr r0, [%0, #32]"						"\n\t"	\
 		      "str r1, [sp, #20]"						"\n\t"	\
@@ -265,31 +287,154 @@
 		      "ldr r1, [%0, #4]"						"\n\t"	\
 		      "ldr r0, [%0]"							"\n\t"	\
 		      DTRACE_CALL(provider, name)						\
-		      DTRACE_DEALLOC_STACK(24)							\
+		      DTRACE_DEALLOC_STACK(32)							\
 		      :										\
 		      : "l" (__dtrace_args)							\
 		      : "memory", "r0", "r1", "r2", "r3"					\
 	);
 
-#else
+#elif defined(__arm64__)
 
-/* We have no Dtrace on 64-bit. */
-#define DTRACE_CALL0ARGS(provider, name)
-#define DTRACE_CALL1ARG(provider, name)
-#define DTRACE_CALL2ARGS(provider, name)
-#define DTRACE_CALL3ARGS(provider, name)
-#define DTRACE_CALL4ARGS(provider, name)
-#define DTRACE_CALL5ARGS(provider, name)
-#define DTRACE_CALL6ARGS(provider, name)
-#define DTRACE_CALL7ARGS(provider, name)
-#define DTRACE_CALL8ARGS(provider, name)
-#define DTRACE_CALL9ARGS(provider, name)
-#define DTRACE_CALL10ARGS(provider, name)
+#define DTRACE_NOPS							\
+	"nop"                   "\n\t"
 
 
-#endif
+#define DTRACE_CALL_INSN(p,n)						\
+	"bl _dtracetest" DTRACE_STRINGIFY(_##p##_##n)	"\n\t"
+
+#define DTRACE_ALLOC_STACK(n)		\
+	"sub sp, sp, #" #n	"\n\t"
+#define DTRACE_DEALLOC_STACK(n)		\
+	"add sp, sp, #" #n	"\n\t"
+
+#define ARG1_EXTENT	1
+#define ARGS2_EXTENT	2
+#define ARGS3_EXTENT	3
+#define ARGS4_EXTENT	4
+#define ARGS5_EXTENT	5
+#define ARGS6_EXTENT	6
+#define ARGS7_EXTENT	7
+#define ARGS8_EXTENT	8
+#define ARGS9_EXTENT	9
+#define ARGS10_EXTENT	10	
+
+#define DTRACE_CALL0ARGS(provider, name)			\
+	asm volatile (						\
+		DTRACE_CALL(provider, name)			\
+		"# eat trailing nl+tab from DTRACE_CALL"	\
+		:						\
+		:						\
+	);
+
+#define DTRACE_CALL1ARG(provider, name)				\
+	asm volatile ("ldr x0, [%0]"							"\n\t"	\
+	    DTRACE_CALL(provider, name)								\
+		      :										\
+		      : "r" (__dtrace_args)							\
+		      : "memory", "x0"								\
+	);
+
+#define DTRACE_CALL2ARGS(provider, name)			\
+	asm volatile ("ldp x0, x1, [%0]"						"\n\t"	\
+		      DTRACE_CALL(provider, name)						\
+		      :										\
+		      : "r" (__dtrace_args)							\
+		      : "memory", "x0", "x1"							\
+	);
+
+#define DTRACE_CALL3ARGS(provider, name)			\
+	asm volatile ("ldr x2, [%0, #16]"						"\n\t"	\
+		      "ldp x0, x1, [%0]"						"\n\t"	\
+		      DTRACE_CALL(provider, name)						\
+		      :										\
+		      : "r" (__dtrace_args)							\
+		      : "memory", "x0", "x1", "x2"						\
+	);
+
+#define DTRACE_CALL4ARGS(provider, name)			\
+	asm volatile ("ldp x2, x3, [%0, #16]"						"\n\t"	\
+		      "ldp x0, x1, [%0]"						"\n\t"	\
+		      DTRACE_CALL(provider, name)						\
+		      :										\
+		      : "r" (__dtrace_args)							\
+		      : "memory", "x0", "x1", "x2", "x3"					\
+	);
+
+#define DTRACE_CALL5ARGS(provider, name)			\
+	asm volatile ("ldr x4, [%0, #32]"						"\n\t"	\
+		      "ldp x2, x3, [%0, #16]"						"\n\t"	\
+		      "ldp x0, x1, [%0]"						"\n\t"	\
+		      DTRACE_CALL(provider, name)						\
+		      :										\
+		      : "r" (__dtrace_args)							\
+		      : "memory", "x0", "x1", "x2", "x3", "x4"					\
+	);
+
+#define DTRACE_CALL6ARGS(provider, name)			\
+	asm volatile ("ldp x4, x5, [%0, #32]"						"\n\t"	\
+		      "ldp x2, x3, [%0, #16]"						"\n\t"	\
+		      "ldp x0, x1, [%0]"						"\n\t"	\
+		      DTRACE_CALL(provider, name)						\
+		      :										\
+		      : "r" (__dtrace_args)							\
+		      : "memory", "x0", "x1", "x2", "x3", "x4", "x5"				\
+	);
+
+#define DTRACE_CALL7ARGS(provider, name)			\
+	asm volatile ("ldr x6, [%0, #48]"						"\n\t"	\
+    		      "ldp x4, x5, [%0, #32]"						"\n\t"	\
+    		      "ldp x2, x3, [%0, #16]"						"\n\t"	\
+    		      "ldp x0, x1, [%0]"						"\n\t"	\
+    		      DTRACE_CALL(provider, name)						\
+    		      :										\
+    		      : "r" (__dtrace_args)							\
+    		      : "memory", "x0", "x1", "x2", "x3", "x4", "x5", "x6"			\
+    	);
+
+#define DTRACE_CALL8ARGS(provider, name)			\
+	asm volatile ("ldp x6, x7, [%0, #48]"						"\n\t"	\
+    		      "ldp x4, x5, [%0, #32]"						"\n\t"	\
+    		      "ldp x2, x3, [%0, #16]"						"\n\t"	\
+    		      "ldp x0, x1, [%0]"						"\n\t"	\
+    		      DTRACE_CALL(provider, name)						\
+    		      :										\
+    		      : "r" (__dtrace_args)							\
+    		      : "memory", "x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7"		\
+    	);
+
+/* Keep stack 16 byte aligned per ABI requirements */
+#define DTRACE_CALL9ARGS(provider, name)			\
+	asm volatile (											\
+			      DTRACE_ALLOC_STACK(16)							\
+			      "ldr x0, [%0, #64]"						"\n\t"	\
+			      "str x0, [sp]"							"\n\t"	\
+			      "ldp x6, x7, [%0, #48]"						"\n\t"	\
+			      "ldp x4, x5, [%0, #32]"						"\n\t"	\
+			      "ldp x2, x3, [%0, #16]"						"\n\t"	\
+			      "ldp x0, x1, [%0]"						"\n\t"	\
+			      DTRACE_CALL(provider, name)						\
+			      DTRACE_DEALLOC_STACK(16)							\
+			      :										\
+			      : "r" (__dtrace_args)							\
+			      : "memory", "x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7"		\
+		);
+
+#define DTRACE_CALL10ARGS(provider, name)			\
+	asm volatile (										\
+			      DTRACE_ALLOC_STACK(16)							\
+			      "ldp x0, x1, [%0, #64]"						"\n\t"	\
+			      "stp x0, x1, [sp]"						"\n\t"	\
+			      "ldp x6, x7, [%0, #48]"						"\n\t"	\
+			      "ldp x4, x5, [%0, #32]"						"\n\t"	\
+			      "ldp x2, x3, [%0, #16]"						"\n\t"	\
+			      "ldp x0, x1, [%0]"						"\n\t"	\
+			      DTRACE_CALL(provider, name)						\
+			      DTRACE_DEALLOC_STACK(16)							\
+			      :										\
+			      : "r" (__dtrace_args)							\
+			      : "memory", "x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7"		\
+		);
 
 #endif /* __arm__ */
 
 #endif	/* _MACH_ARM_SDT_ISA_H */
-

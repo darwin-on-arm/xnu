@@ -65,7 +65,6 @@
 
 #include <mach/boolean.h>
 #include <mach/port.h>
-#include <kern/lock.h>
 #include <kern/kalloc.h>
 #include <ipc/port.h>
 #include <ipc/ipc_space.h>
@@ -207,7 +206,9 @@ ipc_hash_table_lookup(
 {
 	mach_port_index_t hindex, index;
 
-	assert(obj != IO_NULL);
+	if (obj == IO_NULL) {
+		return FALSE;
+	}
 
 	hindex = IH_TABLE_HASH(obj, size);
 

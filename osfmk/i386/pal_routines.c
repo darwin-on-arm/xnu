@@ -78,9 +78,17 @@ pal_serial_init(void)
 }
 
 void
+pal_serial_putc_nocr(char c)
+{
+	serial_putc(c);
+}
+
+void
 pal_serial_putc(char c)
 {
 	serial_putc(c);
+	if (c == '\n')
+		serial_putc('\r');
 }
 
 int
@@ -345,10 +353,5 @@ pal_get_kern_regs( x86_saved_state_t *state )
 
 void
 pal_preemption_assert(void)
-{
-}
-
-void
-hibernate_pal_prepare(void)
 {
 }

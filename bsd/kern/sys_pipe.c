@@ -17,7 +17,7 @@
  *    are met.
  */
 /*
- * Copyright (c) 2003-2007 Apple Inc. All rights reserved.
+ * Copyright (c) 2003-2014 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -146,9 +146,13 @@
 #include <kern/kalloc.h>
 #include <vm/vm_kern.h>
 #include <libkern/OSAtomic.h>
+#include <libkern/section_keywords.h>
+
+#if CONFIG_MACF
+#include <security/mac_framework.h>
+#endif
 
 #define f_flag f_fglob->fg_flag
-#define f_type f_fglob->fg_type
 #define f_msgcount f_fglob->fg_msgcount
 #define f_cred f_fglob->fg_cred
 #define f_ops f_fglob->fg_ops
@@ -159,48 +163,60 @@
  * interfaces to the outside world exported through file operations 
  */
 static int pipe_read(struct fileproc *fp, struct uio *uio,
-                int flags, vfs_context_t ctx);
+		int flags, vfs_context_t ctx);
 static int pipe_write(struct fileproc *fp, struct uio *uio,
-                int flags, vfs_context_t ctx);
+		int flags, vfs_context_t ctx);
 static int pipe_close(struct fileglob *fg, vfs_context_t ctx);
 static int pipe_select(struct fileproc *fp, int which, void * wql,
 		vfs_context_t ctx);
 static int pipe_kqfilter(struct fileproc *fp, struct knote *kn,
-		vfs_context_t ctx);
+		struct kevent_internal_s *kev, vfs_context_t ctx);
 static int pipe_ioctl(struct fileproc *fp, u_long cmd, caddr_t data,
 		vfs_context_t ctx);
 static int pipe_drain(struct fileproc *fp,vfs_context_t ctx);
 
-struct  fileops pipeops =
-  { pipe_read,
-    pipe_write,
-    pipe_ioctl,
-    pipe_select,
-    pipe_close,
-    pipe_kqfilter,
-    pipe_drain };
+static const struct fileops pipeops = {
+	.fo_type = DTYPE_PIPE,
+	.fo_read = pipe_read,
+	.fo_write = pipe_write,
+	.fo_ioctl = pipe_ioctl,
+	.fo_select = pipe_select,
+	.fo_close = pipe_close,
+	.fo_kqfilter = pipe_kqfilter,
+	.fo_drain = pipe_drain,
+};
 
-static void	filt_pipedetach(struct knote *kn);
-static int	filt_piperead(struct knote *kn, long hint);
-static int	filt_pipewrite(struct knote *kn, long hint);
+static void filt_pipedetach(struct knote *kn);
 
-static struct filterops pipe_rfiltops = {
+static int filt_piperead(struct knote *kn, long hint);
+static int filt_pipereadtouch(struct knote *kn, struct kevent_internal_s *kev);
+static int filt_pipereadprocess(struct knote *kn, struct filt_process_s *data, struct kevent_internal_s *kev);
+
+static int filt_pipewrite(struct knote *kn, long hint);
+static int filt_pipewritetouch(struct knote *kn, struct kevent_internal_s *kev);
+static int filt_pipewriteprocess(struct knote *kn, struct filt_process_s *data, struct kevent_internal_s *kev);
+
+SECURITY_READ_ONLY_EARLY(struct filterops) pipe_rfiltops = {
         .f_isfd = 1,
         .f_detach = filt_pipedetach,
         .f_event = filt_piperead,
+	.f_touch = filt_pipereadtouch,
+	.f_process = filt_pipereadprocess,
 };
 
-static struct filterops pipe_wfiltops = {
+SECURITY_READ_ONLY_EARLY(struct filterops) pipe_wfiltops = {
         .f_isfd = 1,
         .f_detach = filt_pipedetach,
         .f_event = filt_pipewrite,
+	.f_touch = filt_pipewritetouch,
+	.f_process = filt_pipewriteprocess,
 };
 
 static int nbigpipe;      /* for compatibility sake. no longer used */
 static int amountpipes;   /* total number of pipes in system */
 static int amountpipekva; /* total memory used by pipes */
 
-int maxpipekva = PIPE_KVAMAX;  /* allowing 16MB max. */
+int maxpipekva __attribute__((used)) = PIPE_KVAMAX;  /* allowing 16MB max. */
 
 #if PIPE_SYSCTLS
 SYSCTL_DECL(_kern_ipc);
@@ -288,6 +304,7 @@ pipeinit(void)
 	
 }
 
+#ifndef	CONFIG_EMBEDDED
 /* Bitmap for things to touch in pipe_touch() */
 #define	PIPE_ATIME	0x00000001	/* time of last access */
 #define	PIPE_MTIME	0x00000002	/* time of last modification */
@@ -296,27 +313,28 @@ pipeinit(void)
 static void
 pipe_touch(struct pipe *tpipe, int touch)
 {
-	struct timeval now;
+	struct timespec now;
 
-	microtime(&now);
+	nanotime(&now);
 
 	if (touch & PIPE_ATIME) {
 		tpipe->st_atimespec.tv_sec  = now.tv_sec;
-		tpipe->st_atimespec.tv_nsec = now.tv_usec * 1000;
+		tpipe->st_atimespec.tv_nsec = now.tv_nsec;
 	}
 
 	if (touch & PIPE_MTIME) {
 		tpipe->st_mtimespec.tv_sec  = now.tv_sec;
-		tpipe->st_mtimespec.tv_nsec = now.tv_usec * 1000;
+		tpipe->st_mtimespec.tv_nsec = now.tv_nsec;
 	}
 
 	if (touch & PIPE_CTIME) {
 		tpipe->st_ctimespec.tv_sec  = now.tv_sec;
-		tpipe->st_ctimespec.tv_nsec = now.tv_usec * 1000;
+		tpipe->st_ctimespec.tv_nsec = now.tv_nsec;
 	}
 }
+#endif
 
-static const unsigned int pipesize_blocks[] = {128,256,1024,2048,PAGE_SIZE, PAGE_SIZE * 2, PIPE_SIZE , PIPE_SIZE * 4 };
+static const unsigned int pipesize_blocks[] = {512,1024,2048,4096, 4096 * 2, PIPE_SIZE , PIPE_SIZE * 4 };
 
 /* 
  * finds the right size from possible sizes in pipesize_blocks 
@@ -327,6 +345,12 @@ choose_pipespace(unsigned long current, unsigned long expected)
 {
 	int i = sizeof(pipesize_blocks)/sizeof(unsigned int) -1;
 	unsigned long target;
+
+	/*
+	 * assert that we always get an atomic transaction sized pipe buffer,
+	 * even if the system pipe buffer high-water mark has been crossed.
+	 */
+	assert(PIPE_BUF == pipesize_blocks[0]);
 
 	if (expected > current) 
 		target = expected;
@@ -432,7 +456,6 @@ pipe(proc_t p, __unused struct pipe_args *uap, int32_t *retval)
 	 * this is what we've always supported..
 	 */
 	rf->f_flag = FREAD;
-	rf->f_type = DTYPE_PIPE;
 	rf->f_data = (caddr_t)rpipe;
 	rf->f_ops = &pipeops;
 
@@ -442,7 +465,6 @@ pipe(proc_t p, __unused struct pipe_args *uap, int32_t *retval)
 	        goto freepipes;
 	}
 	wf->f_flag = FWRITE;
-	wf->f_type = DTYPE_PIPE;
 	wf->f_data = (caddr_t)wpipe;
 	wf->f_ops = &pipeops;
 
@@ -643,8 +665,10 @@ pipe_create(struct pipe **cpipep)
 	 */
 	bzero(cpipe, sizeof *cpipe);
 
+#ifndef	CONFIG_EMBEDDED
 	/* Initial times are all the time of creation of the pipe */
 	pipe_touch(cpipe, PIPE_ATIME | PIPE_MTIME | PIPE_CTIME);
+#endif
 	return (0);
 }
 
@@ -845,8 +869,10 @@ unlocked_error:
 	if ((rpipe->pipe_buffer.size - rpipe->pipe_buffer.cnt) > 0)
 		pipeselwakeup(rpipe, rpipe->pipe_peer);
 
+#ifndef	CONFIG_EMBEDDED
 	/* update last read time */
 	pipe_touch(rpipe, PIPE_ATIME);
+#endif
 
 	PIPE_UNLOCK(rpipe);
 
@@ -1102,9 +1128,11 @@ pipe_write(struct fileproc *fp, struct uio *uio, __unused int flags,
 		pipeselwakeup(wpipe, wpipe);
 	}
 
+#ifndef	CONFIG_EMBEDDED
 	/* Update modification, status change (# of bytes in pipe) times */
 	pipe_touch(rpipe, PIPE_MTIME | PIPE_CTIME);
 	pipe_touch(wpipe, PIPE_MTIME | PIPE_CTIME);
+#endif
 	PIPE_UNLOCK(rpipe);
 
 	return (error);
@@ -1217,7 +1245,7 @@ pipe_select(struct fileproc *fp, int which, void *wql, vfs_context_t ctx)
 			wpipe->pipe_state |= PIPE_WSELECT;
 		if (wpipe == NULL || (wpipe->pipe_state & (PIPE_DRAIN | PIPE_EOF)) ||
 		    (((wpipe->pipe_state & PIPE_DIRECTW) == 0) &&
-		     (MAX_PIPESIZE(wpipe) - wpipe->pipe_buffer.cnt) > 0)) {
+		     (MAX_PIPESIZE(wpipe) - wpipe->pipe_buffer.cnt) >= PIPE_BUF)) {
 
 		        retnum = 1;
 		} else {
@@ -1327,17 +1355,18 @@ pipeclose(struct pipe *cpipe)
 	 * free resources
 	 */
 	if (PIPE_MTX(cpipe) != NULL) {
-	        if (ppipe != NULL) {
-		        /*
+		if (ppipe != NULL) {
+			/*
 			 * since the mutex is shared and the peer is still
 			 * alive, we need to release the mutex, not free it
 			 */
-		        PIPE_UNLOCK(cpipe);
+			PIPE_UNLOCK(cpipe);
 		} else {
-		        /*
+			/*
 			 * peer is gone, so we're the sole party left with
-			 * interest in this mutex... we can just free it
+			 * interest in this mutex... unlock and free it
 			 */
+			PIPE_UNLOCK(cpipe);
 			lck_mtx_free(PIPE_MTX(cpipe), pipe_mtx_grp);
 		}
 	}
@@ -1353,11 +1382,178 @@ pipeclose(struct pipe *cpipe)
 
 /*ARGSUSED*/
 static int
-pipe_kqfilter(__unused struct fileproc *fp, struct knote *kn, __unused vfs_context_t ctx)
+filt_piperead_common(struct knote *kn, struct pipe *rpipe)
 {
-	struct pipe *cpipe;
+	struct pipe *wpipe;
+	int    retval;
 
-	cpipe = (struct pipe *)kn->kn_fp->f_data;
+	/*
+	 * we're being called back via the KNOTE post
+	 * we made in pipeselwakeup, and we already hold the mutex...
+	 */
+
+	wpipe = rpipe->pipe_peer;
+	kn->kn_data = rpipe->pipe_buffer.cnt;
+	if ((rpipe->pipe_state & (PIPE_DRAIN | PIPE_EOF)) ||
+	    (wpipe == NULL) || (wpipe->pipe_state & (PIPE_DRAIN | PIPE_EOF))) {
+		kn->kn_flags |= EV_EOF;
+		retval = 1;
+	} else {
+		int64_t lowwat = 1;
+		if (kn->kn_sfflags & NOTE_LOWAT) {
+			if (rpipe->pipe_buffer.size && kn->kn_sdata > MAX_PIPESIZE(rpipe))
+				lowwat = MAX_PIPESIZE(rpipe);
+			else if (kn->kn_sdata > lowwat)
+				lowwat = kn->kn_sdata;
+		}
+		retval = kn->kn_data >= lowwat;
+	}
+	return (retval);
+}
+
+static int
+filt_piperead(struct knote *kn, long hint)
+{
+#pragma unused(hint)
+	struct pipe *rpipe = (struct pipe *)kn->kn_fp->f_data;
+
+	return filt_piperead_common(kn, rpipe);
+}
+	
+static int
+filt_pipereadtouch(struct knote *kn, struct kevent_internal_s *kev)
+{
+	struct pipe *rpipe = (struct pipe *)kn->kn_fp->f_data;
+	int retval;
+
+	PIPE_LOCK(rpipe);
+
+	/* accept new inputs (and save the low water threshold and flag) */
+	kn->kn_sdata = kev->data;
+	kn->kn_sfflags = kev->fflags;
+	if ((kn->kn_status & KN_UDATA_SPECIFIC) == 0)
+		kn->kn_udata = kev->udata;
+
+	/* identify if any events are now fired */
+	retval = filt_piperead_common(kn, rpipe);
+
+	PIPE_UNLOCK(rpipe);
+
+	return retval;
+}
+
+static int
+filt_pipereadprocess(struct knote *kn, struct filt_process_s *data, struct kevent_internal_s *kev)
+{
+#pragma unused(data)
+	struct pipe *rpipe = (struct pipe *)kn->kn_fp->f_data;
+	int    retval;
+
+	PIPE_LOCK(rpipe);
+	retval = filt_piperead_common(kn, rpipe);
+	if (retval) {
+		*kev = kn->kn_kevent;
+		if (kn->kn_flags & EV_CLEAR) {
+			kn->kn_fflags = 0;
+			kn->kn_data = 0;
+		}
+	}
+	PIPE_UNLOCK(rpipe);
+
+	return (retval);
+}
+
+/*ARGSUSED*/
+static int
+filt_pipewrite_common(struct knote *kn, struct pipe *rpipe)
+{
+	struct pipe *wpipe;
+
+	/*
+	 * we're being called back via the KNOTE post
+	 * we made in pipeselwakeup, and we already hold the mutex...
+	 */
+	wpipe = rpipe->pipe_peer;
+
+	if ((wpipe == NULL) || (wpipe->pipe_state & (PIPE_DRAIN | PIPE_EOF))) {
+		kn->kn_data = 0;
+		kn->kn_flags |= EV_EOF; 
+		return (1);
+	}
+	kn->kn_data = MAX_PIPESIZE(wpipe) - wpipe->pipe_buffer.cnt;
+
+	int64_t lowwat = PIPE_BUF;
+	if (kn->kn_sfflags & NOTE_LOWAT) {
+		if (wpipe->pipe_buffer.size && kn->kn_sdata > MAX_PIPESIZE(wpipe))
+			lowwat = MAX_PIPESIZE(wpipe);
+		else if (kn->kn_sdata > lowwat)
+			lowwat = kn->kn_sdata;
+	}
+
+	return (kn->kn_data >= lowwat);
+}
+
+/*ARGSUSED*/
+static int
+filt_pipewrite(struct knote *kn, long hint)
+{
+#pragma unused(hint)
+	struct pipe *rpipe = (struct pipe *)kn->kn_fp->f_data;
+
+	return filt_pipewrite_common(kn, rpipe);
+}
+
+
+static int
+filt_pipewritetouch(struct knote *kn, struct kevent_internal_s *kev)
+{
+	struct pipe *rpipe = (struct pipe *)kn->kn_fp->f_data;
+	int res;
+
+	PIPE_LOCK(rpipe);
+
+	/* accept new kevent data (and save off lowat threshold and flag) */
+	kn->kn_sfflags = kev->fflags;
+	kn->kn_sdata = kev->data;
+	if ((kn->kn_status & KN_UDATA_SPECIFIC) == 0)
+		kn->kn_udata = kev->udata;
+
+	/* determine if any event is now deemed fired */
+	res = filt_pipewrite_common(kn, rpipe);
+
+	PIPE_UNLOCK(rpipe);
+
+	return res;
+}
+
+static int
+filt_pipewriteprocess(struct knote *kn, struct filt_process_s *data, struct kevent_internal_s *kev)
+{
+#pragma unused(data)
+	struct pipe *rpipe = (struct pipe *)kn->kn_fp->f_data;
+	int res;
+
+	PIPE_LOCK(rpipe);
+	res = filt_pipewrite_common(kn, rpipe);
+	if (res) {
+		*kev = kn->kn_kevent;
+		if (kn->kn_flags & EV_CLEAR) {
+			kn->kn_fflags = 0;
+			kn->kn_data = 0;
+		}
+	}
+	PIPE_UNLOCK(rpipe);
+
+	return res;
+}
+
+/*ARGSUSED*/
+static int
+pipe_kqfilter(__unused struct fileproc *fp, struct knote *kn,
+		__unused struct kevent_internal_s *kev, __unused vfs_context_t ctx)
+{
+	struct pipe *cpipe = (struct pipe *)kn->kn_fp->f_data;
+	int res;
 
 	PIPE_LOCK(cpipe);
 #if CONFIG_MACF
@@ -1368,38 +1564,50 @@ pipe_kqfilter(__unused struct fileproc *fp, struct knote *kn, __unused vfs_conte
 	 */
 	if (mac_pipe_check_kqfilter(vfs_context_ucred(ctx), kn, cpipe) != 0) {
 		PIPE_UNLOCK(cpipe);
-		return (1);
+		kn->kn_flags = EV_ERROR;
+		kn->kn_data = EPERM;
+		return 0;
 	}
 #endif
 
 	switch (kn->kn_filter) {
 	case EVFILT_READ:
-		kn->kn_fop = &pipe_rfiltops;
+		kn->kn_filtid = EVFILTID_PIPE_R;
 
+		/* determine initial state */
+		res = filt_piperead_common(kn, cpipe);
 		break;
+
 	case EVFILT_WRITE:
-		kn->kn_fop = &pipe_wfiltops;
+		kn->kn_filtid = EVFILTID_PIPE_W;
 
 		if (cpipe->pipe_peer == NULL) {
 			/*
 			 * other end of pipe has been closed
 			 */
 		        PIPE_UNLOCK(cpipe);
-			return (EPIPE);
+			kn->kn_flags = EV_ERROR;
+			kn->kn_data = EPIPE;
+			return 0;
 		}
 		if (cpipe->pipe_peer)
 		cpipe = cpipe->pipe_peer;
+
+		/* determine inital state */
+		res = filt_pipewrite_common(kn, cpipe);
 		break;
 	default:
 	        PIPE_UNLOCK(cpipe);
-		return (1);
+		kn->kn_flags = EV_ERROR;
+		kn->kn_data = EINVAL;
+		return 0;
 	}
 
 	if (KNOTE_ATTACH(&cpipe->pipe_sel.si_note, kn))
 	        cpipe->pipe_state |= PIPE_KNOTE;
 
 	PIPE_UNLOCK(cpipe);
-	return (0);
+	return res;
 }
 
 static void
@@ -1423,95 +1631,13 @@ filt_pipedetach(struct knote *kn)
 	PIPE_UNLOCK(cpipe);
 }
 
-/*ARGSUSED*/
-static int
-filt_piperead(struct knote *kn, long hint)
-{
-	struct pipe *rpipe = (struct pipe *)kn->kn_fp->f_data;
-	struct pipe *wpipe;
-	int    retval;
-
-	/*
-	 * if hint == 0, then we've been called from the kevent
-	 * world directly and do not currently hold the pipe mutex...
-	 * if hint == 1, we're being called back via the KNOTE post
-	 * we made in pipeselwakeup, and we already hold the mutex...
-	 */
-	if (hint == 0)
-	        PIPE_LOCK(rpipe);
-
-	wpipe = rpipe->pipe_peer;
-	kn->kn_data = rpipe->pipe_buffer.cnt;
-	if ((rpipe->pipe_state & (PIPE_DRAIN | PIPE_EOF)) ||
-	    (wpipe == NULL) || (wpipe->pipe_state & (PIPE_DRAIN | PIPE_EOF))) {
-		kn->kn_flags |= EV_EOF;
-		retval = 1;
-	} else {
-		int64_t lowwat = 1;
-		if (kn->kn_sfflags & NOTE_LOWAT) {
-			if (rpipe->pipe_buffer.size && kn->kn_sdata > MAX_PIPESIZE(rpipe))
-				lowwat = MAX_PIPESIZE(rpipe);
-			else if (kn->kn_sdata > lowwat)
-				lowwat = kn->kn_sdata;
-		}
-		retval = kn->kn_data >= lowwat;
-	}
-
-	if (hint == 0)
-	        PIPE_UNLOCK(rpipe);
-
-	return (retval);
-}
-
-/*ARGSUSED*/
-static int
-filt_pipewrite(struct knote *kn, long hint)
-{
-	struct pipe *rpipe = (struct pipe *)kn->kn_fp->f_data;
-	struct pipe *wpipe;
-
-	/*
-	 * if hint == 0, then we've been called from the kevent
-	 * world directly and do not currently hold the pipe mutex...
-	 * if hint == 1, we're being called back via the KNOTE post
-	 * we made in pipeselwakeup, and we already hold the mutex...
-	 */
-	if (hint == 0)
-	        PIPE_LOCK(rpipe);
-
-	wpipe = rpipe->pipe_peer;
-
-	if ((wpipe == NULL) || (wpipe->pipe_state & (PIPE_DRAIN | PIPE_EOF))) {
-		kn->kn_data = 0;
-		kn->kn_flags |= EV_EOF; 
-
-		if (hint == 0)
-		        PIPE_UNLOCK(rpipe);
-		return (1);
-	}
-	kn->kn_data = MAX_PIPESIZE(wpipe) - wpipe->pipe_buffer.cnt;
-
-	int64_t lowwat = PIPE_BUF;
-	if (kn->kn_sfflags & NOTE_LOWAT) {
-		if (wpipe->pipe_buffer.size && kn->kn_sdata > MAX_PIPESIZE(wpipe))
-			lowwat = MAX_PIPESIZE(wpipe);
-		else if (kn->kn_sdata > lowwat)
-			lowwat = kn->kn_sdata;
-	}
-	
-	if (hint == 0)
-	        PIPE_UNLOCK(rpipe);
-
-	return (kn->kn_data >= lowwat);
-}
-
 int
 fill_pipeinfo(struct pipe * cpipe, struct pipe_info * pinfo)
 {
 #if CONFIG_MACF
         int error;
 #endif
-	struct timeval now;
+	struct timespec now;
 	struct vinfo_stat * ub;
 	int pipe_size = 0;
 	int pipe_count;
@@ -1564,23 +1690,23 @@ fill_pipeinfo(struct pipe * cpipe, struct pipe_info * pinfo)
 	ub->vst_uid = kauth_getuid();
 	ub->vst_gid = kauth_getgid();
 
-	microtime(&now);
+	nanotime(&now);
 	ub->vst_atime  = now.tv_sec;
-	ub->vst_atimensec = now.tv_usec * 1000;
+	ub->vst_atimensec = now.tv_nsec;
 
 	ub->vst_mtime  = now.tv_sec;
-	ub->vst_mtimensec = now.tv_usec * 1000;
+	ub->vst_mtimensec = now.tv_nsec;
 
 	ub->vst_ctime  = now.tv_sec;
-	ub->vst_ctimensec = now.tv_usec * 1000;
+	ub->vst_ctimensec = now.tv_nsec;
 
 	/*
 	 * Left as 0: st_dev, st_ino, st_nlink, st_rdev, st_flags, st_gen, st_uid, st_gid.
 	 * XXX (st_dev, st_ino) should be unique.
 	 */
 
-	pinfo->pipe_handle = (uint64_t)((uintptr_t)cpipe);
-	pinfo->pipe_peerhandle = (uint64_t)((uintptr_t)(cpipe->pipe_peer));
+	pinfo->pipe_handle = (uint64_t)VM_KERNEL_ADDRPERM((uintptr_t)cpipe);
+	pinfo->pipe_peerhandle = (uint64_t)VM_KERNEL_ADDRPERM((uintptr_t)(cpipe->pipe_peer));
 	pinfo->pipe_status = cpipe->pipe_state;
 
 	PIPE_UNLOCK(cpipe);

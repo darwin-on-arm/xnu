@@ -1,29 +1,10 @@
-#
-# -O2 may work for you. -O2 might not. Your results
-# may vary.
-#
+######################################################################
+#BEGIN	Machine dependent Makefile fragment for arm
+######################################################################
 
-export CFLAGS_RELEASEARM = -O0
-export CFLAGS_DEVELOPMENTARM = -O0
-export CFLAGS_DEBUGARM = -O0
-export CFLAGS_PROFILEARM = -O0
+# Files that must go in the __HIB segment:
+HIB_FILES=
 
-bcopyinout.o_SFLAGS_ADD += -no-integrated-as
-
-ifeq (-arch armv6,$(ARCH_FLAGS_ARM))
-locore.o_SFLAGS_ADD  += -no-integrated-as
-machine_routines_asm.o_SFLAGS_ADD += -no-integrated-as
-hw_lock.o_SFLAGS_ADD  += -no-integrated-as
-cache.o_SFLAGS_ADD += -no-integrated-as
-tlb-arm11.o_SFLAGS_ADD += -no-integrated-as
-endif
-
-ifeq (-arch armv7,$(ARCH_FLAGS_ARM))
-vm_pageout.o_CFLAGS_ADD += -O0
-vm_fault.o_CFLAGS_ADD += -O0
-endif
-
-rtclock.o_CFLAGS_ADD += -O0
-sched_prim.o_CFLAGS_ADD += -O0
-thread_call.o_CFLAGS_ADD += -O0
-device_server.o_CFLAGS_ADD += -O0
+######################################################################
+#END	Machine dependent Makefile fragment for arm
+######################################################################

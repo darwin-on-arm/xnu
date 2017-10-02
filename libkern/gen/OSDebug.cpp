@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2005 Apple Computer, Inc. All rights reserved.
+ * Copyright (c) 2005-2012 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -43,22 +43,24 @@
 #include <sys/kdebug.h>
 #include <kern/thread.h>
 
-#if defined(__arm__) || defined(__aarch64__)
-extern "C" {
-extern int copyinframe(vm_address_t fp, uint32_t *frame);
-}
-#endif
-
 extern int etext;
 __BEGIN_DECLS
 // From osmfk/kern/thread.h but considered to be private
 extern vm_offset_t min_valid_stack_address(void);
 extern vm_offset_t max_valid_stack_address(void);
 
+// From osfmk/kern/printf.c
+extern boolean_t doprnt_hide_pointers;
+
 // From osfmk/kmod.c
-extern void kmod_dump_log(vm_offset_t *addr, unsigned int cnt);
+extern void kmod_dump_log(vm_offset_t *addr, unsigned int cnt, boolean_t doUnslide);
 
 extern addr64_t kvtophys(vm_offset_t va);
+#if __arm__ 
+extern int copyinframe(vm_address_t fp, char *frame);
+#elif defined(__arm64__)
+extern int copyinframe(vm_address_t fp, char *frame, boolean_t is64bit);
+#endif
 
 __END_DECLS
 
@@ -99,7 +101,7 @@ void
 OSReportWithBacktrace(const char *str, ...)
 {
     char buf[128];
-    void *bt[9];
+    void *bt[9] = {};
     const unsigned cnt = sizeof(bt) / sizeof(bt[0]);
     va_list listp;
 
@@ -112,9 +114,15 @@ OSReportWithBacktrace(const char *str, ...)
 
     lck_mtx_lock(sOSReportLock);
     {
-        printf("%s\nBacktrace %p %p %p %p %p %p %p\n",
-            buf, bt[2], bt[3], bt[4], bt[5], bt[6], bt[7], bt[8]);
-        kmod_dump_log((vm_offset_t *) &bt[2], cnt - 2);
+        boolean_t old_doprnt_hide_pointers = doprnt_hide_pointers;
+        doprnt_hide_pointers = FALSE;
+        printf("%s\nBacktrace 0x%lx 0x%lx 0x%lx 0x%lx 0x%lx 0x%lx 0x%lx\n", buf, 
+            (unsigned long) VM_KERNEL_UNSLIDE(bt[2]), (unsigned long) VM_KERNEL_UNSLIDE(bt[3]), 
+            (unsigned long) VM_KERNEL_UNSLIDE(bt[4]), (unsigned long) VM_KERNEL_UNSLIDE(bt[5]), 
+            (unsigned long) VM_KERNEL_UNSLIDE(bt[6]), (unsigned long) VM_KERNEL_UNSLIDE(bt[7]), 
+            (unsigned long) VM_KERNEL_UNSLIDE(bt[8]));
+        kmod_dump_log((vm_offset_t *) &bt[2], cnt - 2, TRUE);
+        doprnt_hide_pointers = old_doprnt_hide_pointers;
     }
     lck_mtx_unlock(sOSReportLock);
 }
@@ -122,38 +130,6 @@ OSReportWithBacktrace(const char *str, ...)
 static vm_offset_t minstackaddr = min_valid_stack_address();
 static vm_offset_t maxstackaddr = max_valid_stack_address();
 
-#if __i386__
-#define i386_RETURN_OFFSET 4
-
-static unsigned int
-i386_validate_stackptr(vm_offset_t stackptr)
-{
-	/* Existence and alignment check
-	 */
-	if (!stackptr || (stackptr & 0x3))
-		return 0;
-  
-	/* Is a virtual->physical translation present?
-	 */
-	if (!kvtophys(stackptr))
-		return 0;
-  
-	/* Check if the return address lies on the same page;
-	 * If not, verify that a translation exists.
-	 */
-	if (((PAGE_SIZE - (stackptr & PAGE_MASK)) < i386_RETURN_OFFSET) &&
-	    !kvtophys(stackptr + i386_RETURN_OFFSET))
-		return 0;
-	return 1;
-}
-
-static unsigned int
-i386_validate_raddr(vm_offset_t raddr)
-{
-	return ((raddr > VM_MIN_KERNEL_AND_KEXT_ADDRESS) &&
-	    (raddr < VM_MAX_KERNEL_ADDRESS));
-}
-#endif
 
 #if __x86_64__
 #define x86_64_RETURN_OFFSET 8
@@ -201,50 +177,9 @@ OSPrintBacktrace(void)
 unsigned OSBacktrace(void **bt, unsigned maxAddrs)
 {
     unsigned frame;
+    if (!current_thread()) return 0;
 
-#if __i386__
-#define SANE_i386_FRAME_SIZE (kernel_stack_size >> 1)
-    vm_offset_t stackptr, stackptr_prev, raddr;
-    unsigned frame_index = 0;
-/* Obtain current frame pointer */
-    __asm__ volatile("movl %%ebp, %0" : "=m" (stackptr)); 
-
-    if (!i386_validate_stackptr(stackptr))
-	    goto pad;
-
-    raddr = *((vm_offset_t *) (stackptr + i386_RETURN_OFFSET));
-
-    if (!i386_validate_raddr(raddr))
-	    goto pad;
-
-    bt[frame_index++] = (void *) raddr;
-
-    for ( ; frame_index < maxAddrs; frame_index++) {
-	    stackptr_prev = stackptr;
-	    stackptr = *((vm_offset_t *) stackptr_prev);
-
-	    if (!i386_validate_stackptr(stackptr))
-		    break;
-	/* Stack grows downwards */
-	    if (stackptr < stackptr_prev)
-		    break;
-
-	    if ((stackptr - stackptr_prev) > SANE_i386_FRAME_SIZE)
-		    break;
-
-	    raddr = *((vm_offset_t *) (stackptr + i386_RETURN_OFFSET));
-
-	    if (!i386_validate_raddr(raddr))
-		    break;
-
-	    bt[frame_index] = (void *) raddr;
-    }
-pad:
-    frame = frame_index;
-
-    for ( ; frame_index < maxAddrs; frame_index++)
-	    bt[frame_index] = (void *) 0;
-#elif __x86_64__
+#if   __x86_64__
 #define SANE_x86_64_FRAME_SIZE (kernel_stack_size >> 1)
     vm_offset_t stackptr, stackptr_prev, raddr;
     unsigned frame_index = 0;
@@ -287,35 +222,44 @@ pad:
 
     for ( ; frame_index < maxAddrs; frame_index++)
 	    bt[frame_index] = (void *) 0;
-#elif __arm__
+#elif __arm__ || __arm64__
     uint32_t i = 0;
-    uint32_t fp = 0;
-    uint32_t frameb[2];
-
-    /* Get the frame pointer from the current thread */
-    __asm__ __volatile("mov %0, r7" : "=r" (fp));
-
-    /* Crawl up the stack recording the link value of each frame */
-    do {
-        /* Check boundaries */
-        if ((fp == 0) || ((fp & 3) != 0) || (fp > VM_MAX_KERNEL_ADDRESS) || (fp < VM_MIN_KERNEL_ADDRESS))
-            break;
-
-        /* Safeley read frame */
-        if (copyinframe(fp, frameb) != 0)
-            break;
-
-        /* No need to use copyin as this is always a kernel address, see check above */
-        bt[i] = (void*)frameb[1]; /* link register */
-        fp = frameb[0];
-    } while (i++ < maxAddrs);
-
-    frame = i;
-#elif __aarch64__
-#warning "TODO: arm64 OSBacktrace"
-    panic("OSBacktrace is not implemented!\n");
+    uintptr_t frameb[2];
+    uintptr_t fp = 0;
+    
+    // get the current frame pointer for this thread
+#if defined(__arm__)
+#define OSBacktraceFrameAlignOK(x) (((x) & 0x3) == 0)
+    __asm__ volatile("mov %0,r7" : "=r" (fp)); 
+#elif defined(__arm64__)
+#define OSBacktraceFrameAlignOK(x) (((x) & 0xf) == 0)
+    __asm__ volatile("mov %0, fp" : "=r" (fp)); 
 #else
-#error "Unsupported architecture"
+#error Unknown architecture.
+#endif
+    
+    // now crawl up the stack recording the link value of each frame
+    do {
+      // check bounds
+      if ((fp == 0) || (!OSBacktraceFrameAlignOK(fp)) || (fp > VM_MAX_KERNEL_ADDRESS) || (fp < VM_MIN_KERNEL_AND_KEXT_ADDRESS)) {
+	break;
+      }
+      // safely read frame
+#ifdef __arm64__
+      if (copyinframe(fp, (char*)frameb, TRUE) != 0) {
+#else
+      if (copyinframe(fp, (char*)frameb) != 0) {
+#endif
+	break;
+      }
+      
+      // No need to use copyin as this is always a kernel address, see check above
+      bt[i] = (void*)frameb[1];        // link register
+      fp = frameb[0]; 
+    } while (++i < maxAddrs);
+    frame= i;
+#else
+#error arch
 #endif
     return frame;
 }

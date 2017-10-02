@@ -56,7 +56,7 @@ mac_labelzone_alloc(int flags)
 {
 	struct label *l;
 
-	if (flags & MAC_NOWAIT)
+	if (flags & MAC_NOWAIT) 
 		l = (struct label *) zalloc_noblock(zone_label);
 	else
 		l = (struct label *) zalloc(zone_label);
@@ -65,7 +65,6 @@ mac_labelzone_alloc(int flags)
 
 	bzero(l, sizeof(struct label));
 	l->l_flags = MAC_FLAG_INITIALIZED;
-
 	return (l);
 }
 

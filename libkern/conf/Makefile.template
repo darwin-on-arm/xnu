@@ -5,16 +5,6 @@
 # the terms and conditions for use and redistribution.
 #
 
-#
-# Export IDENT for sub-makefiles
-#
-export IDENT
-
-#
-# INCFLAGS 
-#
-INCFLAGS_MAKEFILE=  
-
 export MakeInc_cmd=${SRCROOT}/makedefs/MakeInc.cmd
 export MakeInc_def=${SRCROOT}/makedefs/MakeInc.def
 export MakeInc_rule=${SRCROOT}/makedefs/MakeInc.rule
@@ -26,20 +16,30 @@ include $(MakeInc_def)
 #
 # CFLAGS
 #
-CFLAGS+= -include meta_features.h -DLIBKERN_KERNEL_PRIVATE -DOSALLOCDEBUG=1 \
-         $(CFLAGS_INLINE_CONFIG)
+CFLAGS+= -include meta_features.h -DLIBKERN_KERNEL_PRIVATE -DOSALLOCDEBUG=1
+SFLAGS+= -include meta_features.h
+
+# Objects that don't want -Wcast-align warning (8474835)
+OSKextLib.cpo_CXXWARNFLAGS_ADD = -Wno-cast-align
+OSKext.cpo_CXXWARNFLAGS_ADD = -Wno-cast-align
+OSMetaClass.cpo_CXXWARNFLAGS_ADD = -Wno-cast-align
+OSRuntime.cpo_CXXWARNFLAGS_ADD += -Wno-missing-prototypes
+OSUnserialize.cpo_CXXWARNFLAGS_ADD = -Wno-cast-align -Wno-unreachable-code-break
+corecrypto_md5.o_CWARNFLAGS_ADD = -Wno-cast-align
+corecrypto_sha1.o_CWARNFLAGS_ADD = -Wno-cast-align
 
 # zlib is 3rd party source
-compress.o_CWARNFLAGS_ADD = -Wno-cast-qual 
-deflate.o_CWARNFLAGS_ADD = -Wno-cast-qual 
-infback.o_CWARNFLAGS_ADD = -Wno-cast-qual 
-inffast.o_CWARNFLAGS_ADD = -Wno-cast-qual 
-inflate.o_CWARNFLAGS_ADD = -Wno-cast-qual 
-trees.o_CWARNFLAGS_ADD = -Wno-cast-qual 
-uncompr.o_CWARNFLAGS_ADD = -Wno-cast-qual 
+compress.o_CWARNFLAGS_ADD = -Wno-cast-qual
+deflate.o_CWARNFLAGS_ADD = -Wno-cast-qual
+infback.o_CWARNFLAGS_ADD = -Wno-cast-qual
+inffast.o_CWARNFLAGS_ADD = -Wno-cast-qual
+inflate.o_CWARNFLAGS_ADD = -Wno-cast-qual
+trees.o_CWARNFLAGS_ADD = -Wno-cast-qual
+uncompr.o_CWARNFLAGS_ADD = -Wno-cast-qual
 
 # warnings in bison-generated code
-OSUnserializeXML.cpo_CXXWARNFLAGS_ADD = -Wno-uninitialized
+OSUnserializeXML.cpo_CXXWARNFLAGS_ADD += -Wno-uninitialized -Wno-unreachable-code -Wno-unreachable-code-break
+OSUnserialize.cpo_CXXWARNFLAGS_ADD += -Wno-unreachable-code
 
 # Runtime support functions don't interact well with LTO (9294679)
 stack_protector.o_CFLAGS_ADD += $(CFLAGS_NOLTO_FLAG)
@@ -47,7 +47,7 @@ stack_protector.o_CFLAGS_ADD += $(CFLAGS_NOLTO_FLAG)
 #
 # Directories for mig generated files
 #
-COMP_SUBDIRS = 
+COMP_SUBDIRS =
 
 #
 #  Make sure we don't remove this by accident if interrupted at the wrong
@@ -67,46 +67,40 @@ COMP_SUBDIRS =
 
 %CFILES
 
-%MFILES
+%CXXFILES
 
 %SFILES
 
-%BFILES
-
-%ORDERED
 %MACHDEP
 
-#
-#  OBJSDEPS is the set of files (defined in the machine dependent
-#  template if necessary) which all objects depend on (such as an
-#  in-line assembler expansion filter)
-#
-${OBJS}: ${OBJSDEPS}
+# Rebuild if per-file overrides change
+${OBJS}: $(firstword $(MAKEFILE_LIST))
 
+# Rebuild if global compile flags change
+$(COBJS): .CFLAGS
+.CFLAGS: ALWAYS
+	$(_v)$(REPLACECONTENTS) $@ $(KCC) $(CFLAGS) $(INCFLAGS)
+$(CXXOBJS): .CXXFLAGS
+.CXXFLAGS: ALWAYS
+	$(_v)$(REPLACECONTENTS) $@ $(KC++) $(CXXFLAGS) $(INCFLAGS)
+$(SOBJS): .SFLAGS
+.SFLAGS: ALWAYS
+	$(_v)$(REPLACECONTENTS) $@ $(S_KCC) $(SFLAGS) $(INCFLAGS)
 
-%LOAD
-
-LDOBJS = $(OBJS)
-
-$(COMPONENT).filelist: $(LDOBJS)
-	$(_v)if [ $(BUILD_MACHO_OBJ) -eq 1 ]; then \
-	for hib_file in ${HIB_FILES}; \
+$(COMPONENT).filelist: $(OBJS)
+	$(_v)for hib_file in ${HIB_FILES}; \
 	do	\
-		$(SEG_HACK) __HIB $${hib_file} -o $${hib_file}__; \
-		mv $${hib_file}__ $${hib_file} ; \
-	done; \
-	fi
-	@echo LDFILELIST $(COMPONENT)
-	$(_v)( for obj in ${LDOBJS}; do	\
-		 echo $(TARGET)$(COMP_OBJ_DIR)/$(KERNEL_CONFIG)/$${obj}; \
-	done; ) > $(COMPONENT).filelist
+		$(SEG_HACK) -n __HIB -o $${hib_file}__ $${hib_file} || exit 1; \
+		mv $${hib_file}__ $${hib_file} || exit 1; \
+	done
+	@echo "$(ColorL)LDFILELIST$(Color0) $(ColorLF)$(COMPONENT)$(Color0)"
+	$(_v)for obj in ${OBJS}; do	\
+		 echo $(TARGET)/$(CURRENT_KERNEL_CONFIG)/$${obj}; \
+	done > $(COMPONENT).filelist
 
 do_all: $(COMPONENT).filelist
 
-do_depend: do_all
-	$(_v)${MD} -u Makedep -f -d `ls *.d`
-	
-do_build_all: do_depend 
+do_build_all:: do_all
 
 %RULES
 

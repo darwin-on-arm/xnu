@@ -29,6 +29,7 @@
 #ifndef _LIBKERN_OSKEXTLIBPRIVATE_H
 #define _LIBKERN_OSKEXTLIBPRIVATE_H
 
+
 #include <sys/cdefs.h>
 #include <uuid/uuid.h>
 
@@ -39,7 +40,7 @@ __BEGIN_DECLS
 #include <mach/vm_types.h>
 #else
 #include <CoreFoundation/CoreFoundation.h>
-#include <System/mach/kmod.h>
+#include <mach/kmod.h>
 #endif /* KERNEL */
 __END_DECLS
 
@@ -79,6 +80,13 @@ typedef uint8_t OSKextExcludeLevel;
  */
 #define kOSBundleDeveloperOnlyKey		"OSBundleDeveloperOnly"
 
+/*!
+ * @define   kOSBundleRamDiskOnlyKey
+ * @abstract A boolean value indicating whether the kext should only load when
+ *           booted from a ram disk.
+ */
+#define kOSBundleRamDiskOnlyKey		"OSBundleRamDiskOnly"
+
 
 /*!
  * @define   kAppleSecurityExtensionKey
@@ -116,6 +124,7 @@ typedef uint8_t OSKextExcludeLevel;
 *   kOSKernelResourceKey
 *********************************************************************/
 #define kOSBundleMachOHeadersKey                "OSBundleMachOHeaders"
+#define kOSBundleLogStringsKey                  "OSBundleLogStrings"
 #define kOSBundleCPUTypeKey                     "OSBundleCPUType"
 #define kOSBundleCPUSubtypeKey                  "OSBundleCPUSubtype"
 #define kOSBundlePathKey                        "OSBundlePath"
@@ -126,6 +135,8 @@ typedef uint8_t OSKextExcludeLevel;
 #define kOSBundleLoadTagKey                     "OSBundleLoadTag"
 #define kOSBundleLoadAddressKey                 "OSBundleLoadAddress"
 #define kOSBundleLoadSizeKey                    "OSBundleLoadSize"
+#define kOSBundleExecLoadAddressKey             "OSBundleExecLoadAddress"
+#define kOSBundleExecLoadSizeKey                "OSBundleExecLoadSize"
 #define kOSBundleWiredSizeKey                   "OSBundleWiredSize"
 #define kOSBundleDependenciesKey                "OSBundleDependencies"
 #define kOSBundleRetainCountKey                 "OSBundleRetainCount"
@@ -893,6 +904,15 @@ typedef struct _loaded_kext_summary_header {
 extern OSKextLoadedKextSummaryHeader * gLoadedKextSummaries;
 
 /*!
+ * @var gLoadedKextSummariesTimestamp
+ *
+ * @abstract This will be set to mach_absolute_time() around updates to
+ * gLoadedKextSummaries.  Ie. immediately before gLoadedKextSummaries is set to
+ * zero, and immediately after it is set to a new value.
+ */
+extern uint64_t gLoadedKextSummariesTimestamp;
+
+/*!
  * @function OSKextLoadedKextSummariesUpdated
  * @abstract Called when gLoadedKextSummaries has been updated.
  *
@@ -902,6 +922,19 @@ extern OSKextLoadedKextSummaryHeader * gLoadedKextSummaries;
  * gdb can set a breakpoint on this function to detect kext loads and unloads.
  */
 void OSKextLoadedKextSummariesUpdated(void);
+
+#ifdef XNU_KERNEL_PRIVATE
+
+extern const vm_allocation_site_t * OSKextGetAllocationSiteForCaller(uintptr_t address);
+extern uint32_t                     OSKextGetKmodIDForSite(const vm_allocation_site_t * site,
+                                                           char * name, vm_size_t namelen);
+extern void                         OSKextFreeSite(vm_allocation_site_t * site);
+
+#if CONFIG_IMAGEBOOT
+extern int OSKextGetUUIDForName(const char *, uuid_t);
+#endif
+
+#endif /* XNU_KERNEL_PRIVATE */
 
 __END_DECLS
 

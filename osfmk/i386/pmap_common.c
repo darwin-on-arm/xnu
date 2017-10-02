@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2010 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2016 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -61,8 +61,11 @@ event_t	mapping_replenish_event, pmap_user_pv_throttle_event;
 
 uint64_t pmap_pv_throttle_stat, pmap_pv_throttled_waiters;
 
+int pmap_asserts_enabled = DEBUG;
+int pmap_asserts_traced = 0;
+
 unsigned int pmap_cache_attributes(ppnum_t pn) {
-	if (pmap_get_cache_attributes(pn) & INTEL_PTE_NCACHE)
+	if (pmap_get_cache_attributes(pn, FALSE) & INTEL_PTE_NCACHE)
 	        return (VM_WIMG_IO);
 	else
 		return (VM_WIMG_COPYBACK);
@@ -108,28 +111,67 @@ void	pmap_set_cache_attributes(ppnum_t pn, unsigned int cacheattr) {
 	}
 }
 
-unsigned	pmap_get_cache_attributes(ppnum_t pn) {
+unsigned	pmap_get_cache_attributes(ppnum_t pn, boolean_t is_ept) {
 	if (last_managed_page == 0)
 		return 0;
 
-	if (!IS_MANAGED_PAGE(ppn_to_pai(pn))) {
-	    return INTEL_PTE_NCACHE;
-	}
+	if (!IS_MANAGED_PAGE(ppn_to_pai(pn)))
+	    return PTE_NCACHE(is_ept);
 
 	/*
 	 * The cache attributes are read locklessly for efficiency.
 	 */
 	unsigned int attr = pmap_phys_attributes[ppn_to_pai(pn)];
 	unsigned int template = 0;
-	
-	if (attr & PHYS_PTA)
+
+	/*
+	 * The PTA bit is currently unsupported for EPT PTEs.
+	 */
+	if ((attr & PHYS_PTA) && !is_ept)
 		template |= INTEL_PTE_PTA;
+
+	/*
+	 * If the page isn't marked as NCACHE, the default for EPT entries
+	 * is WB.
+	 */
 	if (attr & PHYS_NCACHE)
-		template |= INTEL_PTE_NCACHE;
+		template |= PTE_NCACHE(is_ept);
+	else if (is_ept)
+		template |= INTEL_EPT_WB;
+
 	return template;
 }
 
+boolean_t 
+pmap_has_managed_page(ppnum_t first, ppnum_t last)
+{
+	ppnum_t     pn, kdata_start, kdata_end;
+	boolean_t   result;
+	boot_args * args;
 
+	args        = (boot_args *) PE_state.bootArgs;
+
+	// Allow pages that the booter added to the end of the kernel.
+	// We may miss reporting some pages in this range that were freed
+	// with ml_static_free()
+	kdata_start = atop_32(args->kaddr);
+	kdata_end   = atop_32(args->kaddr + args->ksize);
+
+    assert(last_managed_page);
+    assert(first <= last);
+
+    for (result = FALSE, pn = first; 
+    	!result 
+    	  && (pn <= last)
+    	  && (pn <= last_managed_page); 
+    	 pn++)
+    {
+		if ((pn >= kdata_start) && (pn < kdata_end)) continue;
+    	result = (0 != (pmap_phys_attributes[pn] & PHYS_MANAGED));
+    }
+
+	return (result);
+}
 
 boolean_t
 pmap_is_noencrypt(ppnum_t pn)
@@ -192,6 +234,35 @@ compute_pmap_gc_throttle(void *arg __unused)
 {
 	
 }
+
+
+void
+pmap_lock_phys_page(ppnum_t pn)
+{
+	int		pai;
+
+	pai = ppn_to_pai(pn);
+
+	if (IS_MANAGED_PAGE(pai)) {
+		LOCK_PVH(pai);
+	} else
+		simple_lock(&phys_backup_lock);
+}
+
+
+void
+pmap_unlock_phys_page(ppnum_t pn)
+{
+	int		pai;
+
+	pai = ppn_to_pai(pn);
+
+	if (IS_MANAGED_PAGE(pai)) {
+		UNLOCK_PVH(pai);
+	} else
+		simple_unlock(&phys_backup_lock);
+}
+
 
 
 __private_extern__ void
@@ -283,7 +354,9 @@ unsigned pmap_kernel_reserve_replenish_stat;
 unsigned pmap_user_reserve_replenish_stat;
 unsigned pmap_kern_reserve_alloc_stat;
 
-void mapping_replenish(void)
+__attribute__((noreturn))
+void
+mapping_replenish(void)
 {
 	pv_hashed_entry_t	pvh_e;
 	pv_hashed_entry_t	pvh_eh;
@@ -394,7 +467,7 @@ pmap_set_modify(ppnum_t pn)
 void
 pmap_clear_modify(ppnum_t pn)
 {
-	phys_attribute_clear(pn, PHYS_MODIFIED);
+	phys_attribute_clear(pn, PHYS_MODIFIED, 0, NULL);
 }
 
 /*
@@ -422,7 +495,7 @@ pmap_is_modified(ppnum_t pn)
 void
 pmap_clear_reference(ppnum_t pn)
 {
-	phys_attribute_clear(pn, PHYS_REFERENCED);
+	phys_attribute_clear(pn, PHYS_REFERENCED, 0, NULL);
 }
 
 void
@@ -468,6 +541,18 @@ pmap_get_refmod(ppnum_t pn)
 	return (retval);
 }
 
+
+void
+pmap_clear_refmod_options(ppnum_t pn, unsigned int mask, unsigned int options, void *arg)
+{
+        unsigned int  x86Mask;
+
+        x86Mask = (   ((mask &   VM_MEM_MODIFIED)?   PHYS_MODIFIED : 0)
+		      | ((mask & VM_MEM_REFERENCED)? PHYS_REFERENCED : 0));
+
+        phys_attribute_clear(pn, x86Mask, options, arg);
+}
+
 /*
  * pmap_clear_refmod(phys, mask)
  *  clears the referenced and modified bits as specified by the mask
@@ -480,12 +565,19 @@ pmap_clear_refmod(ppnum_t pn, unsigned int mask)
 
 	x86Mask = (   ((mask &   VM_MEM_MODIFIED)?   PHYS_MODIFIED : 0)
 	            | ((mask & VM_MEM_REFERENCED)? PHYS_REFERENCED : 0));
-	phys_attribute_clear(pn, x86Mask);
+
+	phys_attribute_clear(pn, x86Mask, 0, NULL);
+}
+
+unsigned int
+pmap_disconnect(ppnum_t pa)
+{
+	return (pmap_disconnect_options(pa, 0, NULL));
 }
 
 /*
  *	Routine:
- *		pmap_disconnect
+ *		pmap_disconnect_options
  *
  *	Function:
  *		Disconnect all mappings for this page and return reference and change status
@@ -493,14 +585,14 @@ pmap_clear_refmod(ppnum_t pn, unsigned int mask)
  *
  */
 unsigned int
-pmap_disconnect(ppnum_t pa)
+pmap_disconnect_options(ppnum_t pa, unsigned int options, void *arg)
 {
 	unsigned refmod, vmrefmod = 0;
 
-	pmap_page_protect(pa, 0);		/* disconnect the page */
+	pmap_page_protect_options(pa, 0, options, arg);		/* disconnect the page */
 
 	pmap_assert(pa != vm_page_fictitious_addr);
-	if ((pa == vm_page_guard_addr) || !IS_MANAGED_PAGE(pa))
+	if ((pa == vm_page_guard_addr) || !IS_MANAGED_PAGE(pa) || (options & PMAP_OPTIONS_NOREFMOD))
 		return 0;
 	refmod = pmap_phys_attributes[pa] & (PHYS_MODIFIED | PHYS_REFERENCED);
 	

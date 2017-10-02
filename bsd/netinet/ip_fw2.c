@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2004-2012 Apple Inc. All rights reserved.
+ * Copyright (c) 2004-2016 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -65,7 +65,6 @@
 #endif /* INET */
 
 #if IPFW2
-#include <machine/spl.h>
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -83,6 +82,7 @@
 #include <sys/kauth.h>
 
 #include <net/if.h>
+#include <net/net_kev.h>
 #include <net/route.h>
 #include <netinet/in.h>
 #include <netinet/in_systm.h>
@@ -183,6 +183,37 @@ SYSCTL_INT(_net_inet_ip_fw, OID_AUTO, verbose_limit, CTLFLAG_RW | CTLFLAG_LOCKED
     &verbose_limit, 0, "Set upper limit of matches of ipfw rules logged");
 
 /*
+ * IP FW Stealth Logging:
+ */
+typedef enum ipfw_stealth_stats_type {
+  IPFW_STEALTH_STATS_UDP,
+  IPFW_STEALTH_STATS_TCP,
+  IPFW_STEALTH_STATS_UDPv6,
+  IPFW_STEALTH_STATS_TCPv6,
+  IPFW_STEALTH_STATS_MAX,
+} ipfw_stealth_stats_type_t;
+
+#define IPFW_STEALTH_TIMEOUT_SEC 30
+
+#define	DYN_KEEPALIVE_LEEWAY	15
+
+// Piggybagging Stealth stats with ipfw_tick().
+#define IPFW_STEALTH_TIMEOUT_FREQUENCY (30 / dyn_keepalive_period)
+
+static const char* ipfw_stealth_stats_str [IPFW_STEALTH_STATS_MAX] = {
+  "UDP", "TCP", "UDP v6", "TCP v6",
+};
+
+static uint32_t ipfw_stealth_stats_needs_flush = FALSE;
+static uint32_t ipfw_stealth_stats[IPFW_STEALTH_STATS_MAX];
+
+static void ipfw_stealth_flush_stats(void);
+void ipfw_stealth_stats_incr_udp(void);
+void ipfw_stealth_stats_incr_tcp(void);
+void ipfw_stealth_stats_incr_udpv6(void);
+void ipfw_stealth_stats_incr_tcpv6(void);
+
+/*
  * Description of dynamic rules.
  *
  * Dynamic rules are stored in lists accessed through a hash table
@@ -240,7 +271,7 @@ static u_int32_t dyn_short_lifetime = 5;
  * than dyn_keepalive_period.
  */
 
-static u_int32_t dyn_keepalive_interval = 20;
+static u_int32_t dyn_keepalive_interval = 25;
 static u_int32_t dyn_keepalive_period = 5;
 static u_int32_t dyn_keepalive = 1;	/* do send keepalives */
 
@@ -306,9 +337,6 @@ lck_mtx_t         *ipfw_mutex = &ipfw_mutex_data;
 
 extern  void    ipfwsyslog( int level, const char *format,...);
 
-#define KEV_LOG_SUBCLASS 10
-#define IPFWLOGEVENT    0
-
 #define         ipfwstring      "ipfw:"
 static          size_t		ipfwstringlen;
 
@@ -368,6 +396,52 @@ void    ipfwsyslog( int level, const char *format,...)
         kev_post_msg(&ev_msg);
 }
 
+static inline void ipfw_stealth_stats_incr(uint32_t type)
+{
+    if (type >= IPFW_STEALTH_STATS_MAX)
+        return;
+
+    ipfw_stealth_stats[type]++;
+
+    if (!ipfw_stealth_stats_needs_flush) {
+        ipfw_stealth_stats_needs_flush = TRUE;
+    }
+}
+
+void ipfw_stealth_stats_incr_udp(void)
+{
+    ipfw_stealth_stats_incr(IPFW_STEALTH_STATS_UDP);
+}
+
+void ipfw_stealth_stats_incr_tcp(void)
+{
+    ipfw_stealth_stats_incr(IPFW_STEALTH_STATS_TCP);
+}
+
+void ipfw_stealth_stats_incr_udpv6(void)
+{
+    ipfw_stealth_stats_incr(IPFW_STEALTH_STATS_UDPv6);
+}
+
+void ipfw_stealth_stats_incr_tcpv6(void)
+{
+    ipfw_stealth_stats_incr(IPFW_STEALTH_STATS_TCPv6);
+}
+
+static void ipfw_stealth_flush_stats(void)
+{
+    int i;
+
+    for (i = 0; i < IPFW_STEALTH_STATS_MAX; i++) {
+        if (ipfw_stealth_stats[i]) {
+           ipfwsyslog (LOG_INFO, "Stealth Mode connection attempt to %s %d times",
+                       ipfw_stealth_stats_str[i], ipfw_stealth_stats[i]);
+           ipfw_stealth_stats[i] = 0;
+       }
+    }
+    ipfw_stealth_stats_needs_flush = FALSE;
+}
+
 /*
  * This macro maps an ip pointer into a layer3 header pointer of type T
  */
@@ -393,7 +467,7 @@ is_icmp_query(struct ip *ip)
 #undef TT
 
 static int
-Get32static_len()
+Get32static_len(void)
 {
 	int	diff;
 	int len = static_len_32;
@@ -417,7 +491,7 @@ Get32static_len()
 }
 
 static int
-Get64static_len()
+Get64static_len(void)
 {
 	int	diff;
 	int len = static_len_64;
@@ -1018,29 +1092,31 @@ verify_rev_path(struct in_addr src, struct ifnet *ifp)
 	static struct route ro;
 	struct sockaddr_in *dst;
 
+	bzero(&ro, sizeof (ro));
 	dst = (struct sockaddr_in *)&(ro.ro_dst);
 
 	/* Check if we've cached the route from the previous call. */
 	if (src.s_addr != dst->sin_addr.s_addr) {
-		ro.ro_rt = NULL;
-
-		bzero(dst, sizeof(*dst));
 		dst->sin_family = AF_INET;
 		dst->sin_len = sizeof(*dst);
 		dst->sin_addr = src;
 
-		rtalloc_ign(&ro, RTF_CLONING|RTF_PRCLONING);
+		rtalloc_ign(&ro, RTF_CLONING|RTF_PRCLONING, false);
 	}
-	if (ro.ro_rt != NULL)
+	if (ro.ro_rt != NULL) {
 		RT_LOCK_SPIN(ro.ro_rt);
-	else
+	} else {
+		ROUTE_RELEASE(&ro);
 		return 0;	/* No route */
+	}
 	if ((ifp == NULL) ||
-		(ro.ro_rt->rt_ifp->if_index != ifp->if_index)) {
-			RT_UNLOCK(ro.ro_rt);
-			return 0;
+	    (ro.ro_rt->rt_ifp->if_index != ifp->if_index)) {
+		RT_UNLOCK(ro.ro_rt);
+		ROUTE_RELEASE(&ro);
+		return 0;
         }
 	RT_UNLOCK(ro.ro_rt);
+	ROUTE_RELEASE(&ro);
 	return 1;
 }
 
@@ -1617,7 +1693,8 @@ lookup_dyn_parent(struct ip_flow_id *pkt, struct ip_fw *rule)
 			    pkt->src_port == q->id.src_port &&
 			    pkt->dst_port == q->id.dst_port) {
 				q->expire = timenow.tv_sec + dyn_short_lifetime;
-				DEB(printf("ipfw: lookup_dyn_parent found 0x%p\n",q);)
+				DEB(printf("ipfw: lookup_dyn_parent found "
+				    "0x%llx\n", (uint64_t)VM_KERNEL_ADDRPERM(q));)
 				return q;
 			}
 	}
@@ -1836,9 +1913,8 @@ send_reject(struct ip_fw_args *args, int code, int offset, __unused int ip_len)
 				struct route sro;	/* fake route */
 
 				bzero (&sro, sizeof (sro));
-				ip_output_list(m, 0, NULL, &sro, 0, NULL, NULL);
-				if (sro.ro_rt)
-					RTFREE(sro.ro_rt);
+				ip_output(m, NULL, &sro, 0, NULL, NULL);
+				ROUTE_RELEASE(&sro);
 			}
 		}
 		m_freem(args->fwa_m);
@@ -2759,13 +2835,12 @@ add_rule(struct ip_fw **head, struct ip_fw *input_rule)
 	if (*head == NULL && input_rule->rulenum != IPFW_DEFAULT_RULE)
 		return (EINVAL);
 
-	rule = _MALLOC(l, M_IPFW, M_WAIT);
+	rule = _MALLOC(l, M_IPFW, M_WAIT | M_ZERO);
 	if (rule == NULL) {
 		printf("ipfw2: add_rule MALLOC failed\n");
 		return (ENOSPC);
 	}
 	
-	bzero(rule, l);
 	bcopy(input_rule, rule, l);
 
 	rule->next = NULL;
@@ -3460,14 +3535,12 @@ ipfw_ctl(struct sockopt *sopt)
 		 * how much room is needed, do not bother filling up the
 		 * buffer, just jump to the sooptcopyout.
 		 */
-		buf = _MALLOC(size, M_TEMP, M_WAITOK);
+		buf = _MALLOC(size, M_TEMP, M_WAITOK | M_ZERO);
 		if (buf == 0) {
 			lck_mtx_unlock(ipfw_mutex);
 			error = ENOBUFS;
 			break;
 		}
-		
-		bzero(buf, size);
 
 		bp = buf;
 		for (rule = layer3_chain; rule ; rule = rule->next) {
@@ -3528,7 +3601,7 @@ ipfw_ctl(struct sockopt *sopt)
 						ipfw_dyn_dst->ack_rev = p->ack_rev;
 						ipfw_dyn_dst->dyn_type = p->dyn_type;
 						ipfw_dyn_dst->count = p->count;
-						last = (char*)&ipfw_dyn_dst->next;
+						last = (char*)ipfw_dyn_dst;
 					} else {
 						ipfw_dyn_rule_32	*ipfw_dyn_dst;
 						
@@ -3554,11 +3627,16 @@ ipfw_ctl(struct sockopt *sopt)
 						ipfw_dyn_dst->ack_rev = p->ack_rev;
 						ipfw_dyn_dst->dyn_type = p->dyn_type;
 						ipfw_dyn_dst->count = p->count;
-						last = (char*)&ipfw_dyn_dst->next;
+						last = (char*)ipfw_dyn_dst;
 					}
 				}
-			if (last != NULL) /* mark last dynamic rule */
-				bzero(last, sizeof(last));
+			/* mark last dynamic rule */
+			if (last != NULL) {
+				if (is64user)
+					((ipfw_dyn_rule_64 *)last)->next = 0;
+				else
+					((ipfw_dyn_rule_32 *)last)->next = 0;
+			}
 		}
 		lck_mtx_unlock(ipfw_mutex);
 
@@ -3679,13 +3757,11 @@ ipfw_ctl(struct sockopt *sopt)
 	case IP_FW_ADD:
 	{
 		size_t savedsopt_valsize=0;
-		rule = _MALLOC(RULE_MAXSIZE, M_TEMP, M_WAITOK);
+		rule = _MALLOC(RULE_MAXSIZE, M_TEMP, M_WAITOK | M_ZERO);
 		if (rule == 0) {
 			error = ENOBUFS;
 			break;
 		}
-		
-		bzero(rule, RULE_MAXSIZE);
 
 		if (api_version != IP_FW_CURRENT_API_VERSION) {
 			error = ipfw_convert_to_latest(sopt, rule, api_version, is64user);
@@ -3873,7 +3949,7 @@ ipfw_ctl(struct sockopt *sopt)
  * deleted while packets hold a reference to them. When this happens,
  * dummynet changes the reference to the default rule (it could well be a
  * NULL pointer, but this way we do not need to check for the special
- * case, plus here they have info on the default behaviour).
+ * case, plus here he have info on the default behaviour).
  */
 struct ip_fw *ip_fw_default_rule;
 
@@ -3888,6 +3964,14 @@ ipfw_tick(__unused void * unused)
 	int i;
 	ipfw_dyn_rule *q;
 	struct timeval timenow;
+	static int stealth_cnt = 0;
+
+	if (ipfw_stealth_stats_needs_flush) {
+	    stealth_cnt++;
+	    if (!(stealth_cnt % IPFW_STEALTH_TIMEOUT_FREQUENCY)) {
+	        ipfw_stealth_flush_stats();
+	    }
+	}
 
 	if (dyn_keepalive == 0 || ipfw_dyn_v == NULL || dyn_count == 0)
 		goto done;
@@ -3935,12 +4019,12 @@ ipfw_tick(__unused void * unused)
 		mnext = m->m_nextpkt;
 		m->m_nextpkt = NULL;
 		bzero (&sro, sizeof (sro));
-		ip_output_list(m, 0, NULL, &sro, 0, NULL, NULL);
-		if (sro.ro_rt)
-			RTFREE(sro.ro_rt);
+		ip_output(m, NULL, &sro, 0, NULL, NULL);
+		ROUTE_RELEASE(&sro);
 	}
 done:
-	timeout(ipfw_tick, NULL, dyn_keepalive_period*hz);
+	timeout_with_leeway(ipfw_tick, NULL, dyn_keepalive_period*hz,
+	    DYN_KEEPALIVE_LEEWAY*hz);
 }
 
 void
@@ -3966,7 +4050,7 @@ ipfw_init(void)
 	default_rule.cmd[0].len = 1;
 	default_rule.cmd[0].opcode =
 #ifdef IPFIREWALL_DEFAULT_TO_ACCEPT
-				1 ? O_ACCEPT :
+				(1) ? O_ACCEPT :
 #endif
 				O_DENY;
 
@@ -4002,4 +4086,3 @@ ipfw_init(void)
 }
 
 #endif /* IPFW2 */
-

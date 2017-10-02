@@ -47,8 +47,8 @@ enum {
 
 // masks for __state[1]
 enum {
-    kIOServiceBusyStateMask	= 0x000000ff,
-    kIOServiceBusyMax		= 255,
+    kIOServiceBusyStateMask	= 0x000003ff,
+    kIOServiceBusyMax		= 1023,
     kIOServiceNeedConfigState	= 0x80000000,
     kIOServiceSynchronousState	= 0x40000000,
     kIOServiceModuleStallState	= 0x20000000,
@@ -56,15 +56,15 @@ enum {
 
     kIOServiceSyncPubState	= 0x08000000,
     kIOServiceConfigState	= 0x04000000,
+    kIOServiceStartState	= 0x02000000,
     kIOServiceTermPhase2State	= 0x01000000,
     kIOServiceTermPhase3State	= 0x00800000,
     kIOServiceTermPhase1State	= 0x00400000,
-    kIOServiceTerm1WaiterState  = 0x00200000
-};
-
-// options for terminate()
-enum {
+    kIOServiceTerm1WaiterState  = 0x00200000,
     kIOServiceRecursing		= 0x00100000,
+    kIOServiceNeedWillTerminate = 0x00080000,
+    kIOServiceWaitDetachState   = 0x00040000,
+    kIOServiceConfigRunning     = 0x00020000,
 };
 
 // notify state
@@ -89,6 +89,7 @@ public:
     OSOrderedSet *			whence;
 
     OSDictionary *			matching;
+    const OSSymbol *                    type;
     IOServiceMatchingNotificationHandler handler;
     IOServiceNotificationHandler	compatHandler;
     void *				target;
@@ -97,10 +98,10 @@ public:
     queue_head_t			handlerInvocations;
     IOOptionBits			state;
 
-    virtual void free();
-    virtual void remove();
-    virtual bool disable();
-    virtual void enable( bool was );
+    virtual void free() APPLE_KEXT_OVERRIDE;
+    virtual void remove() APPLE_KEXT_OVERRIDE;
+    virtual bool disable() APPLE_KEXT_OVERRIDE;
+    virtual void enable( bool was ) APPLE_KEXT_OVERRIDE;
     virtual void wait();
 };
 
@@ -119,10 +120,25 @@ public:
     queue_head_t		handlerInvocations;
     IOOptionBits		state;
 
-    virtual void free();
-    virtual void remove();
-    virtual bool disable();
-    virtual void enable( bool was );
+    virtual void free() APPLE_KEXT_OVERRIDE;
+    virtual void remove() APPLE_KEXT_OVERRIDE;
+    virtual bool disable() APPLE_KEXT_OVERRIDE;
+    virtual void enable( bool was ) APPLE_KEXT_OVERRIDE;
+    virtual void wait();
+    virtual bool init() APPLE_KEXT_OVERRIDE;
+};
+
+class _IOServiceNullNotifier : public IONotifier
+{
+    OSDeclareDefaultStructors(_IOServiceNullNotifier)
+
+public:
+    virtual void taggedRetain(const void *tag) const APPLE_KEXT_OVERRIDE;
+    virtual void taggedRelease(const void *tag, const int when) const APPLE_KEXT_OVERRIDE;
+    virtual void free() APPLE_KEXT_OVERRIDE;
+    virtual void remove() APPLE_KEXT_OVERRIDE;
+    virtual bool disable() APPLE_KEXT_OVERRIDE;
+    virtual void enable( bool was ) APPLE_KEXT_OVERRIDE;
     virtual void wait();
 };
 
@@ -133,7 +149,7 @@ class _IOConfigThread : public OSObject
     OSDeclareDefaultStructors(_IOConfigThread)
 
 public:
-    virtual void free();
+    virtual void free() APPLE_KEXT_OVERRIDE;
 
     static void configThread( void );
     static void main( void * arg, wait_result_t result );
@@ -172,10 +188,13 @@ class IOResources : public IOService
 
 public:
     static IOService * resources( void );
-    virtual bool init( OSDictionary * dictionary = 0 );
-    virtual IOWorkLoop * getWorkLoop( ) const;
-    virtual bool matchPropertyTable( OSDictionary * table );
-    virtual IOReturn setProperties( OSObject * properties );
+    virtual bool init( OSDictionary * dictionary = 0 ) APPLE_KEXT_OVERRIDE;
+    virtual IOReturn newUserClient(task_t owningTask, void * securityID,
+                                   UInt32 type,  OSDictionary * properties,
+                                   IOUserClient ** handler) APPLE_KEXT_OVERRIDE;
+    virtual IOWorkLoop * getWorkLoop( ) const APPLE_KEXT_OVERRIDE;
+    virtual bool matchPropertyTable( OSDictionary * table ) APPLE_KEXT_OVERRIDE;
+    virtual IOReturn setProperties( OSObject * properties ) APPLE_KEXT_OVERRIDE;
 };
 
 class _IOOpenServiceIterator : public OSIterator
@@ -193,10 +212,10 @@ public:
     static OSIterator * iterator( OSIterator * _iter,
                                   const IOService * client,
                                   const IOService * provider );
-    virtual void free();
-    virtual void reset();
-    virtual bool isValid();
-    virtual OSObject * getNextObject();
+    virtual void free() APPLE_KEXT_OVERRIDE;
+    virtual void reset() APPLE_KEXT_OVERRIDE;
+    virtual bool isValid() APPLE_KEXT_OVERRIDE;
+    virtual OSObject * getNextObject() APPLE_KEXT_OVERRIDE;
 };
 
 extern const OSSymbol * gIOConsoleUsersKey;

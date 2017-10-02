@@ -138,7 +138,9 @@ extern void ipc_right_terminate(
 extern kern_return_t ipc_right_destroy(
 	ipc_space_t		space,
 	mach_port_name_t	name,
-	ipc_entry_t		entry);
+	ipc_entry_t		entry,
+	boolean_t		check_guard,
+	uint64_t		guard);
 
 /* Release a send/send-once/dead-name user reference */
 extern kern_return_t ipc_right_dealloc(
@@ -153,6 +155,14 @@ extern kern_return_t ipc_right_delta(
 	ipc_entry_t		entry,
 	mach_port_right_t	right,
 	mach_port_delta_t	delta);
+
+/* Destroy a receive right; Modify ref count for send rights */
+extern kern_return_t ipc_right_destruct(
+	ipc_space_t		space,
+	mach_port_name_t	name,
+	ipc_entry_t		entry,
+	mach_port_delta_t	srdelta,
+	uint64_t		guard);
 
 /* Retrieve information about a right */
 extern kern_return_t ipc_right_info(
@@ -179,7 +189,7 @@ extern kern_return_t ipc_right_copyin(
 	ipc_object_t		*objectp,
 	ipc_port_t		*sorightp,
 	ipc_port_t		*releasep,
-	queue_t			links);
+	int			*assertcntp);
 
 /* Undo the effects of an ipc_right_copyin */
 extern void ipc_right_copyin_undo(
@@ -190,11 +200,13 @@ extern void ipc_right_copyin_undo(
 	ipc_object_t		object,
 	ipc_port_t		soright);
 
-/* Copyin two send rights from a space */
+/* Copyin a pair of dispositions from a space */
 extern kern_return_t ipc_right_copyin_two(
 	ipc_space_t		space,
 	mach_port_name_t	name,
 	ipc_entry_t		entry,
+	mach_msg_type_name_t	msgt_one,
+	mach_msg_type_name_t	msgt_two,
 	ipc_object_t		*objectp,
 	ipc_port_t		*sorightp,
 	ipc_port_t		*releasep);

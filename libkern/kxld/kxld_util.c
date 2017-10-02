@@ -1,8 +1,8 @@
 /*
- * Copyright (c) 2007-2008 Apple Inc. All rights reserved.
+ * Copyright (c) 2007-2016 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
- * 
+ *
  * This file contains Original Code and/or Modifications of Original Code
  * as defined in and that are subject to the Apple Public Source License
  * Version 2.0 (the 'License'). You may not use this file except in
@@ -11,10 +11,10 @@
  * unlawful or unlicensed copies of an Apple operating system, or to
  * circumvent, violate, or enable the circumvention or violation of, any
  * terms of an Apple operating system software license agreement.
- * 
+ *
  * Please obtain a copy of the License at
  * http://www.opensource.apple.com/apsl/ and read it before using this file.
- * 
+ *
  * The Original Code and all software distributed under the License are
  * distributed on an 'AS IS' basis, WITHOUT WARRANTY OF ANY KIND, EITHER
  * EXPRESS OR IMPLIED, AND APPLE HEREBY DISCLAIMS ALL SUCH WARRANTIES,
@@ -22,7 +22,7 @@
  * FITNESS FOR A PARTICULAR PURPOSE, QUIET ENJOYMENT OR NON-INFRINGEMENT.
  * Please see the License for the specific language governing rights and
  * limitations under the License.
- * 
+ *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
 #include <stdarg.h>
@@ -62,8 +62,14 @@ static unsigned long bytes_freed = 0;
 #endif
 
 static KXLDLoggingCallback s_logging_callback = NULL;
-static const char *s_callback_name = NULL;
+static char s_callback_name[64] = "internal";
 static void *s_callback_data = NULL;
+
+#if !KERNEL
+static boolean_t s_cross_link_enabled  = FALSE;
+static kxld_size_t s_cross_link_page_size = PAGE_SIZE;
+#endif
+
 
 /*******************************************************************************
 *******************************************************************************/
@@ -78,7 +84,18 @@ kxld_set_logging_callback(KXLDLoggingCallback logging_callback)
 void 
 kxld_set_logging_callback_data(const char *name, void *user_data)
 {
-    s_callback_name = name;
+    if (name) {
+        (void)strlcpy(s_callback_name, name, sizeof(s_callback_name));
+        /* disallow format strings in the kxld logging callback name */
+        for (size_t i = 0; i < sizeof(s_callback_name); i++) {
+            if (s_callback_name[i] == '%') {
+                s_callback_name[i] = '.';
+            }
+        }
+    } else {
+        (void)strlcpy(s_callback_name, "internal", sizeof(s_callback_name));
+    }
+
     s_callback_data = user_data;
 }
 
@@ -91,14 +108,13 @@ kxld_log(KXLDLogSubsystem subsystem, KXLDLogLevel level,
     char stack_buffer[256];
     char *alloc_buffer = NULL;
     char *format = stack_buffer;
-    const char *name = (s_callback_name) ? s_callback_name : "internal";
     u_int length = 0;
     va_list ap;
 
     if (s_logging_callback) {
 
         length = snprintf(stack_buffer, sizeof(stack_buffer), "kxld[%s]: %s",
-            name, in_format);
+                          s_callback_name, in_format);
 
         if (length >= sizeof(stack_buffer)) {
             length += 1;
@@ -106,7 +122,7 @@ kxld_log(KXLDLogSubsystem subsystem, KXLDLogLevel level,
             if (!alloc_buffer) return;
 
             snprintf(alloc_buffer, length, "kxld[%s]: %s",
-                name, in_format);
+                     s_callback_name, in_format);
             format = alloc_buffer;
         }
 
@@ -165,7 +181,7 @@ kxld_page_alloc_untracked(size_t size)
     if (size < KALLOC_MAX) {
         ptr = kalloc(size);
     } else {
-        rval = kmem_alloc(kernel_map, &addr, size);
+        rval = kmem_alloc(kernel_map, &addr, size, VM_KERN_MEMORY_OSKEXT);
         if (!rval) ptr = (void *) addr;
     }
 #else /* !KERNEL */
@@ -204,7 +220,7 @@ kxld_alloc_pageable(size_t size)
     kern_return_t rval = 0;
     vm_offset_t ptr = 0;
 
-    rval = kmem_alloc_pageable(kernel_map, &ptr, size);
+    rval = kmem_alloc_pageable(kernel_map, &ptr, size, VM_KERN_MEMORY_OSKEXT);
     if (rval) ptr = 0;
 
     return (void *) ptr;
@@ -763,13 +779,13 @@ kxld_is_32_bit(cpu_type_t cputype)
 * Find the first occurrence of find in s.
 *******************************************************************************/
 const char *
-kxld_strstr(s, find)
-    const char *s, *find;
+kxld_strstr(const char *s, const char *find)
 {
 #if KERNEL
     char c, sc;
     size_t len;
-
+    if (!s || !find)
+        return s;
     if ((c = *find++) != 0) {
         len = strlen(find);
         do {
@@ -803,4 +819,89 @@ kxld_print_memory_report(void)
         bytes_allocated, bytes_freed, bytes_allocated - bytes_freed);
 #endif
 }
+
+/*********************************************************************
+*********************************************************************/
+#if !KERNEL
+boolean_t kxld_set_cross_link_page_size(kxld_size_t target_page_size)
+{
+    // verify radix 2
+    if ((target_page_size != 0) && 
+        ((target_page_size & (target_page_size - 1)) == 0)) {
+
+        s_cross_link_enabled = TRUE;
+        s_cross_link_page_size = target_page_size;
+
+        return TRUE;   
+    } else {
+        return FALSE;
+    }
+}
+#endif /* !KERNEL */
+
+/*********************************************************************
+*********************************************************************/
+kxld_size_t kxld_get_effective_page_size(void)
+{
+#if KERNEL
+    return PAGE_SIZE;
+#else
+    if (s_cross_link_enabled) {
+        return s_cross_link_page_size;
+    } else {
+        return PAGE_SIZE;
+    }
+#endif /* KERNEL */
+}
+
+/*********************************************************************
+*********************************************************************/
+kxld_addr_t kxld_round_page_cross_safe(kxld_addr_t offset)
+{
+#if KERNEL
+    return round_page(offset);
+#else
+    // assume s_cross_link_page_size is power of 2
+    if (s_cross_link_enabled) {
+        return (offset + (s_cross_link_page_size - 1)) & 
+               (~(s_cross_link_page_size - 1));
+    } else {
+        return round_page(offset);
+    }
+#endif /* KERNEL */
+}
+
+#if SPLIT_KEXTS_DEBUG
+
+void kxld_show_split_info(splitKextLinkInfo *info)
+{
+    kxld_log(kKxldLogLinking, kKxldLogErr,
+             "splitKextLinkInfo: \n"
+             "kextExecutable %p to %p kextSize %lu \n"
+             "linkedKext %p to %p linkedKextSize %lu \n"
+             "vmaddr_TEXT %p vmaddr_TEXT_EXEC %p "
+             "vmaddr_DATA %p vmaddr_DATA_CONST %p "
+             "vmaddr_LLVM_COV %p vmaddr_LINKEDIT %p",
+             (void *) info->kextExecutable,
+             (void *) (info->kextExecutable + info->kextSize),
+             info->kextSize,
+             (void*) info->linkedKext,
+             (void*) (info->linkedKext + info->linkedKextSize),
+             info->linkedKextSize,
+             (void *) info->vmaddr_TEXT,
+             (void *) info->vmaddr_TEXT_EXEC,
+             (void *) info->vmaddr_DATA,
+             (void *) info->vmaddr_DATA_CONST,
+             (void *) info->vmaddr_LLVM_COV,
+             (void *) info->vmaddr_LINKEDIT);
+}
+
+boolean_t isTargetKextName(const char * the_name)
+{
+    if (the_name && 0 == strcmp(the_name, KXLD_TARGET_KEXT)) {
+        return(TRUE);
+    }
+    return(FALSE);
+}
+#endif
 

@@ -104,17 +104,24 @@ struct image_params {
 	int		ip_interp_sugid_fd;		/* fd for sugid script */
 
 	/* Next two fields are for support of architecture translation... */
-	char		*ip_p_comm;		/* optional alt p->p_comm */
 	struct vfs_context	*ip_vfs_context;	/* VFS context */
 	struct nameidata *ip_ndp;		/* current nameidata */
 	thread_t	ip_new_thread;		/* thread for spawn/vfork */
 
 	struct label	*ip_execlabelp;		/* label of the executable */
 	struct label	*ip_scriptlabelp;	/* label of the script */
+	struct vnode	*ip_scriptvp;		/* script */
 	unsigned int	ip_csflags;		/* code signing flags */
+	int		ip_mac_return;		/* return code from mac policy checks */
 	void		*ip_px_sa;
 	void		*ip_px_sfa;
 	void		*ip_px_spa;
+	void		*ip_px_smpx;		/* MAC-specific spawn attrs. */
+	void		*ip_px_persona;		/* persona args */
+	void		*ip_cs_error;		/* codesigning error reason */
+
+	uint64_t ip_dyld_fsid;
+	uint64_t ip_dyld_fsobjid;
 };
 
 /*
@@ -128,5 +135,8 @@ struct image_params {
 #define	IMGPF_SPAWN		0x00000010	/* spawn (without setexec) */
 #define	IMGPF_DISABLE_ASLR	0x00000020	/* disable ASLR */
 #define	IMGPF_ALLOW_DATA_EXEC	0x00000040	/* forcibly disallow data execution */
+#define	IMGPF_VFORK_EXEC	0x00000080	/* vfork followed by exec */
+#define	IMGPF_EXEC		0x00000100	/* exec */
+#define	IMGPF_HIGH_BITS_ASLR	0x00000200	/* randomize high bits of ASLR slide */
 
 #endif	/* !_SYS_IMGACT */

@@ -3,25 +3,26 @@ export MakeInc_def=${SRCROOT}/makedefs/MakeInc.def
 export MakeInc_rule=${SRCROOT}/makedefs/MakeInc.rule
 export MakeInc_dir=${SRCROOT}/makedefs/MakeInc.dir
 
-
 include $(MakeInc_cmd)
 include $(MakeInc_def)
 
 DATAFILES = \
-	_structs.h	endian.h	param.h		types.h \
-	_limits.h	_types.h	limits.h	setjmp.h \
-	_param.h	arch.h		locks.h		signal.h \
-	_mcontext.h	vmparam.h
+	endian.h fasttrap_isa.h param.h \
+	profile.h signal.h limits.h _limits.h \
+	types.h vmparam.h _types.h _param.h \
+	_mcontext.h
+
+PRIVATE_DATAFILES = \
+	disklabel.h
 
 KERNELFILES = \
-	_structs.h	endian.h	param.h		types.h \
-	_limits.h	_types.h	limits.h	setjmp.h \
-	_param.h	arch.h		locks.h		signal.h \
-	_mcontext.h	vmparam.h
-
+	endian.h param.h \
+	profile.h signal.h limits.h _limits.h \
+	types.h vmparam.h _types.h _param.h \
+	_mcontext.h
 
 INSTALL_MD_LIST = ${DATAFILES}
-INSTALL_MD_LCL_LIST = ${DATAFILES} disklabel.h
+INSTALL_MD_LCL_LIST = ${PRIVATE_DATAFILES}
 
 INSTALL_MD_DIR = arm
 
@@ -31,5 +32,3 @@ EXPORT_MD_DIR = arm
 
 include $(MakeInc_rule)
 include $(MakeInc_dir)
-
-

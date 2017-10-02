@@ -40,6 +40,7 @@
 
 #include <ipc/ipc_kmsg.h>
 #include <kern/timer.h>
+#include <kern/debug.h>
 
 struct processor_sched_statistics {
 	uint32_t		csw_count;
@@ -60,11 +61,11 @@ struct processor_data {
 	timer_data_t			system_state;
 	timer_data_t			user_state;
 
-	timer_t					current_state;
+	timer_t					current_state; /* points to processor's idle, system, or user state timer */
 
 	/* Thread execution timers */
-	timer_t					thread_timer;
-	timer_t					kernel_timer;
+	timer_t					thread_timer; /* points to current thread's user or system timer */
+	timer_t					kernel_timer; /* points to current thread's system_timer */
 
 	/* Kernel stack cache */
 	struct stack_cache {
@@ -82,12 +83,32 @@ struct processor_data {
 		unsigned int			avail;
 	}						ikm_cache;
 
-	unsigned long			page_grab_count;
-	int						start_color;
-	void					*free_pages;
+	/* waitq prepost cache */
+#define WQP_CACHE_MAX	50
+	struct wqp_cache {
+		uint64_t		head;
+		unsigned int		avail;
+	} wqp_cache;
 
+	int						start_color;
+	unsigned long			page_grab_count;
+	void					*free_pages;
 	struct processor_sched_statistics sched_stats;
-	uint64_t        timer_call_ttd; /* current timer call time-to-deadline */
+	uint64_t	timer_call_ttd; /* current timer call time-to-deadline */
+	uint64_t	wakeups_issued_total; /* Count of thread wakeups issued
+					       * by this processor
+					       */
+	struct debugger_state {
+		debugger_op db_current_op;
+		const char *db_message;
+		const char *db_panic_str; 
+		va_list *db_panic_args;
+		uint64_t db_panic_options;
+		boolean_t db_proceed_on_sync_failure;
+		uint32_t db_entry_count; /* incremented whenever we panic or call Debugger (current CPU panic level) */
+		kern_return_t db_op_return;
+		unsigned long db_panic_caller;
+	} debugger_state;
 };
 
 typedef struct processor_data	processor_data_t;

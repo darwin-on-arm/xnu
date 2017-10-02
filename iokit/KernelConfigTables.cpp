@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998-2000 Apple Computer, Inc. All rights reserved.
+ * Copyright (c) 1998-2012 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -38,57 +38,11 @@ const char * gIOKernelConfigTables =
 "     'IOClass'         = IOPanicPlatform;"
 "     'IOProviderClass' = IOPlatformExpertDevice;"
 "     'IOProbeScore'    = 0:32;"
-"   },"
-#ifdef __arm__
-"   {"
-"     'IOClass'         = AppleARMPE;"
-"     'IONameMatch'     = 'AppleARM';"
-"     'IOProviderClass' = IOPlatformExpertDevice;"
-"     'IOProbeScore'    = 1:32;"
-"   },"
-"   {"
-"     'IOClass'         = AppleARMIO;"
-"     'IONameMatch'     = arm-io;"
-"     'IOProviderClass' = IOPlatformDevice;"
-"     'IOProbeScore'    = 1:32;"
-"   },"
-"   {"
-"     'IOClass'         = AppleARMCPU;"
-"     'IONameMatch'     = cpu;"
-"     'IOProviderClass' = IOPlatformDevice;"
-"     'IOProbeScore'    = 1:32;"
-"   },"
-"   {"
-"       'IOClass'           = AppleARMCFIFlashController;"
-"       'IOProviderClass'   = AppleARMIODevice;"
-"       'IONameMatch'       = 'nor-flash,cfi';"
-"   },"
-"   {"
-"       'IOClass'           = AppleARMCHRPNVRAM;"
-"       'IOProviderClass'   = AppleARMIODevice;"
-"       'IONameMatch'       = 'nvram,chrp';"
-"   },"
-"  	{"
-"  		'IOClass'           = AppleARMSoftIICController;"
-"  		'IOProviderClass'   = AppleARMIODevice;"
-"  		'IONameMatch'       = 'iic,soft';"
-"  		'IOProbeScore'      = 100:32;"
-" 	},"
-"  	{"
-"  	   'IOClass'           = AppleARMNMI;"
-"  	   'IOProviderClass'   = AppleARMIODevice;"
-"  	   'IONameMatch'       = 'programmer-switch';"
-"  	}"
-#endif
-")"
-;
-
+"   }"
+")";
 
 /* This stuff is no longer used at all but was exported in prior
  * releases, so we'll keep them around for PPC/i386 only.
  * See libkern's OSKext.cpp for other symbols, which have been moved
  * there for sanity.
  */
-#if __i386__
-const char * gIOKernelKmods = "";
-#endif /* __i386__ */

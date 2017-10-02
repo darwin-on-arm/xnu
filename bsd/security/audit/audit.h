@@ -1,5 +1,5 @@
 /*-
- * Copyright (c) 2004-2009 Apple Inc.
+ * Copyright (c) 2004-2016 Apple Inc.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -44,11 +44,6 @@
 
 #if defined(_KERNEL) || defined(KERNEL)
 
-#if CONFIG_MACF
-#include <sys/queue.h>
-#include <security/mac_framework.h>
-#endif
-
 #include <bsm/audit.h>
 
 #include <sys/sysctl.h>
@@ -88,6 +83,7 @@ extern int	audit_syscalls;
 #define	ARG_AUID		0x0000000000000100ULL
 #define	ARG_GID			0x0000000000000200ULL
 #define	ARG_FD			0x0000000000000400ULL
+#define	ARG_FD1			ARG_FD
 #define	ARG_POSIX_IPC_PERM	0x0000000000000800ULL
 #define	ARG_FFLAGS		0x0000000000001000ULL
 #define	ARG_MODE		0x0000000000002000ULL
@@ -133,6 +129,7 @@ extern int	audit_syscalls;
 #define	ARG_OPAQUE		0x0008000000000000ULL	/* darwin-only */
 #define	ARG_DATA		0x0010000000000000ULL	/* darwin-only */
 #define	ARG_ADDR64		0x0020000000000000ULL	/* darwin-only */
+#define	ARG_FD2			0x0040000000000000ULL	/* darwin-only */
 #define	ARG_NONE		0x0000000000000000ULL
 #define	ARG_ALL			0xFFFFFFFFFFFFFFFFULL
 
@@ -189,6 +186,7 @@ void	 audit_arg_addr(struct kaudit_record *ar, user_addr_t addr);
 void 	 audit_arg_exit(struct kaudit_record *ar, int status, int retval);
 void	 audit_arg_len(struct kaudit_record *ar, user_size_t len);
 void	 audit_arg_fd(struct kaudit_record *ar, int fd);
+void	 audit_arg_fd2(struct kaudit_record *ar, int fd);
 void	 audit_arg_fflags(struct kaudit_record *ar, int fflags);
 void	 audit_arg_gid(struct kaudit_record *ar, gid_t gid);
 void	 audit_arg_uid(struct kaudit_record *ar, uid_t uid);
@@ -264,7 +262,7 @@ void	 audit_session_ref(kauth_cred_t cred);
 void	 audit_session_unref(kauth_cred_t cred);
 void	 audit_session_procnew(proc_t p);
 void	 audit_session_procexit(proc_t p);
-int	 audit_session_spawnjoin(proc_t p, ipc_port_t port);
+int	 audit_session_spawnjoin(proc_t p, task_t task, ipc_port_t port);
 
 void	 audit_sdev_submit(au_id_t auid, au_asid_t asid, void *record,
 	    u_int record_len);

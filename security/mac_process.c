@@ -73,6 +73,7 @@
 #include <sys/kauth.h>
 #include <sys/imgact.h>
 #include <mach/mach_types.h>
+#include <kern/task.h>
 
 #include <security/mac_internal.h>
 #include <security/mac_mach_internal.h>
@@ -273,8 +274,11 @@ mac_cred_check_label_update(kauth_cred_t cred, struct label *newlabel)
 {
 	int error;
 
-	if (!mac_proc_enforce)
-		return (0);
+#if SECURITY_MAC_CHECK_ENFORCE
+    /* 21167099 - only check if we allow write */
+    if (!mac_proc_enforce)
+        return 0;
+#endif
 
 	MAC_CHECK(cred_check_label_update, cred, newlabel);
 
@@ -286,25 +290,15 @@ mac_cred_check_visible(kauth_cred_t u1, kauth_cred_t u2)
 {
 	int error;
 
-
-
+#if SECURITY_MAC_CHECK_ENFORCE
+	/* 21167099 - only check if we allow write */
 	if (!mac_proc_enforce)
-		return (0);
-
-
+		return 0;
+#endif
 
 	MAC_CHECK(cred_check_visible, u1, u2);
 
-
 	return (error);
-}
-
-/*                                                                                                    
- * called with process locked.                                                                        
- */
-void mac_proc_set_enforce(proc_t p, int enforce_flags)
-{
-        p->p_mac_enforce |= enforce_flags;
 }
 
 int
@@ -313,11 +307,13 @@ mac_proc_check_debug(proc_t curp, struct proc *proc)
 	kauth_cred_t cred;
 	int error;
 
-
-
-	if (!mac_proc_enforce ||
-	    !mac_proc_check_enforce(curp, MAC_PROC_ENFORCE))
-		return (0);
+#if SECURITY_MAC_CHECK_ENFORCE
+	/* 21167099 - only check if we allow write */
+	if (!mac_proc_enforce)
+		return 0;
+#endif
+	if (!mac_proc_check_enforce(curp))
+		return 0;
 
 	cred = kauth_cred_proc_ref(curp);
 	MAC_CHECK(proc_check_debug, cred, proc);
@@ -332,9 +328,13 @@ mac_proc_check_fork(proc_t curp)
 	kauth_cred_t cred;
 	int error;
 
-	if (!mac_proc_enforce ||
-	    !mac_proc_check_enforce(curp, MAC_PROC_ENFORCE))
-		return (0);
+#if SECURITY_MAC_CHECK_ENFORCE
+	/* 21167099 - only check if we allow write */
+	if (!mac_proc_enforce)
+		return 0;
+#endif
+	if (!mac_proc_check_enforce(curp))
+		return 0;
 
 	cred = kauth_cred_proc_ref(curp);
 	MAC_CHECK(proc_check_fork, cred, curp);
@@ -363,6 +363,26 @@ mac_proc_check_get_task(struct ucred *cred, struct proc *p)
 	return (error);
 }
 
+int
+mac_proc_check_expose_task(struct ucred *cred, struct proc *p)
+{
+	int error;
+
+	MAC_CHECK(proc_check_expose_task, cred, p);
+
+	return (error);
+}
+
+int
+mac_proc_check_inherit_ipc_ports(struct proc *p, struct vnode *cur_vp, off_t cur_offset, struct vnode *img_vp, off_t img_offset, struct vnode *scriptvp)
+{
+	int error;
+
+	MAC_CHECK(proc_check_inherit_ipc_ports, p, cur_vp, cur_offset, img_vp, img_offset, scriptvp);
+
+	return (error);
+}
+
 /*
  * The type of maxprot in proc_check_map_anon must be equivalent to vm_prot_t
  * (defined in <mach/vm_prot.h>). mac_policy.h does not include any header
@@ -375,8 +395,12 @@ mac_proc_check_map_anon(proc_t proc, user_addr_t u_addr,
 	kauth_cred_t cred;
 	int error;
 
-	if (!mac_vm_enforce ||
-	    !mac_proc_check_enforce(proc, MAC_VM_ENFORCE))
+#if SECURITY_MAC_CHECK_ENFORCE
+	/* 21167099 - only check if we allow write */
+	if (!mac_vm_enforce)
+		return 0;
+#endif
+	if (!mac_proc_check_enforce(proc))
 		return (0);
 
 	cred = kauth_cred_proc_ref(proc);
@@ -393,8 +417,12 @@ mac_proc_check_mprotect(proc_t proc,
 	kauth_cred_t cred;
 	int error;
 
-	if (!mac_vm_enforce ||
-	    !mac_proc_check_enforce(proc, MAC_VM_ENFORCE))
+#if SECURITY_MAC_CHECK_ENFORCE
+	/* 21167099 - only check if we allow write */
+	if (!mac_vm_enforce)
+		return 0;
+#endif
+	if (!mac_proc_check_enforce(proc))
 		return (0);
 
 	cred = kauth_cred_proc_ref(proc);
@@ -409,7 +437,11 @@ mac_proc_check_run_cs_invalid(proc_t proc)
 {
 	int error;
 	
-	if (!mac_vm_enforce) return (0);
+#if SECURITY_MAC_CHECK_ENFORCE
+    /* 21167099 - only check if we allow write */
+    if (!mac_vm_enforce)
+        return 0;
+#endif
 	
 	MAC_CHECK(proc_check_run_cs_invalid, proc);
 	
@@ -422,11 +454,13 @@ mac_proc_check_sched(proc_t curp, struct proc *proc)
 	kauth_cred_t cred;
 	int error;
 
-
-
-	if (!mac_proc_enforce ||
-	    !mac_proc_check_enforce(curp, MAC_PROC_ENFORCE))
-		return (0);
+#if SECURITY_MAC_CHECK_ENFORCE
+	/* 21167099 - only check if we allow write */
+	if (!mac_proc_enforce)
+		return 0;
+#endif
+	if (!mac_proc_check_enforce(curp))
+		return 0;
 
 	cred = kauth_cred_proc_ref(curp);
 	MAC_CHECK(proc_check_sched, cred, proc);
@@ -441,11 +475,13 @@ mac_proc_check_signal(proc_t curp, struct proc *proc, int signum)
 	kauth_cred_t cred;
 	int error;
 
-
-
-	if (!mac_proc_enforce ||
-	    !mac_proc_check_enforce(curp, MAC_PROC_ENFORCE))
-		return (0);
+#if SECURITY_MAC_CHECK_ENFORCE
+	/* 21167099 - only check if we allow write */
+	if (!mac_proc_enforce)
+		return 0;
+#endif
+	if (!mac_proc_check_enforce(curp))
+		return 0;
 
 	cred = kauth_cred_proc_ref(curp);
 	MAC_CHECK(proc_check_signal, cred, proc, signum);
@@ -460,11 +496,13 @@ mac_proc_check_wait(proc_t curp, struct proc *proc)
 	kauth_cred_t cred;
 	int error;
 
-
-
-	if (!mac_proc_enforce ||
-	    !mac_proc_check_enforce(curp, MAC_PROC_ENFORCE))
-		return (0);
+#if SECURITY_MAC_CHECK_ENFORCE
+	/* 21167099 - only check if we allow write */
+	if (!mac_proc_enforce)
+		return 0;
+#endif
+	if (!mac_proc_check_enforce(curp))
+		return 0;
 
 	cred = kauth_cred_proc_ref(curp);
 	MAC_CHECK(proc_check_wait, cred, proc);
@@ -473,114 +511,11 @@ mac_proc_check_wait(proc_t curp, struct proc *proc)
 	return (error);
 }
 
-#if CONFIG_LCTX
-/*
- * Login Context
- */
-
-int
-mac_proc_check_setlcid (struct proc *p0, struct proc *p,
-			pid_t pid, pid_t lcid)
-{
-	int error;
-
-	if (!mac_proc_enforce ||
-	    !mac_proc_check_enforce(p0, MAC_PROC_ENFORCE))
-		return (0);
-
-	MAC_CHECK(proc_check_setlcid, p0, p, pid, lcid);
-	return (error);
-}
-
-int
-mac_proc_check_getlcid (struct proc *p0, struct proc *p, pid_t pid)
-{
-	int error;
-
-	if (!mac_proc_enforce ||
-	    !mac_proc_check_enforce(p0, MAC_PROC_ENFORCE))
-		return (0);
-
-	MAC_CHECK(proc_check_getlcid, p0, p, pid);
-	return (error);
-}
-
 void
-mac_lctx_notify_create (struct proc *p, struct lctx *l)
+mac_proc_notify_exit(struct proc *proc)
 {
-	MAC_PERFORM(lctx_notify_create, p, l);
+	MAC_PERFORM(proc_notify_exit, proc);
 }
-
-void
-mac_lctx_notify_join (struct proc *p, struct lctx *l)
-{
-	MAC_PERFORM(lctx_notify_join, p, l);
-}
-
-void
-mac_lctx_notify_leave (struct proc *p, struct lctx *l)
-{
-	MAC_PERFORM(lctx_notify_leave, p, l);
-}
-
-struct label *
-mac_lctx_label_alloc(void)
-{
-	struct label *label;
-
-	label = mac_labelzone_alloc(MAC_WAITOK);
-	if (label == NULL)
-		return (NULL);
-	MAC_PERFORM(lctx_label_init, label);
-	return (label);
-}
-
-void
-mac_lctx_label_free(struct label *label)
-{
-
-	MAC_PERFORM(lctx_label_destroy, label);
-	mac_labelzone_free(label);
-}
-
-int
-mac_lctx_label_externalize(struct label *label, char *elements,
-    char *outbuf, size_t outbuflen)
-{
-	int error;
-
-	error = MAC_EXTERNALIZE(lctx, label, elements, outbuf, outbuflen);
-
-	return (error);
-}
-
-int
-mac_lctx_label_internalize(struct label *label, char *string)
-{
-	int error;
-
-	error = MAC_INTERNALIZE(lctx, label, string);
-
-	return (error);
-}
-
-void
-mac_lctx_label_update(struct lctx *l, struct label *newlabel)
-{
-
-	MAC_PERFORM(lctx_label_update, l, newlabel);
-}
-
-int
-mac_lctx_check_label_update(struct lctx *l, struct label *newlabel)
-{
-	int error;
-
-	MAC_CHECK(lctx_check_label_update, l, newlabel);
-
-	return (error);
-}
-#endif	/* LCTX */
 
 int
 mac_proc_check_suspend_resume(proc_t curp, int sr)
@@ -588,9 +523,13 @@ mac_proc_check_suspend_resume(proc_t curp, int sr)
 	kauth_cred_t cred;
 	int error;
 
-	if (!mac_proc_enforce ||
-	    !mac_proc_check_enforce(curp, MAC_PROC_ENFORCE))
-		return (0);
+#if SECURITY_MAC_CHECK_ENFORCE
+	/* 21167099 - only check if we allow write */
+	if (!mac_proc_enforce)
+		return 0;
+#endif
+	if (!mac_proc_check_enforce(curp))
+		return 0;
 
 	cred = kauth_cred_proc_ref(curp);
 	MAC_CHECK(proc_check_suspend_resume, cred, curp, sr);
@@ -605,9 +544,13 @@ mac_proc_check_ledger(proc_t curp, proc_t proc, int ledger_op)
 	kauth_cred_t cred;
 	int error = 0;
 
-	if (!mac_proc_enforce ||
-	    !mac_proc_check_enforce(curp, MAC_PROC_ENFORCE))
-		return (0);
+#if SECURITY_MAC_CHECK_ENFORCE
+	/* 21167099 - only check if we allow write */
+	if (!mac_proc_enforce)
+		return 0;
+#endif
+	if (!mac_proc_check_enforce(curp))
+		return 0;
 
 	cred = kauth_cred_proc_ref(curp);
 	MAC_CHECK(proc_check_ledger, cred, proc, ledger_op);
@@ -616,57 +559,66 @@ mac_proc_check_ledger(proc_t curp, proc_t proc, int ledger_op)
 	return (error);
 }
 
-struct label *
-mac_thread_label_alloc(void)
+int
+mac_proc_check_proc_info(proc_t curp, proc_t target, int callnum, int flavor)
 {
-	struct label *label;
+	kauth_cred_t cred;
+	int error = 0;
 
-	label = mac_labelzone_alloc(MAC_WAITOK);
-	if (label == NULL)
-		return (NULL);
-	MAC_PERFORM(thread_label_init, label);
-	return (label);
+#if SECURITY_MAC_CHECK_ENFORCE
+	/* 21167099 - only check if we allow write */
+	if (!mac_proc_enforce)
+		return 0;
+#endif
+	if (!mac_proc_check_enforce(curp))
+		return 0;
+
+	cred = kauth_cred_proc_ref(curp);
+	MAC_CHECK(proc_check_proc_info, cred, target, callnum, flavor);
+	kauth_cred_unref(&cred);
+
+	return (error);
 }
 
-void
-mac_thread_label_init(struct uthread *uthread)
+int
+mac_proc_check_get_cs_info(proc_t curp, proc_t target, unsigned int op)
 {
-	uthread->uu_label = mac_thread_label_alloc();
+	kauth_cred_t cred;
+	int error = 0;
+
+#if SECURITY_MAC_CHECK_ENFORCE
+	/* 21167099 - only check if we allow write */
+	if (!mac_proc_enforce)
+		return 0;
+#endif
+	if (!mac_proc_check_enforce(curp))
+		return 0;
+
+	cred = kauth_cred_proc_ref(curp);
+	MAC_CHECK(proc_check_get_cs_info, cred, target, op);
+	kauth_cred_unref(&cred);
+
+	return (error);
 }
 
-void
-mac_thread_label_free(struct label *label)
+int
+mac_proc_check_set_cs_info(proc_t curp, proc_t target, unsigned int op)
 {
-	MAC_PERFORM(thread_label_destroy, label);
-	mac_labelzone_free(label);
+	kauth_cred_t cred;
+	int error = 0;
+
+#if SECURITY_MAC_CHECK_ENFORCE
+	/* 21167099 - only check if we allow write */
+	if (!mac_proc_enforce)
+		return 0;
+#endif
+	if (!mac_proc_check_enforce(curp))
+		return 0;
+
+	cred = kauth_cred_proc_ref(curp);
+	MAC_CHECK(proc_check_set_cs_info, cred, target, op);
+	kauth_cred_unref(&cred);
+
+	return (error);
 }
 
-void
-mac_thread_label_destroy(struct uthread *uthread)
-{
-
-	mac_thread_label_free(uthread->uu_label);
-	uthread->uu_label = NULL;
-}
-
-void
-mac_thread_userret(struct thread *td)
-{
-
-	MAC_PERFORM(thread_userret, td);
-}
-
-struct label *
-mac_thread_get_uthreadlabel(struct uthread *uthread)
-{
-
-	return (uthread->uu_label);
-}
-
-struct label *
-mac_thread_get_threadlabel(struct thread *thread)
-{
-	struct uthread *uthread = get_bsdthread_info(thread);
-
-	return (mac_thread_get_uthreadlabel(uthread));
-}

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2003-2010 Apple Inc. All rights reserved.
+ * Copyright (c) 2003-2016 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -27,13 +27,17 @@
  */
 #include <vm/vm_kern.h>
 #include <kern/kalloc.h>
-#include <kern/etimer.h>
+#include <kern/timer_queue.h>
 #include <mach/machine.h>
 #include <i386/cpu_threads.h>
 #include <i386/cpuid.h>
 #include <i386/machine_cpu.h>
 #include <i386/pmCPU.h>
-#include <i386/lock.h>
+#include <i386/bit_routines.h>
+
+#if MONOTONIC
+#include <kern/monotonic.h>
+#endif /* MONOTONIC */
 
 #define DIVISOR_GUARD(denom)				\
 	if ((denom) == 0) {				\
@@ -348,9 +352,6 @@ x86_lcpu_init(int cpu)
     lcpu->state = LCPU_OFF;
     for (i = 0; i < MAX_CACHE_DEPTH; i += 1)
 	lcpu->caches[i] = NULL;
-
-    lcpu->master = (lcpu->cpu_num == (unsigned int) master_cpu);
-    lcpu->primary = (lcpu->pnum % topoParms.nPThreadsPerPackage) == 0;
 }
 
 static x86_core_t *
@@ -361,7 +362,7 @@ x86_core_alloc(int cpu)
 
     cpup = cpu_datap(cpu);
 
-    simple_lock(&x86_topo_lock);
+    mp_safe_spin_lock(&x86_topo_lock);
     if (free_cores != NULL) {
 	core = free_cores;
 	free_cores = core->next_in_die;
@@ -388,7 +389,7 @@ x86_core_alloc(int cpu)
 static void
 x86_core_free(x86_core_t *core)
 {
-    simple_lock(&x86_topo_lock);
+    mp_safe_spin_lock(&x86_topo_lock);
     core->next_in_die = free_cores;
     free_cores = core;
     simple_unlock(&x86_topo_lock);
@@ -468,30 +469,32 @@ x86_core_find(int cpu)
 }
  
 void
-x86_set_lcpu_numbers(x86_lcpu_t *lcpu)
+x86_set_logical_topology(x86_lcpu_t *lcpu, int pnum, int lnum)
 {
-    lcpu->lnum = lcpu->cpu_num % topoParms.nLThreadsPerCore;
-}
+    x86_core_t	*core = lcpu->core;
+    x86_die_t	*die  = lcpu->die;
+    x86_pkg_t	*pkg  = lcpu->package;
+    
+    assert(core != NULL);
+    assert(die != NULL);
+    assert(pkg != NULL);
 
-void
-x86_set_core_numbers(x86_core_t *core, x86_lcpu_t *lcpu)
-{
-    core->pcore_num = lcpu->cpu_num / topoParms.nLThreadsPerCore;
+    lcpu->cpu_num = lnum;
+    lcpu->pnum = pnum;
+    lcpu->master = (lnum == master_cpu);
+    lcpu->primary = (lnum % topoParms.nLThreadsPerPackage) == 0;
+
+    lcpu->lnum = lnum % topoParms.nLThreadsPerCore;
+
+    core->pcore_num = lnum / topoParms.nLThreadsPerCore;
     core->lcore_num = core->pcore_num % topoParms.nLCoresPerDie;
-}
 
-void
-x86_set_die_numbers(x86_die_t *die, x86_lcpu_t *lcpu)
-{
-    die->pdie_num = lcpu->cpu_num / (topoParms.nLThreadsPerCore * topoParms.nLCoresPerDie);
+    die->pdie_num = lnum / (topoParms.nLThreadsPerCore*topoParms.nLCoresPerDie);
     die->ldie_num = die->pdie_num % topoParms.nLDiesPerPackage;
-}
 
-void
-x86_set_pkg_numbers(x86_pkg_t *pkg, x86_lcpu_t *lcpu)
-{
-    pkg->ppkg_num = lcpu->cpu_num / topoParms.nLThreadsPerPackage;
+    pkg->ppkg_num = lnum / topoParms.nLThreadsPerPackage;
     pkg->lpkg_num = pkg->ppkg_num;
+
 }
 
 static x86_die_t *
@@ -502,7 +505,7 @@ x86_die_alloc(int cpu)
 
     cpup = cpu_datap(cpu);
 
-    simple_lock(&x86_topo_lock);
+    mp_safe_spin_lock(&x86_topo_lock);
     if (free_dies != NULL) {
 	die = free_dies;
 	free_dies = die->next_in_pkg;
@@ -529,7 +532,7 @@ x86_die_alloc(int cpu)
 static void
 x86_die_free(x86_die_t *die)
 {
-    simple_lock(&x86_topo_lock);
+    mp_safe_spin_lock(&x86_topo_lock);
     die->next_in_pkg = free_dies;
     free_dies = die;
     atomic_decl((long *) &num_dies, 1);
@@ -544,7 +547,7 @@ x86_package_alloc(int cpu)
 
     cpup = cpu_datap(cpu);
 
-    simple_lock(&x86_topo_lock);
+    mp_safe_spin_lock(&x86_topo_lock);
     if (free_pkgs != NULL) {
 	pkg = free_pkgs;
 	free_pkgs = pkg->next;
@@ -571,7 +574,7 @@ x86_package_alloc(int cpu)
 static void
 x86_package_free(x86_pkg_t *pkg)
 {
-    simple_lock(&x86_topo_lock);
+    mp_safe_spin_lock(&x86_topo_lock);
     pkg->next = free_pkgs;
     free_pkgs = pkg;
     atomic_decl((long *) &topoParms.nPackages, 1);
@@ -618,7 +621,7 @@ x86_lcpu_add_caches(x86_lcpu_t *lcpu)
      */
     list = x86_cache_list();
 
-    simple_lock(&x86_topo_lock);
+    mp_safe_spin_lock(&x86_topo_lock);
 
     while (list != NULL) {
 	/*
@@ -735,7 +738,7 @@ x86_core_add_lcpu(x86_core_t *core, x86_lcpu_t *lcpu)
     assert(core != NULL);
     assert(lcpu != NULL);
 
-    simple_lock(&x86_topo_lock);
+    mp_safe_spin_lock(&x86_topo_lock);
 
     lcpu->next_in_core = core->lcpus;
     lcpu->core = core;
@@ -813,7 +816,7 @@ cpu_thread_alloc(int cpu)
     /*
      * Only allow one to manipulate the topology at a time.
      */
-    simple_lock(&x86_topo_lock);
+    mp_safe_spin_lock(&x86_topo_lock);
 
     /*
      * Make sure all of the topology parameters have been initialized.
@@ -847,7 +850,7 @@ cpu_thread_alloc(int cpu)
 	     */
 	    simple_unlock(&x86_topo_lock);
 	    pkg = x86_package_alloc(cpu);
-	    simple_lock(&x86_topo_lock);
+	    mp_safe_spin_lock(&x86_topo_lock);
 	    if (x86_package_find(cpu) != NULL) {
 		x86_package_free(pkg);
 		continue;
@@ -872,7 +875,7 @@ cpu_thread_alloc(int cpu)
 	     */
 	    simple_unlock(&x86_topo_lock);
 	    die = x86_die_alloc(cpu);
-	    simple_lock(&x86_topo_lock);
+	    mp_safe_spin_lock(&x86_topo_lock);
 	    if (x86_die_find(cpu) != NULL) {
 		x86_die_free(die);
 		continue;
@@ -896,7 +899,7 @@ cpu_thread_alloc(int cpu)
 	     */
 	    simple_unlock(&x86_topo_lock);
 	    core = x86_core_alloc(cpu);
-	    simple_lock(&x86_topo_lock);
+	    mp_safe_spin_lock(&x86_topo_lock);
 	    if (x86_core_find(cpu) != NULL) {
 		x86_core_free(core);
 		continue;
@@ -956,7 +959,7 @@ cpu_thread_init(void)
      * Do the CPU accounting.
      */
     core = cpup->lcpu.core;
-    simple_lock(&x86_topo_lock);
+    mp_safe_spin_lock(&x86_topo_lock);
     machine_info.logical_cpu += 1;
     if (core->active_lcpus == 0)
 	machine_info.physical_cpu += 1;
@@ -964,20 +967,21 @@ cpu_thread_init(void)
     simple_unlock(&x86_topo_lock);
 
     pmCPUMarkRunning(cpup);
-    etimer_resync_deadlines();
+    timer_resync_deadlines();
 }
 
 /*
  * Called for a cpu to halt permanently
  * (as opposed to halting and expecting an interrupt to awaken it).
  */
+__attribute__((noreturn))
 void
 cpu_thread_halt(void)
 {
     x86_core_t	*core;
     cpu_data_t	*cpup = current_cpu_datap();
 
-    simple_lock(&x86_topo_lock);
+    mp_safe_spin_lock(&x86_topo_lock);
     machine_info.logical_cpu -= 1;
     core = cpup->lcpu.core;
     core->active_lcpus -= 1;
@@ -1001,7 +1005,7 @@ cpu_thread_halt(void)
  * after the complete topology is built and no other changes are being made.
  */
 void
-validate_topology(void)
+x86_validate_topology(void)
 {
     x86_pkg_t		*pkg;
     x86_die_t		*die;

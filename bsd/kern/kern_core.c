@@ -32,10 +32,11 @@
  *	This file contains machine independent code for performing core dumps.
  *
  */
+#if CONFIG_COREDUMP
 
 #include <mach/vm_param.h>
 #include <mach/thread_status.h>
-
+#include <sys/content_protection.h>
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/signalvar.h>
@@ -65,6 +66,11 @@
 
 #include <security/audit/audit.h>
 
+#if CONFIG_CSR
+#include <sys/codesign.h>
+#include <sys/csr.h>
+#endif
+
 typedef struct {
 	int	flavor;			/* the number for this flavor */
 	mach_msg_type_number_t	count;	/* count of ints in this flavor */
@@ -77,14 +83,21 @@ mythread_state_flavor_t thread_flavor_array [] = {
 		{x86_EXCEPTION_STATE, x86_EXCEPTION_STATE_COUNT},
 		};
 int mynum_flavors=3;
-#elif defined(__arm__)
-mythread_state_flavor_t thread_flavor_array [] = { 
-		{ARM_THREAD_STATE, ARM_THREAD_STATE_COUNT},
-		{ARM_VFP_STATE, ARM_VFP_STATE_COUNT},
-		{ARM_EXCEPTION_STATE, ARM_EXCEPTION_STATE_COUNT},
-        {ARM_DEBUG_STATE, ARM_DEBUG_STATE_COUNT}
+#elif defined (__arm__)
+mythread_state_flavor_t thread_flavor_array[]={
+		{ARM_THREAD_STATE , ARM_THREAD_STATE_COUNT},
+		{ARM_VFP_STATE, ARM_VFP_STATE_COUNT}, 
+		{ARM_EXCEPTION_STATE, ARM_EXCEPTION_STATE_COUNT}
 		};
-int mynum_flavors=4;
+int mynum_flavors=3;
+
+#elif defined (__arm64__)
+mythread_state_flavor_t thread_flavor_array[]={
+		{ARM_THREAD_STATE64 , ARM_THREAD_STATE64_COUNT},
+		/* ARM64_TODO: VFP */
+		{ARM_EXCEPTION_STATE64, ARM_EXCEPTION_STATE64_COUNT}
+		};
+int mynum_flavors=2;
 #else
 #error architecture not supported
 #endif
@@ -98,23 +111,19 @@ typedef struct {
 	int flavor_count;
 } tir_t;
 
-/* XXX should be static */
-void collectth_state(thread_t th_act, void *tirp);
+extern int freespace_mb(vnode_t vp);
 
 /* XXX not in a Mach header anywhere */
-kern_return_t thread_getstatus(register thread_t act, int flavor,
+kern_return_t thread_getstatus(thread_t act, int flavor,
 	thread_state_t tstate, mach_msg_type_number_t *count);
 void task_act_iterate_wth_args(task_t, void(*)(thread_t, void *), void *);
 
-static cpu_type_t process_cpu_type(proc_t proc);
-static cpu_type_t process_cpu_subtype(proc_t proc);
-
 #ifdef SECURE_KERNEL
-__private_extern__ int do_coredump = 0;	/* default: don't dump cores */
+__XNU_PRIVATE_EXTERN int do_coredump = 0;	/* default: don't dump cores */
 #else
-__private_extern__ int do_coredump = 1;	/* default: dump cores */
+__XNU_PRIVATE_EXTERN int do_coredump = 1;	/* default: dump cores */
 #endif
-__private_extern__ int sugid_coredump = 0; /* default: but not SGUID binaries */
+__XNU_PRIVATE_EXTERN int sugid_coredump = 0; /* default: but not SGUID binaries */
 
 
 /* cpu_type returns only the most generic indication of the current CPU. */
@@ -130,8 +139,12 @@ process_cpu_type(proc_t core_proc)
 	} else {
 		what_we_think = CPU_TYPE_I386;
 	}
-#elif defined (__arm__)
-	what_we_think = CPU_TYPE_ARM;
+#elif defined (__arm__) || defined(__arm64__)
+	if (IS_64BIT_PROCESS(core_proc)) {
+		what_we_think = CPU_TYPE_ARM64;
+	} else {
+		what_we_think = CPU_TYPE_ARM;
+	}
 #endif
 	return what_we_think;
 }
@@ -146,13 +159,17 @@ process_cpu_subtype(proc_t core_proc)
 	} else {
 		what_we_think = CPU_SUBTYPE_I386_ALL;
 	}
-#elif defined (__arm__)
-	what_we_think = CPU_SUBTYPE_ARM_ALL;
+#elif defined (__arm__) || defined(__arm64__)
+    if (IS_64BIT_PROCESS(core_proc)) {
+		what_we_think = CPU_SUBTYPE_ARM64_ALL;
+	} else {
+		what_we_think = CPU_SUBTYPE_ARM_ALL;
+	}
 #endif
 	return what_we_think;
 }
 
-void
+static void
 collectth_state(thread_t th_act, void *tirp)
 {
 	vm_offset_t	header;
@@ -191,7 +208,6 @@ collectth_state(thread_t th_act, void *tirp)
 		t->hoffset = hoffset;
 }
 
-
 /*
  * coredump
  *
@@ -199,6 +215,9 @@ collectth_state(thread_t th_act, void *tirp)
  *		indicated
  *
  * Parameters:	core_proc			Process to dump core [*]
+ *				reserve_mb			If non-zero, leave filesystem with
+ *									at least this much free space.
+ *				coredump_flags	Extra options (ignore rlimit, run fsync)
  *
  * Returns:	0				Success
  *		EFAULT				Failed
@@ -209,7 +228,7 @@ collectth_state(thread_t th_act, void *tirp)
  */
 #define	MAX_TSTATE_FLAVORS	10
 int
-coredump(proc_t core_proc)
+coredump(proc_t core_proc, uint32_t reserve_mb, int coredump_flags)
 {
 /* Begin assumptions that limit us to only the current process */
 	vfs_context_t ctx = vfs_context_current();
@@ -247,6 +266,10 @@ coredump(proc_t core_proc)
 	int		is_64 = 0;
 	size_t		mach_header_sz = sizeof(struct mach_header);
 	size_t		segment_command_sz = sizeof(struct segment_command);
+	
+	if (current_proc() != core_proc) {
+		panic("coredump() called against proc that is not current_proc: %p", core_proc);
+	}
 
 	if (do_coredump == 0 ||		/* Not dumping at all */
 	    ( (sugid_coredump == 0) &&	/* Not dumping SUID/SGID binaries */
@@ -259,6 +282,20 @@ coredump(proc_t core_proc)
 		return (EFAULT);
 	}
 
+#if CONFIG_CSR
+	/* If the process is restricted, CSR isn't configured to allow
+	 * restricted processes to be debugged, and CSR isn't configured in
+	 * AppleInternal mode, then don't dump core. */
+	if (cs_restricted(core_proc) &&
+	    csr_check(CSR_ALLOW_TASK_FOR_PID) &&
+	    csr_check(CSR_ALLOW_APPLE_INTERNAL)) {
+#if CONFIG_AUDIT
+		audit_proc_coredump(core_proc, NULL, EFAULT);
+#endif
+		return (EFAULT);
+	}
+#endif
+
 	if (IS_64BIT_PROCESS(core_proc)) {
 		is_64 = 1;
 		mach_header_sz = sizeof(struct mach_header_64);
@@ -267,9 +304,11 @@ coredump(proc_t core_proc)
 
 	mapsize = get_vmmap_size(map);
 
-	if (mapsize >=  core_proc->p_rlimit[RLIMIT_CORE].rlim_cur)
+	if (((coredump_flags & COREDUMP_IGNORE_ULIMIT) == 0) &&
+	    (mapsize >=  core_proc->p_rlimit[RLIMIT_CORE].rlim_cur))
 		return (EFAULT);
-	(void) task_suspend(task);
+
+	(void) task_suspend_internal(task);
 
 	MALLOC(alloced_name, char *, MAXPATHLEN, M_TEMP, M_NOWAIT | M_ZERO);
 
@@ -298,8 +337,17 @@ coredump(proc_t core_proc)
 
 	VATTR_INIT(&va);	/* better to do it here than waste more stack in vnode_setsize */
 	VATTR_SET(&va, va_data_size, 0);
+	if (core_proc == initproc) {
+		VATTR_SET(&va, va_dataprotect_class, PROTECTION_CLASS_D);
+	}
 	vnode_setattr(vp, &va, ctx);
 	core_proc->p_acflag |= ACORE;
+
+	if ((reserve_mb > 0) &&
+	    ((freespace_mb(vp) - (mapsize >> 20)) < reserve_mb)) {
+		error = ENOSPC;
+		goto out;
+	}
 
 	/*
 	 *	If the task is modified while dumping the file
@@ -321,7 +369,7 @@ coredump(proc_t core_proc)
 
 	header_size = command_size + mach_header_sz;
 
-	if (kmem_alloc(kernel_map, &header, (vm_size_t)header_size) != KERN_SUCCESS) {
+	if (kmem_alloc(kernel_map, &header, (vm_size_t)header_size, VM_KERN_MEMORY_DIAG) != KERN_SUCCESS) {
 		error = ENOMEM;
 		goto out;
 	}
@@ -412,6 +460,7 @@ coredump(proc_t core_proc)
 			sc64->maxprot = maxprot;
 			sc64->initprot = prot;
 			sc64->nsects = 0;
+			sc64->flags = 0;
 		} else  {
 			sc = (struct segment_command *) (header + hoffset);
 			sc->cmd = LC_SEGMENT;
@@ -425,6 +474,7 @@ coredump(proc_t core_proc)
 			sc->maxprot = maxprot;
 			sc->initprot = prot;
 			sc->nsects = 0;
+			sc->flags = 0;
 		}
 
 		/*
@@ -484,6 +534,9 @@ coredump(proc_t core_proc)
 	error = vn_rdwr(UIO_WRITE, vp, (caddr_t)header, header_size, (off_t)0,
 			UIO_SYSSPACE, IO_NOCACHE|IO_NODELOCKED|IO_UNIT, cred, (int *) 0, core_proc);
 	kmem_free(kernel_map, header, header_size);
+
+	if ((coredump_flags & COREDUMP_FULLFSYNC) && error == 0)
+		error = VNOP_IOCTL(vp, F_FULLFSYNC, (caddr_t)NULL, 0, ctx);
 out:
 	error1 = vnode_close(vp, FWRITE, ctx);
 out2:
@@ -497,3 +550,11 @@ out2:
 
 	return (error);
 }
+
+#else /* CONFIG_COREDUMP */
+
+/* When core dumps aren't needed, no need to compile this file at all */
+
+#error assertion failed: this section is not compiled
+
+#endif /* CONFIG_COREDUMP */

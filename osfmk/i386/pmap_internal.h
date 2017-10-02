@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2009 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2012 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -34,6 +34,8 @@
 #include <vm/pmap.h>
 #include <sys/kdebug.h>
 #include <kern/ledger.h>
+#include <kern/simple_lock.h>
+#include <i386/bit_routines.h>
 
 /*
  * pmap locking
@@ -47,23 +49,29 @@
 	simple_unlock(&(pmap)->lock);		\
 }
 
-#define PMAP_UPDATE_TLBS(pmap, s, e)					\
-	pmap_flush_tlbs(pmap, s, e)
+#define PMAP_UPDATE_TLBS(pmap, s, e)			\
+	pmap_flush_tlbs(pmap, s, e, 0, NULL)
+
+
+#define	PMAP_DELAY_TLB_FLUSH		0x01
+
+#define PMAP_UPDATE_TLBS_DELAYED(pmap, s, e, c)			\
+	pmap_flush_tlbs(pmap, s, e, PMAP_DELAY_TLB_FLUSH, c)
+
 
 #define	iswired(pte)	((pte) & INTEL_PTE_WIRED)
 
 #ifdef	PMAP_TRACES
 extern	boolean_t	pmap_trace;
-#define PMAP_TRACE(x,a,b,c,d,e)						\
-	if (pmap_trace) {						\
-		KERNEL_DEBUG_CONSTANT(x,a,b,c,d,e);			\
+#define PMAP_TRACE(...) \
+	if (pmap_trace) { \
+		KDBG_RELEASE(__VA_ARGS__); \
 	}
 #else
-#define PMAP_TRACE(x,a,b,c,d,e)	KERNEL_DEBUG(x,a,b,c,d,e)
+#define PMAP_TRACE(...)	KDBG_DEBUG(__VA_ARGS__)
 #endif /* PMAP_TRACES */
 
-#define PMAP_TRACE_CONSTANT(x,a,b,c,d,e)				\
-	KERNEL_DEBUG_CONSTANT(x,a,b,c,d,e);				\
+#define PMAP_TRACE_CONSTANT(...) KDBG_RELEASE(__VA_ARGS__)
 
 kern_return_t	pmap_expand_pml4(
 			pmap_t		map,
@@ -85,16 +93,13 @@ void		pmap_set_reference(
 boolean_t	phys_page_exists(
 			ppnum_t pn);
 
-void pmap_flush_tlbs(pmap_t, vm_map_offset_t, vm_map_offset_t);
+void
+pmap_flush_tlbs(pmap_t, vm_map_offset_t, vm_map_offset_t, int, pmap_flush_context *);
 
 void
 pmap_update_cache_attributes_locked(ppnum_t, unsigned);
 
-#if CONFIG_YONAH
-extern boolean_t cpu_64bit;
-#else
 extern const boolean_t cpu_64bit;
-#endif
 
 /*
  *	Private data structures.
@@ -213,7 +218,7 @@ than the original pv lists that contained all aliases for the specific ppn.
 typedef struct pv_rooted_entry {
 	/* first three entries must match pv_hashed_entry_t */
         queue_head_t		qlink;
-	vm_map_offset_t		va;	/* virtual address for mapping */
+	vm_map_offset_t		va_and_flags;	/* virtual address for mapping */
 	pmap_t			pmap;	/* pmap where mapping lies */
 } *pv_rooted_entry_t;
 
@@ -222,7 +227,7 @@ typedef struct pv_rooted_entry {
 typedef struct pv_hashed_entry {
 	/* first three entries must match pv_rooted_entry_t */
 	queue_head_t		qlink;
-	vm_map_offset_t		va;
+	vm_map_offset_t		va_and_flags;
 	pmap_t			pmap;
 	ppnum_t			ppn;
 	struct pv_hashed_entry	*nexth;
@@ -230,14 +235,21 @@ typedef struct pv_hashed_entry {
 
 #define PV_HASHED_ENTRY_NULL ((pv_hashed_entry_t)0)
 
+#define PVE_VA(pve) ((pve)->va_and_flags & ~PAGE_MASK)
+#define PVE_FLAGS(pve) ((pve)->va_and_flags & PAGE_MASK)
+#define PVE_IS_ALTACCT 0x001
+#define PVE_IS_ALTACCT_PAGE(pve) \
+	(((pve)->va_and_flags & PVE_IS_ALTACCT) ? TRUE : FALSE)
+
 //#define PV_DEBUG 1   /* uncomment to enable some PV debugging code */
 #ifdef PV_DEBUG
-#define CHK_NPVHASH() if(0 == npvhash) panic("npvhash uninitialized");
+#define CHK_NPVHASH() if(0 == npvhashmask) panic("npvhash uninitialized");
 #else
 #define CHK_NPVHASH(x)
 #endif
 
-#define NPVHASH 4095   /* MUST BE 2^N - 1 */
+#define NPVHASHBUCKETS (4096)
+#define NPVHASHMASK ((NPVHASHBUCKETS) - 1) /* MUST BE 2^N - 1 */
 #define PV_HASHED_LOW_WATER_MARK_DEFAULT 5000
 #define PV_HASHED_KERN_LOW_WATER_MARK_DEFAULT 2000
 #define PV_HASHED_ALLOC_CHUNK_INITIAL 2000
@@ -252,13 +264,14 @@ extern uint32_t  pv_hashed_low_water_mark, pv_hashed_kern_low_water_mark;
 
 #define LOCK_PV_HASH(hash)	lock_hash_hash(hash)
 #define UNLOCK_PV_HASH(hash)	unlock_hash_hash(hash)
-extern uint32_t npvhash;
+extern uint32_t npvhashmask;
 extern pv_hashed_entry_t	*pv_hash_table;  /* hash lists */
 extern pv_hashed_entry_t	pv_hashed_free_list;
 extern pv_hashed_entry_t	pv_hashed_kern_free_list;
 decl_simple_lock_data(extern, pv_hashed_free_list_lock)
 decl_simple_lock_data(extern, pv_hashed_kern_free_list_lock)
 decl_simple_lock_data(extern, pv_hash_table_lock)
+decl_simple_lock_data(extern, phys_backup_lock)
 
 extern zone_t		pv_hashed_list_zone;	/* zone of pv_hashed_entry
 						 * structures */
@@ -367,20 +380,29 @@ static inline void pmap_pv_throttle(__unused pmap_t p) {
 #define IS_MANAGED_PAGE(x)				\
 	((unsigned int)(x) <= last_managed_page &&	\
 	 (pmap_phys_attributes[x] & PHYS_MANAGED))
+#define IS_INTERNAL_PAGE(x)			\
+	(IS_MANAGED_PAGE(x) && (pmap_phys_attributes[x] & PHYS_INTERNAL))
+#define IS_REUSABLE_PAGE(x)			\
+	(IS_MANAGED_PAGE(x) && (pmap_phys_attributes[x] & PHYS_REUSABLE))
+#define IS_ALTACCT_PAGE(x,pve)				\
+	(IS_MANAGED_PAGE((x)) &&			\
+	 (PVE_IS_ALTACCT_PAGE((pve))))
 
 /*
  *	Physical page attributes.  Copy bits from PTE definition.
  */
 #define	PHYS_MODIFIED	INTEL_PTE_MOD	/* page modified */
 #define	PHYS_REFERENCED	INTEL_PTE_REF	/* page referenced */
-#define PHYS_MANAGED	INTEL_PTE_VALID /* page is managed */
-#define PHYS_NOENCRYPT	INTEL_PTE_USER	/* no need to encrypt this page in the hibernation image */
+#define	PHYS_MANAGED	INTEL_PTE_VALID /* page is managed */
+#define	PHYS_NOENCRYPT	INTEL_PTE_USER	/* no need to encrypt this page in the hibernation image */
 #define	PHYS_NCACHE	INTEL_PTE_NCACHE
 #define	PHYS_PTA	INTEL_PTE_PTA
 #define	PHYS_CACHEABILITY_MASK (INTEL_PTE_PTA | INTEL_PTE_NCACHE)
+#define	PHYS_INTERNAL	INTEL_PTE_WTHRU	/* page from internal object */
+#define	PHYS_REUSABLE	INTEL_PTE_WRITE /* page is "reusable" */
 
-extern const boolean_t	pmap_disable_kheap_nx;
-extern const boolean_t	pmap_disable_kstack_nx;
+extern boolean_t	pmap_disable_kheap_nx;
+extern boolean_t	pmap_disable_kstack_nx;
 
 #define PMAP_EXPAND_OPTIONS_NONE (0x0)
 #define PMAP_EXPAND_OPTIONS_NOWAIT (PMAP_OPTIONS_NOWAIT)
@@ -467,9 +489,10 @@ extern unsigned int    inuse_ptepages_count;
 static inline uint32_t
 pvhashidx(pmap_t pmap, vm_map_offset_t va)
 {
-	return ((uint32_t)(uintptr_t)pmap ^
+	uint32_t hashidx = ((uint32_t)(uintptr_t)pmap ^
 		((uint32_t)(va >> PAGE_SHIFT) & 0xFFFFFFFF)) &
-	       npvhash;
+	       npvhashmask;
+	    return hashidx;
 }
 
 
@@ -486,7 +509,7 @@ pmap_pvh_unlink(pv_hashed_entry_t pvh)
 	int           		pvhash_idx;
 
 	CHK_NPVHASH();
-	pvhash_idx = pvhashidx(pvh->pmap, pvh->va);
+	pvhash_idx = pvhashidx(pvh->pmap, PVE_VA(pvh));
 
 	pprevh = pvhash(pvhash_idx);
 
@@ -515,7 +538,7 @@ pv_hash_add(pv_hashed_entry_t	pvh_e,
 	int                     pvhash_idx;
 
 	CHK_NPVHASH();
-	pvhash_idx = pvhashidx(pvh_e->pmap, pvh_e->va);
+	pvhash_idx = pvhashidx(pvh_e->pmap, PVE_VA(pvh_e));
 	LOCK_PV_HASH(pvhash_idx);
 	insque(&pvh_e->qlink, &pv_h->qlink);
 	hashp = pvhash(pvhash_idx);
@@ -534,7 +557,7 @@ pv_hash_remove(pv_hashed_entry_t pvh_e)
 	int                     pvhash_idx;
 
 	CHK_NPVHASH();
-	pvhash_idx = pvhashidx(pvh_e->pmap,pvh_e->va);
+	pvhash_idx = pvhashidx(pvh_e->pmap,PVE_VA(pvh_e));
 	LOCK_PV_HASH(pvhash_idx);
 	remque(&pvh_e->qlink);
 	pmap_pvh_unlink(pvh_e);
@@ -636,8 +659,10 @@ pmap_classify_pagetable_corruption(pmap_t pmap, vm_map_offset_t vaddr, ppnum_t *
 	pv_rooted_entry_t	pv_e = pv_h;
 	uint32_t	bitdex;
 	pmap_t pvpmap = pv_h->pmap;
-	vm_map_offset_t pvva = pv_h->va;
+	vm_map_offset_t pvva = PVE_VA(pv_h);
+	vm_map_offset_t pve_flags;
 	boolean_t ppcd = FALSE;
+	boolean_t is_ept;
 
 	/* Ideally, we'd consult the Mach VM here to definitively determine
 	 * the nature of the mapping for this address space and address.
@@ -649,16 +674,18 @@ pmap_classify_pagetable_corruption(pmap_t pmap, vm_map_offset_t vaddr, ppnum_t *
 
 	/* As a precautionary measure, mark A+D */
 	pmap_phys_attributes[ppn_to_pai(ppn)] |= (PHYS_MODIFIED | PHYS_REFERENCED);
+	is_ept = is_ept_pmap(pmap);
 
 	/*
 	 * Correct potential single bit errors in either (but not both) element
 	 * of the PV
 	 */
 	do {
-		if ((popcnt1((uintptr_t)pv_e->pmap ^ (uintptr_t)pmap) && pv_e->va == vaddr) ||
-		    (pv_e->pmap == pmap && popcnt1(pv_e->va ^ vaddr))) {
+		if ((popcnt1((uintptr_t)pv_e->pmap ^ (uintptr_t)pmap) && PVE_VA(pv_e) == vaddr) ||
+		    (pv_e->pmap == pmap && popcnt1(PVE_VA(pv_e) ^ vaddr))) {
+			pve_flags = PVE_FLAGS(pv_e);
 			pv_e->pmap = pmap;
-			pv_e->va = vaddr;
+			pv_h->va_and_flags = vaddr | pve_flags;
 			suppress_reason = PV_BITFLIP;
 			action = PMAP_ACTION_RETRY;
 			goto pmap_cpc_exit;
@@ -673,7 +700,7 @@ pmap_classify_pagetable_corruption(pmap_t pmap, vm_map_offset_t vaddr, ppnum_t *
 		ppnum_t npn = cpn ^ (ppnum_t) (1ULL << bitdex);
 		if (IS_MANAGED_PAGE(npn)) {
 			pv_rooted_entry_t npv_h = pai_to_pvh(ppn_to_pai(npn));
-			if (npv_h->va == vaddr && npv_h->pmap == pmap) {
+			if (PVE_VA(npv_h) == vaddr && npv_h->pmap == pmap) {
 				suppress_reason = PTE_BITFLIP;
 				suppress_ppn = npn;
 				action = PMAP_ACTION_RETRY_RELOCK;
@@ -689,9 +716,11 @@ pmap_classify_pagetable_corruption(pmap_t pmap, vm_map_offset_t vaddr, ppnum_t *
 		goto pmap_cpc_exit;
 	}
 
-	/* Check for malformed/inconsistent entries */
-
-	if ((cpte & (INTEL_PTE_NCACHE | INTEL_PTE_WTHRU | INTEL_PTE_PTA)) ==  (INTEL_PTE_NCACHE | INTEL_PTE_WTHRU)) {
+	/*
+	 * Check for malformed/inconsistent entries.
+	 * The first check here isn't useful for EPT PTEs because INTEL_EPT_NCACHE == 0
+	 */
+	if (!is_ept && ((cpte & (INTEL_PTE_NCACHE | INTEL_PTE_WTHRU | INTEL_PTE_PTA)) ==  (INTEL_PTE_NCACHE | INTEL_PTE_WTHRU))) {
 		action = PMAP_ACTION_IGNORE;
 		suppress_reason = PTE_INVALID_CACHEABILITY;
 	}
@@ -699,7 +728,7 @@ pmap_classify_pagetable_corruption(pmap_t pmap, vm_map_offset_t vaddr, ppnum_t *
 		action = PMAP_ACTION_IGNORE;
 		suppress_reason = PTE_RSVD;
 	}
-	else if ((pmap != kernel_pmap) && ((cpte & INTEL_PTE_USER) == 0)) {
+	else if ((pmap != kernel_pmap) && (!is_ept) && ((cpte & INTEL_PTE_USER) == 0)) {
 		action = PMAP_ACTION_IGNORE;
 		suppress_reason = PTE_SUPERVISOR;
 	}
@@ -730,8 +759,9 @@ pmap_cpc_exit:
 static inline __attribute__((always_inline)) pv_hashed_entry_t
 pmap_pv_remove(pmap_t		pmap,
 	       vm_map_offset_t	vaddr,
-    		ppnum_t		*ppnp,
-		pt_entry_t	*pte) 
+	       ppnum_t		*ppnp,
+	       pt_entry_t	*pte,
+	       boolean_t	*was_altacct)
 {
 	pv_hashed_entry_t       pvh_e;
 	pv_rooted_entry_t	pv_h;
@@ -740,6 +770,7 @@ pmap_pv_remove(pmap_t		pmap,
 	uint32_t                pv_cnt;
 	ppnum_t			ppn;
 
+	*was_altacct = FALSE;
 pmap_pv_remove_retry:
 	ppn = *ppnp;
 	pvh_e = PV_HASHED_ENTRY_NULL;
@@ -750,7 +781,7 @@ pmap_pv_remove_retry:
 		if (pac == PMAP_ACTION_IGNORE)
 			goto pmap_pv_remove_exit;
 		else if (pac == PMAP_ACTION_ASSERT)
-			panic("pmap_pv_remove(%p,0x%llx,0x%x, 0x%llx, %p, %p): null pv_list!", pmap, vaddr, ppn, *pte, ppnp, pte);
+			panic("Possible memory corruption: pmap_pv_remove(%p,0x%llx,0x%x, 0x%llx, %p, %p): null pv_list, priors: %d", pmap, vaddr, ppn, *pte, ppnp, pte, pmap_pagetable_corruption_incidents);
 		else if (pac == PMAP_ACTION_RETRY_RELOCK) {
 			LOCK_PVH(ppn_to_pai(*ppnp));
 			pmap_phys_attributes[ppn_to_pai(*ppnp)] |= (PHYS_MODIFIED | PHYS_REFERENCED);
@@ -760,7 +791,8 @@ pmap_pv_remove_retry:
 			goto pmap_pv_remove_retry;
 	}
 
-	if (pv_h->va == vaddr && pv_h->pmap == pmap) {
+	if (PVE_VA(pv_h) == vaddr && pv_h->pmap == pmap) {
+		*was_altacct = IS_ALTACCT_PAGE(ppn_to_pai(*ppnp), pv_h);
 		/*
 	         * Header is the pv_rooted_entry.
 		 * We can't free that. If there is a queued
@@ -775,19 +807,20 @@ pmap_pv_remove_retry:
 			 * and install as new root.
 			 */
 			CHK_NPVHASH();
-			pvhash_idx = pvhashidx(pvh_e->pmap, pvh_e->va);
+			pvhash_idx = pvhashidx(pvh_e->pmap, PVE_VA(pvh_e));
 			LOCK_PV_HASH(pvhash_idx);
 			remque(&pvh_e->qlink);
 			pprevh = pvhash(pvhash_idx);
 			if (PV_HASHED_ENTRY_NULL == *pprevh) {
-				panic("pmap_pv_remove(%p,0x%llx,0x%x): "
-				      "empty hash, removing rooted",
-				      pmap, vaddr, ppn);
+				panic("Possible memory corruption: pmap_pv_remove(%p,0x%llx,0x%x): "
+				      "empty hash, removing rooted, priors: %d",
+				    pmap, vaddr, ppn, pmap_pagetable_corruption_incidents);
 			}
 			pmap_pvh_unlink(pvh_e);
 			UNLOCK_PV_HASH(pvhash_idx);
 			pv_h->pmap = pvh_e->pmap;
-			pv_h->va = pvh_e->va;	/* dispose of pvh_e */
+			pv_h->va_and_flags = pvh_e->va_and_flags;
+			/* dispose of pvh_e */
 		} else {
 			/* none queued after rooted */
 			pv_h->pmap = PMAP_NULL;
@@ -803,8 +836,8 @@ pmap_pv_remove_retry:
 		LOCK_PV_HASH(pvhash_idx);
 		pprevh = pvhash(pvhash_idx);
 		if (PV_HASHED_ENTRY_NULL == *pprevh) {
-			panic("pmap_pv_remove(%p,0x%llx,0x%x, 0x%llx, %p): empty hash",
-			    pmap, vaddr, ppn, *pte, pte);
+			panic("Possible memory corruption: pmap_pv_remove(%p,0x%llx,0x%x, 0x%llx, %p): empty hash, priors: %d",
+			    pmap, vaddr, ppn, *pte, pte, pmap_pagetable_corruption_incidents);
 		}
 		pvh_e = *pprevh;
 		pmap_pv_hashlist_walks++;
@@ -812,7 +845,7 @@ pmap_pv_remove_retry:
 		while (PV_HASHED_ENTRY_NULL != pvh_e) {
 			pv_cnt++;
 			if (pvh_e->pmap == pmap &&
-			    pvh_e->va == vaddr &&
+			    PVE_VA(pvh_e) == vaddr &&
 			    pvh_e->ppn == ppn)
 				break;
 			pprevh = &pvh_e->nexth;
@@ -823,7 +856,7 @@ pmap_pv_remove_retry:
 			pmap_pagetable_corruption_action_t pac = pmap_classify_pagetable_corruption(pmap, vaddr, ppnp, pte, ROOT_PRESENT);
 
 			if (pac == PMAP_ACTION_ASSERT)
-				panic("pmap_pv_remove(%p, 0x%llx, 0x%x, 0x%llx, %p, %p): pv not on hash, head: %p, 0x%llx", pmap, vaddr, ppn, *pte, ppnp, pte, pv_h->pmap, pv_h->va);
+				panic("Possible memory corruption: pmap_pv_remove(%p, 0x%llx, 0x%x, 0x%llx, %p, %p): pv not on hash, head: %p, 0x%llx, priors: %d", pmap, vaddr, ppn, *pte, ppnp, pte, pv_h->pmap, PVE_VA(pv_h), pmap_pagetable_corruption_incidents);
 			else {
 				UNLOCK_PV_HASH(pvhash_idx);
 				if (pac == PMAP_ACTION_RETRY_RELOCK) {
@@ -840,6 +873,8 @@ pmap_pv_remove_retry:
 			}
 		}
 
+		*was_altacct = IS_ALTACCT_PAGE(ppn_to_pai(*ppnp), pvh_e);
+
 		pmap_pv_hashlist_cnts += pv_cnt;
 		if (pmap_pv_hashlist_max < pv_cnt)
 			pmap_pv_hashlist_max = pv_cnt;
@@ -851,34 +886,67 @@ pmap_pv_remove_exit:
 	return pvh_e;
 }
 
+static inline __attribute__((always_inline)) boolean_t
+pmap_pv_is_altacct(
+	pmap_t		pmap,
+	vm_map_offset_t	vaddr,
+	ppnum_t		ppn)
+{
+	pv_hashed_entry_t       pvh_e;
+	pv_rooted_entry_t	pv_h;
+	int                     pvhash_idx;
+	boolean_t		is_altacct;
+
+	pvh_e = PV_HASHED_ENTRY_NULL;
+	pv_h = pai_to_pvh(ppn_to_pai(ppn));
+
+	if (__improbable(pv_h->pmap == PMAP_NULL)) {
+		return FALSE;
+	}
+
+	if (PVE_VA(pv_h) == vaddr && pv_h->pmap == pmap) {
+		/*
+	         * Header is the pv_rooted_entry.
+	         */
+		return IS_ALTACCT_PAGE(ppn, pv_h);
+	}
+
+	CHK_NPVHASH();
+	pvhash_idx = pvhashidx(pmap, vaddr);
+	LOCK_PV_HASH(pvhash_idx);
+	pvh_e = *(pvhash(pvhash_idx));
+	if (PV_HASHED_ENTRY_NULL == pvh_e) {
+		panic("Possible memory corruption: pmap_pv_is_altacct(%p,0x%llx,0x%x): empty hash",
+		      pmap, vaddr, ppn);
+	}
+	while (PV_HASHED_ENTRY_NULL != pvh_e) {
+		if (pvh_e->pmap == pmap &&
+		    PVE_VA(pvh_e) == vaddr &&
+		    pvh_e->ppn == ppn)
+			break;
+		pvh_e = pvh_e->nexth;
+	}
+	if (PV_HASHED_ENTRY_NULL == pvh_e) {
+		is_altacct = FALSE;
+	} else {
+		is_altacct = IS_ALTACCT_PAGE(ppn, pvh_e);
+	}
+	UNLOCK_PV_HASH(pvhash_idx);
+
+	return is_altacct;
+}
 
 extern int 	pt_fake_zone_index;
 static inline void
 PMAP_ZINFO_PALLOC(pmap_t pmap, vm_size_t bytes)
 {
-	thread_t thr = current_thread();
-	task_t task;
-	zinfo_usage_t zinfo;
-
 	pmap_ledger_credit(pmap, task_ledgers.tkm_private, bytes);
-
-	if (pt_fake_zone_index != -1 && 
-	    (task = thr->task) != NULL && (zinfo = task->tkm_zinfo) != NULL)
-		OSAddAtomic64(bytes, (int64_t *)&zinfo[pt_fake_zone_index].alloc);
 }
 
 static inline void
 PMAP_ZINFO_PFREE(pmap_t pmap, vm_size_t bytes)
 {
-	thread_t thr = current_thread();
-	task_t task;
-	zinfo_usage_t zinfo;
-
 	pmap_ledger_debit(pmap, task_ledgers.tkm_private, bytes);
-
-	if (pt_fake_zone_index != -1 && 
-	    (task = thr->task) != NULL && (zinfo = task->tkm_zinfo) != NULL)
-		OSAddAtomic64(bytes, (int64_t *)&zinfo[pt_fake_zone_index].free);
 }
 
 static inline void
@@ -906,7 +974,9 @@ int		phys_attribute_test(
 			int		bits);
 void		phys_attribute_clear(
 			ppnum_t		phys,
-			int		bits);
+			int		bits,
+			unsigned int	options,
+	                void		*arg);
 
 //#define PCID_DEBUG 1
 #if	PCID_DEBUG
@@ -929,26 +999,6 @@ pmap_cmpx_pte(pt_entry_t *entryp, pt_entry_t old, pt_entry_t new)
 {
 	boolean_t		ret;
 
-#ifdef __i386__
-	/*
-	 * Load the old value into %edx:%eax
-	 * Load the new value into %ecx:%ebx
-	 * Compare-exchange-8bytes at address entryp (loaded in %edi)
-	 * If the compare succeeds, the new value is stored, return TRUE.
-	 * Otherwise, no swap is made, return FALSE.
-	 */
-	asm volatile(
-		"	lock; cmpxchg8b (%1)	\n\t"
-		"	setz	%%al		\n\t"
-		"	movzbl	%%al,%0"
-		: "=a" (ret)
-		: "D" (entryp),
-		  "a" ((uint32_t)old),
-		  "d" ((uint32_t)(old >> 32)),
-		  "b" ((uint32_t)new),
-		  "c" ((uint32_t)(new >> 32))
-		: "memory");
-#else
 	/*
 	 * Load the old value into %rax
 	 * Load the new value into another register
@@ -965,7 +1015,6 @@ pmap_cmpx_pte(pt_entry_t *entryp, pt_entry_t old, pt_entry_t new)
 		  "r" (new),
 		  "r" (entryp)
 		: "memory");
-#endif
 	return ret;
 }
 
@@ -999,7 +1048,7 @@ pmap64_pml4(pmap_t pmap, vm_map_offset_t vaddr)
 		return (NULL);
 	}
 
-#if	PMAP_ASSERT
+#if	DEBUG
 	return PHYSMAP_PTOV(&((pml4_entry_t *)pmap->pm_cr3)[(vaddr >> PML4SHIFT) & (NPML4PG-1)]);
 #else
 	return &pmap->pm_pml4[(vaddr >> PML4SHIFT) & (NPML4PG-1)];
@@ -1014,9 +1063,12 @@ pmap64_pdpt(pmap_t pmap, vm_map_offset_t vaddr)
 {
 	pml4_entry_t	newpf;
 	pml4_entry_t	*pml4;
+	boolean_t	is_ept;
 
 	pml4 = pmap64_pml4(pmap, vaddr);
-	if (pml4 && ((*pml4 & INTEL_PTE_VALID))) {
+	is_ept = is_ept_pmap(pmap);
+
+	if (pml4 && (*pml4 & PTE_VALID_MASK(is_ept))) {
 		newpf = *pml4 & PG_FRAME;
 		return &((pdpt_entry_t *) PHYSMAP_PTOV(newpf))
 			[(vaddr >> PDPTSHIFT) & (NPDPTPG-1)];
@@ -1031,10 +1083,12 @@ pmap64_pde(pmap_t pmap, vm_map_offset_t vaddr)
 {
 	pdpt_entry_t	newpf;
 	pdpt_entry_t	*pdpt;
+	boolean_t	is_ept;
 
 	pdpt = pmap64_pdpt(pmap, vaddr);
+	is_ept = is_ept_pmap(pmap);
 
-	if (pdpt && ((*pdpt & INTEL_PTE_VALID))) {
+	if (pdpt && (*pdpt & PTE_VALID_MASK(is_ept))) {
 		newpf = *pdpt & PG_FRAME;
 		return &((pd_entry_t *) PHYSMAP_PTOV(newpf))
 			[(vaddr >> PDSHIFT) & (NPDPG-1)];
@@ -1064,12 +1118,15 @@ pmap_pte(pmap_t pmap, vm_map_offset_t vaddr)
 {
 	pd_entry_t	*pde;
 	pd_entry_t	newpf;
+	boolean_t	is_ept;
 
 	assert(pmap);
 	pde = pmap64_pde(pmap, vaddr);
 
-	if (pde && ((*pde & INTEL_PTE_VALID))) {
-		if (*pde & INTEL_PTE_PS) 
+	is_ept = is_ept_pmap(pmap);
+
+	if (pde && (*pde & PTE_VALID_MASK(is_ept))) {
+		if (*pde & PTE_PS)
 			return pde;
 		newpf = *pde & PG_FRAME;
 		return &((pt_entry_t *)PHYSMAP_PTOV(newpf))

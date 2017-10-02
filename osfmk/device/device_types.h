@@ -71,6 +71,11 @@
 #include <mach/message.h>
 #include <mach/port.h>
 
+#if PRIVATE
+#define IOKIT_SERVER_VERSION	20150715
+#endif
+
+
 /*
  * IO buffer - out-of-line array of characters.
  */
@@ -85,6 +90,7 @@ typedef char *	io_buf_ptr_t;
 /* must match device_types.defs */
 typedef	char			io_name_t[128];
 typedef	char			io_string_t[512];	
+typedef	char			io_string_inband_t[4096];
 typedef char 			io_struct_inband_t[4096];
 
 #if KERNEL
@@ -111,12 +117,13 @@ typedef uint64_t		io_scalar_inband64_t[16];
 typedef uint64_t		io_async_ref64_t[8];
 #endif // __LP64__
 
-#ifdef MACH_KERNEL
+#ifdef MACH_KERNEL_PRIVATE
 
 typedef struct IOObject * io_object_t;
 typedef io_object_t io_connect_t;
 
 extern void iokit_remove_reference( io_object_t	obj );
+extern void iokit_remove_connect_reference( io_object_t	obj );
 
 extern io_object_t iokit_lookup_object_port( ipc_port_t port );
 extern io_connect_t iokit_lookup_connect_port( ipc_port_t port );

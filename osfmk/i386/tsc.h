@@ -41,6 +41,7 @@
 #define _I386_TSC_H_
 
 #define BASE_NHM_CLOCK_SOURCE 	133333333ULL
+#define BASE_ART_CLOCK_SOURCE 	24000000ULL	/* 24Mhz */
 #define IA32_PERF_STS		0x198
 #define	SLOW_TSC_THRESHOLD	1000067800	/* if slower, nonzero shift required in nanotime() algorithm */
 
@@ -56,6 +57,7 @@ extern uint64_t busFreq;
 extern uint32_t	flex_ratio;
 extern uint32_t	flex_ratio_min;
 extern uint32_t	flex_ratio_max;
+extern uint64_t	tsc_at_boot;
 
 struct tscInfo
 {

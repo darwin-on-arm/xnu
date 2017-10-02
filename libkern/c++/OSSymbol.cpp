@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2007 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2016 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -30,9 +30,7 @@
 #include <string.h>
 #include <sys/cdefs.h>
 
-__BEGIN_DECLS
-#include <kern/lock.h>
-__END_DECLS
+#include <kern/locks.h>
 
 #include <libkern/c++/OSSymbol.h>
 #include <libkern/c++/OSLib.h>
@@ -40,16 +38,7 @@ __END_DECLS
 
 #define super OSString
 
-typedef struct { int i, j; } OSSymbolPoolState;
-
-#if OSALLOCDEBUG
-extern "C" {
-    extern int debug_container_malloc_size;
-};
-#define ACCUMSIZE(s) do { debug_container_malloc_size += (s); } while(0)
-#else
-#define ACCUMSIZE(s)
-#endif
+typedef struct { unsigned int i, j; } OSSymbolPoolState;
 
 #define INITIAL_POOL_SIZE  (exp2ml(1 + log2(kInitBucketCount)))
 
@@ -109,14 +98,14 @@ public:
     static void *operator new(size_t size);
     static void operator delete(void *mem, size_t size);
 
-    OSSymbolPool() { };
+    OSSymbolPool() { }
     OSSymbolPool(const OSSymbolPool *old);
     virtual ~OSSymbolPool();
 
     bool init();
 
-    inline void closeGate() { lck_mtx_lock(poolGate); };
-    inline void openGate()  { lck_mtx_unlock(poolGate); };
+    inline void closeGate() { lck_mtx_lock(poolGate); }
+    inline void openGate()  { lck_mtx_unlock(poolGate); }
 
     OSSymbol *findSymbol(const char *cString) const;
     OSSymbol *insertSymbol(OSSymbol *sym);
@@ -128,8 +117,8 @@ public:
 
 void * OSSymbolPool::operator new(size_t size)
 {
-    void *mem = (void *)kalloc(size);
-    ACCUMSIZE(size);
+    void *mem = (void *)kalloc_tag(size, VM_KERN_MEMORY_LIBKERN);
+    OSMETA_ACCUMSIZE(size);
     assert(mem);
     bzero(mem, size);
 
@@ -139,7 +128,7 @@ void * OSSymbolPool::operator new(size_t size)
 void OSSymbolPool::operator delete(void *mem, size_t size)
 {
     kfree(mem, size);
-    ACCUMSIZE(-size);
+    OSMETA_ACCUMSIZE(-size);
 }
 
 extern lck_grp_t *IOLockGroup;
@@ -148,8 +137,8 @@ bool OSSymbolPool::init()
 {
     count = 0;
     nBuckets = INITIAL_POOL_SIZE;
-    buckets = (Bucket *) kalloc(nBuckets * sizeof(Bucket));
-    ACCUMSIZE(nBuckets * sizeof(Bucket));
+    buckets = (Bucket *) kalloc_tag(nBuckets * sizeof(Bucket), VM_KERN_MEMORY_LIBKERN);
+    OSMETA_ACCUMSIZE(nBuckets * sizeof(Bucket));
     if (!buckets)
         return false;
 
@@ -172,8 +161,15 @@ OSSymbolPool::OSSymbolPool(const OSSymbolPool *old)
 OSSymbolPool::~OSSymbolPool()
 {
     if (buckets) {
+        Bucket *thisBucket;
+        for (thisBucket = &buckets[0]; thisBucket < &buckets[nBuckets]; thisBucket++) {
+            if (thisBucket->count > 1) {
+                kfree(thisBucket->symbolP, thisBucket->count * sizeof(OSSymbol *));
+                OSMETA_ACCUMSIZE(-(thisBucket->count * sizeof(OSSymbol *)));
+            }
+        }
         kfree(buckets, nBuckets * sizeof(Bucket));
-        ACCUMSIZE(-(nBuckets * sizeof(Bucket)));
+        OSMETA_ACCUMSIZE(-(nBuckets * sizeof(Bucket)));
     }
 
     if (poolGate)
@@ -248,8 +244,8 @@ void OSSymbolPool::reconstructSymbols(bool grow)
 
     count = 0;
     nBuckets = new_nBuckets;
-    buckets = (Bucket *) kalloc(nBuckets * sizeof(Bucket));
-    ACCUMSIZE(nBuckets * sizeof(Bucket));
+    buckets = (Bucket *) kalloc_tag(nBuckets * sizeof(Bucket), VM_KERN_MEMORY_LIBKERN);
+    OSMETA_ACCUMSIZE(nBuckets * sizeof(Bucket));
     /* @@@ gvdl: Zero test and panic if can't set up pool */
     bzero(buckets, nBuckets * sizeof(Bucket));
 
@@ -315,8 +311,8 @@ OSSymbol *OSSymbolPool::insertSymbol(OSSymbol *sym)
         &&  strncmp(probeSymbol->string, cString, probeSymbol->length) == 0)
             return probeSymbol;
 
-        list = (OSSymbol **) kalloc(2 * sizeof(OSSymbol *));
-        ACCUMSIZE(2 * sizeof(OSSymbol *));
+        list = (OSSymbol **) kalloc_tag(2 * sizeof(OSSymbol *), VM_KERN_MEMORY_LIBKERN);
+        OSMETA_ACCUMSIZE(2 * sizeof(OSSymbol *));
         /* @@@ gvdl: Zero test and panic if can't set up pool */
         list[0] = sym;
         list[1] = probeSymbol;
@@ -337,13 +333,13 @@ OSSymbol *OSSymbolPool::insertSymbol(OSSymbol *sym)
 
     j = thisBucket->count++;
     count++;
-    list = (OSSymbol **) kalloc(thisBucket->count * sizeof(OSSymbol *));
-    ACCUMSIZE(thisBucket->count * sizeof(OSSymbol *));
+    list = (OSSymbol **) kalloc_tag(thisBucket->count * sizeof(OSSymbol *), VM_KERN_MEMORY_LIBKERN);
+    OSMETA_ACCUMSIZE(thisBucket->count * sizeof(OSSymbol *));
     /* @@@ gvdl: Zero test and panic if can't set up pool */
     list[0] = sym;
     bcopy(thisBucket->symbolP, list + 1, j * sizeof(OSSymbol *));
     kfree(thisBucket->symbolP, j * sizeof(OSSymbol *));
-    ACCUMSIZE(-(j * sizeof(OSSymbol *)));
+    OSMETA_ACCUMSIZE(-(j * sizeof(OSSymbol *)));
     thisBucket->symbolP = list;
     GROW_POOL();
 
@@ -363,7 +359,7 @@ void OSSymbolPool::removeSymbol(OSSymbol *sym)
 
     if (!j) {
 	// couldn't find the symbol; probably means string hash changed
-        panic("removeSymbol");
+        panic("removeSymbol %s count %d ", sym->string ? sym->string : "no string", count);
         return;
     }
 
@@ -378,7 +374,7 @@ void OSSymbolPool::removeSymbol(OSSymbol *sym)
             return;
         }
 	// couldn't find the symbol; probably means string hash changed
-    	panic("removeSymbol");
+    	panic("removeSymbol %s count %d ", sym->string ? sym->string : "no string", count);
         return;
     }
 
@@ -387,7 +383,7 @@ void OSSymbolPool::removeSymbol(OSSymbol *sym)
         if (probeSymbol == sym) {
             thisBucket->symbolP = (OSSymbol **) list[1];
             kfree(list, 2 * sizeof(OSSymbol *));
-	    ACCUMSIZE(-(2 * sizeof(OSSymbol *)));
+	    OSMETA_ACCUMSIZE(-(2 * sizeof(OSSymbol *)));
             count--;
             thisBucket->count--;
             SHRINK_POOL();
@@ -398,14 +394,14 @@ void OSSymbolPool::removeSymbol(OSSymbol *sym)
         if (probeSymbol == sym) {
             thisBucket->symbolP = (OSSymbol **) list[0];
             kfree(list, 2 * sizeof(OSSymbol *));
-	    ACCUMSIZE(-(2 * sizeof(OSSymbol *)));
+	    OSMETA_ACCUMSIZE(-(2 * sizeof(OSSymbol *)));
             count--;
             thisBucket->count--;
             SHRINK_POOL();
             return;
         }
 	// couldn't find the symbol; probably means string hash changed
-    	panic("removeSymbol");
+    	panic("removeSymbol %s count %d ", sym->string ? sym->string : "no string", count);
         return;
     }
 
@@ -414,8 +410,8 @@ void OSSymbolPool::removeSymbol(OSSymbol *sym)
         if (probeSymbol == sym) {
 
             list = (OSSymbol **)
-                kalloc((thisBucket->count-1) * sizeof(OSSymbol *));
-	    ACCUMSIZE((thisBucket->count-1) * sizeof(OSSymbol *));
+                kalloc_tag((thisBucket->count-1) * sizeof(OSSymbol *), VM_KERN_MEMORY_LIBKERN);
+	    OSMETA_ACCUMSIZE((thisBucket->count-1) * sizeof(OSSymbol *));
             if (thisBucket->count-1 != j)
                 bcopy(thisBucket->symbolP, list,
                       (thisBucket->count-1-j) * sizeof(OSSymbol *));
@@ -424,7 +420,7 @@ void OSSymbolPool::removeSymbol(OSSymbol *sym)
                       list + thisBucket->count-1-j,
                       j * sizeof(OSSymbol *));
             kfree(thisBucket->symbolP, thisBucket->count * sizeof(OSSymbol *));
-	    ACCUMSIZE(-(thisBucket->count * sizeof(OSSymbol *)));
+	    OSMETA_ACCUMSIZE(-(thisBucket->count * sizeof(OSSymbol *)));
             thisBucket->symbolP = list;
             count--;
             thisBucket->count--;
@@ -432,7 +428,7 @@ void OSSymbolPool::removeSymbol(OSSymbol *sym)
         }
     }
     // couldn't find the symbol; probably means string hash changed
-    panic("removeSymbol");
+    panic("removeSymbol %s count %d ", sym->string ? sym->string : "no string", count);
 }
 
 /*
@@ -458,7 +454,7 @@ void OSSymbol::initialize()
     pool = new OSSymbolPool;
     assert(pool);
 
-    if (!pool->init()) {
+    if (pool && !pool->init()) {
         delete pool;
         assert(false);
     };
@@ -505,7 +501,7 @@ const OSSymbol *OSSymbol::withCString(const char *cString)
 	    newSymb->OSString::free();
     }
     
-    oldSymb->retain();	// Retain the old symbol before releasing the lock.
+    if (oldSymb) oldSymb->retain();    // Retain the old symbol before releasing the lock.
 
     pool->openGate();
     return oldSymb;
@@ -550,12 +546,7 @@ void OSSymbol::checkForPageUnload(void *startAddr, void *endAddr)
     state = pool->initHashState();
     while ( (probeSymbol = pool->nextHashState(&state)) ) {
         if (probeSymbol->string >= startAddr && probeSymbol->string < endAddr) {
-            const char *oldString = probeSymbol->string;
-
-            probeSymbol->string = (char *) kalloc(probeSymbol->length);
-	    ACCUMSIZE(probeSymbol->length);
-            bcopy(oldString, probeSymbol->string, probeSymbol->length);
-            probeSymbol->flags &= ~kOSStringNoCopy;
+	    probeSymbol->OSString::initWithCString(probeSymbol->string);
         }
     }
     pool->openGate();

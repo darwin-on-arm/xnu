@@ -31,6 +31,8 @@
 #include <kern/debug.h>
 #include <corecrypto/ccdigest.h>
 
+#if defined(CRYPTO_SHA2)
+
 void SHA256_Init(SHA256_CTX *ctx)
 {
 	const struct ccdigest_info *di;
@@ -83,7 +85,7 @@ void SHA384_Update(SHA384_CTX *ctx, const void *data, size_t len)
 void SHA384_Final(void *digest, SHA384_CTX *ctx)
 {
 	const struct ccdigest_info *di;
-	di=g_crypto_funcs->ccsha512_di;
+	di=g_crypto_funcs->ccsha384_di;
 
 	ccdigest_final(di, ctx->ctx, digest);
 }
@@ -115,3 +117,25 @@ void SHA512_Final(void *digest, SHA512_CTX *ctx)
 
 	ccdigest_final(di, ctx->ctx, digest);
 }
+
+#else
+
+/* As these are part of the KPI, we need to stub them out for any kernle cofiguration that does not support SHA2. */
+
+void SHA384_Init(__unused SHA384_CTX *ctx)
+{
+	panic("SHA384_Init");
+}
+
+void SHA384_Update(__unused SHA384_CTX *ctx, __unused const void *data, __unused size_t len)
+{
+	panic("SHA384_Update");
+}
+
+void SHA384_Final(__unused void *digest, __unused SHA384_CTX *ctx)
+{
+	panic("SHA384_Final");
+}
+
+#endif
+

@@ -116,8 +116,13 @@ mac_proc_check_getauid(struct proc *curp)
 	kauth_cred_t cred;
 	int error;
 
-	if (!mac_proc_enforce ||
-	    !mac_proc_check_enforce(curp, MAC_PROC_ENFORCE))
+#if SECURITY_MAC_CHECK_ENFORCE
+	/* 21167099 - only check if we allow write */
+	if (!mac_proc_enforce)
+		return 0;
+#endif
+    
+	if (!mac_proc_check_enforce(curp))
 		return 0;
 
 	cred = kauth_cred_proc_ref(curp);
@@ -133,8 +138,12 @@ mac_proc_check_setauid(struct proc *curp, uid_t auid)
 	kauth_cred_t cred;
 	int error;
 
-	if (!mac_proc_enforce ||
-	    !mac_proc_check_enforce(curp, MAC_PROC_ENFORCE))
+#if SECURITY_MAC_CHECK_ENFORCE
+	/* 21167099 - only check if we allow write */
+	if (!mac_proc_enforce)
+		return 0;
+#endif
+	if (!mac_proc_check_enforce(curp))
 		return 0;
 
 	cred = kauth_cred_proc_ref(curp);
@@ -150,8 +159,12 @@ mac_proc_check_getaudit(struct proc *curp)
 	kauth_cred_t cred;
 	int error;
 
-	if (!mac_proc_enforce ||
-	    !mac_proc_check_enforce(curp, MAC_PROC_ENFORCE))
+#if SECURITY_MAC_CHECK_ENFORCE
+	/* 21167099 - only check if we allow write */
+	if (!mac_proc_enforce)
+		return 0;
+#endif
+	if (!mac_proc_check_enforce(curp))
 		return 0;
 
 	cred = kauth_cred_proc_ref(curp);
@@ -167,8 +180,12 @@ mac_proc_check_setaudit(struct proc *curp, struct auditinfo_addr *ai)
 	kauth_cred_t cred;
 	int error;
 
-	if (!mac_proc_enforce ||
-	    !mac_proc_check_enforce(curp, MAC_PROC_ENFORCE))
+#if SECURITY_MAC_CHECK_ENFORCE
+	/* 21167099 - only check if we allow write */
+	if (!mac_proc_enforce)
+		return 0;
+#endif
+	if (!mac_proc_check_enforce(curp))
 		return 0;
 
 	cred = kauth_cred_proc_ref(curp);

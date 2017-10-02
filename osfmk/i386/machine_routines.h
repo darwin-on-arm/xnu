@@ -40,6 +40,8 @@
 #include <sys/cdefs.h>
 #include <sys/appleapiopts.h>
 
+#include <stdarg.h>
+
 __BEGIN_DECLS
 
 #ifdef XNU_KERNEL_PRIVATE
@@ -78,7 +80,9 @@ void ml_install_interrupt_handler(
     IOInterruptHandler handler,
     void *refCon);
 
-void ml_get_timebase(unsigned long long *timestamp);
+void ml_entropy_collect(void);
+
+uint64_t ml_get_timebase(void);
 void ml_init_lock_timeout(void); 
 void ml_init_delay_spin_threshold(int);
 
@@ -103,6 +107,9 @@ vm_offset_t ml_vtophys(
 vm_size_t ml_nofault_copy(
 	vm_offset_t virtsrc, vm_offset_t virtdst, vm_size_t size);
 
+boolean_t ml_validate_nofault(
+	vm_offset_t virtsrc, vm_size_t size);
+
 /* Machine topology info */
 uint64_t ml_cpu_cache_size(unsigned int level);	
 uint64_t ml_cpu_cache_sharing(unsigned int level);	
@@ -117,6 +124,14 @@ extern void	ml_cpu_down(void);
 void bzero_phys_nc(
 				   addr64_t phys_address,
 				   uint32_t length);
+extern uint32_t interrupt_timer_coalescing_enabled;
+extern uint32_t idle_entry_timer_processing_hdeadline_threshold;
+
+#if TCOAL_INSTRUMENT
+#define TCOAL_DEBUG KERNEL_DEBUG_CONSTANT
+#else
+#define TCOAL_DEBUG(x, a, b, c, d, e) do { } while(0)
+#endif /* TCOAL_INSTRUMENT */
 
 #if	defined(PEXPERT_KERNEL_PRIVATE) || defined(MACH_KERNEL_PRIVATE)
 /* IO memory map services */
@@ -132,11 +147,22 @@ void	ml_get_bouncepool_info(
 			       vm_size_t   *size);
 /* Indicates if spinlock, IPI and other timeouts should be suspended */
 boolean_t machine_timeout_suspended(void);
+void plctrace_disable(void);
 #endif /* PEXPERT_KERNEL_PRIVATE || MACH_KERNEL_PRIVATE  */
 
 /* Warm up a CPU to receive an interrupt */
 kern_return_t ml_interrupt_prewarm(uint64_t deadline);
 
+/* Check if the machine layer wants to intercept a panic call */
+boolean_t ml_wants_panic_trap_to_debugger(void);
+
+/* Machine layer routine for intercepting panics */
+void ml_panic_trap_to_debugger(const char *panic_format_str,
+                               va_list *panic_args,
+                               unsigned int reason,
+                               void *ctx,
+                               uint64_t panic_options_mask,
+                               unsigned long panic_caller);
 #endif /* XNU_KERNEL_PRIVATE */
 
 #ifdef KERNEL_PRIVATE
@@ -204,6 +230,12 @@ unsigned long long ml_phys_read_double(
 	vm_offset_t paddr);
 unsigned long long ml_phys_read_double_64(
 	addr64_t paddr);
+
+unsigned long long ml_io_read(uintptr_t iovaddr, int iovsz);
+unsigned int ml_io_read8(uintptr_t iovaddr);
+unsigned int ml_io_read16(uintptr_t iovaddr);
+unsigned int ml_io_read32(uintptr_t iovaddr);
+unsigned long long ml_io_read64(uintptr_t iovaddr);
 
 /* Write physical address byte */
 void ml_phys_write_byte(
@@ -291,6 +323,12 @@ boolean_t ml_set_interrupts_enabled(boolean_t enable);
 /* Check if running at interrupt context */
 boolean_t ml_at_interrupt_context(void);
 
+#ifdef XNU_KERNEL_PRIVATE
+extern boolean_t ml_is_quiescing(void);
+extern void ml_set_is_quiescing(boolean_t);
+extern uint64_t ml_get_booter_memory_size(void);
+#endif
+
 /* Zero bytes starting at a physical address */
 void bzero_phys(
 	addr64_t phys_address,
@@ -299,20 +337,38 @@ void bzero_phys(
 /* Bytes available on current stack */
 vm_offset_t ml_stack_remaining(void);
 
-#if CONFIG_COUNTERS
-void ml_get_csw_threads(thread_t * /*old*/, thread_t * /*new*/);
-#endif /* CONFIG_COUNTERS */
-
 __END_DECLS
-
+#if defined(MACH_KERNEL_PRIVATE)
+__private_extern__ uint64_t
+ml_phys_read_data(uint64_t paddr, int psz);
+__private_extern__ void
+pmap_verify_noncacheable(uintptr_t vaddr);
+#endif /* MACH_KERNEL_PRIVATE */
 #ifdef	XNU_KERNEL_PRIVATE
 
 boolean_t ml_fpu_avx_enabled(void);
+#if !defined(RC_HIDE_XNU_J137)
+boolean_t ml_fpu_avx512_enabled(void);
+#endif
 
 void interrupt_latency_tracker_setup(void);
 void interrupt_reset_latency_stats(void);
 void interrupt_populate_latency_stats(char *, unsigned);
 void ml_get_power_state(boolean_t *, boolean_t *);
+
+void timer_queue_expire_local(void*);
+void timer_queue_expire_rescan(void*);
+void ml_timer_evaluate(void);
+boolean_t ml_timer_forced_evaluation(void);
+
+uint64_t ml_energy_stat(thread_t);
+void ml_gpu_stat_update(uint64_t);
+uint64_t ml_gpu_stat(thread_t);
+boolean_t ml_recent_wake(void);
+
+extern uint64_t reportphyreaddelayabs;
+extern uint32_t reportphyreadosbt;
+extern uint32_t phyreadpanic;
 
 #endif /* XNU_KERNEL_PRIVATE */
 #endif /* _I386_MACHINE_ROUTINES_H_ */

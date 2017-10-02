@@ -1,30 +1,4 @@
-
-# libIOKit
-iokit/Kernel/WKdmCompress.c                           optional iokitcpp
-iokit/Kernel/WKdmDecompress.c                         optional iokitcpp
+iokit/Families/IONVRAM/IONVRAMController.cpp				optional iokitcpp
 
 # Power Domains
-iokit/Kernel/IOPMrootDomain.cpp                       optional iokitcpp
-iokit/Kernel/IOHibernateIO.cpp                        optional iokitcpp
-
-# ARM Platform Expert
-iokit/Drivers//KernelBuiltIn/ARM/AppleARMPlatform/AppleARMCPU.cpp       optional iokitcpp
-iokit/Drivers//KernelBuiltIn/ARM/AppleARMPlatform/AppleARMIO.cpp        optional iokitcpp
-iokit/Drivers//KernelBuiltIn/ARM/AppleARMPlatform/AppleARMPE.cpp        optional iokitcpp
-iokit/Drivers/KernelBuiltIn/ARM/AppleARMPlatform/AppleS5L8930XIO.cpp    optional iokitcpp
-iokit/Drivers/KernelBuiltIn/ARM/AppleARMPlatform/AppleARMSoftIICController.cpp	optional iokitcpp
-iokit/Drivers/KernelBuiltIn/ARM/AppleARMPlatform/AppleARMNMI.cpp        optional iokitcpp
-iokit/Drivers/KernelBuiltIn/ARM/AppleARMPlatform/AppleARMCHRPNVRAM.cpp  optional iokitcpp
-
-# libIOKit
-iokit/Kernel/IOSyncer.cpp                             optional iokitcpp
-
-# Shared lock
-iokit/Kernel/arm/IOSharedLock.s                       standard
-
-# Power Domains
-iokit/Kernel/IOPMrootDomain.cpp                       optional iokitcpp
-
-# NVRAM Controller
-iokit/Families/IONVRAM/IONVRAMController.cpp          optional iokitcpp
-
+iokit/Kernel/IOPMrootDomain.cpp    					optional iokitcpp

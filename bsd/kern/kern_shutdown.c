@@ -74,7 +74,6 @@
 uint32_t system_inshutdown = 0;
 
 /* XXX should be in a header file somewhere, but isn't */
-extern void md_prepare_for_shutdown(int, int, char *);
 extern void (*unmountroot_pre_hook)(void);
 
 unsigned int proc_shutdown_exitcount = 0;
@@ -83,8 +82,13 @@ static int  sd_openlog(vfs_context_t);
 static int  sd_closelog(vfs_context_t);
 static void sd_log(vfs_context_t, const char *, ...);
 static void proc_shutdown(void);
-
+static void kernel_hwm_panic_info(void);
 extern void IOSystemShutdownNotification(void);
+extern void halt_log_enter(const char * what, const void * pc, uint64_t time);
+
+#if DEVELOPMENT || DEBUG
+extern boolean_t kdp_has_polled_corefile(void);
+#endif /* DEVELOPMENT || DEBUG */
 
 struct sd_filterargs{
 	int delayterm;
@@ -105,15 +109,47 @@ static off_t sd_log_offset = 0;
 
 static int sd_filt1(proc_t, void *);
 static int sd_filt2(proc_t, void *);
-static int  sd_callback1(proc_t p, void * arg);
-static int  sd_callback2(proc_t p, void * arg);
-static int  sd_callback3(proc_t p, void * arg);
+static int sd_callback1(proc_t p, void * arg);
+static int sd_callback2(proc_t p, void * arg);
+static int sd_callback3(proc_t p, void * arg);
+
+extern boolean_t panic_include_zprint;
+extern mach_memory_info_t *panic_kext_memory_info;
+extern vm_size_t panic_kext_memory_size;
+
+static void
+kernel_hwm_panic_info(void)
+{
+	unsigned int  num_sites;
+	kern_return_t kr;
+
+	panic_include_zprint = TRUE;
+	panic_kext_memory_info = NULL;
+	panic_kext_memory_size = 0;
+
+	num_sites = vm_page_diagnose_estimate();
+	panic_kext_memory_size = num_sites * sizeof(panic_kext_memory_info[0]);
+
+	kr = kmem_alloc(kernel_map, (vm_offset_t *)&panic_kext_memory_info, round_page(panic_kext_memory_size), VM_KERN_MEMORY_OSFMK);
+	if (kr != KERN_SUCCESS) {
+		panic_kext_memory_info = NULL;
+		return;
+	}
+
+	vm_page_diagnose(panic_kext_memory_info, num_sites, 0);
+}
 
 int
-boot(int paniced, int howto, char *command)
+get_system_inshutdown()
 {
-	struct proc *p = current_proc();	/* XXX */
+	return (system_inshutdown);
+}
+
+int
+reboot_kernel(int howto, char *message)
+{
 	int hostboot_option=0;
+	uint64_t startTime;
 
 	if (!OSCompareAndSwap(0, 1, &system_inshutdown)) {
 		if ( (howto&RB_QUICK) == RB_QUICK)
@@ -126,12 +162,10 @@ boot(int paniced, int howto, char *command)
 	 */
 	IOSystemShutdownNotification();
 
-	md_prepare_for_shutdown(paniced, howto, command);
-
 	if ((howto&RB_QUICK)==RB_QUICK) {
 		printf("Quick reboot...\n");
 		if ((howto&RB_NOSYNC)==0) {
-			sync(p, (void *)NULL, (int *)NULL);
+			sync((proc_t)NULL, (void *)NULL, (int *)NULL);
 		}
 	}
 	else if ((howto&RB_NOSYNC)==0) {
@@ -143,35 +177,45 @@ boot(int paniced, int howto, char *command)
 		 * Release vnodes held by texts before sync.
 		 */
 
-		/* handle live procs (deallocate their root and current directories). */		
+		/* handle live procs (deallocate their root and current directories), suspend initproc */
+
+		startTime = mach_absolute_time();
 		proc_shutdown();
+		halt_log_enter("proc_shutdown", 0, mach_absolute_time() - startTime);
 
 #if CONFIG_AUDIT
+		startTime = mach_absolute_time();
 		audit_shutdown();
+		halt_log_enter("audit_shutdown", 0, mach_absolute_time() - startTime);
 #endif
 
 		if (unmountroot_pre_hook != NULL)
 			unmountroot_pre_hook();
 
-		sync(p, (void *)NULL, (int *)NULL);
+		startTime = mach_absolute_time();
+		sync((proc_t)NULL, (void *)NULL, (int *)NULL);
 
-		/*
-		 * Now that all processes have been terminated and system is
-		 * sync'ed up, suspend init
-		 */
-			
-		if (initproc && p != initproc)
-			task_suspend(initproc->task);
-
-		if (kdebug_enable)
+		if (kdebug_enable) {
+			startTime = mach_absolute_time();
 			kdbg_dump_trace_to_file("/var/log/shutdown/shutdown.trace");
+			halt_log_enter("shutdown.trace", 0, mach_absolute_time() - startTime);
+		}
 
 		/*
 		 * Unmount filesystems
 		 */
-		vfs_unmountall();
+
+#if DEVELOPMENT || DEBUG
+		if (!(howto & RB_PANIC) || !kdp_has_polled_corefile())
+#endif /* DEVELOPMENT || DEBUG */
+		{
+			startTime = mach_absolute_time();
+			vfs_unmountall();
+			halt_log_enter("vfs_unmountall", 0, mach_absolute_time() - startTime);
+		}
 
 		/* Wait for the buffer cache to clean remaining dirty buffers */
+		startTime = mach_absolute_time();
 		for (iter = 0; iter < 100; iter++) {
 			nbusy = count_busy_buffers();
 			if (nbusy == 0)
@@ -183,6 +227,7 @@ boot(int paniced, int howto, char *command)
 			printf("giving up\n");
 		else
 			printf("done\n");
+		halt_log_enter("bufferclean", 0, mach_absolute_time() - startTime);
 	}
 #if NETWORKING
 	/*
@@ -190,15 +235,23 @@ boot(int paniced, int howto, char *command)
 	 * because that will lock out softints which the disk
 	 * drivers depend on to finish DMAs.
 	 */
+	startTime = mach_absolute_time();
 	if_down_all();
+	halt_log_enter("if_down_all", 0, mach_absolute_time() - startTime);
 #endif /* NETWORKING */
 
 force_reboot:
+
+	if (howto & RB_PANIC) {
+		if (strncmp(message, "Kernel memory has exceeded limits", 33) == 0) {
+			kernel_hwm_panic_info();
+		}
+		panic ("userspace panic: %s", message);
+	}
+
 	if (howto & RB_POWERDOWN)
 		hostboot_option = HOST_REBOOT_HALT;
 	if (howto & RB_HALT)
-		hostboot_option = HOST_REBOOT_HALT;
-	if (paniced == RB_PANIC)
 		hostboot_option = HOST_REBOOT_HALT;
 
 	if (howto & RB_UPSDELAY) {
@@ -293,7 +346,7 @@ sd_filt1(proc_t p, void * args)
 }
 
 
-static int  
+static int
 sd_callback1(proc_t p, void * args)
 {
 	struct sd_iterargs * sd = (struct sd_iterargs *)args;
@@ -315,9 +368,11 @@ sd_callback1(proc_t p, void * args)
 		psignal(p, signo);
 		if (countproc !=  0)
 			sd->activecount++;
-	} else
+	} else {
 		proc_unlock(p);
-	return(PROC_RETURNED);
+	}
+
+	return PROC_RETURNED;
 }
 
 static int
@@ -338,7 +393,7 @@ sd_filt2(proc_t p, void * args)
                 return(1);
 }
 
-static int  
+static int
 sd_callback2(proc_t p, void * args)
 {
 	struct sd_iterargs * sd = (struct sd_iterargs *)args;
@@ -359,14 +414,14 @@ sd_callback2(proc_t p, void * args)
 		psignal(p, signo);
 		if (countproc !=  0)
 			sd->activecount++;
-	} else
+	} else {
 		proc_unlock(p);
+	}
 
-	return(PROC_RETURNED);
-
+	return PROC_RETURNED;
 }
 
-static int  
+static int
 sd_callback3(proc_t p, void * args)
 {
 	struct sd_iterargs * sd = (struct sd_iterargs *)args;
@@ -400,10 +455,11 @@ sd_callback3(proc_t p, void * args)
 			sd->activecount++;
 			exit1(p, 1, (int *)NULL);
 		}
-	} else
+	} else {
 		proc_unlock(p);
+	}
 
-	return(PROC_RETURNED);
+	return PROC_RETURNED;
 }
 
 
@@ -415,7 +471,7 @@ sd_callback3(proc_t p, void * args)
  *
  * POSIX modifications:
  *
- *	For POSIX fcntl() file locking call vno_lockrelease() on 
+ *	For POSIX fcntl() file locking call vno_lockrelease() on
  *	the file to release all of its record locks, if any.
  */
 
@@ -434,10 +490,10 @@ proc_shutdown(void)
 	 *	Kill as many procs as we can.  (Except ourself...)
 	 */
 	self = (struct proc *)current_proc();
-	
+
 	/*
-	 * Signal the init with SIGTERM so that they do not launch
-	 * new processes 
+	 * Signal the init with SIGTERM so that he does not launch
+	 * new processes
 	 */
 	p = proc_find(1);
 	if (p && p != self) {
@@ -466,11 +522,11 @@ sigterm_loop:
 		proc_list_lock();
 		if (proc_shutdown_exitcount != 0) {
 			/*
-	 		* now wait for up to 30 seconds to allow those procs catching SIGTERM
-	 		* to digest it
-	 		* as soon as these procs have exited, we'll continue on to the next step
-	 		*/
-			ts.tv_sec = 30;
+			 * now wait for up to 3 seconds to allow those procs catching SIGTERM
+			 * to digest it
+			 * as soon as these procs have exited, we'll continue on to the next step
+			 */
+			ts.tv_sec = 3;
 			ts.tv_nsec = 0;
 			error = msleep(&proc_shutdown_exitcount, proc_list_mlock, PWAIT, "shutdownwait", &ts);
 			if (error != 0) {
@@ -483,7 +539,6 @@ sigterm_loop:
 						p->p_listflag &= ~P_LIST_EXITCOUNT;
 				}
 			}
-			
 		}
 		proc_list_unlock();
 	}
@@ -491,7 +546,6 @@ sigterm_loop:
 		/*
 		 * log the names of the unresponsive tasks
 		 */
-
 
 		proc_list_lock();
 
@@ -503,8 +557,6 @@ sigterm_loop:
 		}
 
 		proc_list_unlock();
-
-		delay_for_interval(1000 * 5, 1000 * 1000);
 	}
 
 	/*
@@ -520,16 +572,18 @@ sigterm_loop:
 	/* post a SIGKILL to all that catch SIGTERM and not marked for delay */
 	proc_rebootscan(sd_callback2, (void *)&sdargs, sd_filt2, (void *)&sfargs);
 
+	error = 0;
+
 	if (sdargs.activecount != 0 && proc_shutdown_exitcount!= 0) {
 		proc_list_lock();
 		if (proc_shutdown_exitcount != 0) {
 			/*
-	 		* wait for up to 60 seconds to allow these procs to exit normally
-	 		*
-	 		* History:	The delay interval was changed from 100 to 200
-	 		*		for NFS requests in particular.
-	 		*/
-			ts.tv_sec = 60;
+			* wait for up to 60 seconds to allow these procs to exit normally
+			*
+			* History:	The delay interval was changed from 100 to 200
+			*		for NFS requests in particular.
+			*/
+			ts.tv_sec = 10;
 			ts.tv_nsec = 0;
 			error = msleep(&proc_shutdown_exitcount, proc_list_mlock, PWAIT, "shutdownwait", &ts);
 			if (error != 0) {
@@ -546,6 +600,23 @@ sigterm_loop:
 		proc_list_unlock();
 	}
 
+	if (error == ETIMEDOUT) {
+		/*
+		 * log the names of the unresponsive tasks
+		 */
+
+		proc_list_lock();
+
+		for (p = allproc.lh_first; p; p = p->p_list.le_next) {
+			if (p->p_shutdownstate == 2) {
+				printf("%s[%d]: didn't act on SIGKILL\n", p->p_comm, p->p_pid);
+				sd_log(ctx, "%s[%d]: didn't act on SIGKILL\n", p->p_comm, p->p_pid);
+			}
+		}
+
+		proc_list_unlock();
+	}
+
 	/*
 	 * if we still have procs that haven't exited, then brute force 'em
 	 */
@@ -555,6 +626,8 @@ sigterm_loop:
 	sdargs.setsdstate = 3;
 	sdargs.countproc = 0;
 	sdargs.activecount = 0;
+
+
 
 	/* post a SIGTERM to all that catch SIGTERM and not marked for delay */
 	proc_rebootscan(sd_callback3, (void *)&sdargs, sd_filt2, (void *)&sfargs);
@@ -567,6 +640,11 @@ sigterm_loop:
 	}
 
 	sd_closelog(ctx);
+
+	/*
+	 * Now that all other processes have been terminated, suspend init
+	 */
+	task_suspend_internal(initproc->task);
 
 	/* drop the ref on initproc */
 	proc_rele(initproc);

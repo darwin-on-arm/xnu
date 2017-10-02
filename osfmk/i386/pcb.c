@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2010 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2016 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -54,7 +54,6 @@
  * the rights to redistribute these changes.
  */
 
-#include <mach_rt.h>
 #include <mach_debug.h>
 #include <mach_ldebug.h>
 
@@ -77,6 +76,7 @@
 #include <kern/assert.h>
 #include <kern/spl.h>
 #include <kern/machine.h>
+#include <kern/kpc.h>
 #include <ipc/ipc_port.h>
 #include <vm/vm_kern.h>
 #include <vm/vm_map.h>
@@ -91,37 +91,37 @@
 #include <i386/misc_protos.h>
 #include <i386/mp_desc.h>
 #include <i386/thread.h>
-#if defined(__i386__)
-#include <i386/fpu.h>
-#endif
 #include <i386/machine_routines.h>
 #include <i386/lapic.h> /* LAPIC_PMC_SWI_VECTOR */
 
-#if CONFIG_COUNTERS
-#include <pmc/pmc.h>
-#endif /* CONFIG_COUNTERS */
+#if HYPERVISOR
+#include <kern/hv_support.h>
+#endif
 
 /*
  * Maps state flavor to number of words in the state:
  */
 unsigned int _MachineStateCount[] = {
-	/* FLAVOR_LIST */
-        0,
-	x86_THREAD_STATE32_COUNT,
-	x86_FLOAT_STATE32_COUNT,
-	x86_EXCEPTION_STATE32_COUNT,
-	x86_THREAD_STATE64_COUNT,
-	x86_FLOAT_STATE64_COUNT,
-	x86_EXCEPTION_STATE64_COUNT,
-	x86_THREAD_STATE_COUNT,
-	x86_FLOAT_STATE_COUNT,
-	x86_EXCEPTION_STATE_COUNT,
-	0,
-	x86_SAVED_STATE32_COUNT,
-	x86_SAVED_STATE64_COUNT,
-	x86_DEBUG_STATE32_COUNT,
-	x86_DEBUG_STATE64_COUNT,
-	x86_DEBUG_STATE_COUNT
+	[x86_THREAD_STATE32]	= x86_THREAD_STATE32_COUNT,
+	[x86_THREAD_STATE64]	= x86_THREAD_STATE64_COUNT,
+	[x86_THREAD_STATE]	= x86_THREAD_STATE_COUNT,
+	[x86_FLOAT_STATE32]	= x86_FLOAT_STATE32_COUNT,
+	[x86_FLOAT_STATE64]	= x86_FLOAT_STATE64_COUNT,
+	[x86_FLOAT_STATE]	= x86_FLOAT_STATE_COUNT,
+	[x86_EXCEPTION_STATE32]	= x86_EXCEPTION_STATE32_COUNT,
+	[x86_EXCEPTION_STATE64]	= x86_EXCEPTION_STATE64_COUNT,
+	[x86_EXCEPTION_STATE]	= x86_EXCEPTION_STATE_COUNT,
+	[x86_DEBUG_STATE32]	= x86_DEBUG_STATE32_COUNT,
+	[x86_DEBUG_STATE64]	= x86_DEBUG_STATE64_COUNT,
+	[x86_DEBUG_STATE]	= x86_DEBUG_STATE_COUNT,
+	[x86_AVX_STATE32]	= x86_AVX_STATE32_COUNT,
+	[x86_AVX_STATE64]	= x86_AVX_STATE64_COUNT,
+	[x86_AVX_STATE]		= x86_AVX_STATE_COUNT,
+#if !defined(RC_HIDE_XNU_J137)
+	[x86_AVX512_STATE32]	= x86_AVX512_STATE32_COUNT,
+	[x86_AVX512_STATE64]	= x86_AVX512_STATE64_COUNT,
+	[x86_AVX512_STATE]	= x86_AVX512_STATE_COUNT,
+#endif /* not RC_HIDE_XNU_J137 */
 };
 
 zone_t		iss_zone;		/* zone for saved_state area */
@@ -131,7 +131,7 @@ zone_t		ids_zone;		/* zone for debug_state area */
 
 extern void		Thread_continue(void);
 extern void		Load_context(
-				thread_t			thread);
+				thread_t			thread) __attribute__((noreturn));
 
 static void
 get_exception_state32(thread_t thread, x86_exception_state32_t *es);
@@ -151,42 +151,26 @@ set_thread_state32(thread_t thread, x86_thread_state32_t *ts);
 static int
 set_thread_state64(thread_t thread, x86_thread_state64_t *ts);
 
-#if CONFIG_COUNTERS
+#if HYPERVISOR
 static inline void
-machine_pmc_cswitch(thread_t /* old */, thread_t /* new */);
+ml_hv_cswitch(thread_t old, thread_t new)
+{
+	if (old->hv_thread_target)
+		hv_callbacks.preempt(old->hv_thread_target);
 
-static inline void
-pmc_swi(thread_t /* old */, thread_t /*new */);
-
-static inline void
-pmc_swi(thread_t old, thread_t new) {
-	current_cpu_datap()->csw_old_thread = old;
-	current_cpu_datap()->csw_new_thread = new;
-	pal_pmc_swi();
+	if (new->hv_thread_target)
+		hv_callbacks.dispatch(new->hv_thread_target);	
 }
-
-static inline void
-machine_pmc_cswitch(thread_t old, thread_t new) {
-	if (pmc_thread_eligible(old) || pmc_thread_eligible(new)) {
-		pmc_swi(old, new);
-	}
-}
-
-void ml_get_csw_threads(thread_t *old, thread_t *new) {
-	*old = current_cpu_datap()->csw_old_thread;
-	*new = current_cpu_datap()->csw_new_thread;
-}
-
-#endif /* CONFIG_COUNTERS */
+#endif
 
 /*
- * Don't let an illegal value for dr7 get set.	Specifically,
- * check for undefined settings.  Setting these bit patterns
+ * Don't let an illegal value for the lower 32-bits of dr7 get set.
+ * Specifically, check for undefined settings.  Setting these bit patterns
  * result in undefined behaviour and can lead to an unexpected
  * TRCTRAP.
  */
 static boolean_t
-dr7_is_valid(uint32_t *dr7)
+dr7d_is_valid(uint32_t *dr7d)
 {
 	int i;
 	uint32_t mask1, mask2;
@@ -198,20 +182,7 @@ dr7_is_valid(uint32_t *dr7)
 	if (!(get_cr4() & CR4_DE))
 		for (i = 0, mask1 = 0x3<<16, mask2 = 0x2<<16; i < 4; 
 				i++, mask1 <<= 4, mask2 <<= 4)
-			if ((*dr7 & mask1) == mask2)
-				return (FALSE);
-
-	/*
-	 * len0-3 pattern "10B" is ok for len on Merom and newer processors
-	 * (it signifies an 8-byte wide region). We use the 64bit capability
-	 * of the processor in lieu of the more laborious model/family checks
-	 * as all 64-bit capable processors so far support this.
-	 * Reject an attempt to use this on 64-bit incapable processors.
-	 */
-	if (current_cpu_datap()->cpu_is64bit == FALSE)
-		for (i = 0, mask1 = 0x3<<18, mask2 = 0x2<<18; i < 4; 
-				i++, mask1 <<= 4, mask2 <<= 4)
-			if ((*dr7 & mask1) == mask2)
+			if ((*dr7d & mask1) == mask2)
 				return (FALSE);
 
 	/*
@@ -220,89 +191,45 @@ dr7_is_valid(uint32_t *dr7)
 	 * to "00B"
 	 */
 	for (i = 0; i < 4; i++)
-		if (((((*dr7 >> (16 + i*4))) & 0x3) == 0) &&
-				((((*dr7 >> (18 + i*4))) & 0x3) != 0))
+		if (((((*dr7d >> (16 + i*4))) & 0x3) == 0) &&
+				((((*dr7d >> (18 + i*4))) & 0x3) != 0))
 			return (FALSE);
 
 	/*
 	 * Intel docs have these bits fixed.
 	 */
-	*dr7 |= 0x1 << 10; /* set bit 10 to 1 */
-	*dr7 &= ~(0x1 << 11); /* set bit 11 to 0 */
-	*dr7 &= ~(0x1 << 12); /* set bit 12 to 0 */
-	*dr7 &= ~(0x1 << 14); /* set bit 14 to 0 */
-	*dr7 &= ~(0x1 << 15); /* set bit 15 to 0 */
+	*dr7d |= 0x1 << 10; /* set bit 10 to 1 */
+	*dr7d &= ~(0x1 << 11); /* set bit 11 to 0 */
+	*dr7d &= ~(0x1 << 12); /* set bit 12 to 0 */
+	*dr7d &= ~(0x1 << 14); /* set bit 14 to 0 */
+	*dr7d &= ~(0x1 << 15); /* set bit 15 to 0 */
 
 	/*
 	 * We don't allow anything to set the global breakpoints.
 	 */
 
-	if (*dr7 & 0x2)
+	if (*dr7d & 0x2)
 		return (FALSE);
 
-	if (*dr7 & (0x2<<2))
+	if (*dr7d & (0x2<<2))
 		return (FALSE);
 
-	if (*dr7 & (0x2<<4))
+	if (*dr7d & (0x2<<4))
 		return (FALSE);
 
-	if (*dr7 & (0x2<<6))
+	if (*dr7d & (0x2<<6))
 		return (FALSE);
 
 	return (TRUE);
 }
 
-static inline void
-set_live_debug_state32(cpu_data_t *cdp, x86_debug_state32_t *ds)
-{
-	__asm__ volatile ("movl %0,%%db0" : :"r" (ds->dr0));
-	__asm__ volatile ("movl %0,%%db1" : :"r" (ds->dr1));
-	__asm__ volatile ("movl %0,%%db2" : :"r" (ds->dr2));
-	__asm__ volatile ("movl %0,%%db3" : :"r" (ds->dr3));
-	if (cpu_mode_is64bit())
-		cdp->cpu_dr7 = ds->dr7;
-}
-
 extern void set_64bit_debug_regs(x86_debug_state64_t *ds);
-
-static inline void
-set_live_debug_state64(cpu_data_t *cdp, x86_debug_state64_t *ds)
-{
-	/*
-	 * We need to enter 64-bit mode in order to set the full
-	 * width of these registers
-	 */
-	set_64bit_debug_regs(ds);
-	cdp->cpu_dr7 = ds->dr7;
-}
 
 boolean_t
 debug_state_is_valid32(x86_debug_state32_t *ds) 
 {
-	if (!dr7_is_valid(&ds->dr7))
+	if (!dr7d_is_valid(&ds->dr7))
 		return FALSE;
-
-#if defined(__i386__)
-	/*
-	 * Only allow local breakpoints and make sure they are not
-	 * in the trampoline code.
-	 */
-	if (ds->dr7 & 0x1)
-		if (ds->dr0 >= (unsigned long)HIGH_MEM_BASE)
-			return FALSE;
-
-	if (ds->dr7 & (0x1<<2))
-		if (ds->dr1 >= (unsigned long)HIGH_MEM_BASE)
-			return FALSE;
-
-	if (ds->dr7 & (0x1<<4))
-		if (ds->dr2 >= (unsigned long)HIGH_MEM_BASE)
-			return FALSE;
-
-	if (ds->dr7 & (0x1<<6))
-		if (ds->dr3 >= (unsigned long)HIGH_MEM_BASE)
-			return FALSE;
-#endif
 
 	return TRUE;
 }
@@ -310,7 +237,7 @@ debug_state_is_valid32(x86_debug_state32_t *ds)
 boolean_t
 debug_state_is_valid64(x86_debug_state64_t *ds)
 {
-	if (!dr7_is_valid((uint32_t *)&ds->dr7))
+	if (!dr7d_is_valid((uint32_t *)&ds->dr7))
 		return FALSE;
 
 	/*
@@ -332,6 +259,9 @@ debug_state_is_valid64(x86_debug_state64_t *ds)
 	if (ds->dr7 & (0x1<<6))
 		if (ds->dr3 >= VM_MAX_PAGE_ADDRESS)
 			return FALSE;
+
+	/* For x86-64, we must ensure the upper 32-bits of DR7 are clear */
+	ds->dr7 &= 0xffffffffULL;
 
 	return TRUE;
 }
@@ -387,6 +317,13 @@ set_debug_state64(thread_t thread, x86_debug_state64_t *ds)
 	if (ids == NULL) {
 		ids = zalloc(ids_zone);
 		bzero(ids, sizeof *ids);
+
+#if HYPERVISOR
+		if (thread->hv_thread_target) {
+			hv_callbacks.volatile_state(thread->hv_thread_target,
+				HV_DEBUG_STATE);
+		}
+#endif
 
 		simple_lock(&pcb->lock);
 		/* make sure it wasn't already alloc()'d elsewhere */
@@ -452,12 +389,18 @@ void
 machine_load_context(
 	thread_t		new)
 {
-#if CONFIG_COUNTERS
-	machine_pmc_cswitch(NULL, new);
-#endif
 	new->machine.specFlags |= OnProc;
 	act_machine_switch_pcb(NULL, new);
 	Load_context(new);
+}
+
+static inline void pmap_switch_context(thread_t ot, thread_t nt, int cnum) {
+	pmap_assert(ml_get_interrupts_enabled() == FALSE);
+	vm_map_t nmap = nt->map, omap = ot->map;
+	if ((omap != nmap) || (nmap->pmap->pagezero_accessible)) {
+		PMAP_DEACTIVATE_MAP(omap, ot, cnum);
+		PMAP_ACTIVATE_MAP(nmap, nt, cnum);
+	}
 }
 
 /*
@@ -471,22 +414,22 @@ machine_switch_context(
 	thread_continue_t	continuation,
 	thread_t			new)
 {
-#if MACH_RT
-        assert(current_cpu_datap()->cpu_active_stack == old->kernel_stack);
-#endif
-#if CONFIG_COUNTERS
-	machine_pmc_cswitch(old, new);
-#endif
+	assert(current_cpu_datap()->cpu_active_stack == old->kernel_stack);
+
+#if KPC
+	kpc_off_cpu(old);
+#endif /* KPC */
+
 	/*
 	 *	Save FP registers if in use.
 	 */
-	fpu_save_context(old);
+	fpu_switch_context(old, new);
 
 	old->machine.specFlags &= ~OnProc;
 	new->machine.specFlags |= OnProc;
 
 	/*
- 	 * Monitor the stack depth and report new max,
+	 * Monitor the stack depth and report new max,
 	 * not worrying about races.
 	 */
 	vm_offset_t	depth = current_stack_depth();
@@ -501,12 +444,16 @@ machine_switch_context(
 	 *	Switch address maps if need be, even if not switching tasks.
 	 *	(A server activation may be "borrowing" a client map.)
 	 */
-	PMAP_SWITCH_CONTEXT(old, new, cpu_number());
+	pmap_switch_context(old, new, cpu_number());
 
 	/*
 	 *	Load the rest of the user state for the new thread
 	 */
 	act_machine_switch_pcb(old, new);
+
+#if HYPERVISOR
+	ml_hv_cswitch(old, new);
+#endif
 
 	return(Switch_context(old, continuation, new));
 }
@@ -520,8 +467,8 @@ machine_processor_shutdown(
 #if CONFIG_VMX
 	vmx_suspend();
 #endif
-	fpu_save_context(thread);
-	PMAP_SWITCH_CONTEXT(thread, processor->idle_thread, cpu_number());
+	fpu_switch_context(thread, NULL);
+	pmap_switch_context(thread, processor->idle_thread, cpu_number());
 	return(Shutdown_context(thread, doshutdown, processor));
 }
 
@@ -626,11 +573,6 @@ set_thread_state32(thread_t thread, x86_thread_state32_t *ts)
 	 * Scrub segment selector values:
 	 */
 	ts->cs = USER_CS;
-#ifdef __i386__
-	if (ts->ss == 0) ts->ss = USER_DS;
-	if (ts->ds == 0) ts->ds = USER_DS;
-	if (ts->es == 0) ts->es = USER_DS;
-#else /* __x86_64__ */
 	/*
 	 * On a 64 bit kernel, we always override the data segments,
 	 * as the actual selector numbers have changed. This also
@@ -640,8 +582,10 @@ set_thread_state32(thread_t thread, x86_thread_state32_t *ts)
 	ts->ss = USER_DS;
 	ts->ds = USER_DS;
 	ts->es = USER_DS;
-#endif
 
+	/* Set GS to CTHREAD only if's been established */
+	ts->gs = thread->machine.cthread_self ? USER_CTHREAD : NULL_SEG;
+ 
 	/* Check segment selectors are safe */
 	if (!valid_user_segment_selectors(ts->cs,
 					  ts->ss,
@@ -929,8 +873,12 @@ machine_thread_set_state(
 	}
 
 	case x86_FLOAT_STATE32:
+	case x86_AVX_STATE32:
+#if !defined(RC_HIDE_XNU_J137)
+	case x86_AVX512_STATE32:
+#endif /* not RC_HIDE_XNU_J137 */
 	{
-		if (count != x86_FLOAT_STATE32_COUNT)
+		if (count != _MachineStateCount[flavor])
 			return(KERN_INVALID_ARGUMENT);
 
 		if (thread_is_64bit(thr_act))
@@ -940,11 +888,15 @@ machine_thread_set_state(
 	}
 
 	case x86_FLOAT_STATE64:
+	case x86_AVX_STATE64:
+#if !defined(RC_HIDE_XNU_J137)
+	case x86_AVX512_STATE64:
+#endif /* not RC_HIDE_XNU_J137 */
 	{
-		if (count != x86_FLOAT_STATE64_COUNT)
+		if (count != _MachineStateCount[flavor])
 			return(KERN_INVALID_ARGUMENT);
 
-		if ( !thread_is_64bit(thr_act))
+		if (!thread_is_64bit(thr_act))
 			return(KERN_INVALID_ARGUMENT);
 
 		return fpu_set_fxstate(thr_act, tstate, flavor);
@@ -969,49 +921,33 @@ machine_thread_set_state(
 		return(KERN_INVALID_ARGUMENT);
 	}
 
-	case x86_AVX_STATE32:
-	{
-		if (count != x86_AVX_STATE32_COUNT)
-			return(KERN_INVALID_ARGUMENT);
-
-		if (thread_is_64bit(thr_act))
-			return(KERN_INVALID_ARGUMENT);
-
-		return fpu_set_fxstate(thr_act, tstate, flavor);
-	}
-
-	case x86_AVX_STATE64:
-	{
-		if (count != x86_AVX_STATE64_COUNT)
-			return(KERN_INVALID_ARGUMENT);
-
-		if (!thread_is_64bit(thr_act))
-			return(KERN_INVALID_ARGUMENT);
-
-		return fpu_set_fxstate(thr_act, tstate, flavor);
-	}
-
 	case x86_AVX_STATE:
+#if !defined(RC_HIDE_XNU_J137)
+	case x86_AVX512_STATE:
+#endif
 	{   
 		x86_avx_state_t       *state;
 
-		if (count != x86_AVX_STATE_COUNT)
+		if (count != _MachineStateCount[flavor])
 			return(KERN_INVALID_ARGUMENT);
 
 		state = (x86_avx_state_t *)tstate;
-		if (state->ash.flavor == x86_AVX_STATE64 &&
-		    state->ash.count  == x86_FLOAT_STATE64_COUNT &&
+		/* Flavors are defined to have sequential values: 32-bit, 64-bit, non-specific */
+		/* 64-bit flavor? */
+		if (state->ash.flavor == (flavor - 1) &&
+		    state->ash.count  == _MachineStateCount[flavor - 1] &&
 		    thread_is_64bit(thr_act)) {
 			return fpu_set_fxstate(thr_act,
 					       (thread_state_t)&state->ufs.as64,
-					       x86_FLOAT_STATE64);
+					       flavor - 1);
 		}
-		if (state->ash.flavor == x86_FLOAT_STATE32 &&
-		    state->ash.count  == x86_FLOAT_STATE32_COUNT &&
+		/* 32-bit flavor? */
+		if (state->ash.flavor == (flavor - 2) &&
+		    state->ash.count  == _MachineStateCount[flavor - 2] &&
 		    !thread_is_64bit(thr_act)) {
 			return fpu_set_fxstate(thr_act,
 					       (thread_state_t)&state->ufs.as32,
-					       x86_FLOAT_STATE32); 
+					       flavor - 2); 
 		}
 		return(KERN_INVALID_ARGUMENT);
 	}
@@ -1057,8 +993,6 @@ machine_thread_set_state(
 			return set_thread_state32(thr_act, &state->uts.ts32);
 		} else
 			return(KERN_INVALID_ARGUMENT);
-
-		break;
 	}
 	case x86_DEBUG_STATE32:
 	{
@@ -1177,6 +1111,24 @@ machine_thread_get_state(
 		break;
 	    }
 
+#if !defined(RC_HIDE_XNU_J137)
+	    case THREAD_STATE_FLAVOR_LIST_10_13:
+	    {
+		if (*count < 6)
+		        return (KERN_INVALID_ARGUMENT);
+
+	        tstate[0] = x86_THREAD_STATE;
+		tstate[1] = x86_FLOAT_STATE;
+		tstate[2] = x86_EXCEPTION_STATE;
+		tstate[3] = x86_DEBUG_STATE;
+		tstate[4] = x86_AVX_STATE;
+		tstate[5] = x86_AVX512_STATE;
+
+		*count = 6;
+		break;
+	    }
+
+#endif
 	    case x86_SAVED_STATE32:
 	    {
 		x86_saved_state32_t	*state;
@@ -1286,58 +1238,64 @@ machine_thread_get_state(
 	    }
 
 	    case x86_AVX_STATE32:
+#if !defined(RC_HIDE_XNU_J137)
+	    case x86_AVX512_STATE32:
+#endif
 	    {
-		if (*count != x86_AVX_STATE32_COUNT)
+		if (*count != _MachineStateCount[flavor])
 			return(KERN_INVALID_ARGUMENT);
 
 		if (thread_is_64bit(thr_act))
 			return(KERN_INVALID_ARGUMENT);
 
-		*count = x86_AVX_STATE32_COUNT;
+		*count = _MachineStateCount[flavor];
 
 		return fpu_get_fxstate(thr_act, tstate, flavor);
 	    }
 
 	    case x86_AVX_STATE64:
+#if !defined(RC_HIDE_XNU_J137)
+	    case x86_AVX512_STATE64:
+#endif
 	    {
-		if (*count != x86_AVX_STATE64_COUNT)
+		if (*count != _MachineStateCount[flavor])
 			return(KERN_INVALID_ARGUMENT);
 
 		if ( !thread_is_64bit(thr_act))
 			return(KERN_INVALID_ARGUMENT);
 
-		*count = x86_AVX_STATE64_COUNT;
+		*count = _MachineStateCount[flavor];
 
 		return fpu_get_fxstate(thr_act, tstate, flavor);
 	    }
 
 	    case x86_AVX_STATE:
+#if !defined(RC_HIDE_XNU_J137)
+	    case x86_AVX512_STATE:
+#endif
 	    {
 	        x86_avx_state_t		*state;
-		kern_return_t		kret;
+		thread_state_t		fstate;
 
-		if (*count < x86_AVX_STATE_COUNT)
+		if (*count < _MachineStateCount[flavor])
 			return(KERN_INVALID_ARGUMENT);
 
+		*count = _MachineStateCount[flavor];
 		state = (x86_avx_state_t *)tstate;
 
-		bzero((char *)state, sizeof(x86_avx_state_t));
-		if (thread_is_64bit(thr_act)) {
-		        state->ash.flavor = x86_AVX_STATE64;
-		        state->ash.count  = x86_AVX_STATE64_COUNT;
-			kret = fpu_get_fxstate(thr_act,
-					       (thread_state_t)&state->ufs.as64,
-					       x86_AVX_STATE64);
-		} else {
-		        state->ash.flavor = x86_AVX_STATE32;
-			state->ash.count  = x86_AVX_STATE32_COUNT;
-			kret = fpu_get_fxstate(thr_act,
-					       (thread_state_t)&state->ufs.as32,
-					       x86_AVX_STATE32);
-		}
-		*count = x86_AVX_STATE_COUNT;
+		bzero((char *)state, *count * sizeof(int));
 
-		return(kret);
+		if (thread_is_64bit(thr_act)) {
+			flavor -= 1;	/* 64-bit flavor */
+			fstate = (thread_state_t) &state->ufs.as64;
+		} else {
+			flavor -= 2;	/* 32-bit flavor */
+			fstate = (thread_state_t) &state->ufs.as32;
+		}
+		state->ash.flavor = flavor; 
+		state->ash.count  = _MachineStateCount[flavor];
+
+		return fpu_get_fxstate(thr_act, fstate, flavor);
 	    }
 
 	    case x86_THREAD_STATE32: 
@@ -1704,13 +1662,12 @@ machine_thread_switch_addrmode(thread_t thread)
 	 */
 	machine_thread_create(thread, thread->task);
 
+	/* Adjust FPU state */
+	fpu_switch_addrmode(thread, task_has_64BitAddr(thread->task));
+
 	/* If we're switching ourselves, reset the pcb addresses etc. */
 	if (thread == current_thread()) {
 		boolean_t istate = ml_set_interrupts_enabled(FALSE);
-#if defined(__i386__)
-		if (current_cpu_datap()->cpu_active_cr3 != kernel_pmap->pm_cr3)
-			pmap_load_kernel_cr3();
-#endif /* defined(__i386) */
 		act_machine_switch_pcb(NULL, thread);
 		ml_set_interrupts_enabled(istate);
 	}
@@ -1736,121 +1693,20 @@ machine_set_current_thread(thread_t thread)
 void
 machine_thread_init(void)
 {
-	if (cpu_mode_is64bit()) {
-		assert(sizeof(x86_sframe_compat32_t) % 16 == 0);
-		iss_zone = zinit(sizeof(x86_sframe64_t),
-				thread_max * sizeof(x86_sframe64_t),
-				THREAD_CHUNK * sizeof(x86_sframe64_t),
-				"x86_64 saved state");
+	iss_zone = zinit(sizeof(x86_saved_state_t),
+			thread_max * sizeof(x86_saved_state_t),
+			THREAD_CHUNK * sizeof(x86_saved_state_t),
+			"x86_64 saved state");
 
-	        ids_zone = zinit(sizeof(x86_debug_state64_t),
-				 thread_max * sizeof(x86_debug_state64_t),
-				 THREAD_CHUNK * sizeof(x86_debug_state64_t),
-				 "x86_64 debug state");
+        ids_zone = zinit(sizeof(x86_debug_state64_t),
+			 thread_max * sizeof(x86_debug_state64_t),
+			 THREAD_CHUNK * sizeof(x86_debug_state64_t),
+			 "x86_64 debug state");
 
-	} else {
-		iss_zone = zinit(sizeof(x86_sframe32_t),
-				thread_max * sizeof(x86_sframe32_t),
-				THREAD_CHUNK * sizeof(x86_sframe32_t),
-				"x86 saved state");
-	        ids_zone = zinit(sizeof(x86_debug_state32_t),
-				thread_max * (sizeof(x86_debug_state32_t)),
-				THREAD_CHUNK * (sizeof(x86_debug_state32_t)),
-				"x86 debug state");
-	}
 	fpu_module_init();
 }
 
 
-#if defined(__i386__)
-/*
- * Some routines for debugging activation code
- */
-static void	dump_handlers(thread_t);
-void		dump_regs(thread_t);
-int		dump_act(thread_t thr_act);
-
-static void
-dump_handlers(thread_t thr_act)
-{
-	ReturnHandler *rhp = thr_act->handlers;
-	int	counter = 0;
-
-	printf("\t");
-	while (rhp) {
-		if (rhp == &thr_act->special_handler){
-			if (rhp->next)
-				printf("[NON-Zero next ptr(%p)]", rhp->next);
-			printf("special_handler()->");
-			break;
-		}
-		printf("hdlr_%d(%p)->", counter, rhp->handler);
-		rhp = rhp->next;
-		if (++counter > 32) {
-			printf("Aborting: HUGE handler chain\n");
-			break;
-		}
-	}
-	printf("HLDR_NULL\n");
-}
-
-void
-dump_regs(thread_t thr_act)
-{
-	if (thread_is_64bit(thr_act)) {
-		x86_saved_state64_t	*ssp;
-
-		ssp = USER_REGS64(thr_act);
-
-		panic("dump_regs: 64bit tasks not yet supported");
-
-	} else {
-		x86_saved_state32_t	*ssp;
-
-		ssp = USER_REGS32(thr_act);
-
-		/*
-		 * Print out user register state
-		 */
-		printf("\tRegs:\tedi=%x esi=%x ebp=%x ebx=%x edx=%x\n",
-			ssp->edi, ssp->esi, ssp->ebp, ssp->ebx, ssp->edx);
-
-		printf("\t\tecx=%x eax=%x eip=%x efl=%x uesp=%x\n",
-			ssp->ecx, ssp->eax, ssp->eip, ssp->efl, ssp->uesp);
-
-		printf("\t\tcs=%x ss=%x\n", ssp->cs, ssp->ss);
-	}
-}
-
-int
-dump_act(thread_t thr_act)
-{
-	if (!thr_act)
-		return(0);
-
-	printf("thread(%p)(%d): task=%p(%d)\n",
-			thr_act, thr_act->ref_count,
-			thr_act->task,
-			thr_act->task   ? thr_act->task->ref_count : 0);
-
-	printf("\tsusp=%d user_stop=%d active=%x ast=%x\n",
-			thr_act->suspend_count, thr_act->user_stop_count,
-			thr_act->active, thr_act->ast);
-	printf("\tpcb=%p\n", &thr_act->machine);
-
-	if (thr_act->kernel_stack) {
-		vm_offset_t stack = thr_act->kernel_stack;
-
-		printf("\tk_stk %lx  eip %x ebx %x esp %x iss %p\n",
-			(long)stack, STACK_IKS(stack)->k_eip, STACK_IKS(stack)->k_ebx,
-			STACK_IKS(stack)->k_esp, thr_act->machine.iss);
-	}
-
-	dump_handlers(thr_act);
-	dump_regs(thr_act);
-	return((int)thr_act);
-}
-#endif
 
 user_addr_t
 get_useraddr(void)
@@ -1909,16 +1765,17 @@ machine_stack_attach(
 
 	assert(stack);
 	thread->kernel_stack = stack;
+	thread_initialize_kernel_state(thread);
 
 	statep = STACK_IKS(stack);
 #if defined(__x86_64__)
 	statep->k_rip = (unsigned long) Thread_continue;
 	statep->k_rbx = (unsigned long) thread_continue;
-	statep->k_rsp = (unsigned long) (STACK_IKS(stack) - 1);
+	statep->k_rsp = (unsigned long) STACK_IKS(stack);
 #else
 	statep->k_eip = (unsigned long) Thread_continue;
 	statep->k_ebx = (unsigned long) thread_continue;
-	statep->k_esp = (unsigned long) (STACK_IKS(stack) - 1);
+	statep->k_esp = (unsigned long) STACK_IKS(stack);
 #endif
 
 	return;
@@ -1937,9 +1794,7 @@ machine_stack_handoff(thread_t old,
 	assert(new);
 	assert(old);
 
-#if CONFIG_COUNTERS
-	machine_pmc_cswitch(old, new);
-#endif
+	kpc_off_cpu(old);
 
 	stack = old->kernel_stack;
 	if (stack == old->reserved_stack) {
@@ -1954,15 +1809,20 @@ machine_stack_handoff(thread_t old,
 	 */
 	new->kernel_stack = stack;
 
-	fpu_save_context(old);
+	fpu_switch_context(old, new);
 	
 	old->machine.specFlags &= ~OnProc;
 	new->machine.specFlags |= OnProc;
 
-	PMAP_SWITCH_CONTEXT(old, new, cpu_number());
+	pmap_switch_context(old, new, cpu_number());
 	act_machine_switch_pcb(old, new);
 
+#if HYPERVISOR
+	ml_hv_cswitch(old, new);
+#endif
+
 	machine_set_current_thread(new);
+	thread_initialize_kernel_state(new);
 
 	return;
 }
@@ -2103,16 +1963,6 @@ void act_thread_cfree(__unused void *ctx)
 {
 	/* XXX - Unused */
 }
-void x86_toggle_sysenter_arg_store(thread_t thread, boolean_t valid);
-void x86_toggle_sysenter_arg_store(thread_t thread, boolean_t valid) {
-	thread->machine.arg_store_valid = valid;
-}
-
-boolean_t x86_sysenter_arg_store_isvalid(thread_t thread);
-
-boolean_t x86_sysenter_arg_store_isvalid(thread_t thread) {
-	return (thread->machine.arg_store_valid);
-}
 
 /*
  * Duplicate one x86_debug_state32_t to another.  "all" parameter
@@ -2162,12 +2012,4 @@ copy_debug_state64(
 	target->dr3 = src->dr3;
 	target->dr6 = src->dr6;
 	target->dr7 = src->dr7;
-}
-
-boolean_t is_useraddr64_canonical(uint64_t addr64);
-
-boolean_t
-is_useraddr64_canonical(uint64_t addr64)
-{
-	return IS_USERADDR64_CANONICAL(addr64);
 }

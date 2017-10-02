@@ -1,29 +1,5 @@
 /*
- * Copyright (c) 2000-2006 Apple Computer, Inc. All rights reserved.
- *
- * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
- * 
- * This file contains Original Code and/or Modifications of Original Code
- * as defined in and that are subject to the Apple Public Source License
- * Version 2.0 (the 'License'). You may not use this file except in
- * compliance with the License. The rights granted to you under the License
- * may not be used to create, or enable the creation or redistribution of,
- * unlawful or unlicensed copies of an Apple operating system, or to
- * circumvent, violate, or enable the circumvention or violation of, any
- * terms of an Apple operating system software license agreement.
- * 
- * Please obtain a copy of the License at
- * http://www.opensource.apple.com/apsl/ and read it before using this file.
- * 
- * The Original Code and all software distributed under the License are
- * distributed on an 'AS IS' basis, WITHOUT WARRANTY OF ANY KIND, EITHER
- * EXPRESS OR IMPLIED, AND APPLE HEREBY DISCLAIMS ALL SUCH WARRANTIES,
- * INCLUDING WITHOUT LIMITATION, ANY WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE, QUIET ENJOYMENT OR NON-INFRINGEMENT.
- * Please see the License for the specific language governing rights and
- * limitations under the License.
- * 
- * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
+ * Copyright (c) 2000-2007 Apple Inc. All rights reserved.
  */
 /*
  *	Copyright (C) 1990,  NeXT, Inc.
@@ -38,32 +14,175 @@
 #include	<mach/machine.h>
 #include	<kern/cpu_number.h>
 #include	<machine/exec.h>
-#include	<machine/machine_routines.h>
+
+#if __arm64__
+extern int bootarg_no64exec;	/* bsd_init.c */
+static cpu_subtype_t cpu_subtype32(void);
+#endif /* __arm64__ */
+
+#if __arm64__
+/*
+ * When an arm64 CPU is executing an arm32 binary, we need to map from the
+ * host's 64-bit subtype to the appropriate 32-bit subtype.
+ */
+static cpu_subtype_t
+cpu_subtype32()
+{
+	switch (cpu_subtype()) {
+	case CPU_SUBTYPE_ARM64_V8:
+		return CPU_SUBTYPE_ARM_V8;
+	default:
+		return 0;
+	}
+}
+#endif /* __arm64__*/
 
 /**********************************************************************
  * Routine:	grade_binary()
  *
- * Function:	Keep the API the same between PPC and X86; always say
- *		any CPU subtype is OK with us, but only OK CPU types
- *		for which we are actually capable of executing the
- *		binary, either directly or via an imputed interpreter.
+ * Function:	Return a relative preference for exectypes and
+ *		execsubtypes in fat executable files.  The higher the
+ *		grade, the higher the preference.  A grade of 0 means
+ *		not acceptable.
  **********************************************************************/
-int grade_binary(cpu_type_t exectype, __unused cpu_subtype_t execsubtype)
+int
+grade_binary(cpu_type_t exectype, cpu_subtype_t execsubtype)
 {
-    switch (exectype) {
-    case CPU_TYPE_ARM:
-        return 1;
-#ifdef __LP64__
-    case CPU_TYPE_ARM64:
-        return 1;
-#endif
-    default:                   /* all other binary types */
-        return 0;
-    }
+#if __arm64__
+	cpu_subtype_t hostsubtype = (exectype & CPU_ARCH_ABI64) ? cpu_subtype() : cpu_subtype32();
+#else
+	cpu_subtype_t hostsubtype = cpu_subtype();
+#endif /* __arm64__ */
+
+	switch (exectype) {
+#if __arm64__
+	case CPU_TYPE_ARM64:
+		if (bootarg_no64exec) return 0;
+
+		switch (hostsubtype) {
+		case CPU_SUBTYPE_ARM64_V8:
+			switch (execsubtype) {
+			case CPU_SUBTYPE_ARM64_V8:
+				return 9;
+			case CPU_SUBTYPE_ARM64_ALL:
+				return 8;
+			}
+			break;
+
+
+		break;
+#else /* __arm64__ */
+
+	case CPU_TYPE_ARM:
+		switch (hostsubtype) {
+		/*
+		 * For 32-bit ARMv8, try the ARMv8 slice before falling back to Swift.
+		 */
+		case CPU_SUBTYPE_ARM_V8:
+			switch (execsubtype) {
+			case CPU_SUBTYPE_ARM_V8:
+				return 7;
+			}
+			goto v7s;
+
+		/*
+		 * For Swift and later, we prefer to run a swift slice, but fall back
+		 * to v7 as Cortex A9 errata should not apply
+		 */
+v7s:
+		case CPU_SUBTYPE_ARM_V7S:
+			switch (execsubtype) {
+			case CPU_SUBTYPE_ARM_V7S:
+				return 6;
+			}
+			goto v7;
+
+		/*
+		 * For Cortex A7, accept v7k only due to differing ABI
+		 */
+		case CPU_SUBTYPE_ARM_V7K:
+			switch (execsubtype) {
+			case CPU_SUBTYPE_ARM_V7K:
+				return 6;
+			}
+			break;	
+
+		/*
+		 * For Cortex A9, we prefer the A9 slice, but will run v7 albeit
+		 * under the risk of hitting the NEON load/store errata
+		 */
+		case CPU_SUBTYPE_ARM_V7F:
+			switch (execsubtype) {
+			case CPU_SUBTYPE_ARM_V7F:
+				return 6;
+			}
+			goto v7;
+
+v7:
+		case CPU_SUBTYPE_ARM_V7:
+			switch (execsubtype) {
+			case CPU_SUBTYPE_ARM_V7:
+				return 5;
+			}
+			// fall through...
+
+		case CPU_SUBTYPE_ARM_V6:
+			switch (execsubtype) {
+			case CPU_SUBTYPE_ARM_V6:
+				return 4;
+			}
+			// fall through...
+
+		case CPU_SUBTYPE_ARM_V5TEJ:
+			switch (execsubtype) {
+			case CPU_SUBTYPE_ARM_V5TEJ:
+				return 3;
+			}
+			// fall through
+
+		case CPU_SUBTYPE_ARM_V4T:
+			switch (execsubtype) {
+			case CPU_SUBTYPE_ARM_V4T:
+				return 2;
+			case CPU_SUBTYPE_ARM_ALL:
+				return 1;
+			}
+			break;
+
+		case CPU_SUBTYPE_ARM_XSCALE:
+			switch (execsubtype) {
+			case CPU_SUBTYPE_ARM_XSCALE:
+				return 4;
+			case CPU_SUBTYPE_ARM_V5TEJ:
+				return 3;
+			case CPU_SUBTYPE_ARM_V4T:
+				return 2;
+			case CPU_SUBTYPE_ARM_ALL:
+				return 1;
+			}
+			break;
+		}
+#endif /* __arm64__ */
+	}
+
+	return 0;
 }
 
-extern void md_prepare_for_shutdown(int, int, char *);
-
-void md_prepare_for_shutdown(__unused int paniced, __unused int howto, __unused char *command)
+boolean_t
+pie_required(cpu_type_t exectype, cpu_subtype_t execsubtype)
 {
+	switch (exectype) {
+#if __arm64__
+	case CPU_TYPE_ARM64:
+		return TRUE;
+#endif /* __arm64__ */
+
+	case CPU_TYPE_ARM:
+		switch (execsubtype) {
+			case CPU_SUBTYPE_ARM_V7K:
+				return TRUE;
+			}
+		break;
+	}
+	return FALSE;
 }

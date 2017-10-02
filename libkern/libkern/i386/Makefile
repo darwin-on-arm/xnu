@@ -6,18 +6,6 @@ export MakeInc_dir=${SRCROOT}/makedefs/MakeInc.dir
 include $(MakeInc_cmd)
 include $(MakeInc_def)
 
-INSTINC_SUBDIRS =
-
-INSTINC_SUBDIRS_I386 =
-
-INSTINC_SUBDIRS_X86_64 =
-
-EXPINC_SUBDIRS = ${INSTINC_SUBDIRS}
-
-EXPINC_SUBDIRS_I386 = ${INSTINC_SUBDIRS_I386}
-
-EXPINC_SUBDIRS_X86_64 = ${INSTINC_SUBDIRS_X86_64}
-
 DATAFILES = \
           OSByteOrder.h \
 	  _OSByteOrder.h
@@ -32,5 +20,3 @@ EXPORT_MD_DIR = libkern/i386
 
 include $(MakeInc_rule)
 include $(MakeInc_dir)
-
-

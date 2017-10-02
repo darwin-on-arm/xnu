@@ -38,6 +38,7 @@
 
 #include <mach-o/loader.h>
 #include <libkern/kernel_mach_header.h>
+#include <san/kasan.h>
 
 #define KASLR_IOREG_DEBUG 0
 
@@ -75,9 +76,11 @@ kext_alloc_init(void)
      */
 
     text = getsegbyname(SEG_TEXT);
-    text_start = vm_map_trunc_page(text->vmaddr);
+    text_start = vm_map_trunc_page(text->vmaddr,
+				   VM_MAP_PAGE_MASK(kernel_map));
     text_start &= ~((512ULL * 1024 * 1024 * 1024) - 1);
-    text_end = vm_map_round_page(text->vmaddr + text->vmsize);
+    text_end = vm_map_round_page(text->vmaddr + text->vmsize,
+				 VM_MAP_PAGE_MASK(kernel_map));
     text_size = text_end - text_start;
 
     kext_alloc_base = KEXT_ALLOC_BASE(text_end);
@@ -91,7 +94,8 @@ kext_alloc_init(void)
          * kexts
          */
         kext_post_boot_base = 
-            vm_map_round_page(kext_alloc_base + prelinkTextSegment->vmsize);
+		vm_map_round_page(kext_alloc_base + prelinkTextSegment->vmsize,
+				  VM_MAP_PAGE_MASK(kernel_map));
     }
     else {
         kext_post_boot_base = kext_alloc_base;
@@ -101,6 +105,7 @@ kext_alloc_init(void)
     rval = kmem_suballoc(kernel_map, (vm_offset_t *) &kext_alloc_base, 
 			 kext_alloc_size, /* pageable */ TRUE,
 			 VM_FLAGS_FIXED|VM_FLAGS_OVERWRITE,
+			 VM_MAP_KERNEL_FLAGS_NONE, VM_KERN_MEMORY_KEXT,
 			 &g_kext_map);
     if (rval != KERN_SUCCESS) {
 	    panic("kext_alloc_init: kmem_suballoc failed 0x%x\n", rval);
@@ -121,31 +126,9 @@ kext_alloc_init(void)
 	   VM_KERNEL_UNSLIDE(text->vmaddr + text->vmsize));
 
 #else
-    kernel_segment_command_t *text = NULL;
-    kernel_segment_command_t *prelinkTextSegment = NULL;
-    mach_vm_offset_t text_end, text_start;
-    mach_vm_size_t text_size;
-    mach_vm_size_t kext_alloc_size;
-
-    /* Determine the start of the kernel's __TEXT segment and determine the
-     * lower bound of the allocated submap for kext allocations.
-     */
-
-    text = getsegbyname(SEG_TEXT);
-    text_start = vm_map_trunc_page(text->vmaddr);
-    text_start &= ~((512ULL * 1024 * 1024 * 1024) - 1);
-    text_end = vm_map_round_page(text->vmaddr + text->vmsize);
-    text_size = text_end - text_start;
-
     g_kext_map = kernel_map;
     kext_alloc_base = VM_MIN_KERNEL_ADDRESS;
     kext_alloc_max = VM_MAX_KERNEL_ADDRESS;
-
-    printf("kext submap [0x%lx - 0x%lx], kernel text [0x%lx - 0x%lx]\n",
-       VM_KERNEL_UNSLIDE(kext_alloc_base),
-       VM_KERNEL_UNSLIDE(kext_alloc_max),
-       VM_KERNEL_UNSLIDE(text->vmaddr),
-       VM_KERNEL_UNSLIDE(text->vmaddr + text->vmsize));
 #endif /* CONFIG_KEXT_BASEMENT */
 }
 
@@ -168,11 +151,12 @@ kext_alloc(vm_offset_t *_addr, vm_size_t size, boolean_t fixed)
      * fixed (post boot) kext allocations to start looking for free space 
      * just past where prelinked kexts have loaded.  
      */
-    rval = mach_vm_map(g_kext_map, 
+    rval = mach_vm_map_kernel(g_kext_map,
                        &addr, 
                        size, 
                        0,
                        flags,
+                       VM_KERN_MEMORY_KEXT,
                        MACH_PORT_NULL,
                        0,
                        TRUE,
@@ -184,7 +168,7 @@ kext_alloc(vm_offset_t *_addr, vm_size_t size, boolean_t fixed)
         goto finish;
     }
 #else
-    rval = mach_vm_allocate(g_kext_map, &addr, size, flags);
+    rval = mach_vm_allocate_kernel(g_kext_map, &addr, size, flags, VM_KERN_MEMORY_KEXT);
     if (rval != KERN_SUCCESS) {
         printf("vm_allocate failed - %d\n", rval);
         goto finish;
@@ -200,6 +184,9 @@ kext_alloc(vm_offset_t *_addr, vm_size_t size, boolean_t fixed)
 
     *_addr = (vm_offset_t)addr;
     rval = KERN_SUCCESS;
+#if KASAN
+    kasan_notify_address(addr, size);
+#endif
 
 finish:
     return rval;

@@ -3,11 +3,15 @@
 OPTIONS/iokitcpp					optional iokitcpp
 OPTIONS/kdebug						optional kdebug
 OPTIONS/networking					optional networking
+OPTIONS/hibernation					optional hibernation
 OPTIONS/crypto						optional crypto
 OPTIONS/config_dtrace				optional config_dtrace
 OPTIONS/mach_assert				optional mach_assert
 
 # libIOKit
+
+iokit/Kernel/IOHibernateIO.cpp				optional hibernation
+iokit/Kernel/IOHibernateRestoreKernel.c			optional hibernation
 
 iokit/Kernel/IOLib.cpp					optional iokitcpp
 iokit/Kernel/IOLocks.cpp				optional iokitcpp
@@ -66,12 +70,21 @@ iokit/Kernel/IOUserClient.cpp				optional iokitcpp
 iokit/Kernel/IOKitDebug.cpp				optional iokitcpp
 iokit/Kernel/IODataQueue.cpp				optional iokitcpp
 iokit/Kernel/IOSharedDataQueue.cpp			optional iokitcpp
-# iokit/Tests/Tests.cpp					optional iokitcpp
-# iokit/Tests/TestDevice.cpp				optional iokitcpp
-# iokit/Tests/TestContainers.cpp			optional iokitcpp
-# iokit/Tests/TestCollections.cpp			optional iokitcpp
+iokit/Tests/Tests.cpp					optional iokitcpp
+iokit/Tests/TestIOMemoryDescriptor.cpp      optional iokitcpp
+# iokit/Tests/TestDevice.cpp                optional iokitcpp
+# iokit/Tests/TestContainers.cpp            optional iokitcpp
+# iokit/Tests/TestCollections.cpp           optional iokitcpp
 
-iokit/Kernel/IOStatistics.cpp			optional iokitcpp
+iokit/Kernel/IOStatistics.cpp				optional iokitcpp
+iokit/Kernel/IOInterruptAccounting.cpp			optional iokitcpp
+
+iokit/Kernel/IOReporter.cpp				optional iokitcpp
+iokit/Kernel/IOSimpleReporter.cpp			optional iokitcpp
+iokit/Kernel/IOStateReporter.cpp			optional iokitcpp
+iokit/Kernel/IOHistogramReporter.cpp			optional iokitcpp
+iokit/Kernel/IOReportLegend.cpp				optional iokitcpp
+
 
 iokit/Kernel/IOStringFuncs.c				standard
 
@@ -92,3 +105,4 @@ iokit/Kernel/IOPowerConnection.cpp			optional iokitcpp
 
 # System Management
 iokit/Families/IOSystemManagement/IOWatchDogTimer.cpp	optional iokitcpp
+

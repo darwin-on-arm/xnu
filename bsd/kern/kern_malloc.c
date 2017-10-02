@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2011 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2013 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -74,11 +74,13 @@
 #include <sys/socketvar.h>
 
 #include <net/route.h>
+#include <net/necp.h>
 
 #include <netinet/in.h>
 #include <netinet/in_systm.h>
 #include <netinet/ip.h>
 #include <netinet/in_pcb.h>
+#include <netinet/flow_divert.h>
 
 #include <sys/event.h>
 #include <sys/eventvar.h>
@@ -95,8 +97,7 @@
 #include <sys/uio_internal.h>
 #include <sys/resourcevar.h>
 #include <sys/signalvar.h>
-
-#include <hfs/hfs_cnode.h>
+#include <sys/decmpfs.h>
 
 #include <miscfs/specfs/specdev.h>
 
@@ -105,23 +106,21 @@
 #include <nfs/nfsnode.h>
 #include <nfs/nfsmount.h>
 
-#include <vfs/vfs_journal.h>
-
 #include <mach/mach_types.h>
 
 #include <kern/zalloc.h>
 #include <kern/kalloc.h>
 
-void kmeminit(void) __attribute__((section("__TEXT, initcode")));
+void kmeminit(void);
 
 /* Strings corresponding to types of memory.
  * Must be in synch with the #defines is sys/malloc.h 
  * NOTE - the reason we pass null strings in some cases is to reduce of foot
  * print as much as possible for systems where a tiny kernel is needed.
- * todo - We should probably redsign this and use enums for our types and only
+ * todo - We should probably redesign this and use enums for our types and only
  * include types needed for that configuration of the kernel.  This can't be
  * done without some kind of kpi since several types are hardwired and exported
- * (for example see types M_HFSMNT, M_UDFMNT, M_TEMP, etc in sys/malloc.h)
+ * (for example see types M_UDFMNT, M_TEMP, etc in sys/malloc.h)
  */
 const char *memname[] = {
 	"free",		/* 0 M_FREE */
@@ -162,7 +161,7 @@ const char *memname[] = {
 #else
 	"",				/* 27 M_DQUOT */ 
 #endif
-	"",				/* 28 M_UFSMNT */ 
+	"proc uuid policy",		/* 28 M_PROC_UUID_POLICY */ 
 #if (SYSV_SEM || SYSV_MSG || SYSV_SHM)
 	"shm",			/* 29 M_SHM */ 
 #else
@@ -225,17 +224,11 @@ const char *memname[] = {
 	"buf hdrs",		/* 72 M_BUFHDR */ 
 	"ofile tabl",	/* 73 M_OFILETABL */ 
 	"mbuf clust",	/* 74 M_MCLUST */ 
-#if HFS
-	"HFS mount",	/* 75 M_HFSMNT */ 
-	"HFS node",		/* 76 M_HFSNODE */ 
-	"HFS fork",		/* 77 M_HFSFORK */ 
-#else
-	"",				/* 75 M_HFSMNT */ 
-	"",				/* 76 M_HFSNODE */ 
-	"",				/* 77 M_HFSFORK */ 
-#endif
-	"ZFS mount", 	/* 78 M_ZFSFSMNT */ 
-	"ZFS node", 	/* 79 M_ZFSNODE */ 
+	"",				/* 75 unused */
+	"",				/* 76 unused */
+	"",				/* 77 unused */
+	"", 			/* 78 unused */
+	"", 			/* 79 unused */
 	"temp",			/* 80 M_TEMP */ 
 	"key mgmt",		/* 81 M_SECA */ 
 	"DEVFS",		/* 82 M_DEVFS */ 
@@ -253,51 +246,64 @@ const char *memname[] = {
 #endif
 	"TCP Segment Q",/* 89 M_TSEGQ */
 	"IGMP state",	/* 90 M_IGMP */
-#if JOURNALING
-	"Journal",		/* 91 M_JNL_JNL */
-	"Transaction",	/* 92 M_JNL_TR */
-#else
-	"",    			/* 91 M_JNL_JNL */
-	"",    			/* 92 M_JNL_TR */
-#endif
+	"",    			/* 91 unused */
+	"",    			/* 92 unused */
 	"specinfo",		/* 93 M_SPECINFO */
 	"kqueue",		/* 94 M_KQUEUE */
-#if HFS
-	"HFS dirhint",	/* 95 M_HFSDIRHINT */ 
-#else
-	"",				/* 95 M_HFSDIRHINT */ 
-#endif
-	"cluster_read",	/* 96 M_CLRDAHEAD */ 
+	"",				/* 95 unused */
+	"cluster_read",	/* 96 M_CLRDAHEAD */
 	"cluster_write",/* 97 M_CLWRBEHIND */ 
 	"iov64",		/* 98 M_IOV64 */ 
 	"fileglob",		/* 99 M_FILEGLOB */ 
 	"kauth",		/* 100 M_KAUTH */ 
 	"dummynet",		/* 101 M_DUMMYNET */ 
-#if CONFIG_VFS_FUNNEL
-	"unsafe_fsnode",	/* 102 M_UNSAFEFS */ 
-#else
 	"",			/* 102 M_UNSAFEFS */ 
-#endif /* CONFIG_VFS_FUNNEL */
 	"macpipelabel", /* 103 M_MACPIPELABEL */
 	"mactemp",      /* 104 M_MACTEMP */
 	"sbuf",         /* 105 M_SBUF */
 	"extattr",      /* 106 M_EXTATTR */
-	"lctx",         /* 107 M_LCTX */
+	"select",       /* 107 M_SELECT */
 #if TRAFFIC_MGT
 	"traffic_mgt",   /* 108 M_TRAFFIC_MGT */
 #else
 	"", /* 108 M_TRAFFIC_MGT */
 #endif
-#if HFS_COMPRESSION
+#if FS_COMPRESSION
 	"decmpfs_cnode",/* 109 M_DECMPFS_CNODE */
 #else
 	"",             /* 109 M_DECMPFS_CNODE */
-#endif /* HFS_COMPRESSION */
+#endif /* FS_COMPRESSION */
 	"ipmfilter",	/* 110 M_INMFILTER */
 	"ipmsource",	/* 111 M_IPMSOURCE */
 	"in6mfilter", 	/* 112 M_IN6MFILTER */
 	"ip6mopts",	/* 113 M_IP6MOPTS */
 	"ip6msource",	/* 114 M_IP6MSOURCE */
+#if FLOW_DIVERT
+	"flow_divert_pcb",	/* 115 M_FLOW_DIVERT_PCB */
+	"flow_divert_group",	/* 116 M_FLOW_DIVERT_GROUP */
+#else
+	"",					/* 115 M_FLOW_DIVERT_PCB */
+	"",					/* 116 M_FLOW_DIVERT_GROUP */
+#endif
+	"ip6cga",	/* 117 M_IP6CGA */
+#if NECP
+	"necp",					/* 118 M_NECP */
+	"necp_session_policy",	/* 119 M_NECP_SESSION_POLICY */
+	"necp_socket_policy",	/* 120 M_NECP_SOCKET_POLICY */
+	"necp_ip_policy",		/* 121 M_NECP_IP_POLICY */
+#else
+	"",						/* 118 M_NECP */
+	"",						/* 119 M_NECP_SESSION_POLICY */
+	"",						/* 120 M_NECP_SOCKET_POLICY */
+	"",						/* 121 M_NECP_IP_POLICY */
+#endif
+	"fdvnodedata"	/* 122 M_FD_VN_DATA */
+	"fddirbuf",	/* 123 M_FD_DIRBUF */
+	"netagent",	/* 124 M_NETAGENT */
+	"Event Handler",/* 125 M_EVENTHANDLER */
+	"Link Layer Table",	/* 126 M_LLTABLE */
+	"Network Work Queue",	/* 127 M_NWKWQ */
+	""
 };
 
 /* for use with kmzones.kz_zalloczone */
@@ -352,7 +358,7 @@ struct kmzones {
 #else
 	{ 0,		KMZ_MALLOC, FALSE },		/* 27 M_DQUOT */
 #endif
-	{ 0,		KMZ_MALLOC, FALSE },		/* 28 M_UFSMNT */
+	{ 0,		KMZ_MALLOC, FALSE },		/* 28 M_PROC_UUID_POLICY */
 	{ 0,		KMZ_MALLOC, FALSE },		/* 29 M_SHM */
 	{ SOS(plimit),	KMZ_CREATEZONE, TRUE },		/* 30 M_PLIMIT */
 	{ SOS(sigacts),	KMZ_CREATEZONE_ACCT, TRUE },	/* 31 M_SIGACTS */
@@ -417,17 +423,11 @@ struct kmzones {
 	{ (NDFILE * OFILESIZE),
 	                KMZ_CREATEZONE_ACCT, FALSE },	/* 73 M_OFILETABL */
 	{ MCLBYTES,	KMZ_CREATEZONE, FALSE },	/* 74 M_MCLUST */
-#if HFS
-	{ SOX(hfsmount),KMZ_LOOKUPZONE, FALSE },	/* 75 M_HFSMNT */
-	{ SOS(cnode),	KMZ_CREATEZONE, TRUE },		/* 76 M_HFSNODE */
-	{ SOS(filefork),KMZ_CREATEZONE, TRUE },		/* 77 M_HFSFORK */
-#else
-	{ 0,		KMZ_MALLOC, FALSE },		/* 75 M_HFSMNT */
-	{ 0,		KMZ_MALLOC, FALSE },		/* 76 M_HFSNODE */
-	{ 0,		KMZ_MALLOC, FALSE },		/* 77 M_HFSFORK */
-#endif
-	{ 0,		KMZ_MALLOC, FALSE },		/* 78 M_ZFSMNT */
-	{ 0,		KMZ_MALLOC, FALSE },		/* 79 M_ZFSNODE */
+	{ 0,		KMZ_MALLOC, FALSE },		/* 75 unused */
+	{ 0,		KMZ_MALLOC, FALSE },		/* 76 unused */
+	{ 0,		KMZ_MALLOC, FALSE },		/* 77 unused */
+	{ 0,		KMZ_MALLOC, FALSE },		/* 78 unused */
+	{ 0,		KMZ_MALLOC, FALSE },		/* 79 unused */
 	{ 0,		KMZ_MALLOC, FALSE },		/* 80 M_TEMP */
 	{ 0,		KMZ_MALLOC, FALSE },		/* 81 M_SECA */
 	{ 0,		KMZ_MALLOC, FALSE },		/* 82 M_DEVFS */
@@ -439,47 +439,58 @@ struct kmzones {
 	{ 0,		KMZ_MALLOC, FALSE },		/* 88 M_IP6MISC */
 	{ 0,		KMZ_MALLOC, FALSE },		/* 89 M_TSEGQ */
 	{ 0,		KMZ_MALLOC, FALSE },		/* 90 M_IGMP */
-#if JOURNALING
-	{ SOS(journal), KMZ_CREATEZONE, FALSE },	/* 91 M_JNL_JNL */
-	{ SOS(transaction), KMZ_CREATEZONE, FALSE },	/* 92 M_JNL_TR */
-#else
-	{ 0,	 	KMZ_MALLOC, FALSE },		/* 91 M_JNL_JNL */
-	{ 0,	 	KMZ_MALLOC, FALSE },		/* 92 M_JNL_TR */
-#endif
+	{ 0,	 	KMZ_MALLOC, FALSE },		/* 91 unused */
+	{ 0,	 	KMZ_MALLOC, FALSE },		/* 92 unused */
 	{ SOS(specinfo),KMZ_CREATEZONE, TRUE },		/* 93 M_SPECINFO */
 	{ SOS(kqueue),	KMZ_CREATEZONE, FALSE },	/* 94 M_KQUEUE */
-#if HFS
-	{ SOS(directoryhint), KMZ_CREATEZONE, TRUE },	/* 95 M_HFSDIRHINT */
-#else
-	{ 0,		KMZ_MALLOC, FALSE },		/* 95 M_HFSDIRHINT */
-#endif
+	{ 0,		KMZ_MALLOC, FALSE },		/* 95 unused */
 	{ SOS(cl_readahead),  KMZ_CREATEZONE, TRUE },	/* 96 M_CLRDAHEAD */
 	{ SOS(cl_writebehind),KMZ_CREATEZONE, TRUE },	/* 97 M_CLWRBEHIND */
 	{ SOS(user64_iovec),	KMZ_LOOKUPZONE, FALSE },/* 98 M_IOV64 */
 	{ SOS(fileglob),	KMZ_CREATEZONE, TRUE },	/* 99 M_FILEGLOB */
 	{ 0,		KMZ_MALLOC, FALSE },		/* 100 M_KAUTH */
 	{ 0,		KMZ_MALLOC, FALSE },		/* 101 M_DUMMYNET */
-#if CONFIG_VFS_FUNNEL
-	{ SOS(unsafe_fsnode),KMZ_CREATEZONE, TRUE },	/* 102 M_UNSAFEFS */
-#else 
 	{ 0,		KMZ_MALLOC, FALSE },		/* 102 M_UNSAFEFS */
-#endif /* CONFIG_VFS_FUNNEL */
 	{ 0,		KMZ_MALLOC, FALSE },		/* 103 M_MACPIPELABEL */
 	{ 0,		KMZ_MALLOC, FALSE },		/* 104 M_MACTEMP */
 	{ 0,		KMZ_MALLOC, FALSE },		/* 105 M_SBUF */
 	{ 0,		KMZ_MALLOC, FALSE },		/* 106 M_HFS_EXTATTR */
-	{ 0,		KMZ_MALLOC, FALSE },		/* 107 M_LCTX */
+	{ 0,		KMZ_MALLOC, FALSE },		/* 107 M_SELECT */
 	{ 0,		KMZ_MALLOC, FALSE },		/* 108 M_TRAFFIC_MGT */
-#if HFS_COMPRESSION
+#if FS_COMPRESSION
 	{ SOS(decmpfs_cnode),KMZ_CREATEZONE , FALSE},	/* 109 M_DECMPFS_CNODE */
 #else
 	{ 0,		KMZ_MALLOC, FALSE },		/* 109 M_DECMPFS_CNODE */
-#endif /* HFS_COMPRESSION */
+#endif /* FS_COMPRESSION */
  	{ 0,		KMZ_MALLOC, FALSE },		/* 110 M_INMFILTER */
 	{ 0,		KMZ_MALLOC, FALSE },		/* 111 M_IPMSOURCE */
 	{ 0,		KMZ_MALLOC, FALSE },		/* 112 M_IN6MFILTER */
 	{ 0,		KMZ_MALLOC, FALSE },		/* 113 M_IP6MOPTS */
 	{ 0,		KMZ_MALLOC, FALSE },		/* 114 M_IP6MSOURCE */
+#if FLOW_DIVERT
+	{ SOS(flow_divert_pcb),		KMZ_CREATEZONE, TRUE },	/* 115 M_FLOW_DIVERT_PCB */
+	{ SOS(flow_divert_group),	KMZ_CREATEZONE, TRUE },	/* 116 M_FLOW_DIVERT_GROUP */
+#else
+	{ 0,		KMZ_MALLOC, FALSE },		/* 115 M_FLOW_DIVERT_PCB */
+	{ 0,		KMZ_MALLOC, FALSE },		/* 116 M_FLOW_DIVERT_GROUP */
+#endif	/* FLOW_DIVERT */
+	{ 0,		KMZ_MALLOC, FALSE },		/* 117 M_IP6CGA */
+	{ 0,		KMZ_MALLOC, FALSE },		/* 118 M_NECP */
+#if NECP
+	{ SOS(necp_session_policy),	KMZ_CREATEZONE, TRUE },	/* 119 M_NECP_SESSION_POLICY */
+	{ SOS(necp_kernel_socket_policy),	KMZ_CREATEZONE, TRUE },	/* 120 M_NECP_SOCKET_POLICY */
+	{ SOS(necp_kernel_ip_output_policy),	KMZ_CREATEZONE, TRUE },	/* 121 M_NECP_IP_POLICY */
+#else
+	{ 0,		KMZ_MALLOC, FALSE },		/* 119 M_NECP_SESSION_POLICY */
+	{ 0,		KMZ_MALLOC, FALSE },		/* 120 M_NECP_SOCKET_POLICY */
+	{ 0,		KMZ_MALLOC, FALSE },		/* 121 M_NECP_IP_POLICY */
+#endif /* NECP */
+	{ 0,		KMZ_MALLOC, FALSE },		/* 122 M_FD_VN_DATA */
+	{ 0,		KMZ_MALLOC, FALSE },		/* 123 M_FD_DIRBUF */
+	{ 0,		KMZ_MALLOC, FALSE },		/* 124 M_NETAGENT */
+	{ 0,		KMZ_MALLOC, FALSE },		/* 125 M_EVENTHANDLER */
+	{ 0,		KMZ_MALLOC, FALSE },		/* 126 M_LLTABLE */
+	{ 0,		KMZ_MALLOC, FALSE },		/* 127 M_NWKWQ */
 #undef	SOS
 #undef	SOX
 };
@@ -541,19 +552,30 @@ kmeminit(void)
 	}
 }
 
-struct _mhead {
-	size_t	mlen;
-	char	dat[0];
-};
-
 void *
-_MALLOC(
+_MALLOC_external(
+	size_t		size,
+	int		type,
+	int		flags);
+void *
+_MALLOC_external(
 	size_t		size,
 	int		type,
 	int		flags)
 {
-	struct _mhead	*hdr;
-	size_t		memsize = sizeof (*hdr) + size;
+    static vm_allocation_site_t site = { .tag = VM_KERN_MEMORY_KALLOC, .flags = VM_TAG_BT };
+    return (__MALLOC(size, type, flags, &site));
+}
+
+void *
+__MALLOC(
+	size_t		size,
+	int		type,
+	int		flags,
+	vm_allocation_site_t *site)
+{
+	void 	*addr = NULL;
+	vm_size_t 	msize = size;
 
 	if (type >= M_LAST)
 		panic("_malloc TYPE");
@@ -561,47 +583,39 @@ _MALLOC(
 	if (size == 0)
 		return (NULL);
 
+	if (msize != size) {
+		panic("Requested size to __MALLOC is too large (%llx)!\n", (uint64_t)size);
+	}
+
 	if (flags & M_NOWAIT) {
-               if (size > memsize)   /* overflow detected */
-                       return (NULL);
-               else
-                       hdr = (void *)kalloc_noblock(memsize); 
+		addr = (void *)kalloc_canblock(&msize, FALSE, site);
 	} else {
-               if (size > memsize) {
-                       /*
-                        * We get here when the caller told us to block, waiting for memory but an overflow
-                        * has been detected.  The caller isn't expecting a NULL return code so we panic
-                        * with a descriptive message.
-                        */
-                       panic("_MALLOC: overflow detected, size %llu ", (uint64_t) size);
-               }
-               else
-                       hdr = (void *)kalloc(memsize);
-
-	       if (hdr == NULL) {
-
+		addr = (void *)kalloc_canblock(&msize, TRUE, site);
+		if (addr == NULL) {
 			/*
 			 * We get here when the caller told us to block waiting for memory, but
 			 * kalloc said there's no memory left to get.  Generally, this means there's a 
-			 * leak or the caller asked for an impossibly large amount of memory.  Since there's
-			 * nothing left to wait for and the caller isn't expecting a NULL return code, we
-			 * just panic.  This is less than ideal, but returning NULL doesn't help since the
-			 * majority of callers don't check the return value and will just dereference the pointer and
-			 * trap anyway.  We may as well get a more descriptive message out while we can.
+			 * leak or the caller asked for an impossibly large amount of memory. If the caller
+			 * is expecting a NULL return code then it should explicitly set the flag M_NULL. 
+			 * If the caller isn't expecting a NULL return code, we just panic. This is less 
+			 * than ideal, but returning NULL when the caller isn't expecting it doesn't help 
+			 * since the majority of callers don't check the return value and will just 
+			 * dereference the pointer and trap anyway.  We may as well get a more 
+			 * descriptive message out while we can.
 			 */
-
+			if (flags & M_NULL) {
+				return NULL;
+			}
 			panic("_MALLOC: kalloc returned NULL (potential leak), size %llu", (uint64_t) size);
 		}
 	}
-	if (!hdr)
+	if (!addr)
 		return (0);
 
-	hdr->mlen = memsize;
-
 	if (flags & M_ZERO)
-		bzero(hdr->dat, size);
+		bzero(addr, size);
 
-	return  (hdr->dat);
+	return  (addr);
 }
 
 void
@@ -609,40 +623,49 @@ _FREE(
 	void		*addr,
 	int		type)
 {
-	struct _mhead	*hdr;
-
 	if (type >= M_LAST)
 		panic("_free TYPE");
 
 	if (!addr)
 		return; /* correct (convenient bsd kernel legacy) */
 
-	hdr = addr; hdr--;
-	kfree(hdr, hdr->mlen);
+	kfree_addr(addr);
 }
 
 void *
-_REALLOC(
+__REALLOC(
 	void		*addr,
 	size_t		size,
 	int		type,
-	int		flags)
+	int		flags,
+	vm_allocation_site_t *site)
 {
-	struct _mhead	*hdr;
 	void		*newaddr;
 	size_t		alloc;
 
 	/* realloc(NULL, ...) is equivalent to malloc(...) */
 	if (addr == NULL)
-		return (_MALLOC(size, type, flags));
+		return (__MALLOC(size, type, flags, site));
+
+	alloc = kalloc_size(addr);
+	/* 
+	 * Find out the size of the bucket in which the new sized allocation 
+	 * would land. If it matches the bucket of the original allocation, 
+	 * simply return the address.
+	 */
+	if (kalloc_bucket_size(size) == alloc) {
+		if (flags & M_ZERO) { 
+			if (alloc < size)
+				bzero(addr + alloc, (size - alloc));
+			else
+				bzero(addr + size, (alloc - size));
+		}
+		return addr;
+	}
 
 	/* Allocate a new, bigger (or smaller) block */
-	if ((newaddr = _MALLOC(size, type, flags)) == NULL)
+	if ((newaddr = __MALLOC(size, type, flags, site)) == NULL)
 		return (NULL);
-
-	hdr = addr;
-	--hdr;
-	alloc = hdr->mlen - sizeof (*hdr);
 
 	/* Copy over original contents */
 	bcopy(addr, newaddr, MIN(size, alloc));
@@ -652,10 +675,25 @@ _REALLOC(
 }
 
 void *
-_MALLOC_ZONE(
+_MALLOC_ZONE_external(
+	size_t		size,
+	int		type,
+	int		flags);
+void *
+_MALLOC_ZONE_external(
 	size_t		size,
 	int		type,
 	int		flags)
+{
+    return (__MALLOC_ZONE(size, type, flags, NULL));
+}
+
+void *
+__MALLOC_ZONE(
+	size_t		size,
+	int		type,
+	int		flags,
+	vm_allocation_site_t *site)
 {
 	struct kmzones	*kmz;
 	void		*elem;
@@ -677,12 +715,19 @@ _MALLOC_ZONE(
 		} else {
 	  		elem = (void *)zalloc(kmz->kz_zalloczone);
 		}
-	else
-		if (flags & M_NOWAIT) {
-			elem = (void *)kalloc_noblock(size);
+	else {
+		vm_size_t kalloc_size = size;
+		if (size > kalloc_size) {
+			elem = NULL;
+		} else if (flags & M_NOWAIT) {
+			elem = (void *)kalloc_canblock(&kalloc_size, FALSE, site);
 		} else {
-			elem = (void *)kalloc(size);
+			elem = (void *)kalloc_canblock(&kalloc_size, TRUE, site);
 		}
+	}
+
+	if (elem && (flags & M_ZERO))
+		bzero(elem, size);
 
 	return (elem);
 }
@@ -711,6 +756,51 @@ _FREE_ZONE(
 	else
 		kfree(elem, size);
 }
+
+#if DEBUG || DEVELOPMENT
+
+extern unsigned int zone_map_jetsam_limit;
+
+static int
+sysctl_zone_map_jetsam_limit SYSCTL_HANDLER_ARGS
+{
+#pragma unused(oidp, arg1, arg2)
+	int oldval = 0, val = 0, error = 0;
+
+	oldval = zone_map_jetsam_limit;
+	error = sysctl_io_number(req, oldval, sizeof(int), &val, NULL);
+	if (error || !req->newptr) {
+		return (error);
+	}
+
+	if (val <= 0 || val > 100) {
+		printf("sysctl_zone_map_jetsam_limit: new jetsam limit value is invalid.\n");
+		return EINVAL;
+	}
+
+	zone_map_jetsam_limit = val;
+	return (0);
+}
+
+SYSCTL_PROC(_kern, OID_AUTO, zone_map_jetsam_limit, CTLTYPE_INT|CTLFLAG_RW, 0, 0,
+		sysctl_zone_map_jetsam_limit, "I", "Zone map jetsam limit");
+
+extern boolean_t run_zone_test(void);
+
+static int
+sysctl_run_zone_test SYSCTL_HANDLER_ARGS
+{
+#pragma unused(oidp, arg1, arg2)
+	int ret_val = run_zone_test();
+
+	return SYSCTL_OUT(req, &ret_val, sizeof(ret_val));
+}
+
+SYSCTL_PROC(_kern, OID_AUTO, run_zone_test,
+	CTLTYPE_INT | CTLFLAG_RD | CTLFLAG_MASKED | CTLFLAG_LOCKED,
+	0, 0, &sysctl_run_zone_test, "I", "Test zone allocator KPI");
+
+#endif /* DEBUG || DEVELOPMENT */
 
 #if CONFIG_ZLEAKS
 
@@ -824,3 +914,18 @@ SYSCTL_PROC(_kern_zleak, OID_AUTO, zone_threshold,
     sysctl_zleak_threshold, "Q", "zleak per-zone threshold");
 
 #endif	/* CONFIG_ZLEAKS */
+
+extern uint64_t get_zones_collectable_bytes(void);
+
+static int
+sysctl_zones_collectable_bytes SYSCTL_HANDLER_ARGS
+{
+#pragma unused(oidp, arg1, arg2)
+	uint64_t zones_free_mem = get_zones_collectable_bytes();
+
+	return SYSCTL_OUT(req, &zones_free_mem, sizeof(zones_free_mem));
+}
+
+SYSCTL_PROC(_kern, OID_AUTO, zones_collectable_bytes,
+	CTLTYPE_QUAD | CTLFLAG_RD | CTLFLAG_MASKED | CTLFLAG_LOCKED,
+	0, 0, &sysctl_zones_collectable_bytes, "Q", "Collectable memory in zones");

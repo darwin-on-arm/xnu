@@ -386,6 +386,8 @@ SYSCTL_QUAD(_audit_session, OID_AUTO, member_clear_sflags_mask, CTLFLAG_RW | CTL
     &audit_session_member_clear_sflags_mask,
     "Audit session flags clearable by a session member");
 
+extern int set_security_token_task_internal(proc_t p, void *task);
+
 #define	AUDIT_SESSION_DEBUG	0
 #if	AUDIT_SESSION_DEBUG
 /*
@@ -1165,14 +1167,14 @@ audit_session_setaia(proc_t p, auditinfo_addr_t *new_aia_p)
 		my_new_cred = kauth_cred_setauditinfo(my_cred, &tmp_as);
 
 		if (my_cred != my_new_cred) {
-			proc_lock(p);
+			proc_ucred_lock(p);
 			/* Need to protect for a race where another thread also
 			 * changed the credential after we took our reference.
 			 * If p_ucred has changed then we should restart this
 			 * again with the new cred.
 			 */
 			if (p->p_ucred != my_cred) {
-				proc_unlock(p);
+				proc_ucred_unlock(p);
 				audit_session_unref(my_new_cred);
 				kauth_cred_unref(&my_new_cred);
 				/* try again */
@@ -1182,7 +1184,7 @@ audit_session_setaia(proc_t p, auditinfo_addr_t *new_aia_p)
 			p->p_ucred = my_new_cred;
 			/* update cred on proc */
 			PROC_UPDATE_CREDS_ONPROC(p);
-			proc_unlock(p);
+			proc_ucred_unlock(p);
 		}
 		/*
 		 * Drop old proc reference or our extra reference.
@@ -1376,7 +1378,7 @@ done:
 }
 
 static int
-audit_session_join_internal(proc_t p, ipc_port_t port, au_asid_t *new_asid)
+audit_session_join_internal(proc_t p, task_t task, ipc_port_t port, au_asid_t *new_asid)
 {
 	auditinfo_addr_t *new_aia_p, *old_aia_p;
 	kauth_cred_t my_cred = NULL;
@@ -1390,12 +1392,12 @@ audit_session_join_internal(proc_t p, ipc_port_t port, au_asid_t *new_asid)
 		goto done;
 	}
 
-	proc_lock(p);
+	proc_ucred_lock(p);
 	kauth_cred_ref(p->p_ucred);
 	my_cred = p->p_ucred;
 	if (!IS_VALID_CRED(my_cred)) {
 		kauth_cred_unref(&my_cred);	
-		proc_unlock(p);
+		proc_ucred_unlock(p);
 		err = ESRCH;
 		goto done;
 	}
@@ -1421,15 +1423,15 @@ audit_session_join_internal(proc_t p, ipc_port_t port, au_asid_t *new_asid)
 		/* Increment the proc count of new session */
 		audit_inc_procount(AU_SENTRY_PTR(new_aia_p));
 
-		proc_unlock(p);
+		proc_ucred_unlock(p);
 
 		/* Propagate the change from the process to the Mach task. */
-		set_security_token(p);
+		set_security_token_task_internal(p, task);
 
 		/* Decrement the process count of the former session. */
 		audit_dec_procount(AU_SENTRY_PTR(old_aia_p));
 	} else  {
-		proc_unlock(p);
+		proc_ucred_unlock(p);
 	}
 	kauth_cred_unref(&my_cred);
 
@@ -1450,11 +1452,11 @@ done:
  * 		ESRCH		Invalid calling process/cred.
  */
 int
-audit_session_spawnjoin(proc_t p, ipc_port_t port)
+audit_session_spawnjoin(proc_t p, task_t task, ipc_port_t port)
 {
 	au_asid_t new_asid;
 	
-	return (audit_session_join_internal(p, port, &new_asid));
+	return (audit_session_join_internal(p, task, port, &new_asid));
 }
 
 /*
@@ -1488,7 +1490,7 @@ audit_session_join(proc_t p, struct audit_session_join_args *uap,
 		*ret_asid = AU_DEFAUDITSID;
 		err = EINVAL;
 	} else
-		err = audit_session_join_internal(p, port, ret_asid);
+		err = audit_session_join_internal(p, p->task, port, ret_asid);
 
 	return (err);
 }
@@ -1660,6 +1662,7 @@ audit_sdev_free(struct audit_sdev *asdev)
 	audit_sdev_flush(asdev);
 	cv_destroy(&asdev->asdev_cv);
 	AUDIT_SDEV_SX_LOCK_DESTROY(asdev);
+	AUDIT_SDEV_UNLOCK(asdev);
 	AUDIT_SDEV_LOCK_DESTROY(asdev);
 
 	TAILQ_REMOVE(&audit_sdev_list, asdev, asdev_list);
@@ -1698,7 +1701,7 @@ audit_sdev_open(dev_t dev, __unused int flags,  __unused int devtype, proc_t p)
 	int u;
 
 	u = minor(dev);
-	if (u < 0 || u > MAX_AUDIT_SDEVS)
+	if (u < 0 || u >= MAX_AUDIT_SDEVS)
 		return (ENXIO);
 
 	(void) audit_sdev_get_aia(p, &aia);
@@ -1911,7 +1914,7 @@ audit_sdev_read(dev_t dev, struct uio *uio, __unused int flag)
 
 		KASSERT(ase->ase_record_len > asdev->asdev_qoffset,
 		    ("audit_sdev_read: record_len > qoffset (1)"));
-		toread = MIN(ase->ase_record_len - asdev->asdev_qoffset,
+		toread = MIN((int)(ase->ase_record_len - asdev->asdev_qoffset),
 		    uio_resid(uio));
 		AUDIT_SDEV_UNLOCK(asdev);
 		error = uiomove((char *) ase->ase_record + asdev->asdev_qoffset,

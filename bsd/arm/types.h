@@ -45,73 +45,28 @@
 #ifndef __ASSEMBLER__
 #include <arm/_types.h>
 #include <sys/cdefs.h>
-
 /*
  * Basic integral types.  Omit the typedef if
  * not possible for a machine/compiler combination.
  */
+#include <sys/_types/_int8_t.h>
+#include <sys/_types/_int16_t.h>
+#include <sys/_types/_int32_t.h>
+#include <sys/_types/_int64_t.h>
 
-typedef	unsigned char		u_int8_t;
-typedef	unsigned short		u_int16_t;
-typedef	unsigned int		u_int32_t;
-typedef	unsigned long long	u_int64_t;
-
-#ifndef _INT8_T
-#define _INT8_T
-typedef	__signed char		int8_t;
-#endif
-
-#ifndef _INT16_T
-#define _INT16_T
-typedef	short			int16_t;
-#endif
-
-#ifndef _INT32_T
-#define _INT32_T
-typedef	int			int32_t;
-#endif
-
-#ifndef _INT64_T
-#define _INT64_T
-typedef	long long		int64_t;
-#endif
- 
-#ifndef _INTPTR_T
-#define _INTPTR_T
-typedef __darwin_intptr_t	intptr_t;
-#endif
-#ifndef _UINTPTR_T
-#define _UINTPTR_T
-typedef unsigned long		uintptr_t;
-#endif
-
-
-#if defined(__arm__)
-typedef u_int32_t		user32_addr_t;	
-typedef u_int32_t		user32_size_t;	
-typedef int32_t			user32_ssize_t;
-typedef int32_t			user32_long_t;
-typedef u_int32_t		user32_ulong_t;
-typedef int32_t			user32_time_t;
-typedef int64_t			user64_off_t;
-
-typedef u_int64_t		user64_addr_t;	
-typedef u_int64_t		user64_size_t;	
-typedef int64_t			user64_ssize_t;
-typedef int64_t			user64_long_t;
-typedef u_int64_t		user64_ulong_t;
-typedef int64_t			user64_time_t;
-#endif
- 
-#ifndef __offsetof
-#define __offsetof(type, field) ((size_t)(&((type *)0)->field))
-#endif
+#include <sys/_types/_u_int8_t.h>
+#include <sys/_types/_u_int16_t.h>
+#include <sys/_types/_u_int32_t.h>
+#include <sys/_types/_u_int64_t.h>
 
 #if __LP64__
 typedef int64_t			register_t;
 #else
 typedef int32_t			register_t;
 #endif
+
+#include <sys/_types/_intptr_t.h>
+#include <sys/_types/_uintptr_t.h>
 
 #if !defined(_ANSI_SOURCE) && (!defined(_POSIX_C_SOURCE) || defined(_DARWIN_C_SOURCE))
 /* These types are used for reserving the largest possible size. */
@@ -136,6 +91,50 @@ typedef int64_t			user_off_t;
 #define USER_ADDR_NULL	((user_addr_t) 0)
 #define CAST_USER_ADDR_T(a_ptr)   ((user_addr_t)((uintptr_t)(a_ptr)))
 
+#ifdef KERNEL
+
+/*
+ * These types are used when you know the word size of the target
+ * user process. They can be used to create struct layouts independent
+ * of the types and alignment requirements of the current running
+ * kernel.
+ */
+
+/*
+ * The user64_ types are not used on the ARM platform, but exist
+ * so that APIs that conditionalize their behavior based on the
+ * size of an input structure (like many ioctl(2) implementations)
+ * can differentiate those structures without a duplicate case
+ * value.
+ */
+
+/*
+ * The default ABI for the ARM platform aligns fundamental integral
+ * data types to their natural boundaries, with a maximum alignment
+ * of 4, even for 8-byte quantites.
+ */
+
+typedef __uint64_t		user64_addr_t;
+typedef __uint64_t		user64_size_t;
+typedef __int64_t		user64_ssize_t;
+typedef __int64_t		user64_long_t;
+typedef __uint64_t		user64_ulong_t;
+typedef __int64_t		user64_time_t;
+typedef __int64_t		user64_off_t;
+
+typedef __uint32_t		user32_addr_t;
+typedef __uint32_t		user32_size_t;
+typedef __int32_t		user32_ssize_t;
+typedef __int32_t		user32_long_t;
+typedef __uint32_t		user32_ulong_t;
+typedef __int32_t		user32_time_t;
+#if __arm__ && (__BIGGEST_ALIGNMENT__ > 4)
+typedef __int64_t		user32_off_t;
+#else
+typedef __int64_t		user32_off_t  __attribute__((aligned(4)));
+#endif
+
+#endif /* KERNEL */
 
 #endif /* !_ANSI_SOURCE && (!_POSIX_C_SOURCE || _DARWIN_C_SOURCE) */
 
@@ -147,7 +146,6 @@ typedef u_int64_t		syscall_arg_t;
 #else
 #error Unknown architecture.
 #endif 
-
 
 #endif /* __ASSEMBLER__ */
 #endif	/* _MACHTYPES_H_ */

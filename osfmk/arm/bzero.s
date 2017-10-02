@@ -1,15 +1,20 @@
 /*
- * Copyright (c) 2006, 2009 Apple Inc. All rights reserved.
+ * Copyright (c) 2007 Apple Inc. All rights reserved.
  *
- * @APPLE_LICENSE_HEADER_START@
- * 
+ * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
+ *
  * This file contains Original Code and/or Modifications of Original Code
  * as defined in and that are subject to the Apple Public Source License
  * Version 2.0 (the 'License'). You may not use this file except in
- * compliance with the License. Please obtain a copy of the License at
- * http://www.opensource.apple.com/apsl/ and read it before using this
- * file.
- * 
+ * compliance with the License. The rights granted to you under the License
+ * may not be used to create, or enable the creation or redistribution of,
+ * unlawful or unlicensed copies of an Apple operating system, or to
+ * circumvent, violate, or enable the circumvention or violation of, any
+ * terms of an Apple operating system software license agreement.
+ *
+ * Please obtain a copy of the License at
+ * http://www.opensource.apple.com/apsl/ and read it before using this file.
+ *
  * The Original Code and all software distributed under the License are
  * distributed on an 'AS IS' basis, WITHOUT WARRANTY OF ANY KIND, EITHER
  * EXPRESS OR IMPLIED, AND APPLE HEREBY DISCLAIMS ALL SUCH WARRANTIES,
@@ -17,12 +22,14 @@
  * FITNESS FOR A PARTICULAR PURPOSE, QUIET ENJOYMENT OR NON-INFRINGEMENT.
  * Please see the License for the specific language governing rights and
  * limitations under the License.
- * 
- * @APPLE_LICENSE_HEADER_END@
+ *
+ * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
 
-#include <arm/arch.h>
+#include <arm/proc_reg.h>
 
+#include <arm/asm.h>
+	
 /* 
  * A reasonably well-optimized bzero/memset. Should work equally well on arm11 and arm9 based
  * cores. 
@@ -30,12 +37,19 @@
  * The algorithm is to align the destination pointer on a 32 byte boundary and then
  * blast data 64 bytes at a time, in two stores of 32 bytes per loop.
  */
+	.syntax unified
 	.text
 	.align 2
 
-	.globl _memset
+/*
+ * void *secure_memset(void * addr, int pattern, size_t length)
+ *
+ * It is important that this function remains defined in assembly to avoid
+ * compiler optimizations.
+ */
+ENTRY(secure_memset)
 /* void *memset(void *ptr, int c, size_t len); */
-_memset:
+ENTRY(memset)
 	/* move len into r1, unpack c into r2 */
 	mov		r3, r2
 	and		r1, r1, #0xff
@@ -44,9 +58,8 @@ _memset:
 	mov		r1, r3
 	b		Lbzeroengine
 
-	.globl _bzero
 /* void bzero(void *ptr, size_t len); */
-_bzero:
+ENTRY2(bzero,__bzero)
 	/* zero out r2 so we can be just like memset(0) */
 	mov		r2, #0
 
@@ -157,3 +170,4 @@ L_unaligned:
 	cmp		r1, #64
 	bge		L_64ormorealigned
 	b		L_lessthan64aligned
+

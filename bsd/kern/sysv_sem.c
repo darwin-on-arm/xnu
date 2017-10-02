@@ -265,8 +265,8 @@ semsys(struct proc *p, struct semsys_args *uap, int32_t *retval)
 static int
 grow_semu_array(int newSize)
 {
-	register int i;
-	register struct sem_undo *newSemu;
+	int i;
+	struct sem_undo *newSemu;
 
 	if (newSize <= seminfo.semmnu)
 		return 1;
@@ -326,8 +326,8 @@ grow_semu_array(int newSize)
 static int
 grow_sema_array(int newSize)
 {
-	register struct semid_kernel *newSema;
-	register int i;
+	struct semid_kernel *newSema;
+	int i;
 
 	if (newSize <= seminfo.semmni)
 		return 0;
@@ -428,7 +428,7 @@ grow_sem_pool(int new_pool_size)
 	printf("growing sem_pool array from %d to %d\n", seminfo.semmns, new_pool_size);
 #endif
 	MALLOC(new_sem_pool, struct sem *, sizeof (struct sem) * new_pool_size,
-	       M_SYSVSEM, M_WAITOK | M_ZERO);
+	       M_SYSVSEM, M_WAITOK | M_ZERO | M_NULL);
 	if (NULL == new_sem_pool) {
 #ifdef SEM_DEBUG
 		printf("allocation failed.  no changes made.\n");
@@ -444,7 +444,8 @@ grow_sem_pool(int new_pool_size)
 	/* Update our id structures to point to the new semaphores */
 	for(i = 0; i < seminfo.semmni; i++) {
 		if (sema[i].u.sem_perm.mode & SEM_ALLOC)  /* ID in use */
-			sema[i].u.sem_base += (new_sem_pool - sem_pool);
+			sema[i].u.sem_base = new_sem_pool + 
+				(sema[i].u.sem_base - sem_pool);
 	}
 
 	sem_free = sem_pool;
@@ -471,8 +472,8 @@ grow_sem_pool(int new_pool_size)
 static int
 semu_alloc(struct proc *p)
 {
-	register int i;
-	register struct sem_undo *suptr;
+	int i;
+	struct sem_undo *suptr;
 	int *supidx;
 	int attempt;
 
@@ -549,9 +550,9 @@ static int
 semundo_adjust(struct proc *p, int *supidx, int semid,
 	int semnum, int adjval)
 {
-	register struct sem_undo *suptr;
+	struct sem_undo *suptr;
 	int suidx;
-	register struct undo *sueptr, **suepptr, *new_sueptr;
+	struct undo *sueptr, **suepptr, *new_sueptr;
 	int i;
 
 	/*
@@ -774,10 +775,12 @@ semctl(struct proc *p, struct semctl_args *uap, int32_t *retval)
 
 		if (IS_64BIT_PROCESS(p)) {
 			struct user64_semid_ds semid_ds64;
+			bzero(&semid_ds64, sizeof(semid_ds64));
 			semid_ds_kernelto64(&semakptr->u, &semid_ds64);
 			eval = copyout(&semid_ds64, user_arg.buf, sizeof(semid_ds64));
 		} else {
 			struct user32_semid_ds semid_ds32;
+			bzero(&semid_ds32, sizeof(semid_ds32));
 			semid_ds_kernelto32(&semakptr->u, &semid_ds32);
 			eval = copyout(&semid_ds32, user_arg.buf, sizeof(semid_ds32));
 		}
@@ -853,12 +856,27 @@ semctl(struct proc *p, struct semctl_args *uap, int32_t *retval)
 			eval = EINVAL;
 			goto semctlout;
 		}
+		
 		/*
 		 * Cast down a pointer instead of using 'val' member directly
 		 * to avoid introducing endieness and a pad field into the
 		 * header file.  Ugly, but it works.
 		 */
-		semakptr->u.sem_base[semnum].semval = CAST_DOWN_EXPLICIT(int,user_arg.buf);
+		u_int newsemval = CAST_DOWN_EXPLICIT(u_int, user_arg.buf);
+		
+		/*
+		 * The check is being performed as unsigned values to match 
+		 * eventual destination
+		 */ 
+		if (newsemval > (u_int)seminfo.semvmx)
+		{
+#ifdef SEM_DEBUG
+			printf("Out of range sem value for set\n");
+#endif
+			eval = ERANGE;
+			goto semctlout;
+		}
+		semakptr->u.sem_base[semnum].semval = newsemval;
 		semakptr->u.sem_base[semnum].sempid = p->p_pid;
 		/* XXX scottl Should there be a MAC call here? */
 		semundo_clear(semid, semnum);
@@ -1045,9 +1063,9 @@ semop(struct proc *p, struct semop_args *uap, int32_t *retval)
 	int semid = uap->semid;
 	int nsops = uap->nsops;
 	struct sembuf sops[seminfo.semopm];
-	register struct semid_kernel *semakptr;
-	register struct sembuf *sopptr = NULL;	/* protected by 'semptr' */
-	register struct sem *semptr = NULL;	/* protected by 'if' */
+	struct semid_kernel *semakptr;
+	struct sembuf *sopptr = NULL;	/* protected by 'semptr' */
+	struct sem *semptr = NULL;	/* protected by 'if' */
 	int supidx = -1;
 	int i, j, eval;
 	int do_wakeup, do_undos;
@@ -1374,7 +1392,7 @@ semopout:
 void
 semexit(struct proc *p)
 {
-	register struct sem_undo *suptr = NULL;
+	struct sem_undo *suptr = NULL;
 	int suidx;
 	int *supidx;
 	int did_something;
@@ -1455,10 +1473,7 @@ semexit(struct proc *p)
 		/* Maybe we should build a list of semakptr's to wake
 		 * up, finish all access to data structures, release the
 		 * subsystem lock, and wake all the processes.  Something
-		 * to think about.  It wouldn't buy us anything unless
-		 * wakeup had the potential to block, or the syscall
-		 * funnel state was changed to allow multiple threads
-		 * in the BSD code at once.
+		 * to think about.
 		 */
 #ifdef SEM_WAKEUP
 			sem_wakeup((caddr_t)semakptr);
@@ -1635,9 +1650,11 @@ IPCS_sem_sysctl(__unused struct sysctl_oid *oidp, __unused void *arg1,
 		 * descriptor to a 32 bit user one.
 		 */
 		if (!IS_64BIT_PROCESS(p)) {
+			bzero(&semid_ds32, sizeof(semid_ds32));
 			semid_ds_kernelto32(semid_dsp, &semid_ds32);
 			semid_dsp = &semid_ds32;
 		} else {
+			bzero(&semid_ds64, sizeof(semid_ds64));
 			semid_ds_kernelto64(semid_dsp, &semid_ds64);
 			semid_dsp = &semid_ds64;
 		}

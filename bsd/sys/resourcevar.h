@@ -65,15 +65,15 @@
 #define	_SYS_RESOURCEVAR_H_
 
 #include <sys/appleapiopts.h>
+#include <sys/resource.h>
 
 /*
  * Kernel per-process accounting / statistics
  * (not necessarily resident except when running).
  */
 struct pstats {
-#define	pstat_startzero	p_ru
-	struct	rusage p_ru;		/* stats for this proc */
-	struct	rusage p_cru;		/* (PL) sum of stats for reaped children */
+	struct	rusage            p_ru;		/* stats for this proc */
+	struct	rusage            p_cru;	/* (PL) sum of stats for reaped children */
 
 	struct uprof {			/* profile arguments */
 		struct uprof *pr_next;  /* multiple prof buffers allowed */
@@ -84,10 +84,10 @@ struct pstats {
 		u_int32_t	pr_addr;	/* temp storage for addr until AST */
 		u_int32_t	pr_ticks;	/* temp storage for ticks until AST */
 	} p_prof;
-#define	pstat_endzero	p_start
-
-	struct  timeval p_start;	/* starting time ; compat only */
+	
+	uint64_t ps_start;       	/* starting time ; compat only */
 #ifdef KERNEL
+	struct  rusage_info_child ri_child; 	/* (PL) sum of additional stats for reaped children (proc_pid_rusage) */
 	struct user_uprof {			    /* profile arguments */
 		struct user_uprof *pr_next;  /* multiple prof buffers allowed */
 		user_addr_t	    pr_base;	/* buffer base */
@@ -132,6 +132,7 @@ void	 addupc_task(struct proc *p, user_addr_t pc, u_int ticks);
 void	 calcru(struct proc *p, struct timeval *up, struct timeval *sp,
 	    struct timeval *ip);
 void	 ruadd(struct rusage *ru, struct rusage *ru2);
+void	 update_rusage_info_child(struct rusage_info_child *ru, rusage_info_current *ru_current);
 void proc_limitget(proc_t p, int whichi, struct rlimit * limp);
 void proc_limitdrop(proc_t p, int exiting);
 void proc_limitfork(proc_t parent, proc_t child);

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010-2012 Apple Inc. All rights reserved.
+ * Copyright (c) 2010-2017 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -80,6 +80,7 @@
 
 #include <net/if.h>
 #include <net/if_dl.h>
+#include <net/net_api_stats.h>
 #include <net/route.h>
 
 #include <netinet/in.h>
@@ -88,17 +89,6 @@
 #include <netinet/in_var.h>
 #include <netinet/ip_var.h>
 #include <netinet/igmp_var.h>
-
-#ifndef __SOCKUNION_DECLARED
-union sockunion {
-	struct sockaddr_storage	ss;
-	struct sockaddr		sa;
-	struct sockaddr_dl	sdl;
-	struct sockaddr_in	sin;
-};
-typedef union sockunion sockunion_t;
-#define __SOCKUNION_DECLARED
-#endif /* __SOCKUNION_DECLARED */
 
 /*
  * Functions with non-static linkage defined in this file should be
@@ -128,10 +118,10 @@ static void	imf_rollback(struct in_mfilter *);
 static void	imf_reap(struct in_mfilter *);
 static int	imo_grow(struct ip_moptions *, size_t);
 static size_t	imo_match_group(const struct ip_moptions *,
-		    const struct ifnet *, const struct sockaddr *);
+		    const struct ifnet *, const struct sockaddr_in *);
 static struct in_msource *
 		imo_match_source(const struct ip_moptions *, const size_t,
-		    const struct sockaddr *);
+		    const struct sockaddr_in *);
 static void	ims_merge(struct ip_msource *ims,
 		    const struct in_msource *lims, const int rollback);
 static int	in_getmulti(struct ifnet *, const struct in_addr *,
@@ -243,9 +233,6 @@ static void ipms_free(struct ip_msource *);
 static struct in_msource *inms_alloc(int);
 static void inms_free(struct in_msource *);
 
-#define	IMO_CAST_TO_NONCONST(x)	((struct ip_moptions *)(void *)(uintptr_t)x)
-#define	INM_CAST_TO_NONCONST(x)	((struct in_multi *)(void *)(uintptr_t)x)
-
 static __inline int
 ip_msource_cmp(const struct ip_msource *a, const struct ip_msource *b)
 {
@@ -338,16 +325,14 @@ imo_grow(struct ip_moptions *imo, size_t newmax)
  */
 static size_t
 imo_match_group(const struct ip_moptions *imo, const struct ifnet *ifp,
-    const struct sockaddr *group)
+    const struct sockaddr_in *group)
 {
-	const struct sockaddr_in *gsin;
 	struct in_multi	*pinm;
 	int		  idx;
 	int		  nmships;
 
-	IMO_LOCK_ASSERT_HELD(IMO_CAST_TO_NONCONST(imo));
+	IMO_LOCK_ASSERT_HELD(__DECONST(struct ip_moptions *, imo));
 
-	gsin = (struct sockaddr_in *)(uintptr_t)(size_t)group;
 
 	/* The imo_membership array may be lazy allocated. */
 	if (imo->imo_membership == NULL || imo->imo_num_memberships == 0)
@@ -360,7 +345,7 @@ imo_match_group(const struct ip_moptions *imo, const struct ifnet *ifp,
 			continue;
 		INM_LOCK(pinm);
 		if ((ifp == NULL || (pinm->inm_ifp == ifp)) &&
-		    in_hosteq(pinm->inm_addr, gsin->sin_addr)) {
+		    in_hosteq(pinm->inm_addr, group->sin_addr)) {
 			INM_UNLOCK(pinm);
 			break;
 		}
@@ -381,16 +366,15 @@ imo_match_group(const struct ip_moptions *imo, const struct ifnet *ifp,
  */
 static struct in_msource *
 imo_match_source(const struct ip_moptions *imo, const size_t gidx,
-    const struct sockaddr *src)
+    const struct sockaddr_in *src)
 {
 	struct ip_msource	 find;
 	struct in_mfilter	*imf;
 	struct ip_msource	*ims;
-	const sockunion_t	*psa;
 
-	IMO_LOCK_ASSERT_HELD(IMO_CAST_TO_NONCONST(imo));
+	IMO_LOCK_ASSERT_HELD(__DECONST(struct ip_moptions *, imo));
 
-	VERIFY(src->sa_family == AF_INET);
+	VERIFY(src->sin_family == AF_INET);
 	VERIFY(gidx != (size_t)-1 && gidx < imo->imo_num_memberships);
 
 	/* The imo_mfilters array may be lazy allocated. */
@@ -399,8 +383,7 @@ imo_match_source(const struct ip_moptions *imo, const size_t gidx,
 	imf = &imo->imo_mfilters[gidx];
 
 	/* Source trees are keyed in host byte order. */
-	psa = (sockunion_t *)(uintptr_t)(size_t)src;
-	find.ims_haddr = ntohl(psa->sin.sin_addr.s_addr);
+	find.ims_haddr = ntohl(src->sin_addr.s_addr);
 	ims = RB_FIND(ip_msource_tree, &imf->imf_sources, &find);
 
 	return ((struct in_msource *)ims);
@@ -414,13 +397,13 @@ imo_match_source(const struct ip_moptions *imo, const size_t gidx,
  */
 int
 imo_multi_filter(const struct ip_moptions *imo, const struct ifnet *ifp,
-    const struct sockaddr *group, const struct sockaddr *src)
+    const struct sockaddr_in *group, const struct sockaddr_in *src)
 {
 	size_t gidx;
 	struct in_msource *ims;
 	int mode;
 
-	IMO_LOCK_ASSERT_HELD(IMO_CAST_TO_NONCONST(imo));
+	IMO_LOCK_ASSERT_HELD(__DECONST(struct ip_moptions *, imo));
 	VERIFY(ifp != NULL);
 
 	gidx = imo_match_group(imo, ifp, group);
@@ -861,7 +844,8 @@ imf_rollback(struct in_mfilter *imf)
 			lims->imsl_st[1] = lims->imsl_st[0];
 		} else {
 			/* revert source added t1 */
-			IGMP_PRINTF(("%s: free inms %p\n", __func__, lims));
+			IGMP_PRINTF(("%s: free inms 0x%llx\n", __func__,
+			    (uint64_t)VM_KERNEL_ADDRPERM(lims)));
 			RB_REMOVE(ip_msource_tree, &imf->imf_sources, ims);
 			inms_free(lims);
 			imf->imf_nsrc--;
@@ -921,7 +905,8 @@ imf_reap(struct in_mfilter *imf)
 		lims = (struct in_msource *)ims;
 		if ((lims->imsl_st[0] == MCAST_UNDEFINED) &&
 		    (lims->imsl_st[1] == MCAST_UNDEFINED)) {
-			IGMP_PRINTF(("%s: free inms %p\n", __func__, lims));
+			IGMP_PRINTF(("%s: free inms 0x%llx\n", __func__,
+			    (uint64_t)VM_KERNEL_ADDRPERM(lims)));
 			RB_REMOVE(ip_msource_tree, &imf->imf_sources, ims);
 			inms_free(lims);
 			imf->imf_nsrc--;
@@ -942,7 +927,8 @@ imf_purge(struct in_mfilter *imf)
 
 	RB_FOREACH_SAFE(ims, ip_msource_tree, &imf->imf_sources, tims) {
 		lims = (struct in_msource *)ims;
-		IGMP_PRINTF(("%s: free inms %p\n", __func__, lims));
+		IGMP_PRINTF(("%s: free inms 0x%llx\n", __func__,
+		    (uint64_t)VM_KERNEL_ADDRPERM(lims)));
 		RB_REMOVE(ip_msource_tree, &imf->imf_sources, ims);
 		inms_free(lims);
 		imf->imf_nsrc--;
@@ -969,6 +955,7 @@ inm_get_source(struct in_multi *inm, const in_addr_t haddr,
 	struct ip_msource	*ims, *nims;
 #ifdef IGMP_DEBUG
 	struct in_addr ia;
+	char buf[MAX_IPv4_STR_LEN];
 #endif
 	INM_LOCK_ASSERT_HELD(inm);
 
@@ -986,8 +973,9 @@ inm_get_source(struct in_multi *inm, const in_addr_t haddr,
 		ims = nims;
 #ifdef IGMP_DEBUG
 		ia.s_addr = htonl(haddr);
-		IGMP_PRINTF(("%s: allocated %s as %p\n", __func__,
-		    inet_ntoa(ia), ims));
+		inet_ntop(AF_INET, &ia, buf, sizeof(buf));
+		IGMP_PRINTF(("%s: allocated %s as 0x%llx\n", __func__,
+		    buf, (uint64_t)VM_KERNEL_ADDRPERM(ims)));
 #endif
 	}
 
@@ -1007,7 +995,7 @@ uint8_t
 ims_get_mode(const struct in_multi *inm, const struct ip_msource *ims,
     uint8_t t)
 {
-	INM_LOCK_ASSERT_HELD(INM_CAST_TO_NONCONST(inm));
+	INM_LOCK_ASSERT_HELD(__DECONST(struct in_multi *, inm));
 
 	t = !!t;
 	if (inm->inm_st[t].iss_ex > 0 &&
@@ -1034,22 +1022,26 @@ ims_merge(struct ip_msource *ims, const struct in_msource *lims,
 #endif
 
 	if (lims->imsl_st[0] == MCAST_EXCLUDE) {
-		IGMP_PRINTF(("%s: t1 ex -= %d on %s\n",
-		    __func__, n, inet_ntoa(ia)));
+		IGMP_INET_PRINTF(ia,
+		    ("%s: t1 ex -= %d on %s\n",
+		    __func__, n, _igmp_inet_buf));
 		ims->ims_st[1].ex -= n;
 	} else if (lims->imsl_st[0] == MCAST_INCLUDE) {
-		IGMP_PRINTF(("%s: t1 in -= %d on %s\n",
-		    __func__, n, inet_ntoa(ia)));
+		IGMP_INET_PRINTF(ia,
+		    ("%s: t1 in -= %d on %s\n",
+		    __func__, n, _igmp_inet_buf));
 		ims->ims_st[1].in -= n;
 	}
 
 	if (lims->imsl_st[1] == MCAST_EXCLUDE) {
-		IGMP_PRINTF(("%s: t1 ex += %d on %s\n",
-		    __func__, n, inet_ntoa(ia)));
+		IGMP_INET_PRINTF(ia,
+		    ("%s: t1 ex += %d on %s\n",
+		    __func__, n, _igmp_inet_buf));
 		ims->ims_st[1].ex += n;
 	} else if (lims->imsl_st[1] == MCAST_INCLUDE) {
-		IGMP_PRINTF(("%s: t1 in += %d on %s\n",
-		    __func__, n, inet_ntoa(ia)));
+		IGMP_INET_PRINTF(ia,
+		    ("%s: t1 in += %d on %s\n",
+		    __func__, n, _igmp_inet_buf));
 		ims->ims_st[1].in += n;
 	}
 }
@@ -1071,7 +1063,7 @@ ims_merge(struct ip_msource *ims, const struct in_msource *lims,
 static int
 inm_merge(struct in_multi *inm, /*const*/ struct in_mfilter *imf)
 {
-	struct ip_msource	*ims, *nims;
+	struct ip_msource	*ims, *nims = NULL;
 	struct in_msource	*lims;
 	int			 schanged, error;
 	int			 nsrc0, nsrc1;
@@ -1183,7 +1175,9 @@ inm_merge(struct in_multi *inm, /*const*/ struct in_mfilter *imf)
 		inm->inm_st[1].iss_asm++;
 	}
 
-	IGMP_PRINTF(("%s: merged imf %p to inm %p\n", __func__, imf, inm));
+	IGMP_PRINTF(("%s: merged imf 0x%llx to inm 0x%llx\n", __func__,
+	    (uint64_t)VM_KERNEL_ADDRPERM(imf),
+	    (uint64_t)VM_KERNEL_ADDRPERM(inm)));
 	inm_print(inm);
 
 out_reap:
@@ -1205,7 +1199,8 @@ inm_commit(struct in_multi *inm)
 
 	INM_LOCK_ASSERT_HELD(inm);
 
-	IGMP_PRINTF(("%s: commit inm %p\n", __func__, inm));
+	IGMP_PRINTF(("%s: commit inm 0x%llx\n", __func__,
+	    (uint64_t)VM_KERNEL_ADDRPERM(inm)));
 	IGMP_PRINTF(("%s: pre commit:\n", __func__));
 	inm_print(inm);
 
@@ -1230,7 +1225,8 @@ inm_reap(struct in_multi *inm)
 		    ims->ims_st[1].ex > 0 || ims->ims_st[1].in > 0 ||
 		    ims->ims_stp != 0)
 			continue;
-		IGMP_PRINTF(("%s: free ims %p\n", __func__, ims));
+		IGMP_PRINTF(("%s: free ims 0x%llx\n", __func__,
+		    (uint64_t)VM_KERNEL_ADDRPERM(ims)));
 		RB_REMOVE(ip_msource_tree, &inm->inm_srcs, ims);
 		ipms_free(ims);
 		inm->inm_nsrc--;
@@ -1248,7 +1244,8 @@ inm_purge(struct in_multi *inm)
 	INM_LOCK_ASSERT_HELD(inm);
 
 	RB_FOREACH_SAFE(ims, ip_msource_tree, &inm->inm_srcs, tims) {
-		IGMP_PRINTF(("%s: free ims %p\n", __func__, ims));
+		IGMP_PRINTF(("%s: free ims 0x%llx\n", __func__,
+		    (uint64_t)VM_KERNEL_ADDRPERM(ims)));
 		RB_REMOVE(ip_msource_tree, &inm->inm_srcs, ims);
 		ipms_free(ims);
 		inm->inm_nsrc--;
@@ -1271,10 +1268,12 @@ in_joingroup(struct ifnet *ifp, const struct in_addr *gina,
 	struct in_mfilter	 timf;
 	struct in_multi		*inm = NULL;
 	int			 error = 0;
+	struct igmp_tparams	 itp;
 
-	IGMP_PRINTF(("%s: join %s on %p(%s%d))\n", __func__,
-	    inet_ntoa(*gina), ifp, ifp->if_name, ifp->if_unit));
+	IGMP_INET_PRINTF(*gina, ("%s: join %s on 0x%llx(%s))\n", __func__,
+	    _igmp_inet_buf, (uint64_t)VM_KERNEL_ADDRPERM(ifp), if_name(ifp)));
 
+	bzero(&itp, sizeof (itp));
 	*pinm = NULL;
 
 	/*
@@ -1302,21 +1301,26 @@ in_joingroup(struct ifnet *ifp, const struct in_addr *gina,
 	}
 
 	IGMP_PRINTF(("%s: doing igmp downcall\n", __func__));
-	error = igmp_change_state(inm);
+	error = igmp_change_state(inm, &itp);
 	if (error) {
 		IGMP_PRINTF(("%s: failed to update source\n", __func__));
+		imf_rollback(imf);
 		goto out_inm_release;
 	}
 
 out_inm_release:
 	if (error) {
-		IGMP_PRINTF(("%s: dropping ref on %p\n", __func__, inm));
+		IGMP_PRINTF(("%s: dropping ref on 0x%llx\n", __func__,
+		    (uint64_t)VM_KERNEL_ADDRPERM(inm)));
 		INM_UNLOCK(inm);
 		INM_REMREF(inm);
 	} else {
 		INM_UNLOCK(inm);
 		*pinm = inm;	/* keep refcount from in_getmulti() */
 	}
+
+	/* schedule timer now that we've dropped the lock(s) */
+	igmp_set_timeout(&itp);
 
 	return (error);
 }
@@ -1335,7 +1339,9 @@ in_leavegroup(struct in_multi *inm, /*const*/ struct in_mfilter *imf)
 {
 	struct in_mfilter	 timf;
 	int			 error, lastref;
+	struct igmp_tparams	 itp;
 
+	bzero(&itp, sizeof (itp));
 	error = 0;
 
 	INM_LOCK_ASSERT_NOTHELD(inm);
@@ -1343,10 +1349,11 @@ in_leavegroup(struct in_multi *inm, /*const*/ struct in_mfilter *imf)
         in_multihead_lock_exclusive();
         INM_LOCK(inm);
 
-	IGMP_PRINTF(("%s: leave inm %p, %s/%s%d, imf %p\n", __func__,
-	    inm, inet_ntoa(inm->inm_addr),
+	IGMP_INET_PRINTF(inm->inm_addr,
+	    ("%s: leave inm 0x%llx, %s/%s%d, imf 0x%llx\n", __func__,
+	    (uint64_t)VM_KERNEL_ADDRPERM(inm), _igmp_inet_buf,
 	    (inm_is_ifp_detached(inm) ? "null" : inm->inm_ifp->if_name),
-	    inm->inm_ifp->if_unit, imf));
+	    inm->inm_ifp->if_unit, (uint64_t)VM_KERNEL_ADDRPERM(imf)));
 
 	/*
 	 * If no imf was specified (i.e. kernel consumer),
@@ -1370,7 +1377,7 @@ in_leavegroup(struct in_multi *inm, /*const*/ struct in_mfilter *imf)
 	KASSERT(error == 0, ("%s: failed to merge inm state\n", __func__));
 
 	IGMP_PRINTF(("%s: doing igmp downcall\n", __func__));
-	error = igmp_change_state(inm);
+	error = igmp_change_state(inm, &itp);
 #if IGMP_DEBUG
 	if (error)
 		IGMP_PRINTF(("%s: failed igmp downcall\n", __func__));
@@ -1383,6 +1390,9 @@ in_leavegroup(struct in_multi *inm, /*const*/ struct in_mfilter *imf)
 
         if (lastref)
 		INM_REMREF(inm);	/* for in_multihead list */
+
+	/* schedule timer now that we've dropped the lock(s) */
+	igmp_set_timeout(&itp);
 
 	return (error);
 }
@@ -1431,7 +1441,7 @@ static int
 inp_block_unblock_source(struct inpcb *inp, struct sockopt *sopt)
 {
 	struct group_source_req		 gsr;
-	sockunion_t			*gsa, *ssa;
+	struct sockaddr_in 		*gsa, *ssa;
 	struct ifnet			*ifp;
 	struct in_mfilter		*imf;
 	struct ip_moptions		*imo;
@@ -1441,14 +1451,16 @@ inp_block_unblock_source(struct inpcb *inp, struct sockopt *sopt)
 	uint16_t			 fmode;
 	int				 error, doblock;
 	unsigned int			 ifindex = 0;
+	struct igmp_tparams		 itp;
 
+	bzero(&itp, sizeof (itp));
 	ifp = NULL;
 	error = 0;
 	doblock = 0;
 
 	memset(&gsr, 0, sizeof(struct group_source_req));
-	gsa = (sockunion_t *)&gsr.gsr_group;
-	ssa = (sockunion_t *)&gsr.gsr_source;
+	gsa = (struct sockaddr_in *)&gsr.gsr_group;
+	ssa = (struct sockaddr_in *)&gsr.gsr_source;
 
 	switch (sopt->sopt_name) {
 	case IP_BLOCK_SOURCE:
@@ -1461,13 +1473,13 @@ inp_block_unblock_source(struct inpcb *inp, struct sockopt *sopt)
 		if (error)
 			return (error);
 
-		gsa->sin.sin_family = AF_INET;
-		gsa->sin.sin_len = sizeof(struct sockaddr_in);
-		gsa->sin.sin_addr = mreqs.imr_multiaddr;
+		gsa->sin_family = AF_INET;
+		gsa->sin_len = sizeof(struct sockaddr_in);
+		gsa->sin_addr = mreqs.imr_multiaddr;
 
-		ssa->sin.sin_family = AF_INET;
-		ssa->sin.sin_len = sizeof(struct sockaddr_in);
-		ssa->sin.sin_addr = mreqs.imr_sourceaddr;
+		ssa->sin_family = AF_INET;
+		ssa->sin_len = sizeof(struct sockaddr_in);
+		ssa->sin_addr = mreqs.imr_sourceaddr;
 
 		if (!in_nullhost(mreqs.imr_interface))
 			ifp = ip_multicast_if(&mreqs.imr_interface, &ifindex);
@@ -1475,8 +1487,9 @@ inp_block_unblock_source(struct inpcb *inp, struct sockopt *sopt)
 		if (sopt->sopt_name == IP_BLOCK_SOURCE)
 			doblock = 1;
 
-		IGMP_PRINTF(("%s: imr_interface = %s, ifp = %p\n",
-		    __func__, inet_ntoa(mreqs.imr_interface), ifp));
+		IGMP_INET_PRINTF(mreqs.imr_interface,
+		    ("%s: imr_interface = %s, ifp = 0x%llx\n", __func__,
+		    _igmp_inet_buf, (uint64_t)VM_KERNEL_ADDRPERM(ifp)));
 		break;
 	    }
 
@@ -1488,12 +1501,12 @@ inp_block_unblock_source(struct inpcb *inp, struct sockopt *sopt)
 		if (error)
 			return (error);
 
-		if (gsa->sin.sin_family != AF_INET ||
-		    gsa->sin.sin_len != sizeof(struct sockaddr_in))
+		if (gsa->sin_family != AF_INET ||
+		    gsa->sin_len != sizeof(struct sockaddr_in))
 			return (EINVAL);
 
-		if (ssa->sin.sin_family != AF_INET ||
-		    ssa->sin.sin_len != sizeof(struct sockaddr_in))
+		if (ssa->sin_family != AF_INET ||
+		    ssa->sin_len != sizeof(struct sockaddr_in))
 			return (EINVAL);
 
 		ifnet_head_lock_shared();
@@ -1517,10 +1530,9 @@ inp_block_unblock_source(struct inpcb *inp, struct sockopt *sopt)
 		IGMP_PRINTF(("%s: unknown sopt_name %d\n",
 		    __func__, sopt->sopt_name));
 		return (EOPNOTSUPP);
-		break;
 	}
 
-	if (!IN_MULTICAST(ntohl(gsa->sin.sin_addr.s_addr)))
+	if (!IN_MULTICAST(ntohl(gsa->sin_addr.s_addr)))
 		return (EINVAL);
 
 	/*
@@ -1531,7 +1543,7 @@ inp_block_unblock_source(struct inpcb *inp, struct sockopt *sopt)
 		return (ENOMEM);
 
 	IMO_LOCK(imo);
-	idx = imo_match_group(imo, ifp, &gsa->sa);
+	idx = imo_match_group(imo, ifp, gsa);
 	if (idx == (size_t)-1 || imo->imo_mfilters == NULL) {
 		error = EADDRNOTAVAIL;
 		goto out_imo_locked;
@@ -1557,10 +1569,11 @@ inp_block_unblock_source(struct inpcb *inp, struct sockopt *sopt)
 	 *  Asked to unblock, but nothing to unblock.
 	 * If adding a new block entry, allocate it.
 	 */
-	ims = imo_match_source(imo, idx, &ssa->sa);
+	ims = imo_match_source(imo, idx, ssa);
 	if ((ims != NULL && doblock) || (ims == NULL && !doblock)) {
-		IGMP_PRINTF(("%s: source %s %spresent\n", __func__,
-		    inet_ntoa(ssa->sin.sin_addr), doblock ? "" : "not "));
+		IGMP_INET_PRINTF(ssa->sin_addr,
+		    ("%s: source %s %spresent\n", __func__,
+		    _igmp_inet_buf, doblock ? "" : "not "));
 		error = EADDRNOTAVAIL;
 		goto out_imo_locked;
 	}
@@ -1570,12 +1583,12 @@ inp_block_unblock_source(struct inpcb *inp, struct sockopt *sopt)
 	 */
 	if (doblock) {
 		IGMP_PRINTF(("%s: %s source\n", __func__, "block"));
-		ims = imf_graft(imf, fmode, &ssa->sin);
+		ims = imf_graft(imf, fmode, ssa);
 		if (ims == NULL)
 			error = ENOMEM;
 	} else {
 		IGMP_PRINTF(("%s: %s source\n", __func__, "allow"));
-		error = imf_prune(imf, &ssa->sin);
+		error = imf_prune(imf, ssa);
 	}
 
 	if (error) {
@@ -1596,7 +1609,7 @@ inp_block_unblock_source(struct inpcb *inp, struct sockopt *sopt)
 	}
 
 	IGMP_PRINTF(("%s: doing igmp downcall\n", __func__));
-	error = igmp_change_state(inm);
+	error = igmp_change_state(inm, &itp);
 	INM_UNLOCK(inm);
 #if IGMP_DEBUG
 	if (error)
@@ -1614,6 +1627,10 @@ out_imf_rollback:
 out_imo_locked:
 	IMO_UNLOCK(imo);
 	IMO_REMREF(imo);	/* from inp_findmoptions() */
+
+	/* schedule timer now that we've dropped the lock(s) */
+	igmp_set_timeout(&itp);
+
 	return (error);
 }
 
@@ -1682,7 +1699,7 @@ inp_get_source_filters(struct inpcb *inp, struct sockopt *sopt)
 {
 	struct __msfilterreq64	msfr, msfr64;
 	struct __msfilterreq32	msfr32;
-	sockunion_t		*gsa;
+	struct sockaddr_in	*gsa;
 	struct ifnet		*ifp;
 	struct ip_moptions	*imo;
 	struct in_mfilter	*imf;
@@ -1705,7 +1722,7 @@ inp_get_source_filters(struct inpcb *inp, struct sockopt *sopt)
 		if (error)
 			return (error);
 		/* we never use msfr.msfr_srcs; */
-		memcpy(&msfr, &msfr64, sizeof(msfr));
+		memcpy(&msfr, &msfr64, sizeof(msfr64));
 	} else {
 		error = sooptcopyin(sopt, &msfr32,
 		    sizeof(struct __msfilterreq32),
@@ -1713,7 +1730,7 @@ inp_get_source_filters(struct inpcb *inp, struct sockopt *sopt)
 		if (error)
 			return (error);
 		/* we never use msfr.msfr_srcs; */
-		memcpy(&msfr, &msfr32, sizeof(msfr));
+		memcpy(&msfr, &msfr32, sizeof(msfr32));
 	}
 
 	ifnet_head_lock_shared();
@@ -1729,8 +1746,8 @@ inp_get_source_filters(struct inpcb *inp, struct sockopt *sopt)
 		return (EADDRNOTAVAIL);
 
 	if ((size_t) msfr.msfr_nsrcs >
-	    SIZE_MAX / sizeof(struct sockaddr_storage))
-		msfr.msfr_nsrcs = SIZE_MAX / sizeof(struct sockaddr_storage);
+	    UINT32_MAX / sizeof(struct sockaddr_storage))
+		msfr.msfr_nsrcs = UINT32_MAX / sizeof(struct sockaddr_storage);
 
 	if (msfr.msfr_nsrcs > in_mcast_maxsocksrc)
 		msfr.msfr_nsrcs = in_mcast_maxsocksrc;
@@ -1739,8 +1756,9 @@ inp_get_source_filters(struct inpcb *inp, struct sockopt *sopt)
 	/*
 	 * Lookup group on the socket.
 	 */
-	gsa = (sockunion_t *)&msfr.msfr_group;
-	idx = imo_match_group(imo, ifp, &gsa->sa);
+	gsa = (struct sockaddr_in *)&msfr.msfr_group;
+
+	idx = imo_match_group(imo, ifp, gsa);
 	if (idx == (size_t)-1 || imo->imo_mfilters == NULL) {
 		IMO_UNLOCK(imo);
 		return (EADDRNOTAVAIL);
@@ -1777,7 +1795,6 @@ inp_get_source_filters(struct inpcb *inp, struct sockopt *sopt)
 			IMO_UNLOCK(imo);
 			return (ENOBUFS);
 		}
-		bzero(tss, (size_t) msfr.msfr_nsrcs * sizeof(*tss));
 	}
 
 	/*
@@ -1826,7 +1843,7 @@ inp_get_source_filters(struct inpcb *inp, struct sockopt *sopt)
 		msfr32.msfr_ifindex = msfr.msfr_ifindex;
 		msfr32.msfr_fmode   = msfr.msfr_fmode;
 		msfr32.msfr_nsrcs   = msfr.msfr_nsrcs;
-		memcpy(&msfr64.msfr_group, &msfr.msfr_group,
+		memcpy(&msfr32.msfr_group, &msfr.msfr_group,
 		    sizeof(struct sockaddr_storage));
 		error = sooptcopyout(sopt, &msfr32,
 		    sizeof(struct __msfilterreq32));
@@ -1854,26 +1871,14 @@ inp_getmoptions(struct inpcb *inp, struct sockopt *sopt)
 	 * If socket is neither of type SOCK_RAW or SOCK_DGRAM,
 	 * or is a divert socket, reject it.
 	 */
-	if (inp->inp_socket->so_proto->pr_protocol == IPPROTO_DIVERT ||
-	    (inp->inp_socket->so_proto->pr_type != SOCK_RAW &&
-	    inp->inp_socket->so_proto->pr_type != SOCK_DGRAM)) {
+	if (SOCK_PROTO(inp->inp_socket) == IPPROTO_DIVERT ||
+	    (SOCK_TYPE(inp->inp_socket) != SOCK_RAW &&
+	    SOCK_TYPE(inp->inp_socket) != SOCK_DGRAM)) {
 		return (EOPNOTSUPP);
 	}
 
 	error = 0;
 	switch (sopt->sopt_name) {
-#ifdef MROUTING
-	case IP_MULTICAST_VIF:
-		if (imo != NULL) {
-			IMO_LOCK(imo);
-			optval = imo->imo_multicast_vif;
-			IMO_UNLOCK(imo);
-		} else
-			optval = -1;
-		error = sooptcopyout(sopt, &optval, sizeof(int));
-		break;
-#endif /* MROUTING */
-
 	case IP_MULTICAST_IF:
 		memset(&mreqn, 0, sizeof(struct ip_mreqn));
 		if (imo != NULL) {
@@ -2009,7 +2014,6 @@ inp_lookup_mcast_ifp(const struct inpcb *inp,
 		if (ro.ro_rt != NULL) {
 			ifp = ro.ro_rt->rt_ifp;
 			VERIFY(ifp != NULL);
-			rtfree(ro.ro_rt);
 		} else {
 			struct in_ifaddr *ia;
 			struct ifnet *mifp;
@@ -2028,6 +2032,7 @@ inp_lookup_mcast_ifp(const struct inpcb *inp,
 			}
 			lck_rw_done(in_ifaddr_rwlock);
 		}
+		ROUTE_RELEASE(&ro);
 	}
 
 	return (ifp);
@@ -2045,7 +2050,7 @@ int
 inp_join_group(struct inpcb *inp, struct sockopt *sopt)
 {
 	struct group_source_req		 gsr;
-	sockunion_t			*gsa, *ssa;
+	struct sockaddr_in		*gsa, *ssa;
 	struct ifnet			*ifp;
 	struct in_mfilter		*imf;
 	struct ip_moptions		*imo;
@@ -2053,17 +2058,19 @@ inp_join_group(struct inpcb *inp, struct sockopt *sopt)
 	struct in_msource		*lims;
 	size_t				 idx;
 	int				 error, is_new;
+	struct igmp_tparams		 itp;
 
+	bzero(&itp, sizeof (itp));
 	ifp = NULL;
 	imf = NULL;
 	error = 0;
 	is_new = 0;
 
 	memset(&gsr, 0, sizeof(struct group_source_req));
-	gsa = (sockunion_t *)&gsr.gsr_group;
-	gsa->ss.ss_family = AF_UNSPEC;
-	ssa = (sockunion_t *)&gsr.gsr_source;
-	ssa->ss.ss_family = AF_UNSPEC;
+	gsa = (struct sockaddr_in *)&gsr.gsr_group;
+	gsa->sin_family = AF_UNSPEC;
+	ssa = (struct sockaddr_in *)&gsr.gsr_source;
+	ssa->sin_family = AF_UNSPEC;
 
 	switch (sopt->sopt_name) {
 	case IP_ADD_MEMBERSHIP:
@@ -2092,23 +2099,23 @@ inp_join_group(struct inpcb *inp, struct sockopt *sopt)
 			return (error);
 		}
 
-		gsa->sin.sin_family = AF_INET;
-		gsa->sin.sin_len = sizeof(struct sockaddr_in);
-		gsa->sin.sin_addr = mreqs.imr_multiaddr;
+		gsa->sin_family = AF_INET;
+		gsa->sin_len = sizeof(struct sockaddr_in);
+		gsa->sin_addr = mreqs.imr_multiaddr;
 
 		if (sopt->sopt_name == IP_ADD_SOURCE_MEMBERSHIP) {
-			ssa->sin.sin_family = AF_INET;
-			ssa->sin.sin_len = sizeof(struct sockaddr_in);
-			ssa->sin.sin_addr = mreqs.imr_sourceaddr;
+			ssa->sin_family = AF_INET;
+			ssa->sin_len = sizeof(struct sockaddr_in);
+			ssa->sin_addr = mreqs.imr_sourceaddr;
 		}
 
-		if (!IN_MULTICAST(ntohl(gsa->sin.sin_addr.s_addr)))
+		if (!IN_MULTICAST(ntohl(gsa->sin_addr.s_addr)))
 			return (EINVAL);
 
-		ifp = inp_lookup_mcast_ifp(inp, &gsa->sin,
-		    mreqs.imr_interface);
-		IGMP_PRINTF(("%s: imr_interface = %s, ifp = %p\n",
-		    __func__, inet_ntoa(mreqs.imr_interface), ifp));
+		ifp = inp_lookup_mcast_ifp(inp, gsa, mreqs.imr_interface);
+		IGMP_INET_PRINTF(mreqs.imr_interface,
+		    ("%s: imr_interface = %s, ifp = 0x%llx\n", __func__,
+		    _igmp_inet_buf, (uint64_t)VM_KERNEL_ADDRPERM(ifp)));
 		break;
 	}
 
@@ -2126,23 +2133,23 @@ inp_join_group(struct inpcb *inp, struct sockopt *sopt)
 		if (error)
 			return (error);
 
-		if (gsa->sin.sin_family != AF_INET ||
-		    gsa->sin.sin_len != sizeof(struct sockaddr_in))
+		if (gsa->sin_family != AF_INET ||
+		    gsa->sin_len != sizeof(struct sockaddr_in))
 			return (EINVAL);
 
 		/*
 		 * Overwrite the port field if present, as the sockaddr
 		 * being copied in may be matched with a binary comparison.
 		 */
-		gsa->sin.sin_port = 0;
+		gsa->sin_port = 0;
 		if (sopt->sopt_name == MCAST_JOIN_SOURCE_GROUP) {
-			if (ssa->sin.sin_family != AF_INET ||
-			    ssa->sin.sin_len != sizeof(struct sockaddr_in))
+			if (ssa->sin_family != AF_INET ||
+			    ssa->sin_len != sizeof(struct sockaddr_in))
 				return (EINVAL);
-			ssa->sin.sin_port = 0;
+			ssa->sin_port = 0;
 		}
 
-		if (!IN_MULTICAST(ntohl(gsa->sin.sin_addr.s_addr)))
+		if (!IN_MULTICAST(ntohl(gsa->sin_addr.s_addr)))
 			return (EINVAL);
 
 		ifnet_head_lock_shared();
@@ -2160,24 +2167,31 @@ inp_join_group(struct inpcb *inp, struct sockopt *sopt)
 		IGMP_PRINTF(("%s: unknown sopt_name %d\n",
 		    __func__, sopt->sopt_name));
 		return (EOPNOTSUPP);
-		break;
 	}
 
 	if (ifp == NULL || (ifp->if_flags & IFF_MULTICAST) == 0)
 		return (EADDRNOTAVAIL);
+
+	INC_ATOMIC_INT64_LIM(net_api_stats.nas_socket_mcast_join_total);
+	/*
+	 * TBD: revisit the criteria for non-OS initiated joins
+	 */
+	if (inp->inp_lport == htons(5353)) {
+		INC_ATOMIC_INT64_LIM(net_api_stats.nas_socket_mcast_join_os_total);
+	}
 
 	imo = inp_findmoptions(inp);
 	if (imo == NULL)
 		return (ENOMEM);
 
 	IMO_LOCK(imo);
-	idx = imo_match_group(imo, ifp, &gsa->sa);
+	idx = imo_match_group(imo, ifp, gsa);
 	if (idx == (size_t)-1) {
 		is_new = 1;
 	} else {
 		inm = imo->imo_membership[idx];
 		imf = &imo->imo_mfilters[idx];
-		if (ssa->ss.ss_family != AF_UNSPEC) {
+		if (ssa->sin_family != AF_UNSPEC) {
 			/*
 			 * MCAST_JOIN_SOURCE_GROUP on an exclusive membership
 			 * is an error. On an existing inclusive membership,
@@ -2203,7 +2217,7 @@ inp_join_group(struct inpcb *inp, struct sockopt *sopt)
 			 * full-state SSM API with the delta-based API,
 			 * which is discouraged in the relevant RFCs.
 			 */
-			lims = imo_match_source(imo, idx, &ssa->sa);
+			lims = imo_match_source(imo, idx, ssa);
 			if (lims != NULL /*&&
 			    lims->imsl_st[1] == MCAST_INCLUDE*/) {
 				error = EADDRNOTAVAIL;
@@ -2261,7 +2275,7 @@ inp_join_group(struct inpcb *inp, struct sockopt *sopt)
 	 * been allocated yet if this is a new membership, however,
 	 * the in_mfilter slot will be allocated and must be initialized.
 	 */
-	if (ssa->ss.ss_family != AF_UNSPEC) {
+	if (ssa->sin_family != AF_UNSPEC) {
 		/* Membership starts in IN mode */
 		if (is_new) {
 			IGMP_PRINTF(("%s: new join w/source\n", __func__));
@@ -2269,7 +2283,7 @@ inp_join_group(struct inpcb *inp, struct sockopt *sopt)
 		} else {
 			IGMP_PRINTF(("%s: %s source\n", __func__, "allow"));
 		}
-		lims = imf_graft(imf, MCAST_INCLUDE, &ssa->sin);
+		lims = imf_graft(imf, MCAST_INCLUDE, ssa);
 		if (lims == NULL) {
 			IGMP_PRINTF(("%s: merge imf state failed\n",
 			    __func__));
@@ -2287,10 +2301,24 @@ inp_join_group(struct inpcb *inp, struct sockopt *sopt)
 	/*
 	 * Begin state merge transaction at IGMP layer.
 	 */
-
 	if (is_new) {
+		/*
+		 * Unlock socket as we may end up calling ifnet_ioctl() to join (or leave)
+		 * the multicast group and we run the risk of a lock ordering issue
+		 * if the ifnet thread calls into the socket layer to acquire the pcb list
+		 * lock while the input thread delivers multicast packets
+		 */
+		IMO_ADDREF_LOCKED(imo);
+		IMO_UNLOCK(imo);
+		socket_unlock(inp->inp_socket, 0);
+
 		VERIFY(inm == NULL);
-		error = in_joingroup(ifp, &gsa->sin.sin_addr, imf, &inm);
+		error = in_joingroup(ifp, &gsa->sin_addr, imf, &inm);
+
+		socket_lock(inp->inp_socket, 0);
+		IMO_REMREF(imo);
+		IMO_LOCK(imo);
+
 		VERIFY(inm != NULL || error != 0);
 		if (error)
 			goto out_imo_free;
@@ -2306,7 +2334,7 @@ inp_join_group(struct inpcb *inp, struct sockopt *sopt)
 			goto out_imf_rollback;
 		}
 		IGMP_PRINTF(("%s: doing igmp downcall\n", __func__));
-		error = igmp_change_state(inm);
+		error = igmp_change_state(inm, &itp);
 		INM_UNLOCK(inm);
 		if (error) {
 			IGMP_PRINTF(("%s: failed igmp downcall\n",
@@ -2336,6 +2364,10 @@ out_imo_free:
 out_imo_locked:
 	IMO_UNLOCK(imo);
 	IMO_REMREF(imo);	/* from inp_findmoptions() */
+
+	/* schedule timer now that we've dropped the lock(s) */
+	igmp_set_timeout(&itp);
+
 	return (error);
 }
 
@@ -2350,7 +2382,7 @@ inp_leave_group(struct inpcb *inp, struct sockopt *sopt)
 {
 	struct group_source_req		 gsr;
 	struct ip_mreq_source		 mreqs;
-	sockunion_t			*gsa, *ssa;
+	struct sockaddr_in 		*gsa, *ssa;
 	struct ifnet			*ifp;
 	struct in_mfilter		*imf;
 	struct ip_moptions		*imo;
@@ -2359,16 +2391,16 @@ inp_leave_group(struct inpcb *inp, struct sockopt *sopt)
 	size_t				 idx;
 	int				 error, is_final;
 	unsigned int			 ifindex = 0;
+	struct igmp_tparams		 itp;
 
+	bzero(&itp, sizeof (itp));
 	ifp = NULL;
 	error = 0;
 	is_final = 1;
 
 	memset(&gsr, 0, sizeof(struct group_source_req));
-	gsa = (sockunion_t *)&gsr.gsr_group;
-	gsa->ss.ss_family = AF_UNSPEC;
-	ssa = (sockunion_t *)&gsr.gsr_source;
-	ssa->ss.ss_family = AF_UNSPEC;
+	gsa = (struct sockaddr_in *)&gsr.gsr_group;
+	ssa = (struct sockaddr_in *)&gsr.gsr_source;
 
 	switch (sopt->sopt_name) {
 	case IP_DROP_MEMBERSHIP:
@@ -2392,14 +2424,14 @@ inp_leave_group(struct inpcb *inp, struct sockopt *sopt)
 		if (error)
 			return (error);
 
-		gsa->sin.sin_family = AF_INET;
-		gsa->sin.sin_len = sizeof(struct sockaddr_in);
-		gsa->sin.sin_addr = mreqs.imr_multiaddr;
+		gsa->sin_family = AF_INET;
+		gsa->sin_len = sizeof(struct sockaddr_in);
+		gsa->sin_addr = mreqs.imr_multiaddr;
 
 		if (sopt->sopt_name == IP_DROP_SOURCE_MEMBERSHIP) {
-			ssa->sin.sin_family = AF_INET;
-			ssa->sin.sin_len = sizeof(struct sockaddr_in);
-			ssa->sin.sin_addr = mreqs.imr_sourceaddr;
+			ssa->sin_family = AF_INET;
+			ssa->sin_len = sizeof(struct sockaddr_in);
+			ssa->sin_addr = mreqs.imr_sourceaddr;
 		}
 		/*
 		 * Attempt to look up hinted ifp from interface address.
@@ -2411,8 +2443,9 @@ inp_leave_group(struct inpcb *inp, struct sockopt *sopt)
 		if (!in_nullhost(mreqs.imr_interface))
 			ifp = ip_multicast_if(&mreqs.imr_interface, &ifindex);
 
-		IGMP_PRINTF(("%s: imr_interface = %s, ifp = %p\n",
-		    __func__, inet_ntoa(mreqs.imr_interface), ifp));
+		IGMP_INET_PRINTF(mreqs.imr_interface,
+		    ("%s: imr_interface = %s, ifp = 0x%llx\n", __func__,
+		    _igmp_inet_buf, (uint64_t)VM_KERNEL_ADDRPERM(ifp)));
 
 		break;
 
@@ -2430,13 +2463,13 @@ inp_leave_group(struct inpcb *inp, struct sockopt *sopt)
 		if (error)
 			return (error);
 
-		if (gsa->sin.sin_family != AF_INET ||
-		    gsa->sin.sin_len != sizeof(struct sockaddr_in))
+		if (gsa->sin_family != AF_INET ||
+		    gsa->sin_len != sizeof(struct sockaddr_in))
 			return (EINVAL);
 
 		if (sopt->sopt_name == MCAST_LEAVE_SOURCE_GROUP) {
-			if (ssa->sin.sin_family != AF_INET ||
-			    ssa->sin.sin_len != sizeof(struct sockaddr_in))
+			if (ssa->sin_family != AF_INET ||
+			    ssa->sin_len != sizeof(struct sockaddr_in))
 				return (EINVAL);
 		}
 
@@ -2455,10 +2488,9 @@ inp_leave_group(struct inpcb *inp, struct sockopt *sopt)
 		IGMP_PRINTF(("%s: unknown sopt_name %d\n",
 		    __func__, sopt->sopt_name));
 		return (EOPNOTSUPP);
-		break;
 	}
 
-	if (!IN_MULTICAST(ntohl(gsa->sin.sin_addr.s_addr)))
+	if (!IN_MULTICAST(ntohl(gsa->sin_addr.s_addr)))
 		return (EINVAL);
 
 	/*
@@ -2469,7 +2501,7 @@ inp_leave_group(struct inpcb *inp, struct sockopt *sopt)
 		return (ENOMEM);
 
 	IMO_LOCK(imo);
-	idx = imo_match_group(imo, ifp, &gsa->sa);
+	idx = imo_match_group(imo, ifp, gsa);
 	if (idx == (size_t)-1) {
 		error = EADDRNOTAVAIL;
 		goto out_locked;
@@ -2477,7 +2509,7 @@ inp_leave_group(struct inpcb *inp, struct sockopt *sopt)
 	inm = imo->imo_membership[idx];
 	imf = &imo->imo_mfilters[idx];
 
-	if (ssa->ss.ss_family != AF_UNSPEC) {
+	if (ssa->sin_family != AF_UNSPEC) {
 		IGMP_PRINTF(("%s: opt=%d is_final=0\n", __func__,
 		    sopt->sopt_name));
 		is_final = 0;
@@ -2498,15 +2530,16 @@ inp_leave_group(struct inpcb *inp, struct sockopt *sopt)
 			error = EADDRNOTAVAIL;
 			goto out_locked;
 		}
-		ims = imo_match_source(imo, idx, &ssa->sa);
+		ims = imo_match_source(imo, idx, ssa);
 		if (ims == NULL) {
-			IGMP_PRINTF(("%s: source %s %spresent\n", __func__,
-			    inet_ntoa(ssa->sin.sin_addr), "not "));
+			IGMP_INET_PRINTF(ssa->sin_addr,
+			    ("%s: source %s %spresent\n", __func__,
+			    _igmp_inet_buf, "not "));
 			error = EADDRNOTAVAIL;
 			goto out_locked;
 		}
 		IGMP_PRINTF(("%s: %s source\n", __func__, "block"));
-		error = imf_prune(imf, &ssa->sin);
+		error = imf_prune(imf, ssa);
 		if (error) {
 			IGMP_PRINTF(("%s: merge imf state failed\n",
 			    __func__));
@@ -2517,6 +2550,7 @@ inp_leave_group(struct inpcb *inp, struct sockopt *sopt)
 	/*
 	 * Begin state merge transaction at IGMP layer.
 	 */
+
 
 	if (is_final) {
 		/*
@@ -2537,7 +2571,7 @@ inp_leave_group(struct inpcb *inp, struct sockopt *sopt)
 		}
 
 		IGMP_PRINTF(("%s: doing igmp downcall\n", __func__));
-		error = igmp_change_state(inm);
+		error = igmp_change_state(inm, &itp);
 		if (error) {
 			IGMP_PRINTF(("%s: failed igmp downcall\n", __func__));
 		}
@@ -2553,10 +2587,23 @@ out_imf_rollback:
 	imf_reap(imf);
 
 	if (is_final) {
-		/* Remove the gap in the membership and filter array. */
+		/* Remove the gap in the membership array. */
 		VERIFY(inm == imo->imo_membership[idx]);
 		imo->imo_membership[idx] = NULL;
+
+		/*
+		 * See inp_join_group() for why we need to unlock
+		 */
+		IMO_ADDREF_LOCKED(imo);
+		IMO_UNLOCK(imo);
+		socket_unlock(inp->inp_socket, 0);
+
 		INM_REMREF(inm);
+
+		socket_lock(inp->inp_socket, 0);
+		IMO_REMREF(imo);
+		IMO_LOCK(imo);
+
 		for (++idx; idx < imo->imo_num_memberships; ++idx) {
 			imo->imo_membership[idx-1] = imo->imo_membership[idx];
 			imo->imo_mfilters[idx-1] = imo->imo_mfilters[idx];
@@ -2567,6 +2614,10 @@ out_imf_rollback:
 out_locked:
 	IMO_UNLOCK(imo);
 	IMO_REMREF(imo);	/* from inp_findmoptions() */
+
+	/* schedule timer now that we've dropped the lock(s) */
+	igmp_set_timeout(&itp);
+
 	return (error);
 }
 
@@ -2588,6 +2639,7 @@ inp_set_multicast_if(struct inpcb *inp, struct sockopt *sopt)
 	int			 error = 0 ;
 	unsigned int		 ifindex = 0;
 
+	bzero(&addr, sizeof(addr));
 	if (sopt->sopt_valsize == sizeof(struct ip_mreqn)) {
 		/*
 		 * An interface index was specified using the
@@ -2628,14 +2680,16 @@ inp_set_multicast_if(struct inpcb *inp, struct sockopt *sopt)
 		} else {
 			ifp = ip_multicast_if(&addr, &ifindex);
 			if (ifp == NULL) {
-				IGMP_PRINTF(("%s: can't find ifp for addr=%s\n",
-				    __func__, inet_ntoa(addr)));
+				IGMP_INET_PRINTF(addr,
+				    ("%s: can't find ifp for addr=%s\n",
+				    __func__, _igmp_inet_buf));
 				return (EADDRNOTAVAIL);
 			}
 		}
+		/* XXX remove? */
 #ifdef IGMP_DEBUG0
-		IGMP_PRINTF(("%s: ifp = %p, addr = %s\n", __func__, ifp,
-		    inet_ntoa(addr)));
+		IGMP_PRINTF(("%s: ifp = 0x%llx, addr = %s\n", __func__,
+		    (uint64_t)VM_KERNEL_ADDRPERM(ifp), inet_ntoa(addr)));
 #endif
 	}
 
@@ -2667,14 +2721,17 @@ inp_set_source_filters(struct inpcb *inp, struct sockopt *sopt)
 {
 	struct __msfilterreq64	 msfr, msfr64;
 	struct __msfilterreq32	 msfr32;
-	sockunion_t		*gsa;
+	struct sockaddr_in	*gsa;
 	struct ifnet		*ifp;
 	struct in_mfilter	*imf;
 	struct ip_moptions	*imo;
 	struct in_multi		*inm;
-	size_t		 	 idx;
+	size_t			 idx;
 	int			 error;
-	user_addr_t 		 tmp_ptr;
+	user_addr_t		 tmp_ptr;
+	struct igmp_tparams	 itp;
+
+	bzero(&itp, sizeof (itp));
 
 	if (IS_64BIT_PROCESS(current_proc())) {
 		error = sooptcopyin(sopt, &msfr64,
@@ -2683,7 +2740,7 @@ inp_set_source_filters(struct inpcb *inp, struct sockopt *sopt)
 		if (error)
 			return (error);
 		/* we never use msfr.msfr_srcs; */
-		memcpy(&msfr, &msfr64, sizeof(msfr));
+		memcpy(&msfr, &msfr64, sizeof(msfr64));
 	} else {
 		error = sooptcopyin(sopt, &msfr32,
 		    sizeof(struct __msfilterreq32),
@@ -2691,12 +2748,12 @@ inp_set_source_filters(struct inpcb *inp, struct sockopt *sopt)
 		if (error)
 			return (error);
 		/* we never use msfr.msfr_srcs; */
-		memcpy(&msfr, &msfr32, sizeof(msfr));
+		memcpy(&msfr, &msfr32, sizeof(msfr32));
 	}
 
 	if ((size_t) msfr.msfr_nsrcs >
-	    SIZE_MAX / sizeof(struct sockaddr_storage))
-		msfr.msfr_nsrcs = SIZE_MAX / sizeof(struct sockaddr_storage);
+	    UINT32_MAX / sizeof(struct sockaddr_storage))
+		msfr.msfr_nsrcs = UINT32_MAX / sizeof(struct sockaddr_storage);
 
 	if (msfr.msfr_nsrcs > in_mcast_maxsocksrc)
 		return (ENOBUFS);
@@ -2709,11 +2766,11 @@ inp_set_source_filters(struct inpcb *inp, struct sockopt *sopt)
 	    msfr.msfr_group.ss_len != sizeof(struct sockaddr_in))
 		return (EINVAL);
 
-	gsa = (sockunion_t *)&msfr.msfr_group;
-	if (!IN_MULTICAST(ntohl(gsa->sin.sin_addr.s_addr)))
+	gsa = (struct sockaddr_in *)&msfr.msfr_group;
+	if (!IN_MULTICAST(ntohl(gsa->sin_addr.s_addr)))
 		return (EINVAL);
 
-	gsa->sin.sin_port = 0;	/* ignore port */
+	gsa->sin_port = 0;	/* ignore port */
 
 	ifnet_head_lock_shared();
 	if (msfr.msfr_ifindex == 0 || (u_int)if_index < msfr.msfr_ifindex) {
@@ -2734,7 +2791,7 @@ inp_set_source_filters(struct inpcb *inp, struct sockopt *sopt)
 		return (ENOMEM);
 
 	IMO_LOCK(imo);
-	idx = imo_match_group(imo, ifp, &gsa->sa);
+	idx = imo_match_group(imo, ifp, gsa);
 	if (idx == (size_t)-1 || imo->imo_mfilters == NULL) {
 		error = EADDRNOTAVAIL;
 		goto out_imo_locked;
@@ -2834,7 +2891,7 @@ inp_set_source_filters(struct inpcb *inp, struct sockopt *sopt)
 	}
 
 	IGMP_PRINTF(("%s: doing igmp downcall\n", __func__));
-	error = igmp_change_state(inm);
+	error = igmp_change_state(inm, &itp);
 	INM_UNLOCK(inm);
 #ifdef IGMP_DEBUG
 	if (error)
@@ -2853,6 +2910,9 @@ out_imo_locked:
 	IMO_UNLOCK(imo);
 	IMO_REMREF(imo);	/* from inp_findmoptions() */
 
+	/* schedule timer now that we've dropped the lock(s) */
+	igmp_set_timeout(&itp);
+
 	return (error);
 }
 
@@ -2864,9 +2924,6 @@ out_imo_locked:
  * it is not possible to merge the duplicate code, because the idempotence
  * of the IPv4 multicast part of the BSD Sockets API must be preserved;
  * the effects of these options must be treated as separate and distinct.
- *
- * FUTURE: The IP_MULTICAST_VIF option may be eliminated if MROUTING
- * is refactored to no longer use vifs.
  */
 int
 inp_setmoptions(struct inpcb *inp, struct sockopt *sopt)
@@ -2882,42 +2939,12 @@ inp_setmoptions(struct inpcb *inp, struct sockopt *sopt)
 	 * If socket is neither of type SOCK_RAW or SOCK_DGRAM,
 	 * or is a divert socket, reject it.
 	 */
-	if (inp->inp_socket->so_proto->pr_protocol == IPPROTO_DIVERT ||
-	    (inp->inp_socket->so_proto->pr_type != SOCK_RAW &&
-	     inp->inp_socket->so_proto->pr_type != SOCK_DGRAM))
+	if (SOCK_PROTO(inp->inp_socket) == IPPROTO_DIVERT ||
+	    (SOCK_TYPE(inp->inp_socket) != SOCK_RAW &&
+	     SOCK_TYPE(inp->inp_socket) != SOCK_DGRAM))
 		return (EOPNOTSUPP);
 
 	switch (sopt->sopt_name) {
-#if MROUTING
-	case IP_MULTICAST_VIF: {
-		int vifi;
-		/*
-		 * Select a multicast VIF for transmission.
-		 * Only useful if multicast forwarding is active.
-		 */
-		if (legal_vif_num == NULL) {
-			error = EOPNOTSUPP;
-			break;
-		}
-		error = sooptcopyin(sopt, &vifi, sizeof(int), sizeof(int));
-		if (error)
-			break;
-		if (!legal_vif_num(vifi) && (vifi != -1)) {
-			error = EINVAL;
-			break;
-		}
-		imo = inp_findmoptions(inp);
-		if (imo == NULL) {
-			error = ENOMEM;
-			break;
-		}
-		IMO_LOCK(imo);
-		imo->imo_multicast_vif = vifi;
-		IMO_UNLOCK(imo);
-		IMO_REMREF(imo);	/* from inp_findmoptions() */
-		break;
-	}
-#endif
 	case IP_MULTICAST_IF:
 		error = inp_set_multicast_if(inp, sopt);
 		break;
@@ -3129,8 +3156,9 @@ sysctl_ip_mcast_filters SYSCTL_HANDLER_ARGS
 
 	group.s_addr = name[1];
 	if (!IN_MULTICAST(ntohl(group.s_addr))) {
-		IGMP_PRINTF(("%s: group %s is not multicast\n",
-		    __func__, inet_ntoa(group)));
+		IGMP_INET_PRINTF(group,
+		    ("%s: group %s is not multicast\n",
+		    __func__, _igmp_inet_buf));
 		ifnet_head_done();
 		return (EINVAL);
 	}
@@ -3162,8 +3190,8 @@ sysctl_ip_mcast_filters SYSCTL_HANDLER_ARGS
 #ifdef IGMP_DEBUG
 			struct in_addr ina;
 			ina.s_addr = htonl(ims->ims_haddr);
-			IGMP_PRINTF(("%s: visit node %s\n", __func__,
-			    inet_ntoa(ina)));
+			IGMP_INET_PRINTF(ina,
+			    ("%s: visit node %s\n", __func__, _igmp_inet_buf));
 #endif
 			/*
 			 * Only copy-out sources which are in-mode.
@@ -3536,7 +3564,10 @@ in_multihead_lock_shared(void)
 void
 in_multihead_lock_assert(int what)
 {
-	lck_rw_assert(&in_multihead_lock, what);
+#if !MACH_ASSERT
+#pragma unused(what)
+#endif
+	LCK_RW_ASSERT(&in_multihead_lock, what);
 }
 
 void
@@ -3597,6 +3628,7 @@ inm_mode_str(const int mode)
 static const char *inm_statestrs[] = {
 	"not-member\n",
 	"silent\n",
+	"reporting\n",
 	"idle\n",
 	"lazy\n",
 	"sleeping\n",
@@ -3621,26 +3653,28 @@ void
 inm_print(const struct in_multi *inm)
 {
 	int t;
+	char buf[MAX_IPv4_STR_LEN];
 
-	INM_LOCK_ASSERT_HELD(INM_CAST_TO_NONCONST(inm));
+	INM_LOCK_ASSERT_HELD(__DECONST(struct in_multi *, inm));
 
 	if (igmp_debug == 0)
 		return;
 
-	printf("%s: --- begin inm %p ---\n", __func__, inm);
-	printf("addr %s ifp %p(%s%d) ifma %p\n",
-	    inet_ntoa(inm->inm_addr),
-	    inm->inm_ifp,
-	    inm->inm_ifp->if_name,
-	    inm->inm_ifp->if_unit,
-	    inm->inm_ifma);
+	inet_ntop(AF_INET, &inm->inm_addr, buf, sizeof(buf));
+	printf("%s: --- begin inm 0x%llx ---\n", __func__,
+	    (uint64_t)VM_KERNEL_ADDRPERM(inm));
+	printf("addr %s ifp 0x%llx(%s) ifma 0x%llx\n",
+	    buf,
+	    (uint64_t)VM_KERNEL_ADDRPERM(inm->inm_ifp),
+	    if_name(inm->inm_ifp),
+	    (uint64_t)VM_KERNEL_ADDRPERM(inm->inm_ifma));
 	printf("timer %u state %s refcount %u scq.len %u\n",
 	    inm->inm_timer,
 	    inm_state_str(inm->inm_state),
 	    inm->inm_refcount,
 	    inm->inm_scq.ifq_len);
-	printf("igi %p nsrc %lu sctimer %u scrv %u\n",
-	    inm->inm_igi,
+	printf("igi 0x%llx nsrc %lu sctimer %u scrv %u\n",
+	    (uint64_t)VM_KERNEL_ADDRPERM(inm->inm_igi),
 	    inm->inm_nsrc,
 	    inm->inm_sctimer,
 	    inm->inm_scrv);
@@ -3652,7 +3686,8 @@ inm_print(const struct in_multi *inm)
 		    inm->inm_st[t].iss_in,
 		    inm->inm_st[t].iss_rec);
 	}
-	printf("%s: --- end inm %p ---\n", __func__, inm);
+	printf("%s: --- end inm 0x%llx ---\n", __func__,
+	    (uint64_t)VM_KERNEL_ADDRPERM(inm));
 }
 
 #else

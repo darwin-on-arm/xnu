@@ -57,6 +57,7 @@
 #define	_MISCFS_DEVFS_DEVFS_H_
 
 #include <sys/appleapiopts.h>
+#include <sys/cdefs.h>
 
 #define DEVFS_CHAR 	0
 #define DEVFS_BLOCK 	1
@@ -148,6 +149,7 @@ __END_DECLS
 #define	GID_BIN		7
 #define	GID_GAMES	13
 #define	GID_DIALER	68
+#define GID_WINDOWSERVER 88
 #endif /* __APPLE_API_PRIVATE */
 
 #endif /* !_MISCFS_DEVFS_DEVFS_H_ */

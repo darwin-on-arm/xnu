@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2011 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2015 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -172,6 +172,8 @@ struct nfs_socket {
 	uint32_t		nso_protocol;		/* RPC protocol */
 	uint32_t		nso_version;		/* RPC protocol version */
 	uint32_t		nso_pingxid;		/* RPC XID of NULL ping request */
+	uint32_t		nso_nfs_min_vers;	/* minimum nfs version for connecting sockets */
+	uint32_t		nso_nfs_max_vers;	/* maximum nfs version for connecting sockets */
 	int			nso_error;		/* saved error/status */
 	struct nfs_rpc_record_state nso_rrs;		/* RPC record parsing state (TCP) */
 };
@@ -199,12 +201,14 @@ struct nfs_socket_search {
 	uint32_t		nss_protocol;		/* RPC protocol */
 	uint32_t		nss_version;		/* RPC protocol version */
 	uint32_t		nss_flags;		/* (see below) */
+	int			nss_addrcnt;		/* Number addresses to try or left */
 	int			nss_timeo;		/* how long we are willing to wait */
 	int			nss_error;		/* best error we've gotten so far */
 };
 /* nss_flags */
 #define NSS_VERBOSE		0x00000001		/* OK to log info about socket search */
 #define NSS_WARNED		0x00000002		/* logged warning about socket search taking a while */
+#define NSS_FALLBACK2PMAP	0x00000004		/* Try V4 on NFS_PORT first, if that fails fall back to portmapper */
 
 /*
  * function table for calling version-specific NFS functions
@@ -213,7 +217,7 @@ struct nfs_funcs {
 	int	(*nf_mount)(struct nfsmount *, vfs_context_t, nfsnode_t *);
 	int	(*nf_update_statfs)(struct nfsmount *, vfs_context_t);
 	int	(*nf_getquota)(struct nfsmount *, vfs_context_t, uid_t, int, struct dqblk *);
-	int	(*nf_access_rpc)(nfsnode_t, u_int32_t *, vfs_context_t);
+	int	(*nf_access_rpc)(nfsnode_t, u_int32_t *, int, vfs_context_t);
 	int	(*nf_getattr_rpc)(nfsnode_t, mount_t, u_char *, size_t, int, vfs_context_t, struct nfs_vattr *, u_int64_t *);
 	int	(*nf_setattr_rpc)(nfsnode_t, struct vnode_attr *, vfs_context_t);
 	int	(*nf_read_rpc_async)(nfsnode_t, off_t, size_t, thread_t, kauth_cred_t, struct nfsreq_cbinfo *, struct nfsreq **);
@@ -240,7 +244,7 @@ struct nfs_client_id {
 	int				nci_idlen;	/* length of client id buffer */
 };
 TAILQ_HEAD(nfsclientidlist, nfs_client_id);
-__private_extern__ struct nfsclientidlist nfsclientids;
+extern struct nfsclientidlist nfsclientids;
 
 /*
  * Mount structure.
@@ -254,15 +258,23 @@ struct nfsmount {
 	uint32_t nm_mflags_mask[NFS_MFLAG_BITMAP_LEN]; /* mount flags mask in mount args */
 	uint32_t nm_mflags[NFS_MFLAG_BITMAP_LEN]; /* mount flags in mount args */
 	uint32_t nm_flags[NFS_MFLAG_BITMAP_LEN]; /* current mount flags (soft, intr, etc...) */
+	char *  nm_realm;		/* Kerberos realm to use */
+	char *  nm_principal;		/* GSS principal to use on initial mount */
+	char *	nm_sprinc;		/* Kerberos principal of the server */
+	int	nm_ref;			/* Reference count on this mount */
 	int	nm_state;		/* Internal state flags */
 	int	nm_vers;		/* NFS version */
+	uint32_t nm_minor_vers;		/* minor version of above */
+	uint32_t nm_min_vers;		/* minimum packed version to try */
+	uint32_t nm_max_vers;		/* maximum packed version to try */
 	struct nfs_funcs *nm_funcs;	/* version-specific functions */
-	kauth_cred_t nm_mcred;		/* credential used for the mount (v4) */
+	kauth_cred_t nm_mcred;		/* credential used for the mount */
 	mount_t	nm_mountp;		/* VFS structure for this filesystem */
 	nfsnode_t nm_dnp;		/* root directory nfsnode pointer */
 	struct nfs_fs_locations nm_locations; /* file system locations */
 	uint32_t nm_numgrps;		/* Max. size of groupslist */
-	TAILQ_HEAD(, nfs_gss_clnt_ctx) nm_gsscl; /* GSS user contexts */
+	TAILQ_HEAD(, nfs_gss_clnt_ctx) nm_gsscl;	/* GSS user contexts */
+	uint32_t nm_ncentries;		/* GSS expired negative cache entries */
 	int	nm_timeo;		/* Init timer for NFSMNT_DUMBTIMR */
 	int	nm_retry;		/* Max retries */
 	uint32_t nm_rsize;		/* Max size of read rpc */
@@ -279,6 +291,7 @@ struct nfsmount {
 	uint32_t nm_mappers;		/* Number of nodes that have mmapped */
 	struct nfs_sec nm_sec;		/* acceptable security mechanism flavors */
 	struct nfs_sec nm_servsec;	/* server's acceptable security mechanism flavors */
+	struct nfs_etype nm_etype;	/* If using kerberos, the support session key encryption types */
 	fhandle_t *nm_fh;		/* initial file handle */
 	uint8_t  nm_lockmode;		/* advisory file locking mode */
 	/* mount info */
@@ -368,6 +381,8 @@ struct nfsmount {
 #define NFSSTA_HASWRITEVERF	0x00040000  /* Has write verifier for V3 */
 #define NFSSTA_GOTPATHCONF	0x00080000  /* Got the V3 pathconf info */
 #define NFSSTA_GOTFSINFO	0x00100000  /* Got the V3 fsinfo */
+#define NFSSTA_WANTRQUOTA	0x00200000  /* Want rquota address */
+#define NFSSTA_RQUOTAINPROG	0x00400000  /* Getting rquota address */
 #define NFSSTA_SENDING		0x00800000  /* Sending on socket */
 #define NFSSTA_SNDLOCK		0x01000000  /* Send socket lock */
 #define NFSSTA_WANTSND		0x02000000  /* Want above */
@@ -376,6 +391,7 @@ struct nfsmount {
 #define NFSSTA_RECOVER_EXPIRED	0x10000000  /* mount state expired */
 #define NFSSTA_REVOKE		0x20000000  /* need to scan for revoked nodes */
 #define	NFSSTA_SQUISHY		0x40000000  /* we can ask to be forcibly unmounted */
+#define NFSSTA_MOUNT_DRAIN	0x80000000  /* mount is draining references */
 
 /* flags for nm_sockflags */
 #define NMSOCK_READY		0x0001	/* socket is ready for use */

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2003-2007 Apple Inc. All rights reserved.
+ * Copyright (c) 2003-2012 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -40,7 +40,7 @@
 #include	<kern/queue.h>
 
 extern void				lck_mod_init(
-								void) __attribute__((section("__TEXT, initcode")));
+								void);
 
 typedef	unsigned int	lck_type_t;
 
@@ -58,8 +58,10 @@ typedef	unsigned int		lck_sleep_action_t;
 #define	LCK_SLEEP_SHARED	0x02	/* Reclaim the lock in shared mode (RW only) */
 #define	LCK_SLEEP_EXCLUSIVE	0x04	/* Reclaim the lock in exclusive mode (RW only) */
 #define	LCK_SLEEP_SPIN		0x08	/* Reclaim the lock in spin mode (mutex only) */
+#define	LCK_SLEEP_PROMOTED_PRI	0x10	/* Sleep at a promoted priority */
+#define	LCK_SLEEP_SPIN_ALWAYS	0x20	/* Reclaim the lock in spin-always mode (mutex only) */
 
-#define	LCK_SLEEP_MASK		0x0f	/* Valid actions */
+#define	LCK_SLEEP_MASK		0x3f	/* Valid actions */
 
 #ifdef	MACH_KERNEL_PRIVATE
 
@@ -263,8 +265,10 @@ extern wait_result_t	lck_spin_sleep_deadline(
 
 #ifdef	KERNEL_PRIVATE
 
-extern boolean_t		lck_spin_try_lock(
-									lck_spin_t		*lck);
+extern boolean_t		lck_spin_try_lock(			lck_spin_t		*lck);
+
+/* NOT SAFE: To be used only by kernel debugger to avoid deadlock. */
+extern boolean_t		kdp_lck_spin_is_acquired(		lck_spin_t		*lck);
 
 struct _lck_mtx_ext_;
 extern void lck_mtx_init_ext(lck_mtx_t *lck, struct _lck_mtx_ext_ *lck_ext,
@@ -286,12 +290,8 @@ extern void				lck_mtx_init(
 extern void				lck_mtx_lock(
 									lck_mtx_t		*lck);
 
-#if	defined(__i386__)
-extern void	lck_mtx_unlock(lck_mtx_t		*lck) __DARWIN10_ALIAS(lck_mtx_unlock);
-#else
 extern void				lck_mtx_unlock(
 									lck_mtx_t		*lck);
-#endif	/* __i386__ */
 
 extern void				lck_mtx_destroy(
 									lck_mtx_t		*lck,
@@ -324,28 +324,32 @@ extern void				mutex_pause(uint32_t);
 extern void 			lck_mtx_yield (
 									lck_mtx_t		*lck);
 
-#if defined(__i386__) || defined(__x86_64__)
 extern boolean_t		lck_mtx_try_lock_spin(
-									lck_mtx_t		*lck);
-
-extern void			lck_mtx_lock_spin_always(
 									lck_mtx_t		*lck);
 
 extern void			lck_mtx_lock_spin(
 									lck_mtx_t		*lck);
 
+extern boolean_t		kdp_lck_mtx_lock_spin_is_acquired(
+									lck_mtx_t		*lck);
+
 extern void			lck_mtx_convert_spin(
+									lck_mtx_t		*lck);
+
+extern void			lck_mtx_lock_spin_always(
+									lck_mtx_t		*lck);
+
+extern boolean_t		lck_mtx_try_lock_spin_always(
 									lck_mtx_t		*lck);
 
 #define lck_mtx_unlock_always(l)	lck_mtx_unlock(l)
 
-#else
-#define lck_mtx_try_lock_spin(l)	lck_mtx_try_lock(l)
-#define	lck_mtx_lock_spin(l)		lck_mtx_lock(l)
-#define lck_mtx_lock_spin_always(l)	lck_spin_lock(l)
-#define lck_mtx_unlock_always(l)	lck_spin_unlock(l)
-#define	lck_mtx_convert_spin(l)		do {} while (0)
-#endif
+extern void				lck_spin_assert(
+									lck_spin_t		*lck,
+									unsigned int	type);
+
+extern boolean_t		kdp_lck_rw_lock_is_acquired_exclusive(
+									lck_rw_t 		*lck);
 
 #endif	/* KERNEL_PRIVATE */
 
@@ -353,10 +357,33 @@ extern void				lck_mtx_assert(
 									lck_mtx_t		*lck,
 									unsigned int	type);
 
+#if MACH_ASSERT
+#define LCK_MTX_ASSERT(lck,type) lck_mtx_assert((lck),(type))
+#define LCK_SPIN_ASSERT(lck,type) lck_spin_assert((lck),(type))
+#define LCK_RW_ASSERT(lck,type) lck_rw_assert((lck),(type))
+#else /* MACH_ASSERT */
+#define LCK_MTX_ASSERT(lck,type)
+#define LCK_SPIN_ASSERT(lck,type)
+#define LCK_RW_ASSERT(lck,type)
+#endif /* MACH_ASSERT */
+
+#if DEBUG
+#define LCK_MTX_ASSERT_DEBUG(lck,type) lck_mtx_assert((lck),(type))
+#define LCK_SPIN_ASSERT_DEBUG(lck,type) lck_spin_assert((lck),(type))
+#define LCK_RW_ASSERT_DEBUG(lck,type) lck_rw_assert((lck),(type))
+#else /* DEBUG */
+#define LCK_MTX_ASSERT_DEBUG(lck,type)
+#define LCK_SPIN_ASSERT_DEBUG(lck,type)
+#define LCK_RW_ASSERT_DEBUG(lck,type)
+#endif /* DEBUG */
+
 __END_DECLS
 
-#define	LCK_MTX_ASSERT_OWNED	0x01
-#define	LCK_MTX_ASSERT_NOTOWNED	0x02
+#define	LCK_ASSERT_OWNED		1
+#define	LCK_ASSERT_NOTOWNED		2
+
+#define	LCK_MTX_ASSERT_OWNED	LCK_ASSERT_OWNED
+#define	LCK_MTX_ASSERT_NOTOWNED	LCK_ASSERT_NOTOWNED
 
 #ifdef	MACH_KERNEL_PRIVATE
 extern void				lck_mtx_lock_wait(
@@ -375,6 +402,9 @@ extern void				lck_mtx_unlockspin_wakeup(
 extern boolean_t		lck_mtx_ilk_unlock(
 									lck_mtx_t		*lck);
 
+extern boolean_t		lck_mtx_ilk_try_lock(
+									lck_mtx_t		*lck);
+
 #endif
 
 #define decl_lck_rw_data(class,name)     class lck_rw_t name;
@@ -387,7 +417,8 @@ typedef unsigned int	 lck_rw_type_t;
 #ifdef XNU_KERNEL_PRIVATE
 #define LCK_RW_ASSERT_SHARED	0x01
 #define LCK_RW_ASSERT_EXCLUSIVE	0x02
-#define LCK_RW_ASSERT_HELD	(LCK_RW_ASSERT_SHARED | LCK_RW_ASSERT_EXCLUSIVE)
+#define LCK_RW_ASSERT_HELD		0x03
+#define LCK_RW_ASSERT_NOTHELD	0x04
 #endif
 
 __BEGIN_DECLS
@@ -415,6 +446,10 @@ extern void				lck_rw_lock_shared(
 extern void				lck_rw_unlock_shared(
 									lck_rw_t		*lck);
 
+extern boolean_t			lck_rw_lock_yield_shared(
+									lck_rw_t		*lck,
+									boolean_t	force_yield);
+
 extern void				lck_rw_lock_exclusive(
 									lck_rw_t		*lck);
 
@@ -430,6 +465,10 @@ extern void				lck_rw_unlock_exclusive(
 extern void				lck_rw_assert(
 									lck_rw_t		*lck,
 									unsigned int		type);
+
+extern void				lck_rw_clear_promotion(
+									thread_t		thread);
+extern void lck_rw_set_promotion_locked(thread_t thread);
 #endif
 
 #ifdef	KERNEL_PRIVATE

@@ -1,5 +1,5 @@
 /*-
- * Copyright (c) 1999-2009 Apple Inc.
+ * Copyright (c) 1999-2016 Apple Inc.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -75,8 +75,6 @@
 #include <kern/host.h>
 #include <kern/kalloc.h>
 #include <kern/zalloc.h>
-#include <kern/lock.h>
-#include <kern/wait_queue.h>
 #include <kern/sched_prim.h>
 
 #if CONFIG_MACF
@@ -134,6 +132,14 @@ audit_arg_len(struct kaudit_record *ar, user_size_t len)
 
 	ar->k_ar.ar_arg_len = len;
 	ARG_SET_VALID(ar, ARG_LEN);
+}
+
+void
+audit_arg_fd2(struct kaudit_record *ar, int fd)
+{
+
+	ar->k_ar.ar_arg_fd2 = fd;
+	ARG_SET_VALID(ar, ARG_FD2);
 }
 
 void
@@ -348,16 +354,20 @@ void
 audit_arg_sockaddr(struct kaudit_record *ar, struct vnode *cwd_vp,
     struct sockaddr *sa)
 {
-	int slen;
+	char path[SOCK_MAXADDRLEN - offsetof(struct sockaddr_un, sun_path) + 1] = "";
 	struct sockaddr_un *sun;
-	char path[SOCK_MAXADDRLEN - offsetof(struct sockaddr_un, sun_path) + 1];
+	ssize_t namelen;
 
 	KASSERT(sa != NULL, ("audit_arg_sockaddr: sa == NULL"));
 
 	if (cwd_vp == NULL || sa == NULL)
 		return;
 
-	bcopy(sa, &ar->k_ar.ar_arg_sockaddr, sa->sa_len);
+	if (sa->sa_len > sizeof(ar->k_ar.ar_arg_sockaddr))
+		bcopy(sa, &ar->k_ar.ar_arg_sockaddr, sizeof(ar->k_ar.ar_arg_sockaddr));
+	else
+		bcopy(sa, &ar->k_ar.ar_arg_sockaddr, sa->sa_len);
+
 	switch (sa->sa_family) {
 	case AF_INET:
 		ARG_SET_VALID(ar, ARG_SADDRINET);
@@ -369,20 +379,14 @@ audit_arg_sockaddr(struct kaudit_record *ar, struct vnode *cwd_vp,
 
 	case AF_UNIX:
 		sun = (struct sockaddr_un *)sa;
-		slen = sun->sun_len - offsetof(struct sockaddr_un, sun_path);
-
-		if (slen >= 0) {
+		namelen = sun->sun_len - offsetof(struct sockaddr_un, sun_path);
+		if (namelen > 0 && (size_t)namelen < sizeof(path)) {
 			/*
-			 * Make sure the path is NULL-terminated
+			 * Make sure the path is NUL-terminated
 			 */
-			if (sun->sun_path[slen] != 0) {
-				bcopy(sun->sun_path, path, slen);
-				path[slen] = 0;
-				audit_arg_upath(ar, cwd_vp, path, ARG_UPATH1);
-			} else {
-				audit_arg_upath(ar, cwd_vp, sun->sun_path, 
-					ARG_UPATH1);
-			}
+			bcopy(sun->sun_path, path, namelen);
+			path[namelen] = 0;
+			audit_arg_upath(ar, cwd_vp, path, ARG_UPATH1);
 		}
 		ARG_SET_VALID(ar, ARG_SADDRUNIX);
 		break;
@@ -594,7 +598,7 @@ audit_arg_file(struct kaudit_record *ar, __unused proc_t p,
 	struct sockaddr_in *sin;
 	struct sockaddr_in6 *sin6;
 
-	switch (fp->f_fglob->fg_type) {
+	switch (FILEGLOB_DTYPE(fp->f_fglob)) {
 	case DTYPE_VNODE:
 	/* case DTYPE_FIFO: */
 		audit_arg_vnpath_withref(ar,
@@ -603,15 +607,13 @@ audit_arg_file(struct kaudit_record *ar, __unused proc_t p,
 
 	case DTYPE_SOCKET:
 		so = (struct socket *)fp->f_fglob->fg_data;
-		if (INP_CHECK_SOCKAF(so, PF_INET)) {
+		if (SOCK_CHECK_DOM(so, PF_INET)) {
 			if (so->so_pcb == NULL)
 				break;
 			ar->k_ar.ar_arg_sockinfo.sai_type =
 			    so->so_type;
-			ar->k_ar.ar_arg_sockinfo.sai_domain =
-			    INP_SOCKAF(so);
-			ar->k_ar.ar_arg_sockinfo.sai_protocol =
-			    so->so_proto->pr_protocol;
+			ar->k_ar.ar_arg_sockinfo.sai_domain = SOCK_DOM(so);
+			ar->k_ar.ar_arg_sockinfo.sai_protocol = SOCK_PROTO(so);
 			pcb = (struct inpcb *)so->so_pcb;
 			sin = (struct sockaddr_in *)
 			    &ar->k_ar.ar_arg_sockinfo.sai_faddr;
@@ -623,15 +625,13 @@ audit_arg_file(struct kaudit_record *ar, __unused proc_t p,
 			sin->sin_port = pcb->inp_lport;
 			ARG_SET_VALID(ar, ARG_SOCKINFO);
 		}
-		if (INP_CHECK_SOCKAF(so, PF_INET6)) {
+		if (SOCK_CHECK_DOM(so, PF_INET6)) {
 			if (so->so_pcb == NULL)
 				break;
 			ar->k_ar.ar_arg_sockinfo.sai_type =
 			    so->so_type;
-			ar->k_ar.ar_arg_sockinfo.sai_domain =
-			    INP_SOCKAF(so);
-			ar->k_ar.ar_arg_sockinfo.sai_protocol =
-			    so->so_proto->pr_protocol;
+			ar->k_ar.ar_arg_sockinfo.sai_domain = SOCK_DOM(so);
+			ar->k_ar.ar_arg_sockinfo.sai_protocol = SOCK_PROTO(so);
 			pcb = (struct inpcb *)so->so_pcb;
 			sin6 = (struct sockaddr_in6 *)
 			    &ar->k_ar.ar_arg_sockinfo.sai_faddr;

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012 Apple Inc. All rights reserved.
+ * Copyright (c) 2012-2017 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -29,11 +29,10 @@
 #ifndef _NET_FLOWADV_H_
 #define	_NET_FLOWADV_H_
 
+#ifdef KERNEL_PRIVATE
 #include <sys/types.h>
+#include <sys/queue.h>
 
-#ifdef  __cplusplus
-extern "C" {
-#endif
 
 #define	FADV_SUCCESS		0	/* success */
 #define	FADV_FLOW_CONTROLLED	1	/* regular flow control */
@@ -43,8 +42,25 @@ struct flowadv {
 	int32_t		code;		/* FADV advisory code */
 };
 
-#ifdef  __cplusplus
-}
-#endif
+#ifdef BSD_KERNEL_PRIVATE
+struct flowadv_fcentry {
+	STAILQ_ENTRY(flowadv_fcentry) fce_link;
+	u_int32_t	fce_flowsrc_type;	/* FLOWSRC values */
+	u_int32_t	fce_flowid;
+};
 
+STAILQ_HEAD(flowadv_fclist, flowadv_fcentry);
+
+__BEGIN_DECLS
+
+extern void flowadv_init(void);
+extern struct flowadv_fcentry *flowadv_alloc_entry(int);
+extern void flowadv_free_entry(struct flowadv_fcentry *);
+extern void flowadv_add(struct flowadv_fclist *);
+extern void flowadv_add_entry(struct flowadv_fcentry *);
+
+__END_DECLS
+
+#endif /* BSD_KERNEL_PRIVATE */
+#endif /* KERNEL_PRIVATE */
 #endif /* _NET_FLOWADV_H_ */

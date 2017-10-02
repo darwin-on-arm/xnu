@@ -88,15 +88,12 @@
  *
  */
 
-#include <vc.h>
-
 #include <console/video_console.h>
 #include <console/serial_protos.h>
 
 #include <kern/kern_types.h>
 #include <kern/kalloc.h>
 #include <kern/debug.h>
-#include <kern/lock.h>
 #include <kern/spl.h>
 #include <kern/thread_call.h>
 
@@ -113,8 +110,6 @@
 #include "progress_meter_data.c"
 #endif
 
-#include <kern/wait_queue.h>
-
 #include "sys/msgbuf.h"
 
 /*
@@ -125,7 +120,7 @@
 struct vc_info vinfo;
 
 void noroot_icon_test(void);
-boolean_t panicDialogDesired;
+
 
 extern int       disableConsoleOutput;
 static boolean_t gc_enabled     = FALSE;
@@ -181,12 +176,23 @@ MACRO_END
 #else
 static hw_lock_data_t vcputc_lock;
 
-#define VCPUTC_LOCK_INIT()
+#define VCPUTC_LOCK_INIT()				\
+MACRO_BEGIN						\
+	hw_lock_init(&vcputc_lock);			\
+MACRO_END
 
-#define VCPUTC_LOCK_LOCK()
+#define VCPUTC_LOCK_LOCK()				\
+MACRO_BEGIN						\
+	if (!hw_lock_to(&vcputc_lock, ~0U))\
+	{						\
+		panic("VCPUTC_LOCK_LOCK");		\
+	}						\
+MACRO_END
 
-#define VCPUTC_LOCK_UNLOCK()
-
+#define VCPUTC_LOCK_UNLOCK()				\
+MACRO_BEGIN						\
+	hw_lock_unlock(&vcputc_lock);			\
+MACRO_END
 #endif
 
 /*
@@ -234,17 +240,17 @@ enum vt100state_e {
 	ESignore		/* Ignore this sequence                    */
 } gc_vt100state = ESnormal;
 
-#ifdef __arm__
-#if defined(BOARD_CONFIG_S5L8930X) || defined(BOARD_CONFIG_S5L8920X) || defined(BOARD_CONFIG_S5L8922X)
-#define CONFIG_VC_PROGRESS_WHITE 1
-#endif
-#endif
 
-#ifdef CONFIG_VC_PROGRESS_WHITE
-enum { kProgressAcquireDelay = 0 /* secs */ };
+enum 
+{
+    /* secs */
+    kProgressAcquireDelay   = 0,
+#if CONFIG_EMBEDDED
+    kProgressReacquireDelay = 5,
 #else
-enum { kProgressAcquireDelay = 0 /* secs */ };
+    kProgressReacquireDelay = 5,
 #endif
+};
 
 static int8_t vc_rotate_matr[4][2][2] = {
   { {  1,  0 },
@@ -327,7 +333,7 @@ static void
 gc_clear_screen(unsigned int xx, unsigned int yy, int top, unsigned int bottom,
 		int which)
 {
-	if (!gc_buffer_size) goto clear_screen;
+	if (!gc_buffer_size) return;
 
 	if ( xx < gc_buffer_columns && yy < gc_buffer_rows && bottom <= gc_buffer_rows )
 	{
@@ -356,7 +362,7 @@ gc_clear_screen(unsigned int xx, unsigned int yy, int top, unsigned int bottom,
 		memset(gc_buffer_characters + start, ' ', end - start + 1);
 		memset(gc_buffer_colorcodes + start, gc_color_code, end - start + 1);
 	}
-clear_screen:
+
 	gc_ops.clear_screen(xx, yy, top, bottom, which);
 }
 
@@ -441,6 +447,10 @@ gc_enable( boolean_t enable )
 					if ( buffer_colorcodes ) kfree( buffer_colorcodes, buffer_size );
 					if ( buffer_tab_stops  ) kfree( buffer_tab_stops,  buffer_columns );
 
+					buffer_attributes = NULL;
+					buffer_characters = NULL;
+					buffer_colorcodes = NULL;
+					buffer_tab_stops  = NULL;
 					buffer_columns = 0;
 					buffer_rows    = 0;
 					buffer_size    = 0;
@@ -1140,11 +1150,7 @@ gc_scroll_down(int num, unsigned int top, unsigned int bottom)
 static void 
 gc_scroll_up(int num, unsigned int top, unsigned int bottom)
 {
-	if (!gc_buffer_size) {
-        gc_ops.scroll_up(num, top, bottom);
-		gc_clear_screen(0, bottom - num, top, bottom, 0);
-        return;
-    }
+	if (!gc_buffer_size) return;
 
 	if ( bottom <= gc_buffer_rows )
 	{
@@ -1245,6 +1251,7 @@ gc_scroll_up(int num, unsigned int top, unsigned int bottom)
 		gc_ops.scroll_up(num, top, bottom);
 
 		/* Now set the freed up lines to the background colour */
+
 		gc_clear_screen(0, bottom - num, top, bottom, 0);
 	}
 }
@@ -1286,7 +1293,7 @@ gc_update_color(int color, boolean_t fore)
 void
 vcputc(__unused int l, __unused int u, int c)
 {
-	if ( gc_initialized && ( gc_enabled || debug_mode ) )
+	if ( gc_initialized && gc_enabled )
 	{
 		spl_t s;
 
@@ -1295,7 +1302,7 @@ vcputc(__unused int l, __unused int u, int c)
 		x86_filter_TLB_coherency_interrupts(TRUE);
 #endif
 		VCPUTC_LOCK_LOCK();
-		if ( gc_enabled || debug_mode )
+		if ( gc_enabled )
 		{
 			gc_hide_cursor(gc_x, gc_y);
 			gc_putchar(c);
@@ -1317,15 +1324,10 @@ vcputc(__unused int l, __unused int u, int c)
 /*
  * For the color support (Michel Pollet)
  */
-
 static unsigned char vc_color_index_table[33] = 
 	{  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 	   1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 0, 2 };
 
-#ifndef __arm__
-/*
- * Platforms such as ix86 require 1555 (XRGB).
- */
 static uint32_t vc_colors[8][4] = {
 	{ 0xFFFFFFFF, 0x00000000, 0x00000000, 0x00000000 },	/* black */
 	{ 0x23232323, 0x7C007C00, 0x00FF0000, 0x3FF00000 },	/* red	*/
@@ -1337,22 +1339,6 @@ static uint32_t vc_colors[8][4] = {
 	{ 0xb4b4b4b4, 0x03FF03FF, 0x0000FFFF, 0x000FFFFF },	/* cyan	*/
 	{ 0x00000000, 0x7FFF7FFF, 0x00FFFFFF, 0x3FFFFFFF }	/* white */
 };
-#else
-/*
- * RGB565 values.
- */
-static uint32_t vc_colors[8][4] = {
-	{ 0xFFFFFFFF, 0x00000000, 0x00000000, 0x00000000 },	/* black */
-	{ 0x23232323, 0xF800F800, 0x00FF0000, 0x3FF00000 },	/* red	*/
-	{ 0xb9b9b9b9, 0x07e007e0, 0x0000FF00, 0x000FFC00 },	/* green */
-	{ 0x05050505, 0xFFE0FFE0, 0x00FFFF00, 0x3FFFFC00 },	/* yellow */
-	{ 0xd2d2d2d2, 0x001f001f, 0x000000FF, 0x000003FF },	/* blue	 */
-//	{ 0x80808080, 0x31933193, 0x00666699, 0x00000000 },	/* blue	 */
-	{ 0x18181818, 0xF01FF01F, 0x00FF00FF, 0x3FF003FF },	/* magenta */
-	{ 0xb4b4b4b4, 0x03FF03FF, 0x0000FFFF, 0x000FFFFF },	/* cyan	*/
-	{ 0x00000000, 0xFFFFFFFF, 0x00FFFFFF, 0x3FFFFFFF }	/* white */
-};
-#endif
 
 static uint32_t vc_color_fore = 0;
 static uint32_t vc_color_back = 0;
@@ -1372,6 +1358,35 @@ static int vc_rendered_char_size = 0;
 
 #define REN_MAX_DEPTH	32
 static unsigned char vc_rendered_char[ISO_CHAR_HEIGHT * ((REN_MAX_DEPTH / 8) * ISO_CHAR_WIDTH)];
+
+#if !CONFIG_EMBEDDED
+static void
+internal_set_progressmeter(int new_value);
+static void
+internal_enable_progressmeter(int new_value);
+
+enum
+{
+    kProgressMeterOff    = FALSE,
+    kProgressMeterUser   = TRUE,
+    kProgressMeterKernel = 3,
+};
+enum
+{
+    kProgressMeterMax    = 1024,
+    kProgressMeterEnd    = 512,
+};
+
+#endif	/* !CONFIG_EMBEDDED */
+
+static boolean_t vc_progress_white = 
+#ifdef CONFIG_VC_PROGRESS_WHITE
+                                     TRUE;
+#else /* !CONFIG_VC_PROGRESS_WHITE */
+                                     FALSE;
+#endif /* !CONFIG_VC_PROGRESS_WHITE */
+
+static int vc_acquire_delay = kProgressAcquireDelay;
 
 static void 
 vc_clear_screen(unsigned int xx, unsigned int yy, unsigned int scrreg_top,
@@ -1837,7 +1852,8 @@ vc_update_color(int color, boolean_t fore)
  */
 
 static vc_progress_element *	vc_progress;
-static const unsigned char *    vc_progress_data[2];
+enum { kMaxProgressData = 3 };
+static const unsigned char *    vc_progress_data[kMaxProgressData];
 static const unsigned char *    vc_progress_alpha;
 static boolean_t		vc_progress_enable;
 static const unsigned char *    vc_clut;
@@ -1851,8 +1867,28 @@ static thread_call_data_t	vc_progress_call;
 static boolean_t		vc_needsave;
 static void *			vc_saveunder;
 static vm_size_t		vc_saveunder_len;
-static int8_t			vc_uiselect = 0;
+static int8_t			vc_uiscale = 1;
+vc_progress_user_options        vc_progress_options;
+vc_progress_user_options        vc_user_options;
+
 decl_simple_lock_data(,vc_progress_lock)
+
+#if !CONFIG_EMBEDDED
+static int           		vc_progress_withmeter = 3;
+int                             vc_progressmeter_enable;
+static int                      vc_progressmeter_drawn;
+int            	                vc_progressmeter_value;
+static uint32_t            	vc_progressmeter_count;
+static uint32_t            	vc_progress_meter_start;
+static uint32_t            	vc_progress_meter_end;
+static uint64_t            	vc_progressmeter_interval;
+static uint64_t            	vc_progressmeter_deadline;
+static thread_call_data_t	vc_progressmeter_call;
+static void *                   vc_progressmeter_backbuffer;
+static boolean_t                vc_progressmeter_hold;
+static uint32_t                 vc_progressmeter_diskspeed = 256;
+
+#endif  /* !CONFIG_EMBEDDED */
 
 enum {
     kSave          = 0x10,
@@ -1897,6 +1933,9 @@ static void vc_blit_rect_30(int x, int y, int bx,
 			    unsigned int * backBuffer,
 			    unsigned int flags);
 static void vc_progress_task( void * arg0, void * arg );
+#if !CONFIG_EMBEDDED
+static void vc_progressmeter_task( void * arg0, void * arg );
+#endif	/* !CONFIG_EMBEDDED */
 
 static void vc_blit_rect(int x, int y, int bx,
 			    int width, int height,
@@ -1905,8 +1944,9 @@ static void vc_blit_rect(int x, int y, int bx,
 			    void * backBuffer,
 			    unsigned int flags)
 {
-    if(!vinfo.v_depth)
-        return;
+    if (!vinfo.v_depth)                                return;
+    if (((unsigned int)(x + width))  > vinfo.v_width)  return;
+    if (((unsigned int)(y + height)) > vinfo.v_height) return;
 
     switch( vinfo.v_depth) {
 	case 8:
@@ -1971,6 +2011,20 @@ vc_blit_rect_8(int x, int y, __unused int bx,
 
 /* For ARM, 16-bit is 565 (RGB); it is 1555 (XRGB) on other platforms */
 
+#ifdef __arm__
+#define CLUT_MASK_R	0xf8
+#define CLUT_MASK_G	0xfc
+#define CLUT_MASK_B	0xf8
+#define CLUT_SHIFT_R	<< 8
+#define CLUT_SHIFT_G	<< 3
+#define CLUT_SHIFT_B	>> 3
+#define MASK_R		0xf800
+#define MASK_G		0x07e0
+#define MASK_B		0x001f
+#define MASK_R_8	0x7f800
+#define MASK_G_8	0x01fe0
+#define MASK_B_8	0x000ff
+#else
 #define CLUT_MASK_R	0xf8
 #define CLUT_MASK_G	0xf8
 #define CLUT_MASK_B	0xf8
@@ -1978,11 +2032,12 @@ vc_blit_rect_8(int x, int y, __unused int bx,
 #define CLUT_SHIFT_G	<< 2
 #define CLUT_SHIFT_B	>> 3
 #define MASK_R		0x7c00
-#define MASK_G		0x07e0
+#define MASK_G		0x03e0
 #define MASK_B		0x001f
 #define MASK_R_8	0x3fc00
-#define MASK_G_8	0x03fe0
+#define MASK_G_8	0x01fe0
 #define MASK_B_8	0x000ff
+#endif
 
 static void vc_blit_rect_16( int x, int y, int bx,
 			     int width, int height,
@@ -2034,13 +2089,13 @@ static void vc_blit_rect_16( int x, int y, int bx,
 		out = (((((back & MASK_R) * data) + MASK_R_8) >> 8) & MASK_R)
 		     | (((((back & MASK_G) * data) + MASK_G_8) >> 8) & MASK_G)
 		     | (((((back & MASK_B) * data) + MASK_B_8) >> 8) & MASK_B);
-#ifdef CONFIG_VC_PROGRESS_WHITE
-		out += (((0xff - data) & CLUT_MASK_R) CLUT_SHIFT_R)
-		     | (((0xff - data) & CLUT_MASK_G) CLUT_SHIFT_G)
-		     | (((0xff - data) & CLUT_MASK_B) CLUT_SHIFT_B);
-#endif
-            } else
+		if (vc_progress_white) out += (((0xff - data) & CLUT_MASK_R) CLUT_SHIFT_R)
+					    | (((0xff - data) & CLUT_MASK_G) CLUT_SHIFT_G)
+					    | (((0xff - data) & CLUT_MASK_B) CLUT_SHIFT_B);
+            } else if (kDataBack & flags)
 		out = back;
+	    else
+		out = data;
             *(dst + col) = out;
 	}
         dst = (volatile unsigned short *) (((volatile char*)dst) + vinfo.v_rowbytes);
@@ -2099,13 +2154,13 @@ static void vc_blit_rect_32(int x, int y, int bx,
 	    } else if (kDataAlpha & flags) {
 		out = (((((back & 0x00ff00ff) * data) + 0x00ff00ff) >> 8) & 0x00ff00ff)
 		     | (((((back & 0x0000ff00) * data) + 0x0000ff00) >> 8) & 0x0000ff00);
-#ifdef CONFIG_VC_PROGRESS_WHITE
-		out += ((0xff - data) << 16)
-		     | ((0xff - data) << 8)
-		     |  (0xff - data);
-#endif
-            } else
+		if (vc_progress_white) out += ((0xff - data) << 16)
+					    | ((0xff - data) << 8)
+					    |  (0xff - data);
+            } else if (kDataBack & flags)
 		out = back;
+	    else
+		out = data;
             *(dst + col) = out;
 	}
         dst = (volatile unsigned int *) (((volatile char*)dst) + vinfo.v_rowbytes);
@@ -2148,9 +2203,8 @@ static void vc_blit_rect_30(int x, int y, int bx,
     {
         for( col = 0; col < width; col++)
 	{
-	    if (col < sourceRow)
-		data = *dataPtr++;
-
+	    if (sourceRow) data = dataPtr[((sx + (col * a) + (line * b)) >> 16)
+				+ sourceRow * (((sy + (col * c) + (line * d)) >> 16))];
 	    if (backPtr) {
 		if (kSave & flags) {
 		    back = *(dst + col);
@@ -2167,13 +2221,13 @@ static void vc_blit_rect_30(int x, int y, int bx,
 		exp =  (((((exp & 0x3FF003FF) * data) + 0x0FF000FF) >> 8) & 0x3FF003FF)
 		     | (((((exp & 0x000FFC00) * data) + 0x0003FC00) >> 8) & 0x000FFC00);
 		out = (unsigned int)exp;
-#ifdef CONFIG_VC_PROGRESS_WHITE
-		out += ((0xFF - data) << 22)
-		     | ((0xFF - data) << 12)
-		     | ((0xFF - data) << 2);
-#endif
-            } else
+		if (vc_progress_white) out += ((0xFF - data) << 22)
+					    | ((0xFF - data) << 12)
+					    | ((0xFF - data) << 2);
+            } else if (kDataBack & flags)
 		out = back;
+	    else
+		out = data;
             *(dst + col) = out;
 	}
         dst = (volatile unsigned int *) (((volatile char*)dst) + vinfo.v_rowbytes);
@@ -2182,6 +2236,16 @@ static void vc_blit_rect_30(int x, int y, int bx,
     }
 }
 
+static void vc_clean_boot_graphics(void)
+{
+#if !CONFIG_EMBEDDED
+    // clean up possible FDE login graphics
+    vc_progress_set(FALSE, 0);
+    const unsigned char *
+    color = (typeof(color))(uintptr_t)(vc_progress_white ? 0x00000000 : 0xBFBFBFBF);
+    vc_blit_rect(0, 0, 0, vinfo.v_width, vinfo.v_height, 0, 0, color, NULL, 0);
+#endif
+}
 
 /*
  * Routines to render the lzss image format
@@ -2265,6 +2329,8 @@ vc_display_lzss_icon(uint32_t dst_x,       uint32_t dst_y,
     uint32_t bytes_per_pixel = 4;
     uint32_t bytes_per_row = vinfo.v_rowbytes;
 
+    vc_clean_boot_graphics();
+
     image_start = (uint32_t *) (vinfo.v_baseaddr + (dst_y * bytes_per_row) + (dst_x * bytes_per_pixel));
     
     lzss_image_state state = {0, 0, image_width, image_height, bytes_per_row, image_start, clut};
@@ -2333,6 +2399,8 @@ void vc_display_icon( vc_progress_element * desc,
 
     if( vc_progress_enable && vc_clut) {
 
+	vc_clean_boot_graphics();
+
 	width = desc->width;
 	height = desc->height;
 	x = desc->dx;
@@ -2349,20 +2417,20 @@ void
 vc_progress_initialize( vc_progress_element * desc,
 			const unsigned char * data1x,
 			const unsigned char * data2x,
+			const unsigned char * data3x,
 			const unsigned char * clut )
 {
-	uint64_t	abstime;
+    uint64_t	abstime;
 
     if( (!clut) || (!desc) || (!data1x))
 	return;
     vc_clut = clut;
     vc_clut8 = clut;
 
-    simple_lock_init(&vc_progress_lock, 0);
-
     vc_progress = desc;
     vc_progress_data[0] = data1x;
     vc_progress_data[1] = data2x;
+    vc_progress_data[2] = data3x;
     if( 2 & vc_progress->flags)
         vc_progress_alpha = data1x
                             + vc_progress->count * vc_progress->width * vc_progress->height;
@@ -2370,9 +2438,15 @@ vc_progress_initialize( vc_progress_element * desc,
         vc_progress_alpha = NULL;
 
     thread_call_setup(&vc_progress_call, vc_progress_task, NULL);
-
     clock_interval_to_absolutetime_interval(vc_progress->time, 1000 * 1000, &abstime);
     vc_progress_interval = (uint32_t)abstime;
+
+#if !CONFIG_EMBEDDED
+    thread_call_setup(&vc_progressmeter_call, vc_progressmeter_task, NULL);
+    clock_interval_to_absolutetime_interval(1000 / 8, 1000 * 1000, &abstime);
+    vc_progressmeter_interval = (uint32_t)abstime;
+#endif	/* !CONFIG_EMBEDDED */
+
 }
 
 void
@@ -2389,11 +2463,43 @@ vc_progress_set(boolean_t enable, uint32_t vc_delay)
     unsigned int     pdata32;
     unsigned int *   buf32;
 
-    if( !vc_progress)
+#if !CONFIG_EMBEDDED
+
+    if (kBootArgsFlagBlack & ((boot_args *) PE_state.bootArgs)->flags) return;
+
+    if (1 & vc_progress_withmeter)
+    {
+	if (enable) internal_enable_progressmeter(kProgressMeterKernel);
+
+	s = splhigh();
+	simple_lock(&vc_progress_lock);
+
+	if( vc_progress_enable != enable) {
+	    vc_progress_enable = enable;
+	    if( enable)
+	    {
+		vc_progressmeter_count = 0;
+		clock_interval_to_deadline(vc_delay,
+					   1000 * 1000 * 1000 /*second scale*/,
+					   &vc_progressmeter_deadline);
+		thread_call_enter_delayed(&vc_progressmeter_call, vc_progressmeter_deadline);
+	    } 
+	    else thread_call_cancel(&vc_progressmeter_call);
+	}
+
+	simple_unlock(&vc_progress_lock);
+	splx(s);
+
+	if (!enable) internal_enable_progressmeter(kProgressMeterOff);
 	return;
+    }
+
+#endif /* !CONFIG_EMBEDDED */
+
+    if(!vc_progress) return;
 
     if( enable) {
-        saveLen = (vc_progress->width << vc_uiselect) * (vc_progress->height << vc_uiselect) * vinfo.v_depth / 8;
+        saveLen = (vc_progress->width * vc_uiscale) * (vc_progress->height * vc_uiscale) * ((vinfo.v_depth + 7) / 8);
         saveBuf = kalloc( saveLen );
 
 	switch( vinfo.v_depth) {
@@ -2471,46 +2577,128 @@ vc_progress_set(boolean_t enable, uint32_t vc_delay)
         kfree( saveBuf, saveLen );
 }
 
+#if !CONFIG_EMBEDDED
+
+static uint32_t vc_progressmeter_range(uint32_t pos)
+{
+    uint32_t ret;
+
+    if (pos > kProgressMeterEnd) pos = kProgressMeterEnd;
+    ret = vc_progress_meter_start 
+    	+ ((pos * (vc_progress_meter_end - vc_progress_meter_start)) / kProgressMeterEnd);
+
+    return (ret);
+}
+
+static void
+vc_progressmeter_task(__unused void *arg0, __unused void *arg)
+{
+    spl_t    s;
+    uint64_t interval;
+
+    s = splhigh();
+    simple_lock(&vc_progress_lock);
+    if (vc_progressmeter_enable)
+    {
+	uint32_t pos = (vc_progressmeter_count >> 13);
+	internal_set_progressmeter(vc_progressmeter_range(pos));
+	if (pos < kProgressMeterEnd)
+	{
+            static uint16_t incr[8] = { 10000, 10000, 8192, 4096, 2048, 384, 384, 64 };
+	    vc_progressmeter_count += incr[(pos * 8) / kProgressMeterEnd];
+
+	    interval = vc_progressmeter_interval;
+	    interval = ((interval * 256) / vc_progressmeter_diskspeed);
+
+	    clock_deadline_for_periodic_event(interval, mach_absolute_time(), &vc_progressmeter_deadline);
+	    thread_call_enter_delayed(&vc_progressmeter_call, vc_progressmeter_deadline);
+	}
+    }
+    simple_unlock(&vc_progress_lock);
+    splx(s);
+}
+
+void vc_progress_setdiskspeed(uint32_t speed)
+{
+    vc_progressmeter_diskspeed = speed;
+}
+
+#endif	/* !CONFIG_EMBEDDED */
 
 static void
 vc_progress_task(__unused void *arg0, __unused void *arg)
 {
-    spl_t		s;
-    int			x, y, width, height;
+    spl_t     s;
+    int	      x, y, width, height;
+    uint64_t  x_pos, y_pos;
     const unsigned char * data;
 
     s = splhigh();
     simple_lock(&vc_progress_lock);
 
-    if( vc_progress_enable) {
-
-        vc_progress_count++;
-        if( vc_progress_count >= vc_progress->count) {
-            vc_progress_count = 0;
+    if( vc_progress_enable) do {
+    
+	vc_progress_count++;
+	if( vc_progress_count >= vc_progress->count) {
+	    vc_progress_count = 0;
 	    vc_progress_angle++;
-        }
-
-	width  = (vc_progress->width << vc_uiselect);
-	height = (vc_progress->height << vc_uiselect);
-	x = (vc_progress->dx << vc_uiselect);
-	y = (vc_progress->dy << vc_uiselect);
-	data = vc_progress_data[vc_uiselect];
-	data += vc_progress_count * width * height;
-	if( 1 & vc_progress->flags) {
-	    x += ((vinfo.v_width - width) / 2);
-	    y += ((vinfo.v_height - height) / 2);
 	}
-	vc_blit_rect( x, y, 0, 
+
+	width  = (vc_progress->width * vc_uiscale);
+	height = (vc_progress->height * vc_uiscale);
+	data   = vc_progress_data[vc_uiscale - 1];
+	if (!data) break;
+
+	if (kVCUsePosition & vc_progress_options.options) {
+	    /* Rotation: 0:normal, 1:right 90, 2:left 180, 3:left 90 */
+	    switch (3 & vinfo.v_rotate) {
+		case 0:
+		    x_pos = vc_progress_options.x_pos;
+		    y_pos = vc_progress_options.y_pos;
+		    break;
+		case 2:
+		    x_pos = 0xFFFFFFFF - vc_progress_options.x_pos;
+		    y_pos = 0xFFFFFFFF - vc_progress_options.y_pos;
+		    break;
+		case 1:
+		    x_pos = 0xFFFFFFFF - vc_progress_options.y_pos;
+		    y_pos = vc_progress_options.x_pos;
+		    break;
+		case 3:
+		    x_pos = vc_progress_options.y_pos;
+		    y_pos = 0xFFFFFFFF - vc_progress_options.x_pos;
+		    break;
+	    }
+	    x = (uint32_t)((x_pos * (uint64_t) vinfo.v_width) / 0xFFFFFFFFULL);
+	    y = (uint32_t)((y_pos * (uint64_t) vinfo.v_height) / 0xFFFFFFFFULL);
+	    x -= (width / 2);
+	    y -= (height / 2);
+	} else {
+	    x = (vc_progress->dx * vc_uiscale);
+	    y = (vc_progress->dy * vc_uiscale);
+	    if( 1 & vc_progress->flags) {
+		x += ((vinfo.v_width - width) / 2);
+		y += ((vinfo.v_height - height) / 2);
+	    }
+	}
+
+	if ((x + width)  > (int)vinfo.v_width)  break;
+	if ((y + height) > (int)vinfo.v_height) break;
+
+	data += vc_progress_count * width * height;
+
+	vc_blit_rect( x, y, 0,
 		      width, height, width, width,
 		      data, vc_saveunder,
-		      kDataAlpha 
+		      kDataAlpha
 		      | (vc_progress_angle & kDataRotate) 
 		      | (vc_needsave ? kSave : 0) );
-        vc_needsave = FALSE;
+	vc_needsave = FALSE;
 
-        clock_deadline_for_periodic_event(vc_progress_interval, mach_absolute_time(), &vc_progress_deadline);
-        thread_call_enter_delayed(&vc_progress_call, vc_progress_deadline);
+	clock_deadline_for_periodic_event(vc_progress_interval, mach_absolute_time(), &vc_progress_deadline);
+	thread_call_enter_delayed(&vc_progress_call, vc_progress_deadline);
     }
+    while (FALSE);
     simple_unlock(&vc_progress_lock);
     splx(s);
 }
@@ -2527,11 +2715,11 @@ vc_progress_task(__unused void *arg0, __unused void *arg)
 static boolean_t gc_acquired      = FALSE;
 static boolean_t gc_graphics_boot = FALSE;
 static boolean_t gc_desire_text   = FALSE;
+static boolean_t gc_paused_progress;
 
-static uint64_t lastVideoPhys   = 0;
-static vm_offset_t  lastVideoVirt   = 0;
-static vm_size_t lastVideoSize   = 0;
-static boolean_t    lastVideoMapped = FALSE;
+static vm_offset_t  lastVideoVirt    = 0;
+static vm_size_t    lastVideoMapSize = 0;
+static boolean_t    lastVideoMapKmap = FALSE;
 
 static void
 gc_pause( boolean_t pause, boolean_t graphics_now )
@@ -2548,9 +2736,21 @@ gc_pause( boolean_t pause, boolean_t graphics_now )
 
     simple_lock(&vc_progress_lock);
 
-    vc_progress_enable = gc_graphics_boot && !gc_desire_text && !pause;
-	if (vc_progress_enable)
-		thread_call_enter_delayed(&vc_progress_call, vc_progress_deadline);
+    if (pause) 
+    {
+        gc_paused_progress = vc_progress_enable;
+	vc_progress_enable = FALSE;
+    }
+    else vc_progress_enable = gc_paused_progress;
+
+    if (vc_progress_enable)
+    {
+#if !CONFIG_EMBEDDED
+	if (1 & vc_progress_withmeter) thread_call_enter_delayed(&vc_progressmeter_call, vc_progressmeter_deadline);
+	else                           
+#endif /* !CONFIG_EMBEDDED */
+	thread_call_enter_delayed(&vc_progress_call, vc_progress_deadline);
+    }
 
     simple_unlock(&vc_progress_lock);
     splx(s);
@@ -2559,38 +2759,55 @@ gc_pause( boolean_t pause, boolean_t graphics_now )
 static void
 vc_initialize(__unused struct vc_info * vinfo_p)
 {
+#ifdef __arm__
+	unsigned long cnt, data16, data32;
+
+	if (vinfo.v_depth == 16) {
+		for (cnt = 0; cnt < 8; cnt++) {
+			data32 = vc_colors[cnt][2];
+			data16  = (data32 & 0x0000F8) <<  8;
+			data16 |= (data32 & 0x00FC00) >>  5;
+			data16 |= (data32 & 0xF80000) >> 19;
+			data16 |= data16 << 16;
+			vc_colors[cnt][1] = data16;
+		}
+	}
+#endif
 
 	vinfo.v_rows = vinfo.v_height / ISO_CHAR_HEIGHT;
 	vinfo.v_columns = vinfo.v_width / ISO_CHAR_WIDTH;
 	vinfo.v_rowscanbytes = ((vinfo.v_depth + 7) / 8) * vinfo.v_width;
-	vc_uiselect = (2 == vinfo.v_scale) ? 1 : 0;
+	vc_uiscale = vinfo.v_scale;
+	if (vc_uiscale > kMaxProgressData) vc_uiscale = kMaxProgressData;
+	else if (!vc_uiscale)              vc_uiscale = 1;
 }
 
 void
 initialize_screen(PE_Video * boot_vinfo, unsigned int op)
 {
-	unsigned int fbsize = 0;
+	unsigned int newMapSize = 0;
 	vm_offset_t newVideoVirt = 0;
 	boolean_t graphics_now;
-	ppnum_t fbppage;
+	uint32_t delay;
 
 	if ( boot_vinfo )
 	{
 		struct vc_info new_vinfo = vinfo;
+		boolean_t makeMapping = FALSE;
+
 		/* 
-		 *	First, check if we are changing the size and/or location of the framebuffer
+		 *	Copy parameters
 		 */
-		new_vinfo.v_name[0]  = 0;
-		new_vinfo.v_physaddr = boot_vinfo->v_baseAddr & ~3;		/* Get the physical address */
-#ifndef __LP64__
-		new_vinfo.v_physaddr |= (((uint64_t) boot_vinfo->v_baseAddrHigh) << 32);
-#endif
 		if (kPEBaseAddressChange != op)
 		{
 		    new_vinfo.v_width    = (unsigned int)boot_vinfo->v_width;
 		    new_vinfo.v_height   = (unsigned int)boot_vinfo->v_height;
 		    new_vinfo.v_depth    = (unsigned int)boot_vinfo->v_depth;
 		    new_vinfo.v_rowbytes = (unsigned int)boot_vinfo->v_rowBytes;
+		    if (kernel_map == VM_MAP_NULL) {
+				// only booter supplies HW rotation
+				new_vinfo.v_rotate   = (unsigned int)boot_vinfo->v_rotate;
+		    }
 #if defined(__i386__) || defined(__x86_64__)
 		    new_vinfo.v_type     = (unsigned int)boot_vinfo->v_display;
 #else
@@ -2602,18 +2819,29 @@ initialize_screen(PE_Video * boot_vinfo, unsigned int op)
             else if (scale == kPEScaleFactor2x)
                 new_vinfo.v_scale = kPEScaleFactor2x;
             else /* Scale factor not set, default to 1x */
-#ifdef BOARD_CONFIG_S5L8930X
-                new_vinfo.v_scale = kPEScaleFactor2x;
-#else
                 new_vinfo.v_scale = kPEScaleFactor1x;
+		}
+		new_vinfo.v_name[0]  = 0;
+		new_vinfo.v_physaddr = 0;
+
+		/*
+		 *  Check if we are have to map the framebuffer
+		 *  If VM is up, we are given a virtual address, unless b0 is set to indicate physical.
+		 */
+		newVideoVirt = boot_vinfo->v_baseAddr;
+		makeMapping = (kernel_map == VM_MAP_NULL) || (0 != (1 & newVideoVirt));
+		if (makeMapping)
+		{
+			newVideoVirt = 0;
+			new_vinfo.v_physaddr = boot_vinfo->v_baseAddr & ~3UL;		/* Get the physical address */
+#ifndef __LP64__
+			new_vinfo.v_physaddr |= (((uint64_t) boot_vinfo->v_baseAddrHigh) << 32);
 #endif
+			kprintf("initialize_screen: b=%08llX, w=%08X, h=%08X, r=%08X, d=%08X\n",                  /* (BRINGUP) */
+			    new_vinfo.v_physaddr, new_vinfo.v_width,  new_vinfo.v_height,  new_vinfo.v_rowbytes, new_vinfo.v_type);     /* (BRINGUP) */
 		}
      
-		if (!lastVideoMapped)
-		    kprintf("initialize_screen: b=%08llX, w=%08X, h=%08X, r=%08X, d=%08X\n",                  /* (BRINGUP) */
-			    new_vinfo.v_physaddr, new_vinfo.v_width,  new_vinfo.v_height,  new_vinfo.v_rowbytes, new_vinfo.v_type);     /* (BRINGUP) */
-
-		if (!new_vinfo.v_physaddr)							/* Check to see if we have a framebuffer */
+		if (!newVideoVirt && !new_vinfo.v_physaddr)							/* Check to see if we have a framebuffer */
 		{
 			kprintf("initialize_screen: No video - forcing serial mode\n");		/* (BRINGUP) */
 			new_vinfo.v_depth = 0;						/* vc routines are nop */
@@ -2624,36 +2852,17 @@ initialize_screen(PE_Video * boot_vinfo, unsigned int op)
 		}
 		else
 		{
-		    /*
-		     * If VM is up, we are given a virtual address, unless b0 is set to indicate physical.
-		     */
-			if ((kernel_map != VM_MAP_NULL) && (0 == (1 & boot_vinfo->v_baseAddr)))
-		    {
-			    fbppage = pmap_find_phys(kernel_pmap, (addr64_t)boot_vinfo->v_baseAddr);	/* Get the physical address of frame buffer */
-			    if(!fbppage)						/* Did we find it? */
-			    {
-				    panic("initialize_screen: Strange framebuffer - addr = %08X\n", (uint32_t)boot_vinfo->v_baseAddr);
-			    }
-			    new_vinfo.v_physaddr = (((uint64_t)fbppage) << 12) | (boot_vinfo->v_baseAddr & PAGE_MASK);			/* Get the physical address */
-		    }
-    
-		    if (boot_vinfo->v_length != 0)
-			    fbsize = (unsigned int) round_page(boot_vinfo->v_length);
-		    else
-			    fbsize = (unsigned int) round_page(new_vinfo.v_height * new_vinfo.v_rowbytes);			/* Remember size */
-
-    
-		    if ((lastVideoPhys != new_vinfo.v_physaddr) || (fbsize > lastVideoSize))		/* Did framebuffer change location or get bigger? */
+		    if (makeMapping)
 		    {
 			    unsigned int flags = VM_WIMG_IO;
-			    newVideoVirt = io_map_spec((vm_map_offset_t)new_vinfo.v_physaddr, fbsize, flags);	/* Allocate address space for framebuffer */
-    		    }
-		}
-
-		if (newVideoVirt != 0)
+				if (boot_vinfo->v_length != 0)
+					newMapSize = (unsigned int) round_page(boot_vinfo->v_length);
+				else
+					newMapSize = (unsigned int) round_page(new_vinfo.v_height * new_vinfo.v_rowbytes);			/* Remember size */
+			    newVideoVirt = io_map_spec((vm_map_offset_t)new_vinfo.v_physaddr, newMapSize, flags);	/* Allocate address space for framebuffer */
+			}
 		    new_vinfo.v_baseaddr = newVideoVirt + boot_vinfo->v_offset;				/* Set the new framebuffer address */
-		else
-		    new_vinfo.v_baseaddr = lastVideoVirt + boot_vinfo->v_offset;				/* Set the new framebuffer address */
+		}
 
 #if defined(__x86_64__)
 		// Adjust the video buffer pointer to point to where it is in high virtual (above the hole)
@@ -2675,24 +2884,23 @@ initialize_screen(PE_Video * boot_vinfo, unsigned int op)
 		// If we changed the virtual address, remove the old mapping
 		if (newVideoVirt != 0)
 		{
-			if (lastVideoVirt)							/* Was the framebuffer mapped before? */
+			if (lastVideoVirt && lastVideoMapSize)							/* Was the framebuffer mapped before? */
 			{
-#if FALSE
-				if(lastVideoMapped)                            /* Was this not a special pre-VM mapping? */
-#endif
+				/* XXX why only !4K? */
+				if (!TEST_PAGE_SIZE_4K && lastVideoMapSize)
 				{
 					pmap_remove(kernel_pmap, trunc_page_64(lastVideoVirt),
-						round_page_64(lastVideoVirt + lastVideoSize));	/* Toss mappings */
+						round_page_64(lastVideoVirt + lastVideoMapSize));	/* Toss mappings */
 				}
-				if(lastVideoMapped)                            /* Was this not a special pre-VM mapping? */
+				/* Was this not a special pre-VM mapping? */
+				if (lastVideoMapKmap)
 				{
-					kmem_free(kernel_map, lastVideoVirt, lastVideoSize);	/* Toss kernel addresses */
+					kmem_free(kernel_map, lastVideoVirt, lastVideoMapSize);	/* Toss kernel addresses */
 				}
 			}
-			lastVideoPhys = new_vinfo.v_physaddr;					/* Remember the framebuffer address */
-			lastVideoSize = fbsize;							/* Remember the size */
-			lastVideoVirt = newVideoVirt;						/* Remember the virtual framebuffer address */
-			lastVideoMapped  = (NULL != kernel_map);
+			lastVideoMapKmap = (NULL != kernel_map);		/* Remember how mapped */
+			lastVideoMapSize = newMapSize;					/* Remember the size */
+			lastVideoVirt    = newVideoVirt;				/* Remember the virtual framebuffer address */
 		}
 
         if (kPEBaseAddressChange != op)
@@ -2710,30 +2918,34 @@ initialize_screen(PE_Video * boot_vinfo, unsigned int op)
 			gc_ops.update_color = vc_update_color;
             gc_initialize(&vinfo);
 		}
-
-#ifdef GRATEFULDEBUGGER
-		GratefulDebInit((bootBumbleC *)boot_vinfo);	/* Re-initialize GratefulDeb */
-#endif /* GRATEFULDEBUGGER */
 	}
 
     graphics_now = gc_graphics_boot && !gc_desire_text;
 	switch ( op )
 	{
 		case kPEGraphicsMode:
-            panicDialogDesired = TRUE;
 			gc_graphics_boot = TRUE;
 			gc_desire_text = FALSE;
 			break;
 
 		case kPETextMode:
-			panicDialogDesired = FALSE;
-			disable_debug_output = FALSE;
 			gc_graphics_boot = FALSE;
 			break;
 
 		case kPEAcquireScreen:
 			if ( gc_acquired ) break;
-			vc_progress_set( graphics_now, kProgressAcquireDelay );
+
+			vc_progress_options = vc_user_options;
+			bzero(&vc_user_options, sizeof(vc_user_options));
+
+			if (kVCAcquireImmediate & vc_progress_options.options) delay = 0;
+			else if (kVCDarkReboot & vc_progress_options.options)  delay = 120;
+			else                                                   delay = vc_acquire_delay;
+
+			if (kVCDarkBackground & vc_progress_options.options)       vc_progress_white = TRUE;
+			else if (kVCLightBackground & vc_progress_options.options) vc_progress_white = FALSE;
+
+			vc_progress_set( graphics_now, delay );
 			gc_enable( !graphics_now );
 			gc_acquired = TRUE;
 			gc_desire_text = FALSE;
@@ -2756,7 +2968,6 @@ initialize_screen(PE_Video * boot_vinfo, unsigned int op)
 		case kPETextScreen:
 			if ( console_is_serial() ) break;
 
-			disable_debug_output = FALSE;
 			if ( gc_acquired == FALSE )
 			{
 				gc_desire_text = TRUE;
@@ -2778,51 +2989,42 @@ initialize_screen(PE_Video * boot_vinfo, unsigned int op)
 			if ( gc_graphics_boot == FALSE ) break;
 
 			vc_progress_set( FALSE, 0 );
+			vc_acquire_delay = kProgressReacquireDelay;
+			vc_progress_white      = TRUE;
 #if !CONFIG_EMBEDDED
-			vc_enable_progressmeter( FALSE );
+			vc_enable_progressmeter(FALSE);
+			vc_progress_withmeter &= ~1;
 #endif
-
 			vc_clut8 = NULL;
-#ifdef GRATEFULDEBUGGER
-			GratefulDebInit(0);						/* Stop grateful debugger */
-#endif /* GRATEFULDEBUGGER */
 			break;
-	}
-#ifdef GRATEFULDEBUGGER
-	if ( boot_vinfo ) GratefulDebInit((bootBumbleC *)boot_vinfo);	/* Re initialize GratefulDeb */
-#endif /* GRATEFULDEBUGGER */
-}
 
-void 
-dim_screen(void)
-{
-	unsigned int *p, *endp, *row;
-	int      col, rowline, rowlongs;
-	register unsigned int mask;
 
-	if(!vinfo.v_depth)
-		return;
+#if !CONFIG_EMBEDDED
+		case kPERefreshBootGraphics:
+		{
+		    spl_t     s;
+		    boolean_t save;
 
-	if ( vinfo.v_depth == 32 )
-		mask = 0x007F7F7F;
-	else if ( vinfo.v_depth == 30 )
-		mask = (0x1ff<<20) | (0x1ff<<10) | 0x1ff;
-	else if ( vinfo.v_depth == 16 )
-		mask = 0x3DEF3DEF;
-	else
-		return;
+		    if (kBootArgsFlagBlack & ((boot_args *) PE_state.bootArgs)->flags) break;
 
-	rowline = (int)(vinfo.v_rowscanbytes / 4);
-	rowlongs = (int)(vinfo.v_rowbytes / 4);
+		    save = vc_progress_white;
+		    vc_progress_white = (0 != (kBootArgsFlagBlackBg & ((boot_args *) PE_state.bootArgs)->flags));
 
-	p = (unsigned int*) vinfo.v_baseaddr;
-	endp = p + (rowlongs * vinfo.v_height);
+		    internal_enable_progressmeter(kProgressMeterKernel);
 
-	for (row = p ; row < endp ; row += rowlongs) {
-		for (p = &row[0], col = 0; col < rowline; col++) {
-			*p = (*p >> 1) & mask;
-			++p;
+		    s = splhigh();
+		    simple_lock(&vc_progress_lock);
+
+		    vc_progressmeter_drawn = 0;
+		    internal_set_progressmeter(vc_progressmeter_range(vc_progressmeter_count >> 13));
+
+		    simple_unlock(&vc_progress_lock);
+		    splx(s);
+
+		    internal_enable_progressmeter(kProgressMeterOff);
+		    vc_progress_white = save;
 		}
+#endif
 	}
 }
 
@@ -2831,15 +3033,27 @@ void vcattach(void); /* XXX gcc 4 warning cleanup */
 void
 vcattach(void)
 {
-#ifdef __arm__
-	/* Print out video console information to serial and screen */
-	printf("%svideo console at 0x%lx (%ldx%ldx%ld)\n", (vinfo.v_depth >= 8) ? "\033[31mC\033[32mO\033[33mL\033[34mO\033[35mR\033[0m " : "",
-		vinfo.v_baseaddr, vinfo.v_width, vinfo.v_height,  vinfo.v_depth);
-	kprintf("%svideo console at 0x%lx (%ldx%ldx%ld)\n", (vinfo.v_depth >= 8) ? "\033[31mC\033[32mO\033[33mL\033[34mO\033[35mR\033[0m " : "",
-		vinfo.v_baseaddr, vinfo.v_width, vinfo.v_height,  vinfo.v_depth);
-#endif
-
 	vm_initialized = TRUE;
+
+#if !CONFIG_EMBEDDED
+        const boot_args * bootargs  = (typeof(bootargs)) PE_state.bootArgs;
+
+	vc_progress_white = (0 != ((kBootArgsFlagBlackBg | kBootArgsFlagLoginUI) 
+					  & bootargs->flags));
+	PE_parse_boot_argn("meter", &vc_progress_withmeter, sizeof(vc_progress_withmeter));
+
+	if (kBootArgsFlagInstallUI & bootargs->flags)
+	{
+	    vc_progress_meter_start = (bootargs->bootProgressMeterStart * kProgressMeterMax) / 65535;
+	    vc_progress_meter_end   = (bootargs->bootProgressMeterEnd   * kProgressMeterMax) / 65535;
+	}
+	else
+	{
+	    vc_progress_meter_start = 0;
+	    vc_progress_meter_end   = kProgressMeterMax;
+	}
+#endif
+	simple_lock_init(&vc_progress_lock, 0);
 
 	if ( gc_graphics_boot == FALSE )
 	{
@@ -2870,106 +3084,124 @@ vcattach(void)
 
 #if !CONFIG_EMBEDDED
 
-int vc_progress_meter_enable;
-int vc_progress_meter_value;
-
-static void * vc_progress_meter_backbuffer;
-static int vc_progress_meter_drawn;
-
+// redraw progress meter between pixels x1, x2, position at x3
 static void
-vc_draw_progress_meter(int select, unsigned int flags, int x1, int x2)
+vc_draw_progress_meter(unsigned int flags, int x1, int x2, int x3)
 {
     const unsigned char * data;
     int x, w;
     int ox, oy;
+    int endCapPos;
+    int onoff;
+    // 1 rounded fill, 0 square end
+    int style = (0 == (2 & vc_progress_withmeter));
 
-    ox = ((vinfo.v_width - (kProgressBarWidth << vc_uiselect)) / 2);
-    oy = vinfo.v_height - (((vinfo.v_height / 2) - ((vc_progress->dy + kProgressBarHeight) << vc_uiselect)) / 2);
+    ox = ((vinfo.v_width - (kProgressBarWidth * vc_uiscale)) / 2);
+    oy = vinfo.v_height - (vinfo.v_height / 3) - ((kProgressBarHeight * vc_uiscale) / 2);
 
     if (kDataBack == flags)
     {
 	// restore back bits
 	vc_blit_rect(ox + x1, oy, x1,
-		    x2, (kProgressBarHeight << vc_uiselect), 0, (kProgressBarWidth << vc_uiselect),
-		    NULL, vc_progress_meter_backbuffer, flags);
+		    x2, (kProgressBarHeight * vc_uiscale), 0, (kProgressBarWidth * vc_uiscale),
+		    NULL, vc_progressmeter_backbuffer, flags);
 	return;
     }
 
     for (x = x1; x < x2; x += w)
     {
-	if (x < (kProgressBarCapWidth << vc_uiselect))
+	onoff = (x < x3);
+	endCapPos = ((style && onoff) ? x3 : (kProgressBarWidth * vc_uiscale));
+	if (x < (kProgressBarCapWidth * vc_uiscale))
 	{
-	    if (x2 < (kProgressBarCapWidth << vc_uiselect))
+	    if (x2 < (kProgressBarCapWidth * vc_uiscale))
 		w = x2 - x;
 	    else
-		w = (kProgressBarCapWidth << vc_uiselect) - x;
-	    data = progressmeter_leftcap[vc_uiselect & 1][select & 1];
+		w = (kProgressBarCapWidth * vc_uiscale) - x;
+	    data = progressmeter_leftcap[vc_uiscale >= 2][onoff];
 	    data += x;
 	    vc_blit_rect(ox + x, oy, x, w,
-			    (kProgressBarHeight << vc_uiselect), 
-			    (kProgressBarCapWidth << vc_uiselect), 
-			    (kProgressBarWidth << vc_uiselect),
-			    data, vc_progress_meter_backbuffer, flags);
+			    (kProgressBarHeight * vc_uiscale), 
+			    (kProgressBarCapWidth * vc_uiscale), 
+			    (kProgressBarWidth * vc_uiscale),
+			    data, vc_progressmeter_backbuffer, flags);
 	}
-	else if (x < ((kProgressBarWidth - kProgressBarCapWidth) << vc_uiselect))
+	else if (x < (endCapPos - (kProgressBarCapWidth * vc_uiscale)))
 	{
-	    if (x2 < ((kProgressBarWidth - kProgressBarCapWidth) << vc_uiselect))
+	    if (x2 < (endCapPos - (kProgressBarCapWidth * vc_uiscale)))
 		w = x2 - x;
 	    else
-		w = ((kProgressBarWidth - kProgressBarCapWidth) << vc_uiselect) - x;
-	    data = progressmeter_middle[vc_uiselect & 1][select & 1];
+		w = (endCapPos - (kProgressBarCapWidth * vc_uiscale)) - x;
+	    data = progressmeter_middle[vc_uiscale >= 2][onoff];
 	    vc_blit_rect(ox + x, oy, x, w,
-			    (kProgressBarHeight << vc_uiselect),
+			    (kProgressBarHeight * vc_uiscale),
 			    1,
-			    (kProgressBarWidth << vc_uiselect),
-			    data, vc_progress_meter_backbuffer, flags);
+			    (kProgressBarWidth * vc_uiscale),
+			    data, vc_progressmeter_backbuffer, flags);
 	}
 	else
 	{
-	    w = x2 - x;
-	    data =  progressmeter_rightcap[vc_uiselect & 1][select & 1];
-	    data += x - ((kProgressBarWidth - kProgressBarCapWidth) << vc_uiselect);
+	    w = endCapPos - x;
+	    data =  progressmeter_rightcap[vc_uiscale >= 2][onoff];
+	    data += x - (endCapPos - (kProgressBarCapWidth * vc_uiscale));
 	    vc_blit_rect(ox + x, oy, x, w,
-			    (kProgressBarHeight << vc_uiselect), 
-			    (kProgressBarCapWidth << vc_uiselect), 
-			    (kProgressBarWidth << vc_uiselect),
-			    data, vc_progress_meter_backbuffer, flags);
+			    (kProgressBarHeight * vc_uiscale), 
+			    (kProgressBarCapWidth * vc_uiscale), 
+			    (kProgressBarWidth * vc_uiscale),
+			    data, vc_progressmeter_backbuffer, flags);
 	}
     }
 }
 
-void
-vc_enable_progressmeter(int new_value)
-{
-    spl_t s;
-    void * new_buffer = NULL;
+extern void IORecordProgressBackbuffer(void * buffer, size_t size, uint32_t theme);
 
+static void
+internal_enable_progressmeter(int new_value)
+{
+    spl_t     s;
+    void    * new_buffer;
+    boolean_t stashBackbuffer;
+
+    stashBackbuffer = FALSE;
+    new_buffer = NULL;
     if (new_value)
-	new_buffer = kalloc((kProgressBarWidth << vc_uiselect) 
-		            * (kProgressBarHeight << vc_uiselect) * sizeof(int));
+    {
+	new_buffer = kalloc((kProgressBarWidth * vc_uiscale) 
+		            * (kProgressBarHeight * vc_uiscale) * sizeof(int));
+    }
 
     s = splhigh();
     simple_lock(&vc_progress_lock);
 
-    if (gc_enabled || !gc_acquired || !gc_graphics_boot)
-	new_value = FALSE;
+    if (kProgressMeterUser == new_value)
+    {
+	if (gc_enabled || !gc_acquired || !gc_graphics_boot
+	 || (kProgressMeterKernel == vc_progressmeter_enable)) new_value = vc_progressmeter_enable;
+    }
 
-    if (new_value != vc_progress_meter_enable)
+    if (new_value != vc_progressmeter_enable)
     {
 	if (new_value)
 	{
-	    vc_progress_meter_backbuffer = new_buffer;
-	    vc_draw_progress_meter(FALSE, kDataAlpha | kSave, 0, (kProgressBarWidth << vc_uiselect));
-	    vc_progress_meter_enable = TRUE;
-	    new_buffer = NULL;
-	    vc_progress_meter_drawn = 0;
+	    if (kProgressMeterOff == vc_progressmeter_enable)
+	    {
+		vc_progressmeter_backbuffer = new_buffer;
+		vc_draw_progress_meter(kDataAlpha | kSave, 0, (kProgressBarWidth * vc_uiscale), 0);
+		new_buffer = NULL;
+		vc_progressmeter_drawn = 0;
+	    }
+	    vc_progressmeter_enable = new_value;
 	}
-	else if (vc_progress_meter_backbuffer)
+	else if (vc_progressmeter_backbuffer)
 	{
-	    vc_draw_progress_meter(0, kDataBack, 0, (kProgressBarWidth << vc_uiselect));
-	    new_buffer = vc_progress_meter_backbuffer;
-	    vc_progress_meter_backbuffer = NULL;
-	    vc_progress_meter_enable = FALSE;
+	    if (kProgressMeterUser == vc_progressmeter_enable)
+	    {
+		vc_draw_progress_meter(kDataBack, 0, (kProgressBarWidth * vc_uiscale), vc_progressmeter_drawn);
+	    }
+	    else stashBackbuffer = TRUE;
+	    new_buffer = vc_progressmeter_backbuffer;
+	    vc_progressmeter_backbuffer = NULL;
+	    vc_progressmeter_enable = FALSE;
 	}
     }
 
@@ -2977,36 +3209,80 @@ vc_enable_progressmeter(int new_value)
     splx(s);
 
     if (new_buffer)
-	kfree(new_buffer, (kProgressBarWidth << vc_uiselect) 
-			* (kProgressBarHeight << vc_uiselect) * sizeof(int));
+    {
+	if (stashBackbuffer) IORecordProgressBackbuffer(new_buffer, 
+	    		                                (kProgressBarWidth * vc_uiscale) 
+	    		                                * (kProgressBarHeight * vc_uiscale) 
+	    		                                * sizeof(int),
+	    		                                vc_progress_white);
+	kfree(new_buffer, (kProgressBarWidth * vc_uiscale) 
+			* (kProgressBarHeight * vc_uiscale) * sizeof(int));
+    }
+}
+
+static void
+internal_set_progressmeter(int new_value)
+{
+    int x1, x3;
+    int capRedraw;
+    // 1 rounded fill, 0 square end
+    int style = (0 == (2 & vc_progress_withmeter));
+
+    if ((new_value < 0) || (new_value > kProgressMeterMax)) return;
+
+    if (vc_progressmeter_enable)
+    {
+	vc_progressmeter_value = new_value;
+
+	capRedraw = (style ? (kProgressBarCapWidth * vc_uiscale) : 0);
+	x3 = (((kProgressBarWidth * vc_uiscale) - 2 * capRedraw) * vc_progressmeter_value) / kProgressMeterMax;
+	x3 += (2 * capRedraw);
+
+	if (x3 > vc_progressmeter_drawn)
+	{
+	    x1 = capRedraw;
+	    if (x1 > vc_progressmeter_drawn) x1 = vc_progressmeter_drawn;
+	    vc_draw_progress_meter(kDataAlpha, vc_progressmeter_drawn - x1, x3, x3);
+        }
+	else
+	{
+	    vc_draw_progress_meter(kDataAlpha, x3 - capRedraw, vc_progressmeter_drawn, x3);
+	}
+	vc_progressmeter_drawn = x3;
+    }
+}
+
+void
+vc_enable_progressmeter(int new_value)
+{
+    if (kProgressMeterKernel == vc_progressmeter_enable)
+    {
+    	vc_progressmeter_hold = new_value;
+    }
+    else
+    {
+	internal_enable_progressmeter(new_value ? kProgressMeterUser : kProgressMeterOff);
+    }
 }
 
 void
 vc_set_progressmeter(int new_value)
 {
     spl_t s;
-    int x2;
-
-    if ((new_value < 0) | (new_value > 100))
-	return;
 
     s = splhigh();
     simple_lock(&vc_progress_lock);
 
-    if (vc_progress_meter_enable)
+    if (vc_progressmeter_enable && (kProgressMeterKernel != vc_progressmeter_enable))
     {
-	vc_progress_meter_value = new_value;
-	x2 = ((kProgressBarWidth << vc_uiselect) * new_value) / 100;
-	if (x2 > vc_progress_meter_drawn)
-	    vc_draw_progress_meter(TRUE, kDataAlpha, vc_progress_meter_drawn, x2);
-	else
-	    vc_draw_progress_meter(FALSE, kDataAlpha, x2, vc_progress_meter_drawn);
-	vc_progress_meter_drawn = x2;
+	internal_set_progressmeter((new_value * kProgressMeterMax) / 100);
     }
-   
+
     simple_unlock(&vc_progress_lock);
     splx(s);
 }
 
 #endif /* !CONFIG_EMBEDDED */
+
+
 

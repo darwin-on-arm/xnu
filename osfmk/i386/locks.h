@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2004-2007 Apple Inc. All rights reserved.
+ * Copyright (c) 2004-2012 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -37,9 +37,13 @@
 #include <i386/hw_lock_types.h>
 
 extern	unsigned int	LcksOpts;
+#if DEVELOPMENT || DEBUG
+extern  unsigned int	LckDisablePreemptCheck;
+#endif
 
 #define enaLkDeb		0x00000001	/* Request debug in default attribute */
 #define enaLkStat		0x00000002	/* Request statistic in default attribute */
+#define disLkRWPrio		0x00000004	/* Disable RW lock priority promotion */
 
 #endif /* MACH_KERNEL_PRIVATE */
 
@@ -70,51 +74,38 @@ typedef	struct __lck_spin_t__	lck_spin_t;
 typedef struct _lck_mtx_ {
 	union {
 		struct {
-			volatile uintptr_t		lck_mtxd_owner;
+			volatile uintptr_t		lck_mtx_owner;
 			union {
 				struct {
 					volatile uint32_t
-						lck_mtxd_waiters:16,
-						lck_mtxd_pri:8,
-						lck_mtxd_ilocked:1,
-						lck_mtxd_mlocked:1,
-						lck_mtxd_promoted:1,
-						lck_mtxd_spin:1,
-						lck_mtxd_is_ext:1,
-						lck_mtxd_pad3:3;
+						lck_mtx_waiters:16,
+						lck_mtx_pri:8,
+						lck_mtx_ilocked:1,
+						lck_mtx_mlocked:1,
+						lck_mtx_promoted:1,
+						lck_mtx_spin:1,
+						lck_mtx_is_ext:1,
+						lck_mtx_pad3:3;
 				};
-					uint32_t	lck_mtxd_state;
+					uint32_t	lck_mtx_state;
 			};
-#if	defined(__x86_64__)
 			/* Pad field used as a canary, initialized to ~0 */
-			uint32_t			lck_mtxd_pad32;
-#endif			
-		} lck_mtxd;
+			uint32_t			lck_mtx_pad32;
+		};
 		struct {
-			struct _lck_mtx_ext_		*lck_mtxi_ptr;
-			uint32_t			lck_mtxi_tag;
-#if	defined(__x86_64__)				
-			uint32_t			lck_mtxi_pad32;
-#endif			
-		} lck_mtxi;
-	} lck_mtx_sw;
+			struct _lck_mtx_ext_		*lck_mtx_ptr;
+			uint32_t			lck_mtx_tag;
+			uint32_t			lck_mtx_pad32_2;
+		};
+	};
 } lck_mtx_t;
 
-#define	lck_mtx_owner	lck_mtx_sw.lck_mtxd.lck_mtxd_owner
-#define	lck_mtx_waiters	lck_mtx_sw.lck_mtxd.lck_mtxd_waiters
-#define	lck_mtx_pri	lck_mtx_sw.lck_mtxd.lck_mtxd_pri
-#define	lck_mtx_promoted lck_mtx_sw.lck_mtxd.lck_mtxd_promoted
-#define lck_mtx_is_ext  lck_mtx_sw.lck_mtxd.lck_mtxd_is_ext
-
-#define lck_mtx_tag	lck_mtx_sw.lck_mtxi.lck_mtxi_tag
-#define lck_mtx_ptr	lck_mtx_sw.lck_mtxi.lck_mtxi_ptr
-#define lck_mtx_state	lck_mtx_sw.lck_mtxd.lck_mtxd_state
 /* This pattern must subsume the interlocked, mlocked and spin bits */
 #define	LCK_MTX_TAG_INDIRECT			0x07ff1007	/* lock marked as Indirect  */
 #define	LCK_MTX_TAG_DESTROYED			0x07fe2007	/* lock marked as Destroyed */
 
 /* Adaptive spin before blocking */
-extern unsigned int	MutexSpin;
+extern uint64_t 	MutexSpin;
 extern int		lck_mtx_lock_spinwait_x86(lck_mtx_t *mutex);
 extern void		lck_mtx_lock_wait_x86(lck_mtx_t *mutex);
 extern void		lck_mtx_lock_acquire_x86(lck_mtx_t *mutex);
@@ -129,9 +120,7 @@ extern void		hw_lock_byte_unlock(volatile uint8_t *lock_byte);
 
 typedef struct {
 	unsigned int		type;
-#ifdef __x86_64__
 	unsigned int		pad4;
-#endif
 	vm_offset_t		pc;
 	vm_offset_t		thread;
 } lck_mtx_deb_t;
@@ -146,20 +135,19 @@ typedef struct _lck_mtx_ext_ {
 	lck_mtx_t		lck_mtx;
 	struct _lck_grp_	*lck_mtx_grp;
 	unsigned int		lck_mtx_attr;
-#ifdef __x86_64__
 	unsigned int		lck_mtx_pad1;
-#endif
 	lck_mtx_deb_t		lck_mtx_deb;
 	uint64_t		lck_mtx_stat;
-#ifdef __x86_64__
 	unsigned int		lck_mtx_pad2[2];
-#endif
 } lck_mtx_ext_t;
 
 #define	LCK_MTX_ATTR_DEBUG	0x1
 #define	LCK_MTX_ATTR_DEBUGb	0
 #define	LCK_MTX_ATTR_STAT	0x2
 #define	LCK_MTX_ATTR_STATb	1
+
+#define LCK_MTX_EVENT(lck)        ((event_t)(((unsigned int*)(lck))+(sizeof(lck_mtx_t)-1)/sizeof(unsigned int)))
+#define LCK_EVENT_TO_MUTEX(event) ((lck_mtx_t *)(uintptr_t)(((unsigned int *)(event)) - ((sizeof(lck_mtx_t)-1)/sizeof(unsigned int))))
 
 #else /* MACH_KERNEL_PRIVATE */
 #ifdef	XNU_KERNEL_PRIVATE
@@ -189,27 +177,51 @@ typedef struct __lck_mtx_ext_t__	lck_mtx_ext_t;
 
 #ifdef	MACH_KERNEL_PRIVATE
 #pragma pack(1)		/* Make sure the structure stays as we defined it */
-typedef struct _lck_rw_t_internal_ {
-	volatile uint16_t	lck_rw_shared_count;	/* No. of accepted readers */
-	volatile uint8_t	lck_rw_interlock; 	/* Interlock byte */
-	volatile uint8_t
-				lck_rw_priv_excl:1,	/* Writers prioritized if set */
-				lck_rw_want_upgrade:1,	/* Read-to-write upgrade waiting */
-				lck_rw_want_write:1,	/* Writer waiting or locked for write */
-				lck_r_waiting:1,	/* Reader is sleeping on lock */
-				lck_w_waiting:1,	/* Writer is sleeping on lock */
-				lck_rw_can_sleep:1,	/* Can attempts to lock go to sleep? */
-				lck_rw_padb6:2; 		/* padding */
-
-	uint32_t		lck_rw_tag; /* This can be obsoleted when stats
-					     * are in
-					     */
-	uint32_t		lck_rw_pad8;
-#ifdef __x86_64__
-	uint32_t		lck_rw_pad12;
-#endif
+typedef union _lck_rw_t_internal_ {
+	struct {
+		volatile uint16_t	lck_rw_shared_count;	/* No. of accepted readers */
+		volatile uint8_t	lck_rw_interlock; 	/* Interlock byte */
+		volatile uint8_t
+					lck_rw_priv_excl:1,	/* Writers prioritized if set */
+					lck_rw_want_upgrade:1,	/* Read-to-write upgrade waiting */
+					lck_rw_want_write:1,	/* Writer waiting or locked for write */
+					lck_r_waiting:1,	/* Reader is sleeping on lock */
+					lck_w_waiting:1,	/* Writer is sleeping on lock */
+					lck_rw_can_sleep:1,	/* Can attempts to lock go to sleep? */
+					lck_rw_padb6:2; 	/* padding */
+		uint32_t		lck_rw_tag; 		/* This can be obsoleted when stats are in */
+		thread_t		lck_rw_owner;		/* Unused */
+	};
+	struct {
+		uint32_t 		data;			/* Single word for count, ilk, and bitfields */
+		uint32_t		lck_rw_pad4;
+		uint32_t		lck_rw_pad8;
+		uint32_t		lck_rw_pad12;
+	};
 } lck_rw_t;
 #pragma pack()
+
+#define LCK_RW_SHARED_SHIFT	 0
+#define LCK_RW_INTERLOCK_BIT	16
+#define LCK_RW_PRIV_EXCL_BIT	24
+#define LCK_RW_WANT_UPGRADE_BIT	25
+#define LCK_RW_WANT_EXCL_BIT	26
+#define LCK_RW_R_WAITING_BIT	27
+#define LCK_RW_W_WAITING_BIT	28
+#define LCK_RW_CAN_SLEEP_BIT	29
+
+#define LCK_RW_INTERLOCK	(1 << LCK_RW_INTERLOCK_BIT)
+#define LCK_RW_WANT_UPGRADE	(1 << LCK_RW_WANT_UPGRADE_BIT)
+#define LCK_RW_WANT_EXCL	(1 << LCK_RW_WANT_EXCL_BIT)
+#define LCK_RW_R_WAITING	(1 << LCK_RW_R_WAITING_BIT)
+#define LCK_RW_W_WAITING	(1 << LCK_RW_W_WAITING_BIT)
+#define LCK_RW_PRIV_EXCL	(1 << LCK_RW_PRIV_EXCL_BIT)
+#define LCK_RW_TAG_VALID	(1 << LCK_RW_TAG_VALID_BIT)
+#define LCK_RW_SHARED_MASK	(0xffff << LCK_RW_SHARED_SHIFT)
+#define LCK_RW_SHARED_READER	(1 << LCK_RW_SHARED_SHIFT)
+
+#define LCK_RW_WANT_WRITE	LCK_RW_WANT_EXCL
+
 
 #define	LCK_RW_ATTR_DEBUG	0x1
 #define	LCK_RW_ATTR_DEBUGb	0
@@ -224,19 +236,43 @@ typedef struct _lck_rw_t_internal_ {
 
 #define	LCK_RW_TAG_DESTROYED		0x00002007	/* lock marked as Destroyed */
 
+#define RW_LOCK_READER_EVENT(x)   ((event_t) (((unsigned char*) (x)) + (offsetof(lck_rw_t, lck_rw_tag))))
+#define RW_LOCK_WRITER_EVENT(x)   ((event_t) (((unsigned char*) (x)) + (offsetof(lck_rw_t, lck_rw_pad8))))
+#define READ_EVENT_TO_RWLOCK(x)   ((lck_rw_t *)(((unsigned char*)(x) - (offsetof(lck_rw_t, lck_rw_tag)))))
+#define WRITE_EVENT_TO_RWLOCK(x)  ((lck_rw_t *)(((unsigned char*)(x) - (offsetof(lck_rw_t, lck_rw_pad8)))))
+
+#if LOCK_PRIVATE
+
+#define disable_preemption_for_thread(t) ((cpu_data_t GS_RELATIVE *)0UL)->cpu_preemption_level++
+
+#define LCK_MTX_THREAD_TO_STATE(t)	((uintptr_t)t)
+#define PLATFORM_LCK_ILOCK		0
+
+#define LOCK_SNOOP_SPINS	1000
+#define LOCK_PRETEST		1
+
+/* Spinlock panic deadline, in mach_absolute_time units (ns on i386) */
+#define LOCK_PANIC_TIMEOUT	0xf00000  /* 250 ms (huge) */
+
+#endif	// LOCK_PRIVATE
+
 #else
 #ifdef	KERNEL_PRIVATE
 #pragma pack(1)
 typedef struct {
 	uint32_t		opaque[3];
-#ifdef	__x86_64__
 	uint32_t		opaque4;
-#endif
 } lck_rw_t;
 #pragma pack()
 #else
 typedef struct __lck_rw_t__	lck_rw_t;
 #endif
 #endif
+
+#ifdef MACH_KERNEL_PRIVATE
+
+extern void		kernel_preempt_check (void);
+
+#endif /* MACH_KERNEL_PRIVATE */
 
 #endif	/* _I386_LOCKS_H_ */

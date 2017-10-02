@@ -29,6 +29,7 @@
  * file: pe_init.c
  *    i386 platform expert initialization.
  */
+
 #include <sys/types.h>
 #include <mach/vm_param.h>
 #include <machine/machine_routines.h>
@@ -39,6 +40,10 @@
 #include <pexpert/pe_images.h>
 #include <kern/sched_prim.h>
 #include <kern/debug.h>
+
+#if CONFIG_CSR
+#include <sys/csr.h>
+#endif
 
 #include "boot_images.h"
 
@@ -100,12 +105,6 @@ void PE_init_iokit(void)
 {
     enum { kMaxBootVar = 128 };
         
-    typedef struct {
-        char            name[32];
-        unsigned long   length;
-        unsigned long   value[2];
-    } DriversPackageProp;
-
     boolean_t bootClutInitialized = FALSE;
     boolean_t noroot_rle_Initialized = FALSE;
 
@@ -171,10 +170,13 @@ void PE_init_iokit(void)
     /*
      * Initialize the spinning wheel (progress indicator).
      */
-    vc_progress_initialize( &default_progress, default_progress_data1x, default_progress_data2x,
-                            (unsigned char *) appleClut8 );
+    vc_progress_initialize(&default_progress, 
+			    default_progress_data1x,
+			    default_progress_data2x, 
+			    default_progress_data3x, 
+			    (unsigned char *) appleClut8);
 
-    (void) StartIOKit( PE_state.deviceTreeHead, PE_state.bootArgs, gPEEFIRuntimeServices, NULL);
+    StartIOKit( PE_state.deviceTreeHead, PE_state.bootArgs, gPEEFIRuntimeServices, NULL);
 }
 
 void PE_init_platform(boolean_t vm_initialized, void * _args)
@@ -187,15 +189,25 @@ void PE_init_platform(boolean_t vm_initialized, void * _args)
         // New EFI-style
         PE_state.bootArgs           = _args;
         PE_state.deviceTreeHead	    = (void *) ml_static_ptovirt(args->deviceTreeP);
-        PE_state.video.v_baseAddr   = args->Video.v_baseAddr; // remains physical address
-        PE_state.video.v_rowBytes   = args->Video.v_rowBytes;
-        PE_state.video.v_width	    = args->Video.v_width;
-        PE_state.video.v_height	    = args->Video.v_height;
-        PE_state.video.v_depth	    = args->Video.v_depth;
-        PE_state.video.v_display    = args->Video.v_display;
-        PE_state.video.v_scale      = (kBootArgsFlagHiDPI & args->flags) ? 2 : 1;
-        strlcpy(PE_state.video.v_pixelFormat, "PPPPPPPP",
-		sizeof(PE_state.video.v_pixelFormat));
+        if (args->Video.v_baseAddr) {
+            PE_state.video.v_baseAddr   = args->Video.v_baseAddr; // remains physical address
+            PE_state.video.v_rowBytes   = args->Video.v_rowBytes;
+            PE_state.video.v_width	    = args->Video.v_width;
+            PE_state.video.v_height	    = args->Video.v_height;
+            PE_state.video.v_depth	    = args->Video.v_depth;
+            PE_state.video.v_display    = args->Video.v_display;
+            strlcpy(PE_state.video.v_pixelFormat, "PPPPPPPP",
+                sizeof(PE_state.video.v_pixelFormat));
+        } else {
+            PE_state.video.v_baseAddr   = args->VideoV1.v_baseAddr; // remains physical address
+            PE_state.video.v_rowBytes   = args->VideoV1.v_rowBytes;
+            PE_state.video.v_width	    = args->VideoV1.v_width;
+            PE_state.video.v_height	    = args->VideoV1.v_height;
+            PE_state.video.v_depth	    = args->VideoV1.v_depth;
+            PE_state.video.v_display    = args->VideoV1.v_display;
+            strlcpy(PE_state.video.v_pixelFormat, "PPPPPPPP",
+                    sizeof(PE_state.video.v_pixelFormat));
+        }
 
 #ifdef  kBootArgsFlagHiDPI
 	if (args->flags & kBootArgsFlagHiDPI)
@@ -214,7 +226,6 @@ void PE_init_platform(boolean_t vm_initialized, void * _args)
         }
 
         pe_identify_machine(args);
-    } else {
         pe_init_debug();
     }
 
@@ -322,4 +333,70 @@ PE_reboot_on_panic(void)
 		return TRUE;
 	else
 		return FALSE;
+}
+
+void
+PE_sync_panic_buffers(void)
+{
+}
+
+/* rdar://problem/21244753 */
+uint32_t
+PE_i_can_has_debugger(uint32_t *debug_flags)
+{
+#if CONFIG_CSR
+	if (csr_check(CSR_ALLOW_KERNEL_DEBUGGER) != 0) {
+		if (debug_flags)
+			*debug_flags = 0;
+		return FALSE;
+	}
+#endif
+	if (debug_flags) {
+		*debug_flags = debug_boot_arg;
+	}
+	return TRUE;
+}
+
+uint32_t
+PE_get_offset_into_panic_region(char *location)
+{
+	assert(panic_info != NULL);
+	assert(location > (char *) panic_info);
+
+	return (uint32_t) (location - debug_buf);
+}
+
+void
+PE_init_panicheader()
+{
+	bzero(panic_info, offsetof(struct macos_panic_header, mph_data));
+	panic_info->mph_panic_log_offset = PE_get_offset_into_panic_region(debug_buf_base);
+
+	panic_info->mph_magic = MACOS_PANIC_MAGIC;
+	panic_info->mph_version = MACOS_PANIC_HEADER_CURRENT_VERSION;
+
+	return;
+}
+
+/*
+ * Tries to update the panic header to keep it consistent on nested panics.
+ *
+ * NOTE: The purpose of this function is NOT to detect/correct corruption in the panic region,
+ *       it is to update the panic header to make it consistent when we nest panics.
+ */
+void
+PE_update_panicheader_nestedpanic()
+{
+	/* If the panic log offset is not set, re-init the panic header */
+	if (panic_info->mph_panic_log_offset == 0) {
+		PE_init_panicheader();
+		panic_info->mph_panic_flags |= MACOS_PANIC_HEADER_FLAG_NESTED_PANIC;
+		return;
+	}
+
+	panic_info->mph_panic_flags |= MACOS_PANIC_HEADER_FLAG_NESTED_PANIC;
+
+	/* macOS panic logs include nested panic data, so don't touch the panic log length here */
+
+	return;
 }

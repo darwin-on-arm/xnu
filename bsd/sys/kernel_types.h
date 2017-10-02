@@ -41,7 +41,6 @@
 #endif
 
 
-typedef int errno_t;
 typedef int64_t daddr64_t;
 
 #ifndef BSD_BUILD
@@ -113,7 +112,7 @@ typedef struct user_iovec * user_iovec_t;
 typedef struct vfs_context * vfs_context_t;
 typedef struct vfstable * vfstable_t;
 
-#if KERNEL_PRIVATE
+#ifdef KERNEL_PRIVATE
 typedef struct kern_iovec * kern_iovec_t;
 typedef	struct ifnet*		ifnet_t;
 typedef	struct mbuf*		mbuf_t;
@@ -130,15 +129,7 @@ typedef struct bufattr*		bufattr_t;
 
 #endif /* !BSD_BUILD */
 
-#ifndef _KAUTH_GUID
-#define _KAUTH_GUID
-/* Apple-style globally unique identifier */
-typedef struct {
-#define KAUTH_GUID_SIZE	16	/* 128-bit identifier */
-	unsigned char g_guid[KAUTH_GUID_SIZE];
-} guid_t;
-#define _GUID_T
-#endif /* _KAUTH_GUID */
+#include <sys/_types/_guid_t.h>
 
 #ifndef _KAUTH_ACE
 #define _KAUTH_ACE
@@ -154,6 +145,11 @@ typedef struct kauth_acl * kauth_acl_t;
 #define _KAUTH_FILESEC
 struct kauth_filesec;
 typedef struct kauth_filesec * kauth_filesec_t;
+#endif
+
+#ifndef _KAUTH_ACTION_T
+#define _KAUTH_ACTION_T
+typedef int kauth_action_t;
 #endif
 
 #endif /* !_KERN_SYS_KERNELTYPES_H_ */

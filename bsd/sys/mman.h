@@ -85,21 +85,9 @@
  * [various] The mode_t, off_t, and size_t types shall be defined as
  * described in <sys/types.h>
  */
-#ifndef	_MODE_T
-typedef	__darwin_mode_t	mode_t;
-#define _MODE_T
-#endif
-
-#ifndef _OFF_T
-typedef __darwin_off_t	off_t;
-#define _OFF_T
-#endif
-
-#ifndef _SIZE_T
-#define _SIZE_T
-typedef __darwin_size_t	size_t;
-#endif
-
+#include <sys/_types/_mode_t.h>
+#include <sys/_types/_off_t.h>
+#include <sys/_types/_size_t.h>
 
 /*
  * Protections are chosen from these bits, or-ed together
@@ -131,6 +119,32 @@ typedef __darwin_size_t	size_t;
 #define	MAP_HASSEMAPHORE 0x0200	/* region may contain semaphores */
 #define MAP_NOCACHE	 0x0400 /* don't cache pages for this mapping */
 #define MAP_JIT		 0x0800 /* Allocate a region that will be used for JIT purposes */
+
+/*
+ * Mapping type
+ */
+#define	MAP_FILE	0x0000	/* map from file (default) */
+#define	MAP_ANON	0x1000	/* allocated from memory, swap space */
+#define	MAP_ANONYMOUS	MAP_ANON
+
+/*
+ * The MAP_RESILIENT_* flags can be used when the caller wants to map some
+ * possibly unreliable memory and be able to access it safely, possibly
+ * getting the wrong contents rather than raising any exception.
+ * For safety reasons, such mappings have to be read-only (PROT_READ access
+ * only).
+ *
+ * MAP_RESILIENT_CODESIGN:
+ * 	accessing this mapping will not generate code-signing violations,
+ *	even if the contents are tainted.
+ * MAP_RESILIENT_MEDIA:
+ *	accessing this mapping will not generate an exception if the contents
+ *	are not available (unreachable removable or remote media, access beyond
+ *	end-of-file, ...).  Missing contents will be replaced with zeroes.
+ */
+#define MAP_RESILIENT_CODESIGN	0x2000 /* no code-signing failures */
+#define MAP_RESILIENT_MEDIA	0x4000 /* no backing-store failures */
+
 #endif	/* (!_POSIX_C_SOURCE || _DARWIN_C_SOURCE) */
 
 /*
@@ -155,11 +169,6 @@ typedef __darwin_size_t	size_t;
 #define MS_KILLPAGES    0x0004  /* invalidate pages, leave mapped */
 #define MS_DEACTIVATE   0x0008  /* deactivate pages, leave mapped */
 
-/*
- * Mapping type
- */
-#define	MAP_FILE	0x0000	/* map from file (default) */
-#define	MAP_ANON	0x1000	/* allocated from memory, swap space */
 #endif	/* (!_POSIX_C_SOURCE || _DARWIN_C_SOURCE) */
 
 
@@ -183,6 +192,7 @@ typedef __darwin_size_t	size_t;
 #define MADV_FREE_REUSABLE	7	/* pages can be reused (by anyone) */
 #define MADV_FREE_REUSE		8	/* caller wants to reuse those pages */
 #define MADV_CAN_REUSE		9
+#define MADV_PAGEOUT		10	/* page out now (internal only) */
 
 /*
  * Return bits from mincore
@@ -192,6 +202,9 @@ typedef __darwin_size_t	size_t;
 #define	MINCORE_MODIFIED	 0x4	 /* Page has been modified by us */
 #define	MINCORE_REFERENCED_OTHER 0x8	 /* Page has been referenced */
 #define	MINCORE_MODIFIED_OTHER	0x10	 /* Page has been modified */
+#define MINCORE_PAGED_OUT       0x20     /* Page has been paged out */
+#define MINCORE_COPIED          0x40     /* Page has been copied */
+#define MINCORE_ANONYMOUS       0x80     /* Page belongs to an anonymous object */
 #endif	/* (!_POSIX_C_SOURCE || _DARWIN_C_SOURCE) */
 
 
@@ -227,11 +240,16 @@ int	madvise(void *, size_t, int);
 int	mincore(const void *, size_t, char *);
 int	minherit(void *, size_t, int);
 #endif
+
+#ifdef PRIVATE
+int mremap_encrypted(void *, size_t, __uint32_t, __uint32_t, __uint32_t);
+#endif
+
 __END_DECLS
 
 #else	/* KERNEL */
 #ifdef XNU_KERNEL_PRIVATE
-void pshm_cache_init(void) __attribute__((section("__TEXT, initcode")));	/* for bsd_init() */
+void pshm_cache_init(void);	/* for bsd_init() */
 void pshm_lock_init(void);
 
 /*

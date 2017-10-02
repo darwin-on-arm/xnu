@@ -61,6 +61,7 @@
 #include <vm/vm_map.h>
 #include <i386/pmap.h>
 #include <i386/io_map_entries.h>
+#include <san/kasan.h>
 
 extern vm_offset_t	virtual_avail;
 
@@ -80,12 +81,15 @@ io_map(vm_map_offset_t phys_addr, vm_size_t size, unsigned int flags)
 	    start = virtual_avail;
 	    virtual_avail += round_page(size);
 
+#if KASAN
+	    kasan_notify_address(start, size);
+#endif
 	    (void) pmap_map_bd(start, phys_addr, phys_addr + round_page(size),
 			       VM_PROT_READ|VM_PROT_WRITE,
 			       flags);
 	}
 	else {
-	    (void) kmem_alloc_pageable(kernel_map, &start, round_page(size));
+	    (void) kmem_alloc_pageable(kernel_map, &start, round_page(size), VM_KERN_MEMORY_IOKIT);
 	    (void) pmap_map(start, phys_addr, phys_addr + round_page(size),
 			    VM_PROT_READ|VM_PROT_WRITE,
 			    flags);

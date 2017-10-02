@@ -35,7 +35,7 @@ IOTimeStampStartConstant(unsigned int csc,
 			 uintptr_t a = 0, uintptr_t b = 0,
 			 uintptr_t c = 0, uintptr_t d = 0)
 {
-    KERNEL_DEBUG_CONSTANT(csc | DBG_FUNC_START, a, b, c, d, 0);
+    KERNEL_DEBUG_CONSTANT(((uint32_t)csc) | DBG_FUNC_START, a, b, c, d, 0);
 }
 
 static inline void
@@ -43,7 +43,7 @@ IOTimeStampEndConstant(uintptr_t csc,
 		       uintptr_t a = 0, uintptr_t b = 0,
 		       uintptr_t c = 0, uintptr_t d = 0)
 {
-    KERNEL_DEBUG_CONSTANT(csc | DBG_FUNC_END, a, b, c, d, 0);
+    KERNEL_DEBUG_CONSTANT(((uint32_t)csc) | DBG_FUNC_END, a, b, c, d, 0);
 }
 
 static inline void
@@ -51,7 +51,7 @@ IOTimeStampConstant(uintptr_t csc,
 		    uintptr_t a = 0, uintptr_t b = 0,
 		    uintptr_t c = 0, uintptr_t d = 0)
 {
-    KERNEL_DEBUG_CONSTANT(csc | DBG_FUNC_NONE, a, b, c, d, 0);
+    KERNEL_DEBUG_CONSTANT(((uint32_t)csc) | DBG_FUNC_NONE, a, b, c, d, 0);
 }
 
 #if KDEBUG
@@ -61,7 +61,7 @@ IOTimeStampStart(uintptr_t csc,
                  uintptr_t a = 0, uintptr_t b = 0,
                  uintptr_t c = 0, uintptr_t d = 0)
 {
-    KERNEL_DEBUG(csc | DBG_FUNC_START, a, b, c, d, 0);
+    KERNEL_DEBUG(((uint32_t)csc) | DBG_FUNC_START, a, b, c, d, 0);
 }
 
 static inline void
@@ -69,7 +69,7 @@ IOTimeStampEnd(uintptr_t csc,
                uintptr_t a = 0, uintptr_t b = 0,
                uintptr_t c = 0, uintptr_t d = 0)
 {
-    KERNEL_DEBUG(csc | DBG_FUNC_END, a, b, c, d, 0);
+    KERNEL_DEBUG(((uint32_t)csc) | DBG_FUNC_END, a, b, c, d, 0);
 }
 
 static inline void
@@ -77,7 +77,7 @@ IOTimeStamp(uintptr_t csc,
             uintptr_t a = 0, uintptr_t b = 0,
             uintptr_t c = 0, uintptr_t d = 0)
 {
-    KERNEL_DEBUG(csc | DBG_FUNC_NONE, a, b, c, d, 0);
+    KERNEL_DEBUG(((uint32_t)csc) | DBG_FUNC_NONE, a, b, c, d, 0);
 }
 
 #endif /* KDEBUG */
@@ -116,6 +116,7 @@ IOTimeStamp(uintptr_t csc,
 #define IODBG_MDESC(code)			(KDBG_CODE(DBG_IOKIT, DBG_IOMDESC, code))
 #define IODBG_POWER(code)			(KDBG_CODE(DBG_IOKIT, DBG_IOPOWER, code))
 #define IODBG_IOSERVICE(code)		(KDBG_CODE(DBG_IOKIT, DBG_IOSERVICE, code))
+#define IODBG_IOREGISTRY(code)		(KDBG_CODE(DBG_IOKIT, DBG_IOREGISTRY, code))
 
 /* IOKit specific codes - within each subclass */
 
@@ -135,6 +136,7 @@ IOTimeStamp(uintptr_t csc,
 
 /* DBG_IOKIT/DBG_IOINTC codes */
 #define IOINTC_HANDLER	1	/* 0x05000004 */
+#define IOINTC_SPURIOUS	2	/* 0x05000008 */
 
 /* DBG_IOKIT/DBG_IOWORKLOOP codes */
 #define IOWL_CLIENT		1	/* 0x05010004 */
@@ -190,8 +192,19 @@ IOTimeStamp(uintptr_t csc,
 #define IOSERVICE_TERMINATE_STOP_DEFER		16	/* 0x05080040 */
 #define IOSERVICE_TERMINATE_DONE		17	/* 0x05080044 */
 
-#define IOSERVICE_KEXTD_ALIVE		18	/* 0x05080048 */
-#define IOSERVICE_KEXTD_READY		19	/* 0x0508004C */
+#define IOSERVICE_KEXTD_ALIVE			18	/* 0x05080048 */
+#define IOSERVICE_KEXTD_READY			19	/* 0x0508004C */
 #define IOSERVICE_REGISTRY_QUIET		20	/* 0x05080050 */
+
+#define IOSERVICE_TERM_SET_INACTIVE		21	/* 0x05080054 */
+#define IOSERVICE_TERM_SCHED_PHASE2		22	/* 0x05080058 */
+#define IOSERVICE_TERM_START_PHASE2		23	/* 0x0508005C */
+#define IOSERVICE_TERM_TRY_PHASE2		24	/* 0x05080060 */
+#define IOSERVICE_TERM_UC_DEFER			25	/* 0x05080064 */
+#define IOSERVICE_DETACH			26	/* 0x05080068 */
+
+/* DBG_IOKIT/DBG_IOREGISTRY codes */
+#define IOREGISTRYENTRY_NAME_STRING              1	/* 0x05090004 */
+#define IOREGISTRYENTRY_NAME			 2	/* 0x05090008 */
 
 #endif /* ! IOKIT_IOTIMESTAMP_H */

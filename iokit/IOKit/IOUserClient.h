@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998-2000 Apple Computer, Inc. All rights reserved.
+ * Copyright (c) 1998-2016 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -40,6 +40,8 @@
 #if IOKITSTATS
 #include <IOKit/IOStatisticsPrivate.h>
 #endif
+
+#define _IOUSERCLIENT_SENDASYNCRESULT64WITHOPTIONS_		1
 
 enum {
     kIOUCTypeMask	= 0x0000000f,
@@ -93,6 +95,10 @@ struct IOExternalTrap {
 
 enum {
     kIOUserNotifyMaxMessageSize = 64
+};
+
+enum {
+    kIOUserNotifyOptionCanDrop = 0x1 /* Fail if queue is full, rather than infinitely queuing. */
 };
 
 // keys for clientHasPrivilege
@@ -167,7 +173,6 @@ enum {
     @abstract   Provides a basis for communication between client applications and I/O Kit objects.
 */
 
-
 class IOUserClient : public IOService
 {
     OSDeclareAbstractStructors(IOUserClient)
@@ -195,14 +200,25 @@ protected:
     bool reserve();
 
 #ifdef XNU_KERNEL_PRIVATE
+
 public:
-#else
-private:
-#endif
     OSSet * mappings;
     UInt8   sharedInstance;
-    UInt8   __reservedA[3];
-    void  * __reserved[7];
+    UInt8   closed;
+    UInt8   __ipcFinal;
+    UInt8   __reservedA[1];
+    volatile SInt32 __ipc;
+    queue_head_t owners;
+#if __LP64__
+    void  * __reserved[5];
+#else
+    void  * __reserved[4];
+#endif
+
+#else /* XNU_KERNEL_PRIVATE */
+private:
+    void  * __reserved[9];
+#endif /* XNU_KERNEL_PRIVATE */
 
 public:
    virtual IOReturn externalMethod( uint32_t selector, IOExternalMethodArguments * arguments,
@@ -235,15 +251,20 @@ private:
     OSMetaClassDeclareReservedUnused(IOUserClient, 15);
 
 #ifdef XNU_KERNEL_PRIVATE
+
     /* Available within xnu source only */
 public:
     static void initialize( void );
     static void destroyUserReferences( OSObject * obj );
+    static bool finalizeUserReferences( OSObject * obj );
     IOMemoryMap * mapClientMemory64( IOOptionBits type,
                                     task_t task,
                                     IOOptionBits mapFlags = kIOMapAnywhere,
 				    mach_vm_address_t atAddress = 0 );
-#endif
+    IOReturn registerOwner(task_t task);
+    void     noMoreSenders(void);
+
+#endif /* XNU_KERNEL_PRIVATE */
 
 protected:
     static IOReturn sendAsyncResult(OSAsyncReference reference,
@@ -254,13 +275,37 @@ protected:
 
     static IOReturn sendAsyncResult64(OSAsyncReference64 reference,
                                         IOReturn result, io_user_reference_t args[], UInt32 numArgs);
+
+    /*! 
+        @function sendAsyncResult64WithOptions
+        @abstract Send a notification as with sendAsyncResult, but with finite queueing.
+        @discussion IOUserClient::sendAsyncResult64() will infitely queue messages if the client
+                is not processing them in a timely fashion.  This variant will not, for simple
+                handling of situations where clients may be expected to stop processing messages.
+     */
+    static IOReturn sendAsyncResult64WithOptions(OSAsyncReference64 reference,
+                                        IOReturn result, io_user_reference_t args[], UInt32 numArgs, 
+					IOOptionBits options);
+
     static void setAsyncReference64(OSAsyncReference64 asyncRef,
 					mach_port_t wakePort,
 					mach_vm_address_t callback, io_user_reference_t refcon);
+
+    static void setAsyncReference64(OSAsyncReference64 asyncRef,
+					mach_port_t wakePort,
+					mach_vm_address_t callback, io_user_reference_t refcon,
+                    task_t task);
+
 public:
+
+    static IOReturn clientHasAuthorization( task_t task,
+                                            IOService * service );
 
     static IOReturn clientHasPrivilege( void * securityToken,
                                         const char * privilegeName );
+
+    static OSObject * copyClientEntitlement( task_t task,
+                                             const char * entitlement );
 
     /*!
         @function releaseAsyncReference64
@@ -274,13 +319,13 @@ public:
         @function releaseNotificationPort
 	@abstract Release the mach_port_t passed to registerNotificationPort().
 	@discussion The mach_port_t passed to the registerNotificationPort() methods should be released to balance each call to registerNotificationPort(). Behavior is undefined if these calls are not correctly balanced.
-        @param reference The mach_port_t argument previously passed to the subclass implementation of registerNotificationPort().
+        @param port The mach_port_t argument previously passed to the subclass implementation of registerNotificationPort().
         @result A return code.
     */
     static IOReturn releaseNotificationPort(mach_port_t port);
 
-    virtual bool init();
-    virtual bool init( OSDictionary * dictionary );
+    virtual bool init() APPLE_KEXT_OVERRIDE;
+    virtual bool init( OSDictionary * dictionary ) APPLE_KEXT_OVERRIDE;
     // Currently ignores the all args, just passes up to IOService::init()
     virtual bool initWithTask(
                     task_t owningTask, void * securityToken, UInt32 type,
@@ -289,7 +334,7 @@ public:
     virtual bool initWithTask(
                     task_t owningTask, void * securityToken, UInt32 type);
 
-    virtual void free();
+    virtual void free() APPLE_KEXT_OVERRIDE;
 
     virtual IOReturn clientClose( void );
     virtual IOReturn clientDied( void );
@@ -318,6 +363,8 @@ private:
 									IOVirtualAddress atAddress = 0 );
 #endif
 
+    static IOReturn _sendAsyncResult64(OSAsyncReference64 reference,
+                                    IOReturn result, io_user_reference_t args[], UInt32 numArgs, IOOptionBits options);
 public:
 
     /*!

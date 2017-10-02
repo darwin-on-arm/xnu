@@ -45,11 +45,6 @@
 #include <vm/vm_map.h>
 #include <machine/machine_routines.h>
 
-/* XXX should be elsewhere (cpeak) */
-extern void	*get_bsduthreadarg(thread_t);
-extern int	*get_bsduthreadrval(thread_t);
-extern void	*find_user_regs(thread_t);
-
 /* 
  * copy a null terminated string from the kernel address space into
  * the user address space.
@@ -115,29 +110,4 @@ copywithin(void *src, void *dst, size_t count)
 {
 	bcopy(src,dst,count);
 	return 0;
-}
-
-void *
-get_bsduthreadarg(thread_t th)
-{
-        void	*arg_ptr;
-struct uthread *ut;
-  
-	ut = get_bsdthread_info(th);
-
-	if (ml_thread_is64bit(th) == TRUE)
-	        arg_ptr = (void *)saved_state64(find_user_regs(th));
-	else
-		arg_ptr = (void *)(ut->uu_arg);
-
-	return(arg_ptr);
-}
-
-int *
-get_bsduthreadrval(thread_t th)
-{
-struct uthread *ut;
-
-	ut = get_bsdthread_info(th);
-	return(&ut->uu_rval[0]);
 }

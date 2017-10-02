@@ -5,16 +5,6 @@
 # the terms and conditions for use and redistribution.
 #
 
-#
-# Export IDENT for sub-makefiles
-#
-export IDENT
-
-#
-# INCFLAGS 
-#
-INCFLAGS_MAKEFILE=  $(INCFLAGS_POSIX)
-
 export MakeInc_cmd=${SRCROOT}/makedefs/MakeInc.cmd
 export MakeInc_def=${SRCROOT}/makedefs/MakeInc.def
 export MakeInc_rule=${SRCROOT}/makedefs/MakeInc.rule
@@ -26,14 +16,16 @@ include $(MakeInc_def)
 #
 # CFLAGS
 #
-#
-CFLAGS+= -include meta_features.h -DPEXPERT_KERNEL_PRIVATE	\
-	$(CFLAGS_INLINE_CONFIG)
+CFLAGS+= -include meta_features.h -DPEXPERT_KERNEL_PRIVATE
+SFLAGS+= -include meta_features.h
+
+# Objects that don't want -Wcast-align warning (8474835)
+pe_identify_machine.o_CWARNFLAGS_ADD = -Wno-cast-align
 
 #
 # Directories for mig generated files
 #
-COMP_SUBDIRS = 
+COMP_SUBDIRS =
 
 #
 #  Make sure we don't remove this by accident if interrupted at the wrong
@@ -53,39 +45,35 @@ COMP_SUBDIRS =
 
 %CFILES
 
-%MFILES
+%CXXFILES
 
 %SFILES
 
-%BFILES
-
-%ORDERED
 %MACHDEP
 
-#
-#  OBJSDEPS is the set of files (defined in the machine dependent
-#  template if necessary) which all objects depend on (such as an
-#  in-line assembler expansion filter)
-#
-${OBJS}: ${OBJSDEPS}
+# Rebuild if per-file overrides change
+${OBJS}: $(firstword $(MAKEFILE_LIST))
 
+# Rebuild if global compile flags change
+$(COBJS): .CFLAGS
+.CFLAGS: ALWAYS
+	$(_v)$(REPLACECONTENTS) $@ $(KCC) $(CFLAGS) $(INCFLAGS)
+$(CXXOBJS): .CXXFLAGS
+.CXXFLAGS: ALWAYS
+	$(_v)$(REPLACECONTENTS) $@ $(KC++) $(CXXFLAGS) $(INCFLAGS)
+$(SOBJS): .SFLAGS
+.SFLAGS: ALWAYS
+	$(_v)$(REPLACECONTENTS) $@ $(S_KCC) $(SFLAGS) $(INCFLAGS)
 
-%LOAD
+$(COMPONENT).filelist: $(OBJS)
+	@echo "$(ColorL)LDFILELIST$(Color0) $(ColorLF)$(COMPONENT)$(Color0)"
+	$(_v)for obj in ${OBJS}; do	\
+		 echo $(TARGET)/$(CURRENT_KERNEL_CONFIG)/$${obj}; \
+	done > $(COMPONENT).filelist
 
-LDOBJS = $(OBJS)
-
-$(COMPONENT).filelist: $(LDOBJS)
-	@echo LDFILELIST $(COMPONENT)
-	$(_v)( for obj in ${LDOBJS}; do	\
-		 echo $(TARGET)$(COMP_OBJ_DIR)/$(KERNEL_CONFIG)/$${obj}; \
-	done; ) > $(COMPONENT).filelist
-
-do_depend: do_all
-	$(_v)${MD} -u Makedep -f -d `ls *.d`;
-	
 do_all: $(COMPONENT).filelist
 
-do_build_all: do_depend
+do_build_all:: do_all
 
 %RULES
 

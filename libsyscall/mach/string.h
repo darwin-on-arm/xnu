@@ -31,27 +31,16 @@
 
 #include <stdarg.h>
 #include <_types.h>
-
-#ifndef SIZE_T
-#define SIZE_T
-typedef __darwin_size_t size_t;
-#endif
-
-#ifndef NULL
-#define NULL __DARWIN_NULL
-#endif
-
-#ifndef _UINTPTR_T
-#define _UINTPTR_T
-typedef unsigned long   uintptr_t;
-#endif /* _UINTPTR_T */
+#include <sys/_types/_null.h>
+#include <sys/_types/_size_t.h>
+#include <sys/_types/_uintptr_t.h>
 
 // We're purposefully called "string.h" in order to superceed any use
 // of Libc's string.h (which no one should be using bar MIG) in order
 // to override their use of memcpy.
 
-int _mach_snprintf(char *buffer, int length, const char *fmt, ...);
-int _mach_vsnprintf(char *buffer, int length, const char *fmt, va_list ap);
+int _mach_snprintf(char *buffer, int length, const char *fmt, ...) __printflike(3, 4);
+int _mach_vsnprintf(char *buffer, int length, const char *fmt, va_list ap) __printflike(3, 0);
 
 // Actually in memcpy.c but MIG likes to include string.h
 

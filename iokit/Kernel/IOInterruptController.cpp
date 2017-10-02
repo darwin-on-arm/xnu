@@ -1,5 +1,6 @@
 /*
- * Copyright (c) 1998-2010 Apple Inc. All rights reserved.
+ * Copyright (c) 2007-2012 Apple Inc. All rights reserved.
+ * Copyright (c) 1998-2006 Apple Computer, Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -290,7 +291,10 @@ IOReturn IOInterruptController::enableInterrupt(IOService *nub, int source)
   
   if (vector->interruptDisabledSoft) {
     vector->interruptDisabledSoft = 0;
-    
+#if !defined(__i386__) && !defined(__x86_64__)
+    OSMemoryBarrier();
+#endif
+
     if (!getPlatform()->atInterruptLevel()) {
       while (vector->interruptActive)
 	{}
@@ -318,6 +322,9 @@ IOReturn IOInterruptController::disableInterrupt(IOService *nub, int source)
   vector = &vectors[vectorNumber];
   
   vector->interruptDisabledSoft = 1;
+#if !defined(__i386__) && !defined(__x86_64__)
+  OSMemoryBarrier();
+#endif
   
   if (!getPlatform()->atInterruptLevel()) {
     while (vector->interruptActive)
@@ -390,6 +397,54 @@ void IOInterruptController::causeVector(IOInterruptVectorNumber /*vectorNumber*/
 {
 }
 
+void IOInterruptController::timeStampSpuriousInterrupt(void)
+{
+  uint64_t providerID = 0;
+  IOService * provider = getProvider();
+
+  if (provider) {
+    providerID = provider->getRegistryEntryID();
+  }
+
+  IOTimeStampConstant(IODBG_INTC(IOINTC_SPURIOUS), providerID);
+}
+
+void IOInterruptController::timeStampInterruptHandlerInternal(bool isStart, IOInterruptVectorNumber vectorNumber, IOInterruptVector *vector)
+{
+  uint64_t providerID = 0;
+  vm_offset_t unslidHandler = 0;
+  vm_offset_t unslidTarget = 0;
+
+  IOService * provider = getProvider();
+
+  if (provider) {
+    providerID = provider->getRegistryEntryID();
+  }
+
+  if (vector) {
+    unslidHandler = VM_KERNEL_UNSLIDE((vm_offset_t)vector->handler);
+    unslidTarget = VM_KERNEL_UNSLIDE_OR_PERM((vm_offset_t)vector->target);
+  }
+
+
+  if (isStart) {
+    IOTimeStampStartConstant(IODBG_INTC(IOINTC_HANDLER), (uintptr_t)vectorNumber, (uintptr_t)unslidHandler,
+                           (uintptr_t)unslidTarget, (uintptr_t)providerID);
+  } else {
+    IOTimeStampEndConstant(IODBG_INTC(IOINTC_HANDLER), (uintptr_t)vectorNumber, (uintptr_t)unslidHandler,
+                           (uintptr_t)unslidTarget, (uintptr_t)providerID);
+  }
+}
+
+void IOInterruptController::timeStampInterruptHandlerStart(IOInterruptVectorNumber vectorNumber, IOInterruptVector *vector)
+{
+  timeStampInterruptHandlerInternal(true, vectorNumber, vector);
+}
+
+void IOInterruptController::timeStampInterruptHandlerEnd(IOInterruptVectorNumber vectorNumber, IOInterruptVector *vector)
+{
+  timeStampInterruptHandlerInternal(false, vectorNumber, vector);
+}
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
@@ -411,6 +466,8 @@ IOReturn IOSharedInterruptController::initInterruptController(IOInterruptControl
 {
   int      cnt, interruptType;
   IOReturn error;
+
+  reserved = NULL;
   
   if (!super::init())
     return kIOReturnNoResources;
@@ -510,6 +567,7 @@ IOReturn IOSharedInterruptController::registerInterrupt(IOService *nub,
   // Create the vectorData for the IOInterruptSource.
   vectorData = OSData::withBytes(&vectorNumber, sizeof(vectorNumber));
   if (vectorData == 0) {
+    IOLockUnlock(vector->interruptLock);
     return kIOReturnNoMemory;
   }
   
@@ -644,6 +702,10 @@ IOReturn IOSharedInterruptController::disableInterrupt(IOService *nub,
   interruptState = IOSimpleLockLockDisableInterrupt(controllerLock); 
   if (!vector->interruptDisabledSoft) {
     vector->interruptDisabledSoft = 1;
+#if !defined(__i386__) && !defined(__x86_64__)
+    OSMemoryBarrier();
+#endif
+
     vectorsEnabled--;
   }
   IOSimpleLockUnlockEnableInterrupt(controllerLock, interruptState);
@@ -673,26 +735,27 @@ IOReturn IOSharedInterruptController::handleInterrupt(void * /*refCon*/,
     vector = &vectors[vectorNumber];
     
     vector->interruptActive = 1;
-	if (!vector->interruptDisabledSoft) {
-	  
-	  // Call the handler if it exists.
-	  if (vector->interruptRegistered) {
-		  
-		  bool	trace = (gIOKitTrace & kIOTraceInterrupts) ? true : false;
-		  
-		  if (trace)
-			  IOTimeStampStartConstant(IODBG_INTC(IOINTC_HANDLER),
-									   (uintptr_t) vectorNumber, (uintptr_t) vector->handler, (uintptr_t)vector->target);
-		  
-		  // Call handler.
-		  vector->handler(vector->target, vector->refCon, vector->nub, vector->source);
-		  
-		  if (trace)
-			  IOTimeStampEndConstant(IODBG_INTC(IOINTC_HANDLER),
-									 (uintptr_t) vectorNumber, (uintptr_t) vector->handler, (uintptr_t)vector->target);
-		  
-		}
-	}
+#if !defined(__i386__) && !defined(__x86_64__)
+    OSMemoryBarrier();
+#endif
+
+    if (!vector->interruptDisabledSoft) {
+
+      // Call the handler if it exists.
+      if (vector->interruptRegistered) {
+
+        bool trace = (gIOKitTrace & kIOTraceInterrupts) ? true : false;
+
+        if (trace)
+          timeStampInterruptHandlerStart(vectorNumber, vector);
+
+        // Call handler.
+        vector->handler(vector->target, vector->refCon, vector->nub, vector->source);
+
+        if (trace)
+          timeStampInterruptHandlerEnd(vectorNumber, vector);
+      }
+    }
     
     vector->interruptActive = 0;
   }

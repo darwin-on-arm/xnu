@@ -6,25 +6,13 @@ export MakeInc_dir=${SRCROOT}/makedefs/MakeInc.dir
 include $(MakeInc_cmd)
 include $(MakeInc_def)
 
-INSTINC_SUBDIRS = \
-
-INSTINC_SUBDIRS_PPC = \
-
-INSTINC_SUBDIRS_I386 = \
-
-EXPINC_SUBDIRS = \
-
-EXPINC_SUBDIRS_PPC = \
-
-EXPINC_SUBDIRS_I386 = \
-
 DATAFILES= \
 
 KERNELFILES= \
 
 PRIVATE_DATAFILES = \
 	classq.h classq_blue.h classq_red.h classq_rio.h classq_sfb.h \
-	if_classq.h
+	if_classq.h classq_fq_codel.h
 
 PRIVATE_KERNELFILES = ${KERNELFILES}
 
@@ -36,9 +24,9 @@ EXPORT_MI_LIST	= ${INSTALL_MI_LIST} ${KERNELFILES}
 
 EXPORT_MI_DIR = ${INSTALL_MI_DIR}
 
-INSTALL_MI_LCL_LIST = ${DATAFILES} ${PRIVATE_DATAFILES}
+INSTALL_MI_LCL_LIST = ${PRIVATE_DATAFILES}
 
-INSTALL_KF_MI_LCL_LIST = ${INSTALL_MI_LCL_LIST} ${PRIVATE_KERNELFILES}
+INSTALL_KF_MI_LCL_LIST = ${DATAFILES} ${PRIVATE_DATAFILES} ${PRIVATE_KERNELFILES}
 
 include $(MakeInc_rule)
 include $(MakeInc_dir)

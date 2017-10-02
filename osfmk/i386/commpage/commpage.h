@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2003-2009 Apple Inc. All rights reserved.
+ * Copyright (c) 2003-2012 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -59,21 +59,9 @@
 
 #define COMMPAGE_DESCRIPTOR_NAME(label)  _commpage_ ## label
 
-#if defined (__i386__)
-
-#define COMMPAGE_DESCRIPTOR_FIELD_POINTER .long
-#define COMMPAGE_DESCRIPTOR_REFERENCE(label) \
-	.long COMMPAGE_DESCRIPTOR_NAME(label)
-
-#elif defined (__x86_64__)
-
 #define COMMPAGE_DESCRIPTOR_FIELD_POINTER .quad
 #define COMMPAGE_DESCRIPTOR_REFERENCE(label) \
 	.quad COMMPAGE_DESCRIPTOR_NAME(label)
-
-#else
-#error unsupported architecture
-#endif
 
 #define COMMPAGE_FUNCTION_START(label,codetype,alignment) \
 .text								;\
@@ -118,6 +106,14 @@ COMMPAGE_DESCRIPTOR_NAME(label) ## :				;\
 
 #define UNIQUEID(name)	L ## name
 
+/* COMMPAGE_JMP(target,from,start)
+ *
+ * This macro perform a jump to another commpage routine.
+ * Used to return from the PFZ by jumping via a return outside the PFZ.
+ */
+#define COMMPAGE_JMP(target,from,start)				\
+	jmp      L ## start - from + target
+
 #else /* __ASSEMBLER__ */
 
 /* Each potential commpage routine is described by one of these.
@@ -146,17 +142,21 @@ typedef	volatile struct	commpage_time_data	{
 	uint64_t	gtod_sec_base;				// _COMM_PAGE_GTOD_SEC_BASE
 } commpage_time_data;
 
-
 extern	char	*commPagePtr32;				// virt address of 32-bit commpage in kernel map
 extern	char	*commPagePtr64;				// ...and of 64-bit commpage
 
-extern	void	commpage_set_timestamp(uint64_t abstime, uint64_t secs);
-extern	void	commpage_disable_timestamp( void );
+extern  void	commpage_set_timestamp(uint64_t abstime, uint64_t sec, uint64_t frac, uint64_t scale, uint64_t tick_per_sec);
+#define commpage_disable_timestamp() commpage_set_timestamp( 0, 0, 0, 0, 0 );
 extern  void	commpage_set_nanotime(uint64_t tsc_base, uint64_t ns_base, uint32_t scale, uint32_t shift);
 extern	void	commpage_set_memory_pressure(unsigned int  pressure);
 extern	void	commpage_set_spin_count(unsigned int  count);
 extern	void	commpage_sched_gen_inc(void);
 extern	void	commpage_update_active_cpus(void);
+extern	void	commpage_update_mach_approximate_time(uint64_t abstime);
+extern  void	commpage_update_mach_continuous_time(uint64_t sleeptime);
+extern  void	commpage_update_boottime(uint64_t boottime_usec);
+extern	void	commpage_update_kdebug_state(void);
+extern	void	commpage_update_atm_diagnostic_config(uint32_t);
 
 extern	uint32_t	commpage_is_in_pfz32(uint32_t);
 extern	uint32_t	commpage_is_in_pfz64(addr64_t);

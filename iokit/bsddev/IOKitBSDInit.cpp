@@ -32,12 +32,15 @@
 #include <IOKit/IODeviceTreeSupport.h>
 #include <IOKit/IOKitKeys.h>
 #include <IOKit/IOPlatformExpert.h>
+#include <IOKit/IOUserClient.h>
 
 extern "C" {
 
 #include <pexpert/pexpert.h>
 #include <kern/clock.h>
 #include <uuid/uuid.h>
+#include <sys/vnode_internal.h>
+#include <sys/mount.h>
 
 // how long to wait for matching root device, secs
 #if DEBUG
@@ -46,10 +49,45 @@ extern "C" {
 #define ROOTDEVICETIMEOUT       60
 #endif
 
+int panic_on_exception_triage = 0;
+
 extern dev_t mdevadd(int devid, uint64_t base, unsigned int size, int phys);
 extern dev_t mdevlookup(int devid);
 extern void mdevremoveall(void);
+extern int mdevgetrange(int devid, uint64_t *base, uint64_t *size);
 extern void di_root_ramfile(IORegistryEntry * entry);
+
+
+#if CONFIG_EMBEDDED
+#define IOPOLLED_COREFILE 	(CONFIG_KDP_INTERACTIVE_DEBUGGING)
+#define kIOCoreDumpPath 	"/private/var/vm/kernelcore"
+#define kIOCoreDumpSize		350ULL*1024ULL*1024ULL
+// leave free space on volume:
+#define kIOCoreDumpFreeSize	350ULL*1024ULL*1024ULL
+#elif DEVELOPMENT
+#define IOPOLLED_COREFILE  	1
+// no sizing
+#define kIOCoreDumpSize		0ULL
+#define kIOCoreDumpFreeSize	0ULL
+#else
+#define IOPOLLED_COREFILE  	0
+#endif
+
+
+#if IOPOLLED_COREFILE
+static bool 
+NewKernelCoreMedia(void * target, void * refCon,
+		   IOService * newService,
+		   IONotifier * notifier);
+#endif /* IOPOLLED_COREFILE */
+
+#if CONFIG_KDP_INTERACTIVE_DEBUGGING
+/*
+ * Touched by IOFindBSDRoot() if a RAMDisk is used for the root device.
+ */
+extern uint64_t kdp_core_ramdisk_addr;
+extern uint64_t kdp_core_ramdisk_size;
+#endif
 
 kern_return_t
 IOKitBSDInit( void )
@@ -264,7 +302,7 @@ static bool IORegisterNetworkInterface( IOService * netif )
 
 OSDictionary * IOOFPathMatching( const char * path, char * buf, int maxLen )
 {
-    OSDictionary *	matching;
+    OSDictionary *	matching = NULL;
     OSString *		str;
     char *		comp;
     int			len;
@@ -306,7 +344,7 @@ OSDictionary * IOOFPathMatching( const char * path, char * buf, int maxLen )
 }
 
 static int didRam = 0;
-static int rootMountTries = 0;
+enum { kMaxPathBuf = 512, kMaxBootVar = 128 };
 
 kern_return_t IOFindBSDRoot( char * rootName, unsigned int rootNameSize,
 				dev_t * root, u_int32_t * oflags )
@@ -323,7 +361,6 @@ kern_return_t IOFindBSDRoot( char * rootName, unsigned int rootNameSize,
     int			mnr, mjr;
     const char *        mediaProperty = 0;
     char *		rdBootVar;
-    enum {		kMaxPathBuf = 512, kMaxBootVar = 128 };
     char *		str;
     const char *	look = 0;
     int			len;
@@ -333,10 +370,25 @@ kern_return_t IOFindBSDRoot( char * rootName, unsigned int rootNameSize,
     static int		mountAttempts = 0;
 				
     int xchar, dchar;
-                                    
+
+    // stall here for anyone matching on the IOBSD resource to finish (filesystems)
+    matching = IOService::serviceMatching(gIOResourcesKey);
+    assert(matching);
+    matching->setObject(gIOResourceMatchedKey, gIOBSDKey);
+
+	if ((service = IOService::waitForMatchingService(matching, 30ULL * kSecondScale))) {
+		service->release();
+	} else {
+		IOLog("!BSD\n");
+	}
+    matching->release();
+	matching = NULL;
 
     if( mountAttempts++)
+    {
+        IOLog("mount(%d) failed\n", mountAttempts);
 	IOSleep( 5 * 1000 );
+    }
 
     str = (char *) IOMalloc( kMaxPathBuf + kMaxBootVar );
     if( !str)
@@ -390,8 +442,8 @@ kern_return_t IOFindBSDRoot( char * rootName, unsigned int rootNameSize,
 		if((regEntry = IORegistryEntry::fromPath( "/chosen/memory-map", gIODTPlane ))) {	/* Find the map node */
 			data = (OSData *)regEntry->getProperty("RAMDisk");	/* Find the ram disk, if there */
 			if(data) {											/* We found one */
-				UInt32		*ramdParms = 0;
-				ramdParms = (UInt32 *)data->getBytesNoCopy();	/* Point to the ram disk base and size */
+				uintptr_t *ramdParms;
+				ramdParms = (uintptr_t *)data->getBytesNoCopy();	/* Point to the ram disk base and size */
 				(void)mdevadd(-1, ml_static_ptovirt(ramdParms[0]) >> 12, ramdParms[1] >> 12, 0);	/* Initialize it and pass back the device number */
 			}
 			regEntry->release();								/* Toss the entry */
@@ -416,13 +468,22 @@ kern_return_t IOFindBSDRoot( char * rootName, unsigned int rootNameSize,
 		if(xchar >= 0) {										/* Do we have a valid memory device name? */
 			*root = mdevlookup(xchar);							/* Find the device number */
 			if(*root >= 0) {									/* Did we find one? */
-
 				rootName[0] = 'm';								/* Build root name */
 				rootName[1] = 'd';								/* Build root name */
 				rootName[2] = dchar;							/* Build root name */
 				rootName[3] = 0;								/* Build root name */
 				IOLog("BSD root: %s, major %d, minor %d\n", rootName, major(*root), minor(*root));
 				*oflags = 0;									/* Show that this is not network */
+
+#if CONFIG_KDP_INTERACTIVE_DEBUGGING
+                /* retrieve final ramdisk range and initialize KDP variables */
+                if (mdevgetrange(xchar, &kdp_core_ramdisk_addr, &kdp_core_ramdisk_size) != 0) {
+                    IOLog("Unable to retrieve range for root memory device %d\n", xchar);
+                    kdp_core_ramdisk_addr = 0;
+                    kdp_core_ramdisk_size = 0;
+                }
+#endif
+
 				goto iofrootx;									/* Join common exit... */
 			}
 			panic("IOFindBSDRoot: specified root memory device, %s, has not been configured\n", rdBootVar);	/* Not there */
@@ -474,6 +535,11 @@ kern_return_t IOFindBSDRoot( char * rootName, unsigned int rootNameSize,
         }
     }
 
+    if( gIOKitDebug & kIOWaitQuietBeforeRoot ) {
+    	IOLog( "Waiting for matching to complete\n" );
+    	IOService::getPlatform()->waitQuiet();
+    }
+
     if( true && matching) {
         OSSerialize * s = OSSerialize::withCapacity( 5 );
 
@@ -488,15 +554,10 @@ kern_return_t IOFindBSDRoot( char * rootName, unsigned int rootNameSize,
         t.tv_nsec = 0;
 	matching->retain();
         service = IOService::waitForService( matching, &t );
-        rootMountTries++;
-
-        /* Give up after a while. */
-        if(rootMountTries == 30)
-            panic("Gave up trying to mount root");
-
 	if( (!service) || (mountAttempts == 10)) {
             PE_display_icon( 0, "noroot");
             IOLog( "Still waiting for root device\n" );
+
             if( !debugInfoPrintedOnce) {
                 debugInfoPrintedOnce = true;
                 if( gIOKitDebug & kIOLogDTree) {
@@ -571,9 +632,8 @@ kern_return_t IOFindBSDRoot( char * rootName, unsigned int rootNameSize,
 
 iofrootx:
     if( (gIOKitDebug & (kIOLogDTree | kIOLogServiceTree | kIOLogMemory)) && !debugInfoPrintedOnce) {
-#if 0
+
 	IOService::getPlatform()->waitQuiet();
-#endif
         if( gIOKitDebug & kIOLogDTree) {
             IOLog("\nDT plane:\n");
             IOPrintPlane( gIODTPlane );
@@ -589,23 +649,51 @@ iofrootx:
     return( kIOReturnSuccess );
 }
 
+bool IORamDiskBSDRoot(void)
+{
+    char rdBootVar[kMaxBootVar];
+    if (PE_parse_boot_argn("rd", rdBootVar, kMaxBootVar )
+     || PE_parse_boot_argn("rootdev", rdBootVar, kMaxBootVar )) {
+        if((rdBootVar[0] == 'm') && (rdBootVar[1] == 'd') && (rdBootVar[3] == 0)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 void IOSecureBSDRoot(const char * rootName)
 {
 #if CONFIG_EMBEDDED
+    int              tmpInt;
     IOReturn         result;
     IOPlatformExpert *pe;
+    OSDictionary     *matching;
     const OSSymbol   *functionName = OSSymbol::withCStringNoCopy("SecureRootName");
     
-    while ((pe = IOService::getPlatform()) == 0) IOSleep(1 * 1000);
-    
+    matching = IOService::serviceMatching("IOPlatformExpert");
+    assert(matching);
+    pe = (IOPlatformExpert *) IOService::waitForMatchingService(matching, 30ULL * kSecondScale);
+    matching->release();
+    assert(pe);
     // Returns kIOReturnNotPrivileged is the root device is not secure.
     // Returns kIOReturnUnsupported if "SecureRootName" is not implemented.
     result = pe->callPlatformFunction(functionName, false, (void *)rootName, (void *)0, (void *)0, (void *)0);
-    
     functionName->release();
+    OSSafeReleaseNULL(pe);
     
-    if (result == kIOReturnNotPrivileged) mdevremoveall();
-#endif
+    if (result == kIOReturnNotPrivileged) {
+        mdevremoveall();
+    } else if (result == kIOReturnSuccess) {
+        // If we are booting with a secure root, and we have the right
+	// boot-arg, we will want to panic on exception triage.  This
+	// behavior is intended as a debug aid (we can look at why an
+	// exception occured in the kernel debugger).
+        if (PE_parse_boot_argn("-panic_on_exception_triage", &tmpInt, sizeof(tmpInt))) {
+            panic_on_exception_triage = 1;
+        }
+    }
+
+#endif  // CONFIG_EMBEDDED
 }
 
 void *
@@ -655,156 +743,197 @@ kern_return_t IOBSDGetPlatformUUID( uuid_t uuid, mach_timespec_t timeout )
     return KERN_SUCCESS;
 }
 
-kern_return_t IOBSDGetPlatformSerialNumber( char *serial_number_str, u_int32_t len )
-{
-    OSDictionary * platform_dict;
-    IOService *platform;
-    OSString *  string;
-
-    if (len < 1) {
-	    return 0;
-    }
-    serial_number_str[0] = '\0';
-
-    platform_dict = IOService::serviceMatching( "IOPlatformExpertDevice" );
-    if (platform_dict == NULL) {
-	    return KERN_NOT_SUPPORTED;
-    }
-
-    platform = IOService::waitForService( platform_dict );
-    if (platform) {
-	    string = ( OSString * ) platform->getProperty( kIOPlatformSerialNumberKey );
-	    if ( string == 0 ) {
-		    return KERN_NOT_SUPPORTED;
-	    } else {
-		    strlcpy( serial_number_str, string->getCStringNoCopy( ), len );
-	    }
-    }
-    
-    return KERN_SUCCESS;
-}
-
-dev_t IOBSDGetMediaWithUUID( const char *uuid_cstring, char *bsd_name, int bsd_name_len, int timeout)
-{
-    dev_t dev = 0;
-    OSDictionary *dictionary;
-    OSString *uuid_string;
-
-    if (bsd_name_len < 1) {
-	return 0;
-    }
-    bsd_name[0] = '\0';
-    
-    dictionary = IOService::serviceMatching( "IOMedia" );
-    if( dictionary ) {
-	uuid_string = OSString::withCString( uuid_cstring );
-	if( uuid_string ) {
-	    IOService *service;
-	    mach_timespec_t tv = { timeout, 0 };    // wait up to "timeout" seconds for the device
-
-	    dictionary->setObject( "UUID", uuid_string );
-	    dictionary->retain();
-	    service = IOService::waitForService( dictionary, &tv );
-	    if( service ) {
-		OSNumber *dev_major = (OSNumber *) service->getProperty( kIOBSDMajorKey );
-		OSNumber *dev_minor = (OSNumber *) service->getProperty( kIOBSDMinorKey );
-		OSString *iostr = (OSString *) service->getProperty( kIOBSDNameKey );
-
-		if( iostr)
-		    strlcpy( bsd_name, iostr->getCStringNoCopy(), bsd_name_len );
-
-		if ( dev_major && dev_minor )
-		    dev = makedev( dev_major->unsigned32BitValue(), dev_minor->unsigned32BitValue() );
-	    }
-	    uuid_string->release();
-	}
-	dictionary->release();
-    }
-
-    return dev;
-}
-
-
-void IOBSDIterateMediaWithContent(const char *content_uuid_cstring, int (*func)(const char *bsd_dev_name, const char *uuid_str, void *arg), void *arg)
-{
-    OSDictionary *dictionary;
-    OSString *content_uuid_string;
-
-    dictionary = IOService::serviceMatching( "IOMedia" );
-    if( dictionary ) {
-	content_uuid_string = OSString::withCString( content_uuid_cstring );
-	if( content_uuid_string ) {
-	    IOService *service;
-	    OSIterator *iter;
-
-	    dictionary->setObject( "Content", content_uuid_string );
-	    dictionary->retain();
-
-	    iter = IOService::getMatchingServices(dictionary);
-	    while (iter && (service = (IOService *)iter->getNextObject())) {
-		    if( service ) {
-			    OSString *iostr = (OSString *) service->getProperty( kIOBSDNameKey );
-			    OSString *uuidstr = (OSString *) service->getProperty( "UUID" );
-			    const char *uuid;
-
-			    if( iostr) {
-				    if (uuidstr) {
-					    uuid = uuidstr->getCStringNoCopy();
-				    } else {
-					    uuid = "00000000-0000-0000-0000-000000000000";
-				    }
-
-				    // call the callback
-				    if (func && func(iostr->getCStringNoCopy(), uuid, arg) == 0) {
-					    break;
-				    }
-			    }
-		    }
-	    }
-	    if (iter)
-		    iter->release();
-	    
-	    content_uuid_string->release();
-	}
-	dictionary->release();
-    }
-}
-
-
-int IOBSDIsMediaEjectable( const char *cdev_name )
-{
-    int ret = 0;
-    OSDictionary *dictionary;
-    OSString *dev_name;
-
-    if (strncmp(cdev_name, "/dev/", 5) == 0) {
-	    cdev_name += 5;
-    }
-
-    dictionary = IOService::serviceMatching( "IOMedia" );
-    if( dictionary ) {
-	dev_name = OSString::withCString( cdev_name );
-	if( dev_name ) {
-	    IOService *service;
-	    mach_timespec_t tv = { 5, 0 };    // wait up to "timeout" seconds for the device
-
-	    dictionary->setObject( kIOBSDNameKey, dev_name );
-	    dictionary->retain();
-	    service = IOService::waitForService( dictionary, &tv );
-	    if( service ) {
-		OSBoolean *ejectable = (OSBoolean *) service->getProperty( "Ejectable" );
-
-		if( ejectable ) {
-			ret = (int)ejectable->getValue();
-		}
-
-	    }
-	    dev_name->release();
-	}
-	dictionary->release();
-    }
-
-    return ret;
-}
-
 } /* extern "C" */
+
+/* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
+
+#include <sys/conf.h>
+#include <sys/vnode.h>
+#include <sys/vnode_internal.h>
+#include <sys/fcntl.h>
+#include <IOKit/IOPolledInterface.h>
+#include <IOKit/IOBufferMemoryDescriptor.h>
+
+IOPolledFileIOVars * gIOPolledCoreFileVars;
+
+#if IOPOLLED_COREFILE
+
+static IOReturn 
+IOOpenPolledCoreFile(const char * filename)
+{
+    IOReturn err;
+    unsigned int debug;
+
+    if (gIOPolledCoreFileVars)                             return (kIOReturnBusy);
+    if (!IOPolledInterface::gMetaClass.getInstanceCount()) return (kIOReturnUnsupported);
+
+    debug = 0;
+    PE_parse_boot_argn("debug", &debug, sizeof (debug));
+    if (DB_DISABLE_LOCAL_CORE & debug)                     return (kIOReturnUnsupported);
+
+    err = IOPolledFileOpen(filename, kIOCoreDumpSize, kIOCoreDumpFreeSize,
+			    NULL, 0,
+			    &gIOPolledCoreFileVars, NULL, NULL, 0);
+    if (kIOReturnSuccess != err)                           return (err);
+
+    err = IOPolledFilePollersSetup(gIOPolledCoreFileVars, kIOPolledPreflightCoreDumpState);
+    if (kIOReturnSuccess != err)
+    {
+	IOPolledFileClose(&gIOPolledCoreFileVars, NULL, NULL, 0, 0, 0);
+    }
+
+    return (err);
+}
+
+static void 
+IOClosePolledCoreFile(void)
+{
+    IOPolledFilePollersClose(gIOPolledCoreFileVars, kIOPolledPostflightCoreDumpState);
+    IOPolledFileClose(&gIOPolledCoreFileVars, NULL, NULL, 0, 0, 0);
+}
+
+static thread_call_t gIOOpenPolledCoreFileTC;
+static IONotifier  * gIOPolledCoreFileNotifier;
+static IONotifier  * gIOPolledCoreFileInterestNotifier;
+
+static IOReturn 
+KernelCoreMediaInterest(void * target, void * refCon,
+			UInt32 messageType, IOService * provider,
+			void * messageArgument, vm_size_t argSize )
+{
+    if (kIOMessageServiceIsTerminated == messageType)
+    {
+	gIOPolledCoreFileInterestNotifier->remove();
+	gIOPolledCoreFileInterestNotifier = 0;
+	IOClosePolledCoreFile();
+    }
+
+    return (kIOReturnSuccess);
+}
+
+static void
+OpenKernelCoreMedia(thread_call_param_t p0, thread_call_param_t p1)
+{
+    IOService * newService;
+    OSString  * string;
+    char        filename[16];
+
+    newService = (IOService *) p1;
+    do
+    {
+	if (gIOPolledCoreFileVars) break;
+	string = OSDynamicCast(OSString, newService->getProperty(kIOBSDNameKey));
+	if (!string) break;
+	snprintf(filename, sizeof(filename), "/dev/%s", string->getCStringNoCopy());
+	if (kIOReturnSuccess != IOOpenPolledCoreFile(filename)) break;
+	gIOPolledCoreFileInterestNotifier = newService->registerInterest(
+				gIOGeneralInterest, &KernelCoreMediaInterest, NULL, 0);
+    }
+    while (false);
+
+    newService->release();
+}
+
+static bool 
+NewKernelCoreMedia(void * target, void * refCon,
+		   IOService * newService,
+		   IONotifier * notifier)
+{
+    static volatile UInt32 onlyOneCorePartition = 0;
+    do
+    {
+	if (!OSCompareAndSwap(0, 1, &onlyOneCorePartition)) break;
+	if (gIOPolledCoreFileVars)    break;
+        if (!gIOOpenPolledCoreFileTC) break;
+        newService = newService->getProvider();
+        if (!newService)              break;
+        newService->retain();
+	thread_call_enter1(gIOOpenPolledCoreFileTC, newService);
+    }
+    while (false);
+
+    return (false);
+}
+
+#endif /* IOPOLLED_COREFILE */
+
+extern "C" void 
+IOBSDMountChange(struct mount * mp, uint32_t op)
+{
+#if IOPOLLED_COREFILE
+
+    OSDictionary * bsdMatching;
+    OSDictionary * mediaMatching;
+    OSString     * string;
+
+    if (!gIOPolledCoreFileNotifier) do
+    {
+	if (!gIOOpenPolledCoreFileTC) gIOOpenPolledCoreFileTC = thread_call_allocate(&OpenKernelCoreMedia, NULL);
+	bsdMatching = IOService::serviceMatching("IOMediaBSDClient");
+	if (!bsdMatching) break;
+	mediaMatching = IOService::serviceMatching("IOMedia");
+	string = OSString::withCStringNoCopy("5361644D-6163-11AA-AA11-00306543ECAC");
+	if (!string || !mediaMatching) break;
+	mediaMatching->setObject("Content", string);
+	string->release();
+	bsdMatching->setObject(gIOParentMatchKey, mediaMatching);
+	mediaMatching->release();
+
+	gIOPolledCoreFileNotifier = IOService::addMatchingNotification(
+						  gIOFirstMatchNotification, bsdMatching, 
+						  &NewKernelCoreMedia, NULL, NULL, -1000);
+    }
+    while (false);
+
+#if CONFIG_EMBEDDED
+    uint64_t flags;
+    char path[128];
+    int pathLen;
+    vnode_t vn;
+    int result;
+
+    switch (op)
+    {
+	case kIOMountChangeMount:
+	case kIOMountChangeDidResize:
+
+	    if (gIOPolledCoreFileVars) break;
+	    flags = vfs_flags(mp);
+	    if (MNT_RDONLY & flags) break;
+	    if (!(MNT_LOCAL & flags)) break;
+
+	    vn = vfs_vnodecovered(mp);
+	    if (!vn) break;
+	    pathLen = sizeof(path);
+	    result = vn_getpath(vn, &path[0], &pathLen);
+	    vnode_put(vn);
+	    if (0 != result) break;
+	    if (!pathLen) break;
+	    if (0 != bcmp(path, kIOCoreDumpPath, pathLen - 1)) break;
+	    IOOpenPolledCoreFile(kIOCoreDumpPath);
+	    break;
+
+	case kIOMountChangeUnmount:
+	case kIOMountChangeWillResize:
+	    if (gIOPolledCoreFileVars && (mp == kern_file_mount(gIOPolledCoreFileVars->fileRef)))
+	    {
+		IOClosePolledCoreFile();
+	    }
+	    break;
+    }
+#endif /* CONFIG_EMBEDDED */
+#endif /* IOPOLLED_COREFILE */
+}
+
+/* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
+
+extern "C" boolean_t 
+IOTaskHasEntitlement(task_t task, const char * entitlement)
+{
+    OSObject * obj;
+    obj = IOUserClient::copyClientEntitlement(task, entitlement);
+    if (!obj) return (false);
+    obj->release();
+    return (obj != kOSBooleanFalse);
+}
+

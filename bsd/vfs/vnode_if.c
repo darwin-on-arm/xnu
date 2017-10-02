@@ -1,6 +1,6 @@
 
 /*
- * Copyright (c) 2000-2002 Apple Computer, Inc. All rights reserved.
+ * Copyright (c) 2000-2016 Apple Computer, Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -558,6 +558,26 @@ struct vnodeop_desc vnop_rename_desc = {
 	NULL
 };
 
+int vnop_renamex_vp_offsets[] = {
+	VOPARG_OFFSETOF(struct vnop_renamex_args,a_fdvp),
+	VOPARG_OFFSETOF(struct vnop_renamex_args,a_fvp),
+	VOPARG_OFFSETOF(struct vnop_renamex_args,a_tdvp),
+	VOPARG_OFFSETOF(struct vnop_renamex_args,a_tvp),
+	VDESC_NO_OFFSET
+};
+struct vnodeop_desc vnop_renamex_desc = {
+	0,
+	"vnop_renamex",
+	0 | VDESC_VP0_WILLRELE | VDESC_VP1_WILLRELE | VDESC_VP2_WILLRELE | VDESC_VP3_WILLRELE,
+	vnop_renamex_vp_offsets,
+	VDESC_NO_OFFSET,
+	VDESC_NO_OFFSET,
+	VDESC_NO_OFFSET,
+	VOPARG_OFFSETOF(struct vnop_renamex_args, a_fcnp),
+	VOPARG_OFFSETOF(struct vnop_renamex_args, a_context),
+	NULL
+};
+
 int vnop_compound_rename_vp_offsets[] = {
 	VOPARG_OFFSETOF(struct vnop_compound_rename_args,a_fdvp),
 	VOPARG_OFFSETOF(struct vnop_compound_rename_args,a_fvpp),
@@ -696,6 +716,23 @@ struct vnodeop_desc vnop_readdirattr_desc = {
 	VDESC_NO_OFFSET,
 	VDESC_NO_OFFSET,
 	VOPARG_OFFSETOF(struct vnop_readdirattr_args, a_context),
+	NULL
+};
+
+int vnop_getattrlistbulk_vp_offsets[] = {
+	VOPARG_OFFSETOF(struct vnop_getattrlistbulk_args,a_vp),
+	VDESC_NO_OFFSET
+};
+struct vnodeop_desc vnop_getattrlistbulk_desc = {
+	0,
+	"vnop_getattrlistbulk",
+	0,
+	vnop_getattrlistbulk_vp_offsets,
+	VDESC_NO_OFFSET,
+	VDESC_NO_OFFSET,
+	VDESC_NO_OFFSET,
+	VDESC_NO_OFFSET,
+	VOPARG_OFFSETOF(struct vnop_getattrlistbulk_args, a_context),
 	NULL
 };
 
@@ -871,6 +908,24 @@ struct vnodeop_desc vnop_copyfile_desc = {
 	NULL
 };
 
+int vnop_clonefile_vp_offsets[] = {
+	VOPARG_OFFSETOF(struct vnop_clonefile_args,a_fvp),
+	VOPARG_OFFSETOF(struct vnop_clonefile_args,a_dvp),
+	VDESC_NO_OFFSET
+};
+struct vnodeop_desc vnop_clonefile_desc = {
+	0,
+	"vnop_clonefile",
+	0 | VDESC_VP0_WILLRELE | VDESC_VP1_WILLRELE | VDESC_VPP_WILLRELE,
+	vnop_clonefile_vp_offsets,
+	VOPARG_OFFSETOF(struct vnop_clonefile_args, a_vpp),
+	VDESC_NO_OFFSET,
+	VDESC_NO_OFFSET,
+	VOPARG_OFFSETOF(struct vnop_clonefile_args, a_cnp),
+	VOPARG_OFFSETOF(struct vnop_clonefile_args, a_context),
+	NULL
+};
+
 int vop_getxattr_vp_offsets[] = {
 	VOPARG_OFFSETOF(struct vnop_getxattr_args,a_vp),
 	VDESC_NO_OFFSET
@@ -1042,10 +1097,53 @@ struct vnodeop_desc vnop_removenamedstream_desc = {
 	NULL
 };
 #else
-/* These symbols are in the exports list so they need to always be defined. */
-int vnop_getnamedstream_desc;
-int vnop_makenamedstream_desc;
-int vnop_removenamedstream_desc;
+int vnop_getnamedstream_vp_offsets[] = {
+	VDESC_NO_OFFSET
+};
+struct vnodeop_desc vnop_getnamedstream_desc = {
+	0,
+	"vnop_getnamedstream",
+	VDESC_DISABLED, /* flags */
+	vnop_getnamedstream_vp_offsets,
+	VDESC_NO_OFFSET,
+	VDESC_NO_OFFSET,
+	VDESC_NO_OFFSET,
+	VDESC_NO_OFFSET,
+	VDESC_NO_OFFSET,
+	NULL
+};
+
+int vnop_makenamedstream_vp_offsets[] = {
+	VDESC_NO_OFFSET
+};
+struct vnodeop_desc vnop_makenamedstream_desc = {
+	0,
+	"vnop_makenamedstream",
+	VDESC_DISABLED, /* flags */
+	vnop_makenamedstream_vp_offsets,
+	VDESC_NO_OFFSET,
+	VDESC_NO_OFFSET,
+	VDESC_NO_OFFSET,
+	VDESC_NO_OFFSET,
+	VDESC_NO_OFFSET,
+	NULL
+};
+
+int vnop_removenamedstream_vp_offsets[] = {
+	VDESC_NO_OFFSET
+};
+struct vnodeop_desc vnop_removenamedstream_desc = {
+	0,
+	"vnop_removenamedstream",
+	VDESC_DISABLED, /* flags */
+	vnop_removenamedstream_vp_offsets,
+	VDESC_NO_OFFSET,
+	VDESC_NO_OFFSET,
+	VDESC_NO_OFFSET,
+	VDESC_NO_OFFSET,
+	VDESC_NO_OFFSET,
+	NULL
+};
 #endif
 
 /* Special cases: */
@@ -1115,6 +1213,7 @@ struct vnodeop_desc *vfs_op_descs[] = {
 	&vnop_compound_remove_desc,
 	&vnop_link_desc,
 	&vnop_rename_desc,
+	&vnop_renamex_desc,
 	&vnop_compound_rename_desc,
 	&vnop_mkdir_desc,
 	&vnop_compound_mkdir_desc,
@@ -1123,6 +1222,7 @@ struct vnodeop_desc *vfs_op_descs[] = {
 	&vnop_symlink_desc,
 	&vnop_readdir_desc,
 	&vnop_readdirattr_desc,
+	&vnop_getattrlistbulk_desc,
 	&vnop_readlink_desc,
 	&vnop_inactive_desc,
 	&vnop_reclaim_desc,
@@ -1133,6 +1233,7 @@ struct vnodeop_desc *vfs_op_descs[] = {
 	&vnop_pageout_desc,
 	&vnop_searchfs_desc,
 	&vnop_copyfile_desc,
+	&vnop_clonefile_desc,
 	&vnop_getxattr_desc,
 	&vnop_setxattr_desc,
 	&vnop_removexattr_desc,
@@ -1141,11 +1242,18 @@ struct vnodeop_desc *vfs_op_descs[] = {
 	&vnop_offtoblk_desc,
 	&vnop_blockmap_desc,
 	&vnop_monitor_desc,
-#if NAMEDSTREAMS
+#if !defined(NAMEDSTREAMS)
+	/*
+	 * We define the named streams ops descriptors as we _always_ have to
+	 * have symbols with their names, and as such we really really need
+	 * those symbols to be valid operations descriptors. However if
+	 * named streams support is not enabled, we flag these descriptors
+	 * as ignored.
+	 */
+#endif
 	&vnop_getnamedstream_desc,
 	&vnop_makenamedstream_desc,
 	&vnop_removenamedstream_desc,
-#endif
 	NULL
 };
 

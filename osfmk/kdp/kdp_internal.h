@@ -31,8 +31,11 @@
  */
 
 #include <kdp/kdp.h>
+#include <kern/machine.h>
 #include <kdp/kdp_protocol.h>
 #include <mach/vm_types.h>
+#include <mach/boolean.h>
+#include <mach/mach_types.h>
 #include <libsa/types.h>
 
 typedef struct {
@@ -53,6 +56,8 @@ extern kdp_glob_t	kdp;
 
 extern volatile int	kdp_flag;
 extern int            noresume_on_disconnect;
+
+extern char kdp_kernelversion_string[256];
 
 #define KDP_READY       0x1
 #define KDP_ARP         0x2
@@ -203,3 +208,4 @@ kdp_machine_msr64_read(kdp_readmsr64_req_t *, caddr_t /* data */, uint16_t /* lc
 
 int
 kdp_machine_msr64_write(kdp_writemsr64_req_t *, caddr_t /* data */, uint16_t /* lcpu */);
+

@@ -56,10 +56,6 @@
 #include <i386/machine_check.h>
 #endif
 
-#if CONFIG_COUNTERS
-#include <pmc/pmc.h>
-#endif
-
 #include <sys/kdebug.h>
 
 #if	MP_DEBUG
@@ -112,6 +108,7 @@ static void
 legacy_init(void)
 {
 	int		result;
+	kern_return_t	kr;
 	vm_map_entry_t	entry;
 	vm_map_offset_t lapic_vbase64;
 	/* Establish a map to the local apic */
@@ -121,7 +118,10 @@ legacy_init(void)
 		result = vm_map_find_space(kernel_map,
 					   &lapic_vbase64,
 					   round_page(LAPIC_SIZE), 0,
-					   VM_MAKE_TAG(VM_MEMORY_IOKIT), &entry);
+					   0,
+					   VM_MAP_KERNEL_FLAGS_NONE,
+					   VM_KERN_MEMORY_IOKIT,
+					   &entry);
 		/* Convert 64-bit vm_map_offset_t to "pointer sized" vm_offset_t
 		 */
 		lapic_vbase = (vm_offset_t) lapic_vbase64;
@@ -137,13 +137,15 @@ legacy_init(void)
 		 * MTRR physical range containing the local APIC's MMIO space as
 		 * UC and this will override the default PAT setting.
 		 */
-		pmap_enter(pmap_kernel(),
-				lapic_vbase,
-				(ppnum_t) i386_btop(lapic_pbase),
-				VM_PROT_READ|VM_PROT_WRITE,
-				VM_PROT_NONE,
-				VM_WIMG_IO,
-				TRUE);
+		kr = pmap_enter(pmap_kernel(),
+		                lapic_vbase,
+		                (ppnum_t) i386_btop(lapic_pbase),
+		                VM_PROT_READ|VM_PROT_WRITE,
+		                VM_PROT_NONE,
+		                VM_WIMG_IO,
+		                TRUE);
+
+		assert(kr == KERN_SUCCESS);
 	}
 
 	/*
@@ -284,6 +286,7 @@ lapic_init(void)
 	/* Set up the lapic_id <-> cpu_number map and add this boot processor */
 	lapic_cpu_map_init();
 	lapic_cpu_map((LAPIC_READ(ID)>>LAPIC_ID_SHIFT)&LAPIC_ID_MASK, 0);
+	current_cpu_datap()->cpu_phys_number = cpu_to_lapic[0];
 	kprintf("Boot cpu local APIC id 0x%x\n", cpu_to_lapic[0]);
 }
 
@@ -443,6 +446,10 @@ lapic_probe(void)
 		 * Re-initialize cpu features info and re-check.
 		 */
 		cpuid_set_info();
+		/* We expect this codepath will never be traversed
+		 * due to EFI enabling the APIC. Reducing the APIC
+		 * interrupt base dynamically is not supported.
+		 */
 		if (cpuid_features() & CPUID_FEATURE_APIC) {
 			printf("Local APIC discovered and enabled\n");
 			lapic_os_enabled = TRUE;
@@ -795,16 +802,11 @@ lapic_interrupt(int interrupt_num, x86_saved_state_t *state)
 		break;
 	case LAPIC_PMC_SW_INTERRUPT: 
 		{
-#if CONFIG_COUNTERS
-			thread_t old, new;
-			ml_get_csw_threads(&old, &new);
-
-			if (pmc_context_switch(old, new) == TRUE) {
-				retval = 1;
-				/* No EOI required for SWI */
-			}
-#endif /* CONFIG_COUNTERS */
 		}
+		break;
+	case LAPIC_KICK_INTERRUPT:
+		_lapic_end_of_interrupt();
+		retval = 1;
 		break;
 	}
 
@@ -949,3 +951,26 @@ lapic_disable_timer(void)
 	}
 }
 
+/* SPI returning the CMCI vector */
+uint8_t
+lapic_get_cmci_vector(void)
+{
+	uint8_t	cmci_vector = 0;
+#if CONFIG_MCA
+	/* CMCI, if available */
+	if (mca_is_cmci_present())
+		cmci_vector = LAPIC_VECTOR(CMCI);
+#endif
+	return cmci_vector;
+}
+
+#if DEVELOPMENT || DEBUG
+extern void lapic_trigger_MC(void);
+void
+lapic_trigger_MC(void)
+{
+	/* A 64-bit access to any register will do it. */
+	volatile uint64_t dummy = *(volatile uint64_t *) (volatile void *) LAPIC_MMIO(ID);
+	dummy++;
+}
+#endif

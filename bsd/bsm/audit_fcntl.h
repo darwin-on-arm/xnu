@@ -113,6 +113,9 @@
 #define	BSM_F_CHECK_OPENEVT	358	/* Darwin-specific. */
 #define	BSM_F_ADDSIGS		359	/* Darwin-specific. */
 #define	BSM_F_MARKDEPENDENCY	360	/* Darwin-specific. */
+#define	BSM_F_BARRIERFSYNC	361	/* Darwin-specific. */
+#define	BSM_F_PUNCHHOLE		362	/* Darwin-specific. */
+#define	BSM_F_TRIM_ACTIVE_FILE		363	/* Darwin-specific. */
 
 /*
  * Darwin file system specific (400-499).

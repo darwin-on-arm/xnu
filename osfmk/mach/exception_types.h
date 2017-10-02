@@ -92,11 +92,18 @@
 #define EXC_MACH_SYSCALL	8	/* Mach system calls. */
 
 #define EXC_RPC_ALERT		9	/* RPC alert */
- 
+
 #define EXC_CRASH		10	/* Abnormal process exit */
 
 #define EXC_RESOURCE		11	/* Hit resource consumption limit */
 		/* Exact resource is in code field. */
+
+#define EXC_GUARD		12	/* Violated guarded resource protections */
+
+#define EXC_CORPSE_NOTIFY	13	/* Abnormal process exited to corpse state */
+
+#define EXC_CORPSE_VARIANT_BIT	0x100  /* bit set for EXC_*_CORPSE variants of EXC_* */
+
 
 /*
  *	Machine-independent exception behaviors
@@ -135,6 +142,8 @@
 #define EXC_MASK_RPC_ALERT		(1 << EXC_RPC_ALERT)
 #define EXC_MASK_CRASH			(1 << EXC_CRASH)
 #define EXC_MASK_RESOURCE		(1 << EXC_RESOURCE)
+#define EXC_MASK_GUARD			(1 << EXC_GUARD)
+#define EXC_MASK_CORPSE_NOTIFY		(1 << EXC_CORPSE_NOTIFY)
 
 #define EXC_MASK_ALL	(EXC_MASK_BAD_ACCESS |			\
 			 EXC_MASK_BAD_INSTRUCTION |		\
@@ -146,10 +155,11 @@
 			 EXC_MASK_MACH_SYSCALL |		\
 			 EXC_MASK_RPC_ALERT |			\
 			 EXC_MASK_RESOURCE |			\
+			 EXC_MASK_GUARD |			\
 			 EXC_MASK_MACHINE)
 
 #ifdef	KERNEL_PRIVATE
-#define EXC_MASK_VALID	(EXC_MASK_ALL | EXC_MASK_CRASH)
+#define EXC_MASK_VALID	(EXC_MASK_ALL | EXC_MASK_CRASH | EXC_MASK_CORPSE_NOTIFY)
 #endif /* KERNEL_PRIVATE */
 
 #define FIRST_EXCEPTION		1	/* ZERO is illegal */

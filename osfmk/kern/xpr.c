@@ -59,7 +59,6 @@
 
 #include <mach/machine/vm_types.h>
 #include <kern/xpr.h>
-#include <kern/lock.h>
 #include <kern/spl.h>
 #include <kern/cpu_number.h>
 #include <kern/misc_protos.h>
@@ -94,7 +93,7 @@ xpr(
 	long		arg5)
 {
 	spl_t s;
-	register struct xprbuf *x;
+	struct xprbuf *x;
 
 	/* If we aren't initialized, ignore trace request */
 	if (!xprenable || (xprptr == 0))

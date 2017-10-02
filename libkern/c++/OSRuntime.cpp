@@ -33,6 +33,7 @@
 #include <libkern/c++/OSKext.h>
 #include <libkern/c++/OSLib.h>
 #include <libkern/c++/OSSymbol.h>
+#include <IOKit/IOKitDebug.h>
 
 #include <sys/cdefs.h>
 
@@ -73,7 +74,6 @@ static bool gKernelCPPInitialized = false;
         }                                                     \
     } while (0)
 
-
 #if PRAGMA_MARK
 #pragma mark kern_os Allocator Package
 #endif /* PRAGMA_MARK */
@@ -87,36 +87,28 @@ static bool gKernelCPPInitialized = false;
 extern int debug_iomalloc_size;
 #endif
 
-struct _mhead {
-    size_t  mlen;
-    char    dat[0];
-};
-
 /*********************************************************************
 *********************************************************************/
 void *
 kern_os_malloc(size_t size)
 {
-    struct _mhead * mem;
-    size_t          memsize = sizeof (*mem) + size ;
-
+    void *mem;
     if (size == 0) {
         return (0);
     }
 
-    mem = (struct _mhead *)kalloc(memsize);
+    mem = kallocp_tag_bt((vm_size_t *)&size, VM_KERN_MEMORY_LIBKERN);
     if (!mem) {
         return (0);
     }
 
 #if OSALLOCDEBUG
-    debug_iomalloc_size += memsize;
+    OSAddAtomic(size, &debug_iomalloc_size);
 #endif
 
-    mem->mlen = memsize;
-    bzero(mem->dat, size);
+    bzero(mem, size);
 
-    return mem->dat;
+    return mem;
 }
 
 /*********************************************************************
@@ -124,24 +116,13 @@ kern_os_malloc(size_t size)
 void
 kern_os_free(void * addr)
 {
-    struct _mhead * hdr;
-
-    if (!addr) {
-        return;
-    }
-
-    hdr = (struct _mhead *)addr; 
-    hdr--;
-
+    size_t size;
+    size = kalloc_size(addr);
 #if OSALLOCDEBUG
-    debug_iomalloc_size -= hdr->mlen;
+	OSAddAtomic(-size, &debug_iomalloc_size);
 #endif
 
-#if 0
-    memset((vm_offset_t)hdr, 0xbb, hdr->mlen);
-#else
-    kfree(hdr, hdr->mlen);
-#endif
+    kfree_addr(addr);
 }
 
 /*********************************************************************
@@ -151,60 +132,40 @@ kern_os_realloc(
     void   * addr,
     size_t   nsize)
 {
-    struct _mhead * ohdr;
-    struct _mhead * nmem;
-    size_t          nmemsize, osize;
+    void            *nmem;
+    size_t          osize;
 
     if (!addr) {
         return (kern_os_malloc(nsize));
     }
 
-    ohdr = (struct _mhead *)addr;
-    ohdr--;
-    osize = ohdr->mlen - sizeof(*ohdr);
+    osize = kalloc_size(addr);
     if (nsize == osize) {
         return (addr);
     }
 
     if (nsize == 0) {
-        kern_os_free(addr);
+        kfree_addr(addr);
         return (0);
     }
 
-    nmemsize = sizeof (*nmem) + nsize ;
-    nmem = (struct _mhead *) kalloc(nmemsize);
+    nmem = kallocp_tag_bt((vm_size_t *)&nsize, VM_KERN_MEMORY_LIBKERN);
     if (!nmem){
-        kern_os_free(addr);
+        kfree_addr(addr);
         return (0);
     }
 
 #if OSALLOCDEBUG
-    debug_iomalloc_size += (nmemsize - ohdr->mlen);
+    OSAddAtomic((nsize - osize), &debug_iomalloc_size);
 #endif
 
-    nmem->mlen = nmemsize;
     if (nsize > osize) {
-        (void) memset(&nmem->dat[osize], 0, nsize - osize);
+        (void)memset((char *)nmem + osize, 0, nsize - osize);
     }
-    (void)memcpy(nmem->dat, ohdr->dat, (nsize > osize) ? osize : nsize);
-    kfree(ohdr, ohdr->mlen);
+    (void)memcpy(nmem, addr, (nsize > osize) ? osize : nsize);
+    kfree_addr(addr);
 
-    return (nmem->dat);
-}
-
-/*********************************************************************
-*********************************************************************/
-size_t
-kern_os_malloc_size(void * addr)
-{
-    struct _mhead * hdr;
-
-    if (!addr) {
-        return(0);
-    }
-
-    hdr = (struct _mhead *) addr; hdr--;
-    return hdr->mlen - sizeof (struct _mhead);
+    return (nmem);
 }
 
 #if PRAGMA_MARK
@@ -306,7 +267,7 @@ OSRuntimeUnloadCPPForSegmentInKmod(
         } /* if (strncmp...) */
     } /* for (section...) */
 
-    OSSafeRelease(theKext);
+    OSSafeReleaseNULL(theKext);
     return;
 }
 
@@ -391,7 +352,7 @@ OSRuntimeFinalizeCPP(
     }
     result = KMOD_RETURN_SUCCESS;
 finish:
-    OSSafeRelease(theKext);
+    OSSafeReleaseNULL(theKext);
     return result;
 }
 
@@ -412,7 +373,7 @@ OSRuntimeInitializeCPP(
     kernel_segment_command_t * segment         = NULL;  // do not free
     kernel_segment_command_t * failure_segment = NULL;  // do not free
 
-    if (!kmodInfo || !kmodInfo->address || !kmodInfo->name) {
+    if (!kmodInfo || !kmodInfo->address) {
         result = kOSKextReturnInvalidArgument;
         goto finish;
     }
@@ -524,7 +485,7 @@ OSRuntimeInitializeCPP(
         theKext->setCPPInitialized(true);
     }
 finish:
-    OSSafeRelease(theKext);
+    OSSafeReleaseNULL(theKext);
     return result;
 }
 
@@ -537,14 +498,11 @@ finish:
 
 /*********************************************************************
 *********************************************************************/
-extern lck_spin_t  gOSObjectTrackLock;
 extern lck_grp_t * IOLockGroup;
 extern kmod_info_t g_kernel_kmod_info;
 
 void OSlibkernInit(void)
 {
-    lck_spin_init(&gOSObjectTrackLock, IOLockGroup, LCK_ATTR_NULL);
- 
     // This must be called before calling OSRuntimeInitializeCPP.
     OSMetaClassBase::initialize();
     
@@ -568,6 +526,9 @@ __END_DECLS
 *********************************************************************/
 void *
 operator new(size_t size)
+#if __cplusplus >= 201103L
+								noexcept
+#endif
 {
     void * result;
 
@@ -577,6 +538,9 @@ operator new(size_t size)
 
 void
 operator delete(void * addr)
+#if __cplusplus >= 201103L
+								noexcept
+#endif
 {
     kern_os_free(addr);
     return;
@@ -584,6 +548,9 @@ operator delete(void * addr)
 
 void *
 operator new[](unsigned long sz)
+#if __cplusplus >= 201103L
+								noexcept
+#endif
 {
     if (sz == 0) sz = 1;
     return kern_os_malloc(sz);
@@ -591,6 +558,9 @@ operator new[](unsigned long sz)
 
 void
 operator delete[](void * ptr)
+#if __cplusplus >= 201103L
+								noexcept
+#endif
 {
     if (ptr) {
         kern_os_free(ptr);

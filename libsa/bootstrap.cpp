@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2012 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -29,6 +29,10 @@ extern "C" {
 #include <mach/kmod.h>
 #include <libkern/kernel_mach_header.h>
 #include <libkern/prelink.h>
+
+#if CONFIG_EMBEDDED
+extern uuid_t kernelcache_uuid;
+#endif
 }
 
 #include <libkern/version.h>
@@ -71,6 +75,10 @@ static void bootstrapRecordStartupExtensions(void);
 static void bootstrapLoadSecurityExtensions(void);
 
 
+#if NO_KEXTD
+extern "C" bool IORamDiskBSDRoot(void);
+#endif
+
 #if PRAGMA_MARK
 #pragma mark Macros
 #endif
@@ -107,6 +115,26 @@ static const char * sKernelComponentNames[] = {
    NULL
 };
 
+static int __whereIsAddr(vm_offset_t theAddr, unsigned long * segSizes, vm_offset_t *segAddrs, int segCount );
+
+#define PLK_SEGMENTS 12
+
+static const char * plk_segNames[] = {
+    "__TEXT",
+    "__TEXT_EXEC",
+    "__DATA",
+    "__DATA_CONST",
+    "__LINKEDIT",
+    "__PRELINK_TEXT",
+    "__PLK_TEXT_EXEC",
+    "__PRELINK_DATA",
+    "__PLK_DATA_CONST",
+    "__PLK_LLVM_COV",
+    "__PLK_LINKEDIT",
+    "__PRELINK_INFO",
+    NULL
+};
+
 #if PRAGMA_MARK
 #pragma mark KLDBootstrap Class
 #endif
@@ -127,9 +155,6 @@ private:
     void readPrelinkedExtensions(
         kernel_section_t * prelinkInfoSect);
     void readBooterExtensions(void);
-    OSReturn readMkextExtensions(
-        OSString * deviceTreeName,
-        OSData   * deviceTreeData);
     
     OSReturn loadKernelComponentKexts(void);
     void     loadKernelExternalComponents(void);
@@ -205,6 +230,11 @@ KLDBootstrap::readStartupExtensions(void)
     return;
 }
 
+typedef struct kaslrPackedOffsets {
+    uint32_t 	count;              /* number of offsets */
+    uint32_t 	offsetsArray[];     /* offsets to slide */
+} kaslrPackedOffsets;
+
 /*********************************************************************
 *********************************************************************/
 void
@@ -216,6 +246,9 @@ KLDBootstrap::readPrelinkedExtensions(
     OSDictionary              * prelinkInfoDict         = NULL;  // do not release
     OSString                  * errorString             = NULL;  // must release
     OSKext                    * theKernel               = NULL;  // must release
+#if CONFIG_EMBEDDED
+    OSData                    * kernelcacheUUID         = NULL;  // do not release
+#endif
 
     kernel_segment_command_t  * prelinkTextSegment      = NULL;  // see code
     kernel_segment_command_t  * prelinkInfoSegment      = NULL;  // see code
@@ -226,11 +259,6 @@ KLDBootstrap::readPrelinkedExtensions(
     void                      * prelinkData             = NULL;  // see code
     vm_size_t                   prelinkLength           = 0;
 
-#if __i386__
-    vm_map_offset_t             prelinkDataMapOffset    = 0;
-    void                      * prelinkCopy             = NULL;  // see code
-    kern_return_t               mem_result              = KERN_SUCCESS;
-#endif
 
     OSDictionary              * infoDict                = NULL;  // do not release
 
@@ -239,8 +267,13 @@ KLDBootstrap::readPrelinkedExtensions(
 
     u_int                       i = 0;
 #if NO_KEXTD
+    bool                        ramDiskBoot;
     bool                        developerDevice;
+    bool                        dontLoad;
 #endif
+    OSData                     * kaslrOffsets = NULL;
+    unsigned long               plk_segSizes[PLK_SEGMENTS];
+    vm_offset_t                 plk_segAddrs[PLK_SEGMENTS];
 
     OSKextLog(/* kext */ NULL,
         kOSKextLogProgressLevel |
@@ -255,7 +288,7 @@ KLDBootstrap::readPrelinkedExtensions(
             "Can't find prelinked kexts' text segment.");
         goto finish;
     }
-    
+
 #if KASLR_KEXT_DEBUG
     unsigned long   scratchSize;
     vm_offset_t     scratchAddr;
@@ -302,67 +335,14 @@ KLDBootstrap::readPrelinkedExtensions(
     prelinkData = (void *) prelinkTextSegment->vmaddr;
     prelinkLength = prelinkTextSegment->vmsize;
 
-#if __i386__
-    /* To enable paging and write/execute protections on the kext
-     * executables, we need to copy them out of the booter-created
-     * memory, reallocate that space with VM, then prelinkCopy them back in.
-     *
-     * This isn't necessary on x86_64 because kexts have their own VM
-     * region for that architecture.
-     *
-     * XXX: arm's pmap implementation doesn't seem to let us do this.
-     */
+    /* build arrays of plk info for later use */
+    const char ** segNamePtr;
 
-    mem_result = kmem_alloc(kernel_map, (vm_offset_t *)&prelinkCopy,
-        prelinkLength);
-    if (mem_result != KERN_SUCCESS) {
-        OSKextLog(/* kext */ NULL,
-            kOSKextLogErrorLevel |
-            kOSKextLogGeneralFlag | kOSKextLogArchiveFlag,
-            "Can't copy prelinked kexts' text for VM reassign.");
-        goto finish;
+    for (segNamePtr = &plk_segNames[0], i = 0; *segNamePtr && i < PLK_SEGMENTS; segNamePtr++, i++) {
+        plk_segSizes[i] = 0;
+        plk_segAddrs[i] = (vm_offset_t)getsegdatafromheader(&_mh_execute_header, *segNamePtr, &plk_segSizes[i]);
     }
 
-   /* Copy it out.
-    */
-    memcpy(prelinkCopy, prelinkData, prelinkLength);
-    
-   /* Dump the booter memory.
-    */
-    ml_static_mfree((vm_offset_t)prelinkData, prelinkLength);
-
-   /* Set up the VM region.
-    */
-    prelinkDataMapOffset = (vm_map_offset_t)(uintptr_t)prelinkData;
-    mem_result = vm_map_enter_mem_object(
-        kernel_map,
-        &prelinkDataMapOffset,
-        prelinkLength, /* mask */ 0, 
-        VM_FLAGS_FIXED | VM_FLAGS_OVERWRITE, 
-        (ipc_port_t)NULL,
-        (vm_object_offset_t) 0,
-        /* copy */ FALSE,
-        /* cur_protection */ VM_PROT_ALL,
-        /* max_protection */ VM_PROT_ALL,
-        /* inheritance */ VM_INHERIT_DEFAULT);
-    if ((mem_result != KERN_SUCCESS) || 
-        (prelinkTextSegment->vmaddr != prelinkDataMapOffset)) 
-    {
-        OSKextLog(/* kext */ NULL,
-            kOSKextLogErrorLevel |
-            kOSKextLogGeneralFlag | kOSKextLogArchiveFlag,
-            "Can't create kexts' text VM entry at 0x%llx, length 0x%x (error 0x%x).",
-            (unsigned long long) prelinkDataMapOffset, prelinkLength, mem_result);
-        goto finish;
-    }
-    prelinkData = (void *)(uintptr_t)prelinkDataMapOffset;
-
-   /* And copy it back.
-    */
-    memcpy(prelinkData, prelinkCopy, prelinkLength);
-
-    kmem_free(kernel_map, (vm_offset_t)prelinkCopy, prelinkLength);
-#endif /* __i386__ */
 
    /* Unserialize the info dictionary from the prelink info section.
     */
@@ -385,20 +365,28 @@ KLDBootstrap::readPrelinkedExtensions(
     }
 
 #if NO_KEXTD
-    /* Check if we should keep developer kexts around. Default:
-     *   Release: No
-     *   Development: Yes
-     *   Debug : Yes
+    /* Check if we should keep developer kexts around.
      * TODO: Check DeviceTree instead of a boot-arg <rdar://problem/10604201>
      */
-#if DEVELOPMENT
     developerDevice = true;
-#else
-    developerDevice = false;
-#endif
-
     PE_parse_boot_argn("developer", &developerDevice, sizeof(developerDevice));
+
+    ramDiskBoot = IORamDiskBSDRoot();
 #endif /* NO_KEXTD */
+
+#if CONFIG_EMBEDDED
+    /* Copy in the kernelcache UUID */
+    kernelcacheUUID = OSDynamicCast(OSData,
+        prelinkInfoDict->getObject(kPrelinkInfoKCIDKey));
+    if (!kernelcacheUUID) {
+	bzero(&kernelcache_uuid, sizeof(kernelcache_uuid));
+    } else if (kernelcacheUUID->getLength() != sizeof(kernelcache_uuid)) {
+        panic("kernelcacheUUID length is %d, expected %lu", kernelcacheUUID->getLength(),
+            sizeof(kernelcache_uuid));
+    } else {
+        memcpy((void *)&kernelcache_uuid, (void *)kernelcacheUUID->getBytesNoCopy(), kernelcacheUUID->getLength());
+    }
+#endif /* CONFIG_EMBEDDED */
 
     infoDictArray = OSDynamicCast(OSArray, 
         prelinkInfoDict->getObject(kPrelinkInfoDictionaryKey));
@@ -407,9 +395,18 @@ KLDBootstrap::readPrelinkedExtensions(
             "The prelinked kernel has no kext info dictionaries");
         goto finish;
     }
-
-   /* Create OSKext objects for each info dictionary.
-    */
+    
+    /* kaslrOffsets are available use them to slide local relocations */
+    kaslrOffsets = OSDynamicCast(OSData,
+                                 prelinkInfoDict->getObject(kPrelinkLinkKASLROffsetsKey));
+        
+    /* Create dictionary of excluded kexts
+     */
+#ifndef CONFIG_EMBEDDED
+    OSKext::createExcludeListFromPrelinkInfo(infoDictArray);
+#endif
+    /* Create OSKext objects for each info dictionary. 
+     */
     for (i = 0; i < infoDictArray->getCount(); ++i) {
         infoDict = OSDynamicCast(OSDictionary, infoDictArray->getObject(i));
         if (!infoDict) {
@@ -421,30 +418,52 @@ KLDBootstrap::readPrelinkedExtensions(
         }
 
 #if NO_KEXTD
+        dontLoad = false;
+
         /* If we're not on a developer device, skip and free developer kexts.
          */
         if (developerDevice == false) {
             OSBoolean *devOnlyBool = OSDynamicCast(OSBoolean,
                 infoDict->getObject(kOSBundleDeveloperOnlyKey));
             if (devOnlyBool == kOSBooleanTrue) {
-                OSString *bundleID = OSDynamicCast(OSString,
-                    infoDict->getObject(kCFBundleIdentifierKey));
-                if (bundleID) {
-                    OSKextLog(NULL, kOSKextLogWarningLevel | kOSKextLogGeneralFlag,
-                        "Kext %s not loading on non-dev device.", bundleID->getCStringNoCopy());
-                }
-
-                OSNumber *addressNum = OSDynamicCast(OSNumber,
-                    infoDict->getObject(kPrelinkExecutableLoadKey));
-                OSNumber *lengthNum = OSDynamicCast(OSNumber,
-                    infoDict->getObject(kPrelinkExecutableSizeKey));
-                if (addressNum && lengthNum) {
-#error Pick the right way to free prelinked data on this arch
-                }
-
-                infoDictArray->removeObject(i--);
-                continue;
+                dontLoad = true;
             }
+        }
+
+        /* Skip and free kexts that are only needed when booted from a ram disk.
+         */
+        if (ramDiskBoot == false) {
+            OSBoolean *ramDiskOnlyBool = OSDynamicCast(OSBoolean,
+                infoDict->getObject(kOSBundleRamDiskOnlyKey));
+            if (ramDiskOnlyBool == kOSBooleanTrue) {
+                dontLoad = true;
+            }
+        }
+
+        if (dontLoad == true) {
+            OSString *bundleID = OSDynamicCast(OSString,
+                infoDict->getObject(kCFBundleIdentifierKey));
+            if (bundleID) {
+                OSKextLog(NULL, kOSKextLogWarningLevel | kOSKextLogGeneralFlag,
+                    "Kext %s not loading.", bundleID->getCStringNoCopy());
+            }
+            
+            OSNumber *addressNum = OSDynamicCast(OSNumber,
+                infoDict->getObject(kPrelinkExecutableLoadKey));
+            OSNumber *lengthNum = OSDynamicCast(OSNumber,
+                infoDict->getObject(kPrelinkExecutableSizeKey));
+            if (addressNum && lengthNum) {
+#if __arm__ || __arm64__
+                vm_offset_t data = (vm_offset_t) ((addressNum->unsigned64BitValue()) + vm_kernel_slide);
+                vm_size_t length = (vm_size_t) (lengthNum->unsigned32BitValue());
+                ml_static_mfree(data, length);
+#else
+#error Pick the right way to free prelinked data on this arch
+#endif
+            }
+
+            infoDictArray->removeObject(i--);
+            continue;
         }
 #endif /* NO_KEXTD */
 
@@ -452,10 +471,47 @@ KLDBootstrap::readPrelinkedExtensions(
         * kext system keeps them around until explicitly removed.
         * Any creation/registration failures are already logged for us.
         */
-        OSKext * newKext = OSKext::withPrelinkedInfoDict(infoDict);
+        OSKext * newKext = OSKext::withPrelinkedInfoDict(infoDict, (kaslrOffsets ? TRUE : FALSE));
         OSSafeReleaseNULL(newKext);
     }
-    
+
+    /* slide kxld relocations */
+    if (kaslrOffsets && vm_kernel_slide > 0) {
+	    int slidKextAddrCount = 0;
+	    int badSlideAddr = 0;
+	    int badSlideTarget = 0;
+
+        kaslrPackedOffsets * myOffsets = NULL;
+	    myOffsets = (kaslrPackedOffsets *) kaslrOffsets->getBytesNoCopy();
+
+	    for (uint32_t j = 0; j < myOffsets->count; j++) {
+
+		    uint64_t        slideOffset = (uint64_t) myOffsets->offsetsArray[j];
+		    uintptr_t *     slideAddr = (uintptr_t *) ((uint64_t)prelinkData + slideOffset);
+		    int             slideAddrSegIndex = -1;
+		    int             addrToSlideSegIndex = -1;
+
+		    slideAddrSegIndex = __whereIsAddr( (vm_offset_t)slideAddr, &plk_segSizes[0], &plk_segAddrs[0], PLK_SEGMENTS );
+		    if (slideAddrSegIndex >= 0) {
+			    addrToSlideSegIndex = __whereIsAddr( (vm_offset_t)(*slideAddr + vm_kernel_slide), &plk_segSizes[0], &plk_segAddrs[0], PLK_SEGMENTS );
+			    if (addrToSlideSegIndex < 0) {
+				    badSlideTarget++;
+				    continue;
+			    }
+		    }
+		    else {
+			    badSlideAddr++;
+			    continue;
+		    }
+
+		    slidKextAddrCount++;
+		    *(slideAddr) += vm_kernel_slide;
+	    } // for ...
+
+	    /* All kexts are now slid, set VM protections for them */
+	    OSKext::setAllVMAttributes();
+    }
+
    /* Store the number of prelinked kexts in the registry so we can tell
     * when the system has been started from a prelinked kernel.
     */
@@ -469,7 +525,7 @@ KLDBootstrap::readPrelinkedExtensions(
     if (prelinkCountObj) {
         registryRoot->setProperty(kOSPrelinkKextCountKey, prelinkCountObj);
     }
-
+    
     OSKextLog(/* kext */ NULL,
         kOSKextLogProgressLevel |
         kOSKextLogGeneralFlag | kOSKextLogKextBookkeepingFlag |
@@ -494,17 +550,33 @@ KLDBootstrap::readPrelinkedExtensions(
     }
 
 finish:
-    OSSafeRelease(errorString);
-    OSSafeRelease(parsedXML);
-    OSSafeRelease(theKernel);
-    OSSafeRelease(prelinkCountObj);
+    OSSafeReleaseNULL(errorString);
+    OSSafeReleaseNULL(parsedXML);
+    OSSafeReleaseNULL(theKernel);
+    OSSafeReleaseNULL(prelinkCountObj);
     return;
 }
+
+static int __whereIsAddr(vm_offset_t theAddr, unsigned long * segSizes, vm_offset_t *segAddrs, int segCount)
+{
+	int i;
+
+	for (i = 0; i < segCount; i++) {
+		vm_offset_t         myAddr = *(segAddrs + i);
+		unsigned long       mySize = *(segSizes + i);
+
+		if (theAddr >= myAddr && theAddr < (myAddr + mySize)) {
+			return i;
+		}
+	}
+
+	return -1;
+}
+
 
 /*********************************************************************
 *********************************************************************/
 #define BOOTER_KEXT_PREFIX   "Driver-"
-#define BOOTER_MKEXT_PREFIX  "DriversPackage-"
 
 typedef struct _DeviceTreeBuffer {
     uint32_t paddr;
@@ -528,7 +600,7 @@ KLDBootstrap::readBooterExtensions(void)
     OSKextLog(/* kext */ NULL,
         kOSKextLogProgressLevel |
         kOSKextLogDirectoryScanFlag | kOSKextLogKextBookkeepingFlag,
-        "Reading startup extensions/mkexts from booter memory.");
+        "Reading startup extensions from booter memory.");
     
     booterMemoryMap = IORegistryEntry::fromPath( "/chosen/memory-map", gIODTPlane);
 
@@ -558,10 +630,16 @@ KLDBootstrap::readBooterExtensions(void)
         goto finish;
     }
 
+    /* Create dictionary of excluded kexts
+     */
+#ifndef CONFIG_EMBEDDED
+    OSKext::createExcludeListFromBooterData(propertyDict, keyIterator);
+#endif
+    keyIterator->reset();
+
     while ( ( deviceTreeName =
         OSDynamicCast(OSString, keyIterator->getNextObject() ))) {
 
-        boolean_t isMkext = FALSE;
         const char * devTreeNameCString = deviceTreeName->getCStringNoCopy();
         OSData * deviceTreeEntry = OSDynamicCast(OSData,
             propertyDict->getObject(deviceTreeName));
@@ -575,18 +653,10 @@ KLDBootstrap::readBooterExtensions(void)
             continue;
         }
 
-        /* Make sure it is either a kext or an mkext */
-        if (!strncmp(devTreeNameCString, BOOTER_KEXT_PREFIX,
-            CONST_STRLEN(BOOTER_KEXT_PREFIX))) {
-
-            isMkext = FALSE;
-
-        } else if (!strncmp(devTreeNameCString, BOOTER_MKEXT_PREFIX,
-            CONST_STRLEN(BOOTER_MKEXT_PREFIX))) {
-
-            isMkext = TRUE;
-
-        } else {
+        /* Make sure it is a kext */
+        if (strncmp(devTreeNameCString,
+                    BOOTER_KEXT_PREFIX,
+                    CONST_STRLEN(BOOTER_KEXT_PREFIX))) {
             continue;
         }
 
@@ -609,7 +679,7 @@ KLDBootstrap::readBooterExtensions(void)
             OSKextLog(/* kext */ NULL,
                 kOSKextLogErrorLevel |
                 kOSKextLogDirectoryScanFlag,
-                "Can't get virtual address for device tree mkext entry %s.",
+                "Can't get virtual address for device tree entry %s.",
                 devTreeNameCString);
             goto finish;
         }
@@ -631,16 +701,12 @@ KLDBootstrap::readBooterExtensions(void)
         }
         booterData->setDeallocFunction(osdata_phys_free);
 
-        if (isMkext) {
-            readMkextExtensions(deviceTreeName, booterData);
-        } else {
-           /* Create the kext for the entry, then release it, because the
-            * kext system keeps them around until explicitly removed.
-            * Any creation/registration failures are already logged for us.
-            */
-            OSKext * newKext = OSKext::withBooterData(deviceTreeName, booterData);
-            OSSafeRelease(newKext);
-        }
+        /* Create the kext for the entry, then release it, because the
+         * kext system keeps them around until explicitly removed.
+         * Any creation/registration failures are already logged for us.
+         */
+        OSKext * newKext = OSKext::withBooterData(deviceTreeName, booterData);
+        OSSafeReleaseNULL(newKext);
 
         booterMemoryMap->removeProperty(deviceTreeName);
 
@@ -648,55 +714,12 @@ KLDBootstrap::readBooterExtensions(void)
 
 finish:
 
-    OSSafeRelease(booterMemoryMap);
-    OSSafeRelease(propertyDict);
-    OSSafeRelease(keyIterator);
-    OSSafeRelease(booterData);
-    OSSafeRelease(aKext);
+    OSSafeReleaseNULL(booterMemoryMap);
+    OSSafeReleaseNULL(propertyDict);
+    OSSafeReleaseNULL(keyIterator);
+    OSSafeReleaseNULL(booterData);
+    OSSafeReleaseNULL(aKext);
     return;
-}
-
-/*********************************************************************
-*********************************************************************/
-OSReturn
-KLDBootstrap::readMkextExtensions(
-    OSString   * deviceTreeName,
-    OSData     * booterData)
-{
-    OSReturn result = kOSReturnError;
-
-    uint32_t          checksum;
-    IORegistryEntry * registryRoot = NULL;  // do not release
-    OSData          * checksumObj  = NULL;   // must release
-
-    OSKextLog(/* kext */ NULL,
-        kOSKextLogStepLevel |
-        kOSKextLogDirectoryScanFlag | kOSKextLogArchiveFlag,
-        "Reading startup mkext archive from device tree entry %s.",
-        deviceTreeName->getCStringNoCopy());
-
-   /* If we successfully read the archive,
-    * then save the mkext's checksum in the IORegistry.
-    * assumes we'll only ever have one mkext to boot
-    */
-    result = OSKext::readMkextArchive(booterData, &checksum);
-    if (result == kOSReturnSuccess) {
-
-        OSKextLog(/* kext */ NULL,
-            kOSKextLogProgressLevel |
-            kOSKextLogArchiveFlag,
-            "Startup mkext archive has checksum 0x%x.", (int)checksum);
-
-        registryRoot = IORegistryEntry::getRegistryRoot();
-        assert(registryRoot);
-        checksumObj = OSData::withBytes((void *)&checksum, sizeof(checksum));
-        assert(checksumObj);
-        if (checksumObj) {
-            registryRoot->setProperty(kOSStartupMkextCRC, checksumObj);
-        }
-    }
-    
-    return result;
 }
 
 /*********************************************************************
@@ -761,8 +784,8 @@ KLDBootstrap::loadSecurityExtensions(void)
     }
 
 finish:
-    OSSafeRelease(keyIterator);
-    OSSafeRelease(extensionsDict);
+    OSSafeReleaseNULL(keyIterator);
+    OSSafeReleaseNULL(extensionsDict);
 
     return;
 }
@@ -804,7 +827,7 @@ KLDBootstrap::loadKernelComponentKexts(void)
         }
     }
 
-    OSSafeRelease(theKext);
+    OSSafeReleaseNULL(theKext);
     return result;
 }
 
@@ -876,8 +899,8 @@ KLDBootstrap::loadKernelExternalComponents(void)
     }
 
 finish:
-    OSSafeRelease(keyIterator);
-    OSSafeRelease(extensionsDict);
+    OSSafeReleaseNULL(keyIterator);
+    OSSafeReleaseNULL(extensionsDict);
 
     return;
 }
@@ -996,10 +1019,10 @@ KLDBootstrap::readBuiltinPersonalities(void)
     gIOCatalogue->addDrivers(allPersonalities, false);
 
 finish:
-    OSSafeRelease(parsedXML);
-    OSSafeRelease(allPersonalities);
-    OSSafeRelease(errorString);
-    OSSafeRelease(personalitiesIterator);
+    OSSafeReleaseNULL(parsedXML);
+    OSSafeReleaseNULL(allPersonalities);
+    OSSafeReleaseNULL(errorString);
+    OSSafeReleaseNULL(personalitiesIterator);
     return;
 }
 

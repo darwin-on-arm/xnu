@@ -42,16 +42,24 @@
 #include <IOKit/pwr_mgt/IOPMinformeeList.h>
 #include <IOKit/IOStatisticsPrivate.h>
 #include <IOKit/IOKitKeysPrivate.h>
-
+#include <IOKit/IOInterruptAccountingPrivate.h>
 #include <IOKit/assert.h>
+#include <sys/conf.h>
 
 #include "IOKitKernelInternal.h"
 
+const OSSymbol * gIOProgressBackbufferKey;
+OSSet *          gIORemoveOnReadProperties;
+
 extern "C" {
+
+void StartIOKit( void * p1, void * p2, void * p3, void * p4 );
+void IORegistrySetOSBuildVersion(char * build_version);
+void IORecordProgressBackbuffer(void * buffer, size_t size, uint32_t theme);
 
 extern void OSlibkernInit (void);
 
-void iokit_post_constructor_init(void) __attribute__((section("__TEXT, initcode")));
+void iokit_post_constructor_init(void);
 
 #include <kern/clock.h>
 #include <sys/time.h>
@@ -60,29 +68,16 @@ void IOKitInitializeTime( void )
 {
 	mach_timespec_t		t;
 
-	t.tv_sec = 2;
+	t.tv_sec = 30;
 	t.tv_nsec = 0;
-
-	IOService::waitForService(IOService::resourceMatching("IORTC"), &t );
+	IOService::waitForService(
+		IOService::resourceMatching("IORTC"), &t );
 #if defined(__i386__) || defined(__x86_64__)
-	IOService::waitForService(IOService::resourceMatching("IONVRAM"), &t );
+	IOService::waitForService(
+		IOService::resourceMatching("IONVRAM"), &t );
 #endif
 
-    clock_initialize_calendar();
-}
-
-void IOKitResetTime( void )
-{
-    clock_sec_t		secs;
-	clock_usec_t	microsecs;
-
-    clock_initialize_calendar();
-
-    clock_get_calendar_microtime(&secs, &microsecs);
-    gIOLastWakeTime.tv_sec  = secs;
-    gIOLastWakeTime.tv_usec = microsecs;
-
-    IOService::updateConsoleUsers(NULL, kIOMessageSystemHasPoweredOn);
+	clock_initialize_calendar();
 }
 
 void iokit_post_constructor_init(void)
@@ -90,6 +85,7 @@ void iokit_post_constructor_init(void)
     IORegistryEntry *		root;
     OSObject *			obj;
 
+    IOCPUInitialize();
     root = IORegistryEntry::initialize();
     assert( root );
     IOService::initialize();
@@ -116,9 +112,6 @@ void iokit_post_constructor_init(void)
     }
 }
 
-// From <osfmk/kern/debug.c>
-extern int debug_mode;
-
 /*****
  * Pointer into bootstrap KLD segment for functions never used past startup.
  */
@@ -130,19 +123,19 @@ void StartIOKit( void * p1, void * p2, void * p3, void * p4 )
     int				debugFlags;
 
     if( PE_parse_boot_argn( "io", &debugFlags, sizeof (debugFlags) ))
-		gIOKitDebug = debugFlags;
+	gIOKitDebug = debugFlags;
+#if DEVELOPMENT || DEBUG
+    else gIOKitDebug |= kIOWaitQuietPanics;
+#endif /* DEVELOPMENT || DEBUG */
 	
     if( PE_parse_boot_argn( "iotrace", &debugFlags, sizeof (debugFlags) ))
-		gIOKitTrace = debugFlags;
+	gIOKitTrace = debugFlags;
 	
-
-	// Compat for boot-args
-	gIOKitTrace |= (gIOKitDebug & kIOTraceCompatBootArgs);
+    // Compat for boot-args
+    gIOKitTrace |= (gIOKitDebug & kIOTraceCompatBootArgs);
 	
-    // Check for the log synchronous bit set in io
-    if (gIOKitDebug & kIOLogSynchronous)
-        debug_mode = true;
-
+    if( PE_parse_boot_argn( "pmtimeout", &debugFlags, sizeof (debugFlags) ))
+        gCanSleepTimeout = debugFlags;
     //
     // Have to start IOKit environment before we attempt to start
     // the C++ runtime environment.  At some stage we have to clean up
@@ -152,6 +145,12 @@ void StartIOKit( void * p1, void * p2, void * p3, void * p4 )
     //
     IOLibInit(); 
     OSlibkernInit();
+    devsw_init();
+
+    gIOProgressBackbufferKey  = OSSymbol::withCStringNoCopy(kIOProgressBackbufferKey);
+    gIORemoveOnReadProperties = OSSet::withObjects((const OSObject **) &gIOProgressBackbufferKey, 1);
+
+    interruptAccountingInit();
 
     rootNub = new IOPlatformExpertDevice;
 
@@ -192,6 +191,19 @@ IORegistrySetOSBuildVersion(char * build_version)
     }
 
     return;
+}
+
+void
+IORecordProgressBackbuffer(void * buffer, size_t size, uint32_t theme)
+{
+    IORegistryEntry * chosen;
+    if ((chosen = IORegistryEntry::fromPath(kIODeviceTreePlane ":/chosen")))
+    {
+        chosen->setProperty(kIOProgressBackbufferKey, buffer, size);
+	chosen->setProperty(kIOProgressColorThemeKey, theme, 32);
+
+        chosen->release();
+    }
 }
 
 }; /* extern "C" */

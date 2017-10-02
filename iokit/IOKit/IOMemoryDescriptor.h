@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998-2000 Apple Computer, Inc. All rights reserved.
+ * Copyright (c) 1998-2016 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -33,12 +33,16 @@
 #include <IOKit/IOTypes.h>
 #include <IOKit/IOLocks.h>
 #include <libkern/c++/OSContainers.h>
+#ifdef XNU_KERNEL_PRIVATE
+#include <IOKit/IOKitDebug.h>
+#endif
 
 #include <mach/memory_object_types.h>
 
 class IOMemoryMap;
 class IOMapper;
 class IOService;
+class IODMACommand;
 
 /*
  * Direction of transfer, with respect to the described memory.
@@ -53,8 +57,22 @@ enum IODirection
     kIODirectionIn    = 0x1,	// User land 'read',  same as VM_PROT_READ
     kIODirectionOut   = 0x2,	// User land 'write', same as VM_PROT_WRITE
     kIODirectionOutIn = kIODirectionOut | kIODirectionIn,
-    kIODirectionInOut = kIODirectionIn  | kIODirectionOut
+    kIODirectionInOut = kIODirectionIn  | kIODirectionOut,
+
+    // these flags are valid for the prepare() method only
+    kIODirectionPrepareToPhys32   = 0x00000004,
+    kIODirectionPrepareNoFault    = 0x00000008,
+    kIODirectionPrepareReserved1  = 0x00000010,
+#define IODIRECTIONPREPARENONCOHERENTDEFINED	1
+    kIODirectionPrepareNonCoherent = 0x00000020,
+
+     // these flags are valid for the complete() method only
+#define IODIRECTIONCOMPLETEWITHERRORDEFINED		1
+     kIODirectionCompleteWithError = 0x00000040,
+#define IODIRECTIONCOMPLETEWITHDATAVALIDDEFINED	1
+     kIODirectionCompleteWithDataValid = 0x00000080,
 };
+
 #ifdef __LP64__
 typedef IOOptionBits IODirection;
 #endif /* __LP64__ */
@@ -92,10 +110,19 @@ enum {
 #endif
     kIOMemoryPersistent		= 0x00010000,
 #ifdef XNU_KERNEL_PRIVATE
-    kIOMemoryReserved6156215	= 0x00020000,
+    kIOMemoryMapCopyOnWrite	= 0x00020000,
 #endif
+    kIOMemoryRemote		= 0x00040000,
     kIOMemoryThreadSafe		= 0x00100000,	// Shared with Buffer MD
     kIOMemoryClearEncrypt	= 0x00200000,	// Shared with Buffer MD
+    kIOMemoryUseReserve  	= 0x00800000,	// Shared with Buffer MD
+#define IOMEMORYUSERESERVEDEFINED	1
+
+#ifdef XNU_KERNEL_PRIVATE
+    kIOMemoryBufferPurgeable	= 0x00400000,
+    kIOMemoryBufferCacheMask	= 0x70000000,
+    kIOMemoryBufferCacheShift	= 28,
+#endif
 };
 
 #define kIOMapperSystem	((IOMapper *) 0)
@@ -103,9 +130,25 @@ enum {
 enum 
 {
     kIOMemoryPurgeableKeepCurrent = 1,
+
     kIOMemoryPurgeableNonVolatile = 2,
     kIOMemoryPurgeableVolatile    = 3,
-    kIOMemoryPurgeableEmpty       = 4
+    kIOMemoryPurgeableEmpty       = 4,
+
+    // modifiers for kIOMemoryPurgeableVolatile behavior
+    kIOMemoryPurgeableVolatileGroup0           = VM_VOLATILE_GROUP_0,
+    kIOMemoryPurgeableVolatileGroup1           = VM_VOLATILE_GROUP_1,
+    kIOMemoryPurgeableVolatileGroup2           = VM_VOLATILE_GROUP_2,
+    kIOMemoryPurgeableVolatileGroup3           = VM_VOLATILE_GROUP_3,
+    kIOMemoryPurgeableVolatileGroup4           = VM_VOLATILE_GROUP_4,
+    kIOMemoryPurgeableVolatileGroup5           = VM_VOLATILE_GROUP_5,
+    kIOMemoryPurgeableVolatileGroup6           = VM_VOLATILE_GROUP_6,
+    kIOMemoryPurgeableVolatileGroup7           = VM_VOLATILE_GROUP_7,
+    kIOMemoryPurgeableVolatileBehaviorFifo     = VM_PURGABLE_BEHAVIOR_FIFO,
+    kIOMemoryPurgeableVolatileBehaviorLifo     = VM_PURGABLE_BEHAVIOR_LIFO,
+    kIOMemoryPurgeableVolatileOrderingObsolete = VM_PURGABLE_ORDERING_OBSOLETE,
+    kIOMemoryPurgeableVolatileOrderingNormal   = VM_PURGABLE_ORDERING_NORMAL,
+    kIOMemoryPurgeableFaultOnAccess            = VM_PURGABLE_DEBUG_FAULT,
 };
 enum 
 {
@@ -128,15 +171,73 @@ struct IODMAMapSpecification
 	uint32_t    resvB[4];
 };
 
+struct IODMAMapPageList
+{
+    uint32_t                pageOffset;
+    uint32_t                pageListCount;
+    const upl_page_info_t * pageList;
+};
+
+// mapOptions for iovmMapMemory
 enum
 {
+    kIODMAMapReadAccess           = 0x00000001,
     kIODMAMapWriteAccess          = 0x00000002,
     kIODMAMapPhysicallyContiguous = 0x00000010,
     kIODMAMapDeviceMemory         = 0x00000020,
     kIODMAMapPagingPath           = 0x00000040,
     kIODMAMapIdentityMap          = 0x00000080,
+
+    kIODMAMapPageListFullyOccupied = 0x00000100,
+    kIODMAMapFixedAddress          = 0x00000200,
 };
 
+#ifdef KERNEL_PRIVATE
+
+// Used for dmaCommandOperation communications for IODMACommand and mappers
+
+enum  {
+    kIOMDWalkSegments             = 0x01000000,
+    kIOMDFirstSegment	          = 1 | kIOMDWalkSegments,
+    kIOMDGetCharacteristics       = 0x02000000,
+    kIOMDGetCharacteristicsMapped = 1 | kIOMDGetCharacteristics,
+    kIOMDDMAActive                = 0x03000000,
+    kIOMDSetDMAActive             = 1 | kIOMDDMAActive,
+    kIOMDSetDMAInactive           = kIOMDDMAActive,
+    kIOMDAddDMAMapSpec            = 0x04000000,
+    kIOMDDMAMap                   = 0x05000000,
+    kIOMDDMAUnmap                 = 0x06000000,
+    kIOMDDMACommandOperationMask  = 0xFF000000,
+};
+struct IOMDDMACharacteristics {
+    UInt64 fLength;
+    UInt32 fSGCount;
+    UInt32 fPages;
+    UInt32 fPageAlign;
+    ppnum_t fHighestPage;
+    IODirection fDirection;
+    UInt8 fIsPrepared;
+};
+
+struct IOMDDMAMapArgs {
+    IOMapper            * fMapper;
+    IODMACommand        * fCommand;
+    IODMAMapSpecification fMapSpec;
+    uint64_t              fOffset;
+    uint64_t              fLength;
+    uint64_t              fAlloc;
+    uint64_t              fAllocLength;
+    uint8_t               fMapContig;
+};
+
+struct IOMDDMAWalkSegmentArgs {
+    UInt64 fOffset;			// Input/Output offset
+    UInt64 fIOVMAddr, fLength;		// Output variables
+    UInt8 fMapped;			// Input Variable, Require mapped IOVMA
+};
+typedef UInt8 IOMDDMAWalkSegmentState[128];
+
+#endif /* KERNEL_PRIVATE */
 
 enum 
 {
@@ -145,6 +246,11 @@ enum
     kIOPreparationIDAlwaysPrepared = 2,
 };
 
+#ifdef XNU_KERNEL_PRIVATE
+struct IOMemoryReference;
+#endif
+
+
 /*! @class IOMemoryDescriptor : public OSObject
     @abstract An abstract base class defining common methods for describing physical or virtual memory.
     @discussion The IOMemoryDescriptor object represents a buffer or range of memory, specified as one or more physical or virtual address ranges. It contains methods to return the memory's physically contiguous segments (fragments), for use with the IOMemoryCursor, and methods to map the memory into any address space with caching and placed mapping options. */
@@ -152,6 +258,7 @@ enum
 class IOMemoryDescriptor : public OSObject
 {
     friend class IOMemoryMap;
+    friend class IOMultiMemoryDescriptor;
 
     OSDeclareDefaultStructors(IOMemoryDescriptor);
 
@@ -164,14 +271,27 @@ protected:
 protected:
     OSSet *		_mappings;
     IOOptionBits 	_flags;
-    void *		_memEntry;
 
-#ifdef __LP64__
-    uint64_t		__iomd_reserved1;
-    uint64_t		__iomd_reserved2;
-    uint64_t		__iomd_reserved3;
-    uint64_t		__iomd_reserved4;
-#else /* !__LP64__ */
+
+#ifdef XNU_KERNEL_PRIVATE
+public:
+    struct IOMemoryReference *	_memRef;
+    vm_tag_t _kernelTag;
+    vm_tag_t _userTag;
+    int16_t _dmaReferences;
+    uint16_t _internalFlags;
+    kern_allocation_name_t _mapName;
+protected:
+#else /* XNU_KERNEL_PRIVATE */
+    void *      	__iomd_reserved5;
+    uint16_t		__iomd_reserved1[4];
+    uintptr_t		__iomd_reserved2;
+#endif /* XNU_KERNEL_PRIVATE */
+
+    uintptr_t		__iomd_reserved3;
+    uintptr_t		__iomd_reserved4;
+
+#ifndef __LP64__
     IODirection         _direction;        /* use _flags instead */
 #endif /* !__LP64__ */
     IOByteCount         _length;           /* length of all ranges */
@@ -216,6 +336,17 @@ typedef IOOptionBits DMACommandOps;
 
     virtual IOReturn setPurgeable( IOOptionBits newState,
                                     IOOptionBits * oldState );
+    
+
+/*! @function getPageCounts
+    @abstract Retrieve the number of resident and/or dirty pages encompassed by an IOMemoryDescriptor.
+    @discussion This method returns the number of resident and/or dirty pages encompassed by an IOMemoryDescriptor.
+    @param residentPageCount - If non-null, a pointer to a byte count that will return the number of resident pages encompassed by this IOMemoryDescriptor.
+    @param dirtyPageCount - If non-null, a pointer to a byte count that will return the number of dirty pages encompassed by this IOMemoryDescriptor.
+    @result An IOReturn code. */
+
+    IOReturn getPageCounts( IOByteCount * residentPageCount,
+                            IOByteCount * dirtyPageCount);
 
 /*! @function performOperation
     @abstract Perform an operation on the memory descriptor's memory.
@@ -257,11 +388,25 @@ typedef IOOptionBits DMACommandOps;
     IOMemoryDescriptorReserved * getKernelReserved( void );
     IOReturn dmaMap(
 	IOMapper                    * mapper,
+	IODMACommand                * command,
 	const IODMAMapSpecification * mapSpec,
 	uint64_t                      offset,
 	uint64_t                      length,
-	uint64_t                    * address,
-	ppnum_t                     * mapPages);
+	uint64_t                    * mapAddress,
+	uint64_t                    * mapLength);
+    IOReturn dmaUnmap(
+	IOMapper                    * mapper,
+	IODMACommand                * command,
+	uint64_t                      offset,
+	uint64_t                      mapAddress,
+	uint64_t                      mapLength);
+    void dmaMapRecord(
+	IOMapper                    * mapper,
+	IODMACommand                * command,
+	uint64_t                      mapLength);
+
+    void     setVMTags(vm_tag_t kernelTag, vm_tag_t userTag);
+    vm_tag_t getVMTag(vm_map_t map);
 #endif
 	
 private:
@@ -293,7 +438,7 @@ private:
     OSMetaClassDeclareReservedUnused(IOMemoryDescriptor, 15);
 
 protected:
-    virtual void free();
+    virtual void free() APPLE_KEXT_OVERRIDE;
 public:
     static void initialize( void );
 
@@ -342,7 +487,7 @@ public:
     @abstract Create an IOMemoryDescriptor to describe one virtual range of the specified map.
     @discussion This method creates and initializes an IOMemoryDescriptor for memory consisting of a single virtual memory range mapped into the specified map.  This memory descriptor needs to be prepared before it can be used to extract data from the memory described.
     @param address The virtual address of the first byte in the memory.
-    @param withLength The length of memory.
+    @param length The length of memory.
     @param options
         kIOMemoryDirectionMask (options:direction)	This nibble indicates the I/O direction to be associated with the descriptor, which may affect the operation of the prepare and complete methods on some architectures. 
     @param task The task the virtual ranges are mapped into. Note that unlike IOMemoryDescriptor::withAddress(), kernel_task memory must be explicitly prepared when passed to this api. The task argument may be NULL to specify memory by physical address.
@@ -477,6 +622,13 @@ public:
 
     virtual IOOptionBits getTag( void );
 
+/*! @function getFlags
+    @abstract Accessor to the retrieve the options the memory descriptor was created with.
+    @discussion Accessor to the retrieve the options the memory descriptor was created with, and flags with its state. These bits are defined by the kIOMemory* enum.
+    @result The flags bitfield. */
+
+    uint64_t getFlags(void);
+
 /*! @function readBytes
     @abstract Copy data from the memory descriptor's buffer to the specified buffer.
     @discussion This method copies data from the memory descriptor's memory at the given offset, to the caller's buffer.  The memory descriptor MUST have the kIODirectionOut direcction bit set  and be prepared.  kIODirectionOut means that this memory descriptor will be output to an external device, so readBytes is used to get memory into a local buffer for a PIO transfer to the device.
@@ -548,6 +700,7 @@ public:
 	kIOMapReadOnly to allow only read only accesses to the memory - writes will cause and access fault.<br>
 	kIOMapReference will only succeed if the mapping already exists, and the IOMemoryMap object is just an extra reference, ie. no new mapping will be created.<br>
 	kIOMapUnique allows a special kind of mapping to be created that may be used with the IOMemoryMap::redirect() API. These mappings will not be shared as is the default - there will always be a unique mapping created for the caller, not an existing mapping with an extra reference.<br>
+	kIOMapPrefault will try to prefault the pages corresponding to the mapping. This must not be done on the kernel task, and the memory must have been wired via prepare(). Otherwise, the function will fail.<br>
     @param offset Is a beginning offset into the IOMemoryDescriptor's memory where the mapping starts. Zero is the default to map all the memory.
     @param length Is the length of the mapping requested for a subset of the IOMemoryDescriptor. Zero is the default to map all the memory.
     @result A reference to an IOMemoryMap object representing the mapping, which can supply the virtual address of the mapping and other information. The mapping may be shared with multiple callers - multiple maps are avoided if a compatible one exists. The IOMemoryMap object returned should be released only when the caller has finished accessing the mapping, as freeing the object destroys the mapping. The IOMemoryMap instance also retains the IOMemoryDescriptor it maps while it exists. */
@@ -598,6 +751,11 @@ public:
     IOReturn redirect( task_t safeTask, bool redirect );
 
     IOReturn handleFault(
+        void *			_pager,
+	mach_vm_size_t		sourceOffset,
+	mach_vm_size_t		length);
+
+    IOReturn populateDevicePager(
         void *			pager,
 	vm_map_t		addressMap,
 	mach_vm_address_t	address,
@@ -656,11 +814,14 @@ public:
     ipc_port_t		 fRedirEntry;
     IOMemoryDescriptor * fOwner;
     uint8_t		 fUserClientUnmap;
+#if IOTRACKING
+    IOTrackingUser       fTracking;
+#endif
 #endif /* XNU_KERNEL_PRIVATE */
 
 protected:
-    virtual void taggedRelease(const void *tag = 0) const;
-    virtual void free();
+    virtual void taggedRelease(const void *tag = 0) const APPLE_KEXT_OVERRIDE;
+    virtual void free() APPLE_KEXT_OVERRIDE;
 
 public:
 /*! @function getVirtualAddress
@@ -754,22 +915,22 @@ public:
     @abstract Accessor to the virtual address of the first byte in the mapping.
     @discussion This method returns the virtual address of the first byte in the mapping.
     @result A virtual address. */
+    inline mach_vm_address_t 	getAddress() __attribute__((always_inline));
 /*! @function getSize
     @abstract Accessor to the length of the mapping.
     @discussion This method returns the length of the mapping.
     @result A byte count. */
-    inline mach_vm_address_t 	getAddress() __attribute__((always_inline));
     inline mach_vm_size_t 	getSize() __attribute__((always_inline));
 #else /* !__LP64__ */
 /*! @function getAddress
     @abstract Accessor to the virtual address of the first byte in the mapping.
     @discussion This method returns the virtual address of the first byte in the mapping.
     @result A virtual address. */
+    virtual mach_vm_address_t 	getAddress();
 /*! @function getSize
     @abstract Accessor to the length of the mapping.
     @discussion This method returns the length of the mapping.
     @result A byte count. */
-    virtual mach_vm_address_t 	getAddress();
     virtual mach_vm_size_t 	getSize();
 #endif /* !__LP64__ */
 
@@ -858,23 +1019,49 @@ protected:
     bool		_initialized;      /* has superclass been initialized? */
 
 public:
-    virtual void free();
+    virtual void free() APPLE_KEXT_OVERRIDE;
 
-    virtual IOReturn dmaCommandOperation(DMACommandOps op, void *vData, UInt dataSize) const;
+    virtual IOReturn dmaCommandOperation(DMACommandOps op, void *vData, UInt dataSize) const APPLE_KEXT_OVERRIDE;
 
-    virtual uint64_t getPreparationID( void );
+    virtual uint64_t getPreparationID( void ) APPLE_KEXT_OVERRIDE;
 
 #ifdef XNU_KERNEL_PRIVATE
     // Internal APIs may be made virtual at some time in the future.
     IOReturn wireVirtual(IODirection forDirection);
     IOReturn dmaMap(
 	IOMapper                    * mapper,
+	IODMACommand                * command,
 	const IODMAMapSpecification * mapSpec,
 	uint64_t                      offset,
 	uint64_t                      length,
-	uint64_t                    * address,
-	ppnum_t                     * mapPages);
+	uint64_t                    * mapAddress,
+	uint64_t                    * mapLength);
     bool initMemoryEntries(size_t size, IOMapper * mapper);
+
+    IOMemoryReference * memoryReferenceAlloc(uint32_t capacity, 
+    					     IOMemoryReference * realloc);
+    void memoryReferenceFree(IOMemoryReference * ref);
+    void memoryReferenceRelease(IOMemoryReference * ref);
+
+    IOReturn memoryReferenceCreate(
+                        IOOptionBits         options,
+                        IOMemoryReference ** reference);
+
+    IOReturn memoryReferenceMap(IOMemoryReference * ref,
+			 vm_map_t            map,
+			 mach_vm_size_t      inoffset,
+			 mach_vm_size_t      size,
+			 IOOptionBits        options,
+			 mach_vm_address_t * inaddr);
+
+    static IOReturn memoryReferenceSetPurgeable(
+				IOMemoryReference * ref,
+				IOOptionBits newState,
+				IOOptionBits * oldState);
+    static IOReturn memoryReferenceGetPageCounts(
+			       IOMemoryReference * ref,
+                               IOByteCount       * residentPageCount,
+                               IOByteCount       * dirtyPageCount);
 #endif
 
 private:
@@ -884,8 +1071,6 @@ private:
     virtual void mapIntoKernel(unsigned rangeIndex);
     virtual void unmapFromKernel();
 #endif /* !__LP64__ */
-
-    void *createNamedEntry();
 
     // Internal
     OSData *	    _memoryEntries;
@@ -907,76 +1092,76 @@ public:
                                  UInt32		offset,
                                  task_t		task,
                                  IOOptionBits	options,
-                                 IOMapper *	mapper = kIOMapperSystem);
+                                 IOMapper *	mapper = kIOMapperSystem) APPLE_KEXT_OVERRIDE;
 
 #ifndef __LP64__
     // Secondary initialisers
     virtual bool initWithAddress(void *		address,
                                  IOByteCount	withLength,
-                                 IODirection	withDirection) APPLE_KEXT_DEPRECATED;
+                                 IODirection	withDirection) APPLE_KEXT_OVERRIDE APPLE_KEXT_DEPRECATED;
 
     virtual bool initWithAddress(IOVirtualAddress address,
                                  IOByteCount    withLength,
                                  IODirection	withDirection,
-                                 task_t		withTask) APPLE_KEXT_DEPRECATED;
+                                 task_t		withTask) APPLE_KEXT_OVERRIDE APPLE_KEXT_DEPRECATED;
 
     virtual bool initWithPhysicalAddress(
 				 IOPhysicalAddress	address,
 				 IOByteCount		withLength,
-				 IODirection      	withDirection ) APPLE_KEXT_DEPRECATED;
+				 IODirection      	withDirection ) APPLE_KEXT_OVERRIDE APPLE_KEXT_DEPRECATED;
 
     virtual bool initWithRanges(        IOVirtualRange * ranges,
                                         UInt32           withCount,
                                         IODirection      withDirection,
                                         task_t           withTask,
-                                        bool             asReference = false) APPLE_KEXT_DEPRECATED;
+                                        bool             asReference = false) APPLE_KEXT_OVERRIDE APPLE_KEXT_DEPRECATED;
 
     virtual bool initWithPhysicalRanges(IOPhysicalRange * ranges,
                                         UInt32           withCount,
                                         IODirection      withDirection,
-                                        bool             asReference = false) APPLE_KEXT_DEPRECATED;
+                                        bool             asReference = false) APPLE_KEXT_OVERRIDE APPLE_KEXT_DEPRECATED;
 
     virtual addr64_t getPhysicalSegment64( IOByteCount offset,
-                                            IOByteCount * length ) APPLE_KEXT_DEPRECATED;
+                                            IOByteCount * length ) APPLE_KEXT_OVERRIDE APPLE_KEXT_DEPRECATED;
 
     virtual IOPhysicalAddress getPhysicalSegment(IOByteCount offset,
-						 IOByteCount * length);
+						 IOByteCount * length) APPLE_KEXT_OVERRIDE;
 
     virtual IOPhysicalAddress getSourceSegment(IOByteCount offset,
-                                               IOByteCount * length) APPLE_KEXT_DEPRECATED;
+                                               IOByteCount * length) APPLE_KEXT_OVERRIDE APPLE_KEXT_DEPRECATED;
 
     virtual void * getVirtualSegment(IOByteCount offset,
-					IOByteCount * length) APPLE_KEXT_DEPRECATED;
+					IOByteCount * length) APPLE_KEXT_OVERRIDE APPLE_KEXT_DEPRECATED;
 #endif /* !__LP64__ */
 
     virtual IOReturn setPurgeable( IOOptionBits newState,
-                                    IOOptionBits * oldState );
-
+                                    IOOptionBits * oldState ) APPLE_KEXT_OVERRIDE;
+    
     virtual addr64_t getPhysicalSegment( IOByteCount   offset,
                                          IOByteCount * length,
 #ifdef __LP64__
-                                         IOOptionBits  options = 0 );
+                                         IOOptionBits  options = 0 ) APPLE_KEXT_OVERRIDE;
 #else /* !__LP64__ */
-                                         IOOptionBits  options );
+                                         IOOptionBits  options ) APPLE_KEXT_OVERRIDE;
 #endif /* !__LP64__ */
 
-    virtual IOReturn prepare(IODirection forDirection = kIODirectionNone);
+    virtual IOReturn prepare(IODirection forDirection = kIODirectionNone) APPLE_KEXT_OVERRIDE;
 
-    virtual IOReturn complete(IODirection forDirection = kIODirectionNone);
+    virtual IOReturn complete(IODirection forDirection = kIODirectionNone) APPLE_KEXT_OVERRIDE;
 
     virtual IOReturn doMap(
 	vm_map_t		addressMap,
 	IOVirtualAddress *	atAddress,
 	IOOptionBits		options,
 	IOByteCount		sourceOffset = 0,
-	IOByteCount		length = 0 );
+	IOByteCount		length = 0 ) APPLE_KEXT_OVERRIDE;
 
     virtual IOReturn doUnmap(
 	vm_map_t		addressMap,
 	IOVirtualAddress	logical,
-	IOByteCount		length );
+	IOByteCount		length ) APPLE_KEXT_OVERRIDE;
 
-    virtual bool serialize(OSSerialize *s) const;
+    virtual bool serialize(OSSerialize *s) const APPLE_KEXT_OVERRIDE;
 
     // Factory method for cloning a persistent IOMD, see IOMemoryDescriptor
     static IOMemoryDescriptor *

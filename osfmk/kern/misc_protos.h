@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2011 Apple Computer, Inc. All rights reserved.
+ * Copyright (c) 2000-2016 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -69,6 +69,14 @@ extern int ffsbit(
 	int		*bitmap);
 extern int ffs(
 	unsigned int	mask);
+extern int ffsll(
+	unsigned long long mask);
+
+/* Find the last set bit in a bit array */
+extern int fls(
+	unsigned int	mask);
+extern int flsll(
+	unsigned long long mask);
 
 /*
  * Test if indicated bit is set in bit string.
@@ -81,6 +89,18 @@ extern int testbit(
 extern int copyin(
 	const user_addr_t   user_addr,
 	char                *kernel_addr,
+	vm_size_t           nbytes);
+
+/* Move an aligned 32 or 64-bit word from user space to kernel space
+ * using a single read instruction
+ *
+ * when reading a 32-bit word, the value is 0-extended into the kernel space
+ * 64-bit buffer passed as `kernel_addr`
+ * (think `*kernel_addr = *(uint32_t *)user_addr`)
+ */
+extern int copyin_word(
+	const user_addr_t   user_addr,
+	uint64_t            *kernel_addr,
 	vm_size_t           nbytes);
 
 /* Move a NUL-terminated string from a user space to kernel space */
@@ -121,6 +141,7 @@ extern int sscanf(const char *input, const char *fmt, ...) __scanflike(2,3);
 extern integer_t sprintf(char *buf, const char *fmt, ...) __deprecated;
 
 extern int printf(const char *format, ...) __printflike(1,2);
+extern int vprintf(const char *format, va_list ap);
 
 #if KERNEL_PRIVATE
 int     _consume_printf_args(int, ...);
@@ -133,6 +154,8 @@ int     _consume_printf_args(int, ...);
 #define printf(x, ...)  do {} while (0)
 #endif
 #endif
+
+extern int paniclog_append_noflush(const char *format, ...) __printflike(1,2);
 
 extern int kdb_printf(const char *format, ...) __printflike(1,2);
 
@@ -148,23 +171,34 @@ extern void log(int level, char *fmt, ...);
 
 void 
 _doprnt(
-	register const char	*fmt,
+	const char	*fmt,
 	va_list			*argp,
 	void			(*putc)(char),
 	int			radix);
+
+void
+_doprnt_log(
+	const char	*fmt,
+	va_list			*argp,
+	void			(*putc)(char),
+	int			radix);
+
 int
 __doprnt(
-	register const char	*fmt,
+	const char	*fmt,
 	va_list			argp,
 	void			(*putc)(int, void *),
 	void                    *arg,
-	int			radix);
+	int			radix,
+	int			is_log);
 
 extern void safe_gets(
 	char	*str,
 	int	maxlen);
 
 extern void cnputcusr(char);
+
+extern void cnputsusr(char *, int);
 
 extern void conslog_putc(char);
 
@@ -180,6 +214,12 @@ extern void cnputc(char);
 
 extern void cnputc_unbuffered(char);
 
+extern void console_write(char *, int);
+
+extern void console_suspend(void);
+
+extern void console_resume(void);
+
 extern int cngetc(void);
 
 extern int cnmaygetc(void);
@@ -193,19 +233,6 @@ extern int _longjmp(
 
 extern void bootstrap_create(void);
 
-extern void Debugger(
-		const char	* message);
-
-extern void DebuggerWithContext(
-		unsigned int	reason,
-		void		*ctx,
-		const char	*message);
-
-extern void delay(
-		int		n);
-
-
-
 #if	DIPC
 extern boolean_t	no_bootstrap_task(void);
 extern ipc_port_t	get_root_master_device_port(void);
@@ -215,6 +242,11 @@ extern kern_return_t	kernel_set_special_port(
 		host_priv_t	host_priv,
 		int 		which,
 		ipc_port_t	port);
+
+extern kern_return_t	kernel_get_special_port(
+		host_priv_t	host_priv,
+		int 		which,
+		ipc_port_t	*portp);
 
 user_addr_t get_useraddr(void);
 

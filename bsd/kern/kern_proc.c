@@ -99,11 +99,26 @@
 #include <sys/ubc.h>
 #include <kern/kalloc.h>
 #include <kern/task.h>
+#include <kern/coalition.h>
+#include <sys/coalition.h>
 #include <kern/assert.h>
 #include <vm/vm_protos.h>
 #include <vm/vm_map.h>		/* vm_map_switch_protect() */
+#include <vm/vm_pageout.h>
 #include <mach/task.h>
 #include <mach/message.h>
+#include <sys/priv.h>
+#include <sys/proc_info.h>
+#include <sys/bsdtask_info.h>
+#include <sys/persona.h>
+
+#if CONFIG_CSR
+#include <sys/csr.h>
+#endif
+
+#if CONFIG_MEMORYSTATUS
+#include <sys/kern_memorystatus.h>
+#endif
 
 #if CONFIG_MACF
 #include <security/mac_framework.h>
@@ -137,38 +152,37 @@ struct proclist allproc;
 struct proclist zombproc;
 extern struct tty cons;
 
-#if CONFIG_LCTX
-/*
- * Login Context
- */
-static pid_t	lastlcid = 1;
-static int	alllctx_cnt;
+extern int cs_debug;
 
-#define	LCID_MAX	8192	/* Does this really need to be large? */
-static int	maxlcid = LCID_MAX;
-
-LIST_HEAD(lctxlist, lctx);
-static struct lctxlist alllctx;
-
-lck_mtx_t alllctx_lock;
-lck_grp_t * lctx_lck_grp;
-lck_grp_attr_t * lctx_lck_grp_attr;
-lck_attr_t * lctx_lck_attr;
-
-static	void	lctxinit(void);
+#if DEVELOPMENT || DEBUG
+extern int cs_enforcement_enable;
 #endif
-
-int cs_debug;	/* declared further down in this file */
 
 #if DEBUG
 #define __PROC_INTERNAL_DEBUG 1
 #endif
+#if CONFIG_COREDUMP
 /* Name to give to core files */
-__private_extern__ char corefilename[MAXPATHLEN+1] = {"/cores/core.%P"};
+#if CONFIG_EMBEDDED
+__XNU_PRIVATE_EXTERN char corefilename[MAXPATHLEN+1] = {"/private/var/cores/%N.core"};
+#else
+__XNU_PRIVATE_EXTERN char corefilename[MAXPATHLEN+1] = {"/cores/core.%P"};
+#endif
+#endif
 
-static void orphanpg(struct pgrp *pg);
-void 	proc_name_kdp(task_t t, char * buf, int size);
-char	*proc_name_address(void *p);
+#if PROC_REF_DEBUG
+#include <kern/backtrace.h>
+#endif
+
+static void orphanpg(struct pgrp * pg);
+void proc_name_kdp(task_t t, char * buf, int size);
+void * proc_get_uthread_uu_threadlist(void * uthread_v);
+int proc_threadname_kdp(void * uth, char * buf, size_t size);
+void proc_starttime_kdp(void * p, uint64_t * tv_sec, uint64_t * tv_usec, uint64_t * abstime);
+char * proc_name_address(void * p);
+
+/* TODO: make a header that's exported and usable in osfmk */
+char* proc_best_name(proc_t p);
 
 static void  pgrp_add(struct pgrp * pgrp, proc_t parent, proc_t child);
 static void pgrp_remove(proc_t p);
@@ -176,6 +190,7 @@ static void pgrp_replace(proc_t p, struct pgrp *pgrp);
 static void pgdelete_dropref(struct pgrp *pgrp);
 extern void pg_rele_dropref(struct pgrp * pgrp);
 static int csops_internal(pid_t pid, int ops, user_addr_t uaddr, user_size_t usersize, user_addr_t uaddittoken);
+static boolean_t proc_parent_is_currentproc(proc_t p);
 
 struct fixjob_iterargs {
 	struct pgrp * pg;
@@ -184,6 +199,20 @@ struct fixjob_iterargs {
 };
 
 int fixjob_callback(proc_t, void *);
+
+uint64_t get_current_unique_pid(void);
+
+
+uint64_t
+get_current_unique_pid(void)
+{
+	proc_t	p = current_proc();
+
+	if (p)
+		return p->p_uniqueid;
+	else
+		return 0;
+}
 
 /*
  * Initialize global process hashing structures.
@@ -197,8 +226,8 @@ procinit(void)
 	pgrphashtbl = hashinit(maxproc / 4, M_PROC, &pgrphash);
 	sesshashtbl = hashinit(maxproc / 4, M_PROC, &sesshash);
 	uihashtbl = hashinit(maxproc / 16, M_PROC, &uihash);
-#if CONFIG_LCTX
-	lctxinit();
+#if CONFIG_PERSONAS
+	personas_bootstrap();
 #endif
 }
 
@@ -372,6 +401,76 @@ proc_findthread(thread_t thread)
 	return(p);
 }
 
+void
+uthread_reset_proc_refcount(void *uthread) {
+	uthread_t uth;
+
+	uth = (uthread_t) uthread;
+	uth->uu_proc_refcount = 0;
+
+#if PROC_REF_DEBUG
+	if (proc_ref_tracking_disabled) {
+		return;
+	}
+
+	uth->uu_pindex = 0;
+#endif
+}
+
+#if PROC_REF_DEBUG
+int
+uthread_get_proc_refcount(void *uthread) {
+	uthread_t uth;
+
+	if (proc_ref_tracking_disabled) {
+		return 0;
+	}
+
+	uth = (uthread_t) uthread;
+
+	return uth->uu_proc_refcount;
+}
+#endif
+
+static void
+record_procref(proc_t p __unused, int count) {
+	uthread_t uth;
+
+	uth = current_uthread();
+	uth->uu_proc_refcount += count;
+
+#if PROC_REF_DEBUG
+	if (proc_ref_tracking_disabled) {
+		return;
+	}
+
+	if (count == 1) {
+		if (uth->uu_pindex < NUM_PROC_REFS_TO_TRACK) {
+			backtrace((uintptr_t *) &uth->uu_proc_pcs[uth->uu_pindex], PROC_REF_STACK_DEPTH);
+
+			uth->uu_proc_ps[uth->uu_pindex] = p;
+			uth->uu_pindex++;
+		}
+	}
+#endif
+}
+
+static boolean_t
+uthread_needs_to_wait_in_proc_refwait(void) {
+	uthread_t uth = current_uthread();
+
+	/*
+	 * Allow threads holding no proc refs to wait
+	 * in proc_refwait, allowing threads holding
+	 * proc refs to wait in proc_refwait causes
+	 * deadlocks and makes proc_find non-reentrant.
+	 */
+	if (uth->uu_proc_refcount == 0)
+		return TRUE;
+
+	return FALSE;
+}
+
 int 
 proc_rele(proc_t p)
 {
@@ -401,13 +500,41 @@ proc_t
 proc_ref_locked(proc_t p)
 {
 	proc_t p1 = p;
+	int pid = proc_pid(p);
 	
-	/* if process still in creation return failure */
-	if ((p == PROC_NULL) || ((p->p_listflag & P_LIST_INCREATE) != 0))
+retry:
+	/*
+	 * if process still in creation or proc got recycled
+	 * during msleep then return failure.
+	 */
+	if ((p == PROC_NULL) || (p1 != p) || ((p->p_listflag & P_LIST_INCREATE) != 0))
 			return (PROC_NULL);
-	/* do not return process marked for termination */
-	if ((p->p_stat != SZOMB) && ((p->p_listflag & P_LIST_EXITED) == 0) && ((p->p_listflag & (P_LIST_DRAINWAIT | P_LIST_DRAIN | P_LIST_DEAD)) == 0))
+
+	/*
+	 * Do not return process marked for termination
+	 * or proc_refdrain called without ref wait.
+	 * Wait for proc_refdrain_with_refwait to complete if
+	 * process in refdrain and refwait flag is set, unless
+	 * the current thread is holding to a proc_ref
+	 * for any proc.
+	 */
+	if ((p->p_stat != SZOMB) &&
+	    ((p->p_listflag & P_LIST_EXITED) == 0) &&
+	    ((p->p_listflag & P_LIST_DEAD) == 0) &&
+	    (((p->p_listflag & (P_LIST_DRAIN | P_LIST_DRAINWAIT)) == 0) ||
+	     ((p->p_listflag & P_LIST_REFWAIT) != 0))) {
+		if ((p->p_listflag & P_LIST_REFWAIT) != 0 && uthread_needs_to_wait_in_proc_refwait()) {
+			msleep(&p->p_listflag, proc_list_mlock, 0, "proc_refwait", 0) ;
+			/*
+			 * the proc might have been recycled since we dropped
+			 * the proc list lock, get the proc again.
+			 */
+			p = pfind_locked(pid);
+			goto retry;
+		}
 		p->p_refcount++;
+		record_procref(p, 1);
+	}
 	else 
 		p1 = PROC_NULL;
 
@@ -420,6 +547,7 @@ proc_rele_locked(proc_t p)
 
 	if (p->p_refcount > 0) {
 		p->p_refcount--;
+		record_procref(p, -1);
 		if ((p->p_refcount == 0) && ((p->p_listflag & P_LIST_DRAINWAIT) == P_LIST_DRAINWAIT)) {
 			p->p_listflag &= ~P_LIST_DRAINWAIT;
 			wakeup(&p->p_refcount);
@@ -432,29 +560,32 @@ proc_rele_locked(proc_t p)
 proc_t
 proc_find_zombref(int pid)
 {
-	proc_t p1 = PROC_NULL;
-	proc_t p = PROC_NULL;
+	proc_t p;
 
 	proc_list_lock();
 
+ again:
 	p = pfind_locked(pid);
 
-	/* if process still in creation return NULL */
-	if ((p == PROC_NULL) || ((p->p_listflag & P_LIST_INCREATE) != 0)) {
+	/* should we bail? */
+	if ((p == PROC_NULL)					/* not found */
+	    || ((p->p_listflag & P_LIST_INCREATE) != 0)		/* not created yet */
+	    || ((p->p_listflag & P_LIST_EXITED) == 0)) {	/* not started exit */
+
 		proc_list_unlock();
-		return (p1);
+		return (PROC_NULL);
 	}
 
-	/* if process has not started exit or  is being reaped, return NULL */
-	if (((p->p_listflag & P_LIST_EXITED) != 0) && ((p->p_listflag & P_LIST_WAITING) == 0)) {
-		p->p_listflag |=  P_LIST_WAITING;
-		p1 = p;
-	} else 
-		p1 = PROC_NULL;
+	/* If someone else is controlling the (unreaped) zombie - wait */
+	if ((p->p_listflag & P_LIST_WAITING) != 0) {
+		(void)msleep(&p->p_stat, proc_list_mlock, PWAIT, "waitcoll", 0);
+		goto again;
+	}
+	p->p_listflag |=  P_LIST_WAITING;
 
 	proc_list_unlock();
 
-	return(p1);
+	return(p);
 }
 
 void
@@ -472,20 +603,59 @@ proc_drop_zombref(proc_t p)
 void
 proc_refdrain(proc_t p)
 {
+	proc_refdrain_with_refwait(p, FALSE);
+}
 
+proc_t
+proc_refdrain_with_refwait(proc_t p, boolean_t get_ref_and_allow_wait)
+{
+	boolean_t initexec = FALSE;
 	proc_list_lock();
 
 	p->p_listflag |= P_LIST_DRAIN;
-	while (p->p_refcount) {
+	if (get_ref_and_allow_wait) {
+		/*
+		 * All the calls to proc_ref_locked will wait
+		 * for the flag to get cleared before returning a ref,
+		 * unless the current thread is holding to a proc ref
+		 * for any proc.
+		 */
+		p->p_listflag |= P_LIST_REFWAIT;
+		if (p == initproc) {
+			initexec = TRUE;
+		}
+	}
+
+	/* Do not wait in ref drain for launchd exec */
+	while (p->p_refcount && !initexec) {
 		p->p_listflag |= P_LIST_DRAINWAIT;
 		msleep(&p->p_refcount, proc_list_mlock, 0, "proc_refdrain", 0) ;
 	}
+
 	p->p_listflag &= ~P_LIST_DRAIN;
-	p->p_listflag |= P_LIST_DEAD;
+	if (!get_ref_and_allow_wait) {
+		p->p_listflag |= P_LIST_DEAD;
+	} else {
+		/* Return a ref to the caller */
+		p->p_refcount++;
+		record_procref(p, 1);
+	}
 
 	proc_list_unlock();
 
+	if (get_ref_and_allow_wait) {
+		return (p);
+	}
+	return NULL;
+}
 
+void
+proc_refwake(proc_t p)
+{
+	proc_list_lock();
+	p->p_listflag &= ~P_LIST_REFWAIT;
+	wakeup(&p->p_listflag);
+	proc_list_unlock();
 }
 
 proc_t 
@@ -593,28 +763,74 @@ proc_checkdeadrefs(__unused proc_t p)
 int
 proc_pid(proc_t p)
 {
-	return(p->p_pid);
+	if (p != NULL)
+		return (p->p_pid);
+	return -1;
 }
 
-int 
+int
 proc_ppid(proc_t p)
 {
-		return(p->p_ppid);
+	if (p != NULL)
+		return (p->p_ppid);
+	return -1;
 }
 
-int 
+int
 proc_selfpid(void)
 {
-	proc_t p = current_proc();
-	return(p->p_pid);
+	return (current_proc()->p_pid);
+}
+
+int
+proc_selfppid(void)
+{
+	return (current_proc()->p_ppid);
+}
+
+int
+proc_selfcsflags(void)
+{
+	return (current_proc()->p_csflags);
+}
+
+#if CONFIG_DTRACE
+static proc_t
+dtrace_current_proc_vforking(void)
+{
+	thread_t th = current_thread();
+	struct uthread *ut = get_bsdthread_info(th);
+
+	if (ut &&
+	    ((ut->uu_flag & (UT_VFORK|UT_VFORKING)) == (UT_VFORK|UT_VFORKING))) {
+		/*
+		 * Handle the narrow window where we're in the vfork syscall,
+		 * but we're not quite ready to claim (in particular, to DTrace)
+		 * that we're running as the child.
+		 */
+		return (get_bsdtask_info(get_threadtask(th)));
+	}
+	return (current_proc());
+}
+
+int
+dtrace_proc_selfpid(void)
+{
+	return (dtrace_current_proc_vforking()->p_pid);
 }
 
 int 
-proc_selfppid(void)
+dtrace_proc_selfppid(void)
 {
-	proc_t p = current_proc();
-	return(p->p_ppid);
+	return (dtrace_current_proc_vforking()->p_ppid);
 }
+
+uid_t
+dtrace_proc_selfruid(void)
+{
+	return (dtrace_current_proc_vforking()->p_ruid);
+}
+#endif /* CONFIG_DTRACE */
 
 proc_t 
 proc_parent(proc_t p)
@@ -635,6 +851,18 @@ loop:
 	return(parent);
 }
 
+static boolean_t
+proc_parent_is_currentproc(proc_t p)
+{
+	boolean_t ret = FALSE;
+	
+	proc_list_lock();
+	if (p->p_pptr == current_proc())
+		ret = TRUE;
+
+	proc_list_unlock();
+	return ret;
+}
 
 void
 proc_name(int pid, char * buf, int size)
@@ -651,15 +879,70 @@ void
 proc_name_kdp(task_t t, char * buf, int size)
 {
 	proc_t p = get_bsdtask_info(t);
+	if (p == PROC_NULL)
+		return;
 
-	if (p != PROC_NULL)
-		strlcpy(buf, &p->p_comm[0], size);
+	if ((size_t)size > sizeof(p->p_comm))
+		strlcpy(buf, &p->p_name[0], MIN((int)sizeof(p->p_name), size));
+	else
+		strlcpy(buf, &p->p_comm[0], MIN((int)sizeof(p->p_comm), size));
+}
+
+int
+proc_threadname_kdp(void * uth, char * buf, size_t size)
+{
+	if (size < MAXTHREADNAMESIZE) {
+		/* this is really just a protective measure for the future in
+		 * case the thread name size in stackshot gets out of sync with
+		 * the BSD max thread name size. Note that bsd_getthreadname
+		 * doesn't take input buffer size into account. */
+		return -1;
+	}
+
+	if (uth != NULL) {
+		bsd_getthreadname(uth, buf);
+	}
+	return 0;
+}
+
+/* note that this function is generally going to be called from stackshot,
+ * and the arguments will be coming from a struct which is declared packed
+ * thus the input arguments will in general be unaligned. We have to handle
+ * that here. */
+void
+proc_starttime_kdp(void *p, uint64_t *tv_sec, uint64_t *tv_usec, uint64_t *abstime)
+{
+	proc_t pp = (proc_t)p;
+	struct uint64p {
+		uint64_t val;
+	} __attribute__((packed));
+
+	if (pp != PROC_NULL) {
+		if (tv_sec != NULL)
+			((struct uint64p *)tv_sec)->val = pp->p_start.tv_sec;
+		if (tv_usec != NULL)
+			((struct uint64p *)tv_usec)->val = pp->p_start.tv_usec;
+		if (abstime != NULL) {
+			if (pp->p_stats != NULL)
+				*abstime = pp->p_stats->ps_start;
+			else
+				*abstime = 0;
+		}
+	}
 }
 
 char *
 proc_name_address(void *p)
 {
 	return &((proc_t)p)->p_comm[0];
+}
+
+char *
+proc_best_name(proc_t p)
+{
+    if (p->p_name[0] != 0)
+        return (&p->p_name[0]);
+    return (&p->p_comm[0]);
 }
 
 void
@@ -730,17 +1013,6 @@ proc_forcequota(proc_t p)
 }
 
 int
-proc_tbe(proc_t p)
-{
-	int retval = 0;
-
-	if (p)
-		retval = p->p_flag & P_TBE;
-	return(retval? 1: 0);
-
-}
-
-int
 proc_suser(proc_t p)
 {
 	kauth_cred_t my_cred;
@@ -804,6 +1076,24 @@ proc_pidversion(proc_t p)
 	return(p->p_idversion);
 }
 
+uint32_t
+proc_persona_id(proc_t p)
+{
+	return (uint32_t)persona_id_from_proc(p);
+}
+
+uint32_t
+proc_getuid(proc_t p)
+{
+	return(p->p_uid);
+}
+
+uint32_t
+proc_getgid(proc_t p)
+{
+	return(p->p_gid);
+}
+
 uint64_t
 proc_uniqueid(proc_t p)
 {
@@ -811,10 +1101,32 @@ proc_uniqueid(proc_t p)
 }
 
 uint64_t
-proc_selfuniqueid(void)
+proc_puniqueid(proc_t p)
 {
-	proc_t p = current_proc();
-	return(p->p_uniqueid);
+	return(p->p_puniqueid);
+}
+
+void
+proc_coalitionids(__unused proc_t p, __unused uint64_t ids[COALITION_NUM_TYPES])
+{
+#if CONFIG_COALITIONS
+	task_coalition_ids(p->task, ids);
+#else
+	memset(ids, 0, sizeof(uint64_t [COALITION_NUM_TYPES]));
+#endif
+	return;
+}
+
+uint64_t
+proc_was_throttled(proc_t p)
+{
+	return (p->was_throttled);
+}
+
+uint64_t
+proc_did_throttle(proc_t p)
+{
+	return (p->did_throttle);
 }
 
 int
@@ -831,6 +1143,21 @@ proc_getexecutableuuid(proc_t p, unsigned char *uuidbuf, unsigned long size)
 	}
 }
 
+/* Return vnode for executable with an iocount. Must be released with vnode_put() */
+vnode_t
+proc_getexecutablevnode(proc_t p)
+{
+	vnode_t tvp  = p->p_textvp;
+
+	if ( tvp != NULLVP) {
+		if (vnode_getwithref(tvp) == 0) {
+			return tvp;
+		}
+	}       
+
+	return NULLVP;
+}
+
 
 void
 bsd_set_dependency_capable(task_t task)
@@ -843,6 +1170,7 @@ bsd_set_dependency_capable(task_t task)
 }
 
 
+#ifndef	__arm__
 int
 IS_64BIT_PROCESS(proc_t p)
 {
@@ -851,6 +1179,7 @@ IS_64BIT_PROCESS(proc_t p)
 	else
 		return(0);
 }
+#endif
 
 /*
  * Locate a process by number
@@ -991,12 +1320,19 @@ pinsertchild(proc_t parent, proc_t child)
 	TAILQ_INIT(&child->p_evlist);
 	child->p_pptr = parent;
 	child->p_ppid = parent->p_pid;
+	child->p_puniqueid = parent->p_uniqueid;
+	child->p_xhighbits = 0;
 
 	pg = proc_pgrp(parent);
 	pgrp_add(pg, parent, child);
 	pg_rele(pg);
 
 	proc_list_lock();
+	
+#if CONFIG_MEMORYSTATUS
+	memorystatus_add(child, TRUE);
+#endif
+	
 	parent->p_childrencnt++;
 	LIST_INSERT_HEAD(&parent->p_children, child, p_sibling);
 
@@ -1005,7 +1341,6 @@ pinsertchild(proc_t parent, proc_t child)
 	child->p_listflag &= ~P_LIST_INCREATE;
 
 	proc_list_unlock();
-
 }
 
 /*
@@ -1294,12 +1629,24 @@ fixjobc(proc_t p, struct pgrp *pgrp, int entering)
 	struct session *mysession = pgrp->pg_session;
 	proc_t parent;
 	struct fixjob_iterargs fjarg;
+	boolean_t proc_parent_self;
 
-	parent = proc_parent(p);
+	/*
+	 * Check if p's parent is current proc, if yes then no need to take 
+	 * a ref; calling proc_parent with current proc as parent may 
+	 * deadlock if current proc is exiting.
+	 */
+	proc_parent_self = proc_parent_is_currentproc(p);
+	if (proc_parent_self)
+		parent = current_proc();
+	else 
+		parent = proc_parent(p);
+
 	if (parent != PROC_NULL) {
 		hispgrp = proc_pgrp(parent);	
 		hissess = proc_session(parent);
-		proc_rele(parent);
+		if (!proc_parent_self)
+			proc_rele(parent);
 	}
 
 
@@ -1336,85 +1683,102 @@ fixjobc(proc_t p, struct pgrp *pgrp, int entering)
 	proc_childrenwalk(p, fixjob_callback, &fjarg);
 }
 
-/* 
- * A process group has become orphaned;
- * if there are any stopped processes in the group,
- * hang-up all process in that group.
+/*
+ * A process group has become orphaned; if there are any stopped processes in
+ * the group, hang-up all process in that group.
  */
 static void
-orphanpg(struct pgrp * pgrp)
+orphanpg(struct pgrp *pgrp)
 {
+	pid_t *pid_list;
 	proc_t p;
-	pid_t * pid_list;
-	int count, pidcount, i, alloc_count;
+	vm_size_t pid_list_size = 0;
+	vm_size_t pid_list_size_needed = 0;
+	int pid_count = 0;
+	int pid_count_available = 0;
 
-	if (pgrp == PGRP_NULL)
-		return;
-	count = 0;
-	pgrp_lock(pgrp);
-	for (p = pgrp->pg_members.lh_first; p != 0; p = p->p_pglist.le_next) {
-		if (p->p_stat == SSTOP) {
-			for (p = pgrp->pg_members.lh_first; p != 0;
-				p = p->p_pglist.le_next) 
-				count++;
-			break;	/* ??? stops after finding one.. */
-		}
-	}
-	pgrp_unlock(pgrp);
+	assert(pgrp != NULL);
 
-	count += 20;
-	if (count > hard_maxproc)
-		count = hard_maxproc;
-	alloc_count = count * sizeof(pid_t);
-	pid_list = (pid_t *)kalloc(alloc_count);
-	bzero(pid_list, alloc_count);
-	
-	pidcount = 0;
-	pgrp_lock(pgrp);
-	for (p = pgrp->pg_members.lh_first; p != 0;
-	     p = p->p_pglist.le_next) {
-		if (p->p_stat == SSTOP) {
-			for (p = pgrp->pg_members.lh_first; p != 0;
-				p = p->p_pglist.le_next) {
-				pid_list[pidcount] = p->p_pid;
-				pidcount++;
-				if (pidcount >= count)
-					break;
+	/* allocate outside of the pgrp_lock */
+	for (;;) {
+		pgrp_lock(pgrp);
+
+		boolean_t should_iterate = FALSE;
+		pid_count_available = 0;
+
+		PGMEMBERS_FOREACH(pgrp, p) {
+			pid_count_available++;
+
+			if (p->p_stat == SSTOP) {
+				should_iterate = TRUE;
 			}
-			break; /* ??? stops after finding one.. */
+		}
+
+		if (pid_count_available == 0 || !should_iterate) {
+			pgrp_unlock(pgrp);
+			return;
+		}
+
+		pid_list_size_needed = pid_count_available * sizeof(pid_t);
+		if (pid_list_size >= pid_list_size_needed) {
+			break;
+		}
+		pgrp_unlock(pgrp);
+
+		if (pid_list_size != 0) {
+			kfree(pid_list, pid_list_size);
+		}
+		pid_list = kalloc(pid_list_size_needed);
+		if (!pid_list) {
+			return;
+		}
+		pid_list_size = pid_list_size_needed;
+	}
+
+	/* no orphaned processes */
+	if (pid_list_size == 0) {
+		pgrp_unlock(pgrp);
+		return;
+	}
+
+	PGMEMBERS_FOREACH(pgrp, p) {
+		pid_list[pid_count++] = proc_pid(p);
+		if (pid_count >= pid_count_available) {
+			break;
 		}
 	}
 	pgrp_unlock(pgrp);
-		
-	if (pidcount == 0)
+
+	if (pid_count == 0) {
 		goto out;
-
-
-	for (i = 0; i< pidcount; i++) {
-		/* No handling or proc0 */
-		if (pid_list[i] == 0)
-			continue;
-		p = proc_find(pid_list[i]);
-		if (p) {
-			proc_transwait(p, 0);
-			pt_setrunnable(p);
-			psignal(p, SIGHUP);
-			psignal(p, SIGCONT);
-			proc_rele(p);
-		}
 	}
+
+	for (int i = 0; i < pid_count; i++) {
+		/* do not handle kernproc */
+		if (pid_list[i] == 0) {
+			continue;
+		}
+		p = proc_find(pid_list[i]);
+		if (!p) {
+			continue;
+		}
+
+		proc_transwait(p, 0);
+		pt_setrunnable(p);
+		psignal(p, SIGHUP);
+		psignal(p, SIGCONT);
+		proc_rele(p);
+	}
+
 out:
-	kfree(pid_list, alloc_count);
+	kfree(pid_list, pid_list_size);
 	return;
 }
 
-
-
-/* XXX should be __private_extern__ */
 int
-proc_is_classic(proc_t p)
+proc_is_classic(proc_t p __unused)
 {
-    return (p->p_flag & P_TRANSLATED) ? 1 : 0;
+    return (0);
 }
 
 /* XXX Why does this function exist?  Need to kill it off... */
@@ -1424,6 +1788,13 @@ current_proc_EXTERNAL(void)
 	return (current_proc());
 }
 
+int
+proc_is_forcing_hfs_case_sensitivity(proc_t p)
+{
+	return (p->p_vfs_iopolicy & P_VFS_IOPOLICY_FORCE_HFS_CASE_SENSITIVITY) ? 1 : 0;
+}
+
+#if CONFIG_COREDUMP
 /*
  * proc_core_name(name, uid, pid)
  * Expand the name described in corefilename, using name, uid, and pid.
@@ -1466,6 +1837,8 @@ proc_core_name(const char *name, uid_t uid, pid_t pid, char *cf_name,
 				snprintf(id_buf, sizeof(id_buf), "%u", uid);
 				appendstr = id_buf;
 				break;
+			case '\0': /* format string ended in % symbol */
+				goto endofstring;
 			default:
 				appendstr = "";
 			  	log(LOG_ERR,
@@ -1489,222 +1862,12 @@ toolong:
 	log(LOG_ERR, "pid %ld (%s), uid (%u): corename is too long\n",
 	    (long)pid, name, (uint32_t)uid);
 	return (1);
+endofstring:
+	log(LOG_ERR, "pid %ld (%s), uid (%u): unexpected end of string after %% token\n",
+	    (long)pid, name, (uint32_t)uid);
+	return (1);
 }
-
-#if CONFIG_LCTX
-
-static void
-lctxinit(void)
-{
-	LIST_INIT(&alllctx);
-	alllctx_cnt = 0;
-
-	/* allocate lctx lock group attribute and group */
-	lctx_lck_grp_attr = lck_grp_attr_alloc_init();
-	lck_grp_attr_setstat(lctx_lck_grp_attr);
-
-	lctx_lck_grp = lck_grp_alloc_init("lctx", lctx_lck_grp_attr);
-	/* Allocate lctx lock attribute */
-	lctx_lck_attr = lck_attr_alloc_init();
-
-	lck_mtx_init(&alllctx_lock, lctx_lck_grp, lctx_lck_attr);
-}
-
-/*
- * Locate login context by number.
- */
-struct lctx *
-lcfind(pid_t lcid)
-{
-	struct lctx *l;
-
-	ALLLCTX_LOCK;
-	LIST_FOREACH(l, &alllctx, lc_list) {
-		if (l->lc_id == lcid) {
-			LCTX_LOCK(l);
-			break;
-		}
-	}
-	ALLLCTX_UNLOCK;
-	return (l);
-}
-
-#define	LCID_INC				\
-	do {					\
-		lastlcid++;			\
-		if (lastlcid > maxlcid)	\
-			lastlcid = 1;		\
-	} while (0)				\
-
-struct lctx *
-lccreate(void)
-{
-	struct lctx *l;
-	pid_t newlcid;
-
-	/* Not very efficient but this isn't a common operation. */
-	while ((l = lcfind(lastlcid)) != NULL) {
-		LCTX_UNLOCK(l);
-		LCID_INC;
-	}
-	newlcid = lastlcid;
-	LCID_INC;
-
-	MALLOC(l, struct lctx *, sizeof(struct lctx), M_LCTX, M_WAITOK|M_ZERO);
-	l->lc_id = newlcid;
-	LIST_INIT(&l->lc_members);
-	lck_mtx_init(&l->lc_mtx, lctx_lck_grp, lctx_lck_attr);
-#if CONFIG_MACF
-	l->lc_label = mac_lctx_label_alloc();
-#endif
-	ALLLCTX_LOCK;
-	LIST_INSERT_HEAD(&alllctx, l, lc_list);
-	alllctx_cnt++;
-	ALLLCTX_UNLOCK;
-
-	return (l);
-}
-
-/*
- * Call with proc protected (either by being invisible
- * or by having the all-login-context lock held) and
- * the lctx locked.
- *
- * Will unlock lctx on return.
- */
-void
-enterlctx (proc_t p, struct lctx *l, __unused int create)
-{
-	if (l == NULL)
-		return;
-
-	p->p_lctx = l;
-	LIST_INSERT_HEAD(&l->lc_members, p, p_lclist);
-	l->lc_mc++;
-
-#if CONFIG_MACF
-	if (create)
-		mac_lctx_notify_create(p, l);
-	else
-		mac_lctx_notify_join(p, l);
-#endif
-	LCTX_UNLOCK(l);
-
-	return;
-}
-
-/*
- * Remove process from login context (if any). Called with p protected by
- * the alllctx lock.
- */
-void
-leavelctx (proc_t p)
-{
-	struct lctx *l;
-
-	if (p->p_lctx == NULL) {
-		return;
-	}
-
-	LCTX_LOCK(p->p_lctx);
-	l = p->p_lctx;
-	p->p_lctx = NULL;
-	LIST_REMOVE(p, p_lclist);
-	l->lc_mc--;
-#if CONFIG_MACF
-	mac_lctx_notify_leave(p, l);
-#endif
-	if (LIST_EMPTY(&l->lc_members)) {
-		LIST_REMOVE(l, lc_list);
-		alllctx_cnt--;
-		LCTX_UNLOCK(l);
-		lck_mtx_destroy(&l->lc_mtx, lctx_lck_grp);
-#if CONFIG_MACF
-		mac_lctx_label_free(l->lc_label);
-		l->lc_label = NULL;
-#endif
-		FREE(l, M_LCTX);
-	} else {
-		LCTX_UNLOCK(l);
-	}
-	return;
-}
-
-static int
-sysctl_kern_lctx SYSCTL_HANDLER_ARGS
-{
-	int *name = (int*) arg1;
-	u_int namelen = arg2;
-	struct kinfo_lctx kil;
-	struct lctx *l;
-	int error;
-
-	error = 0;
-
-	switch (oidp->oid_number) {
-	case KERN_LCTX_ALL:
-		ALLLCTX_LOCK;
-		/* Request for size. */
-		if (!req->oldptr) {
-			error = SYSCTL_OUT(req, 0,
-				sizeof(struct kinfo_lctx) * (alllctx_cnt + 1));
-			goto out;
-		}
-		break;
-
-	case KERN_LCTX_LCID:
-		/* No space */
-		if (req->oldlen < sizeof(struct kinfo_lctx))
-			return (ENOMEM);
-		/* No argument */
-		if (namelen != 1)
-			return (EINVAL);
-		/* No login context */
-		l = lcfind((pid_t)name[0]);
-		if (l == NULL)
-			return (ENOENT);
-		kil.id = l->lc_id;
-		kil.mc = l->lc_mc;
-		LCTX_UNLOCK(l);
-		return (SYSCTL_OUT(req, (caddr_t)&kil, sizeof(kil)));
-
-	default:
-		return (EINVAL);
-	}
-
-	/* Provided buffer is too small. */
-	if (req->oldlen < (sizeof(struct kinfo_lctx) * alllctx_cnt)) {
-		error = ENOMEM;
-		goto out;
-	}
-
-	LIST_FOREACH(l, &alllctx, lc_list) {
-		LCTX_LOCK(l);
-		kil.id = l->lc_id;
-		kil.mc = l->lc_mc;
-		LCTX_UNLOCK(l);
-		error = SYSCTL_OUT(req, (caddr_t)&kil, sizeof(kil));
-		if (error)
-			break;
-	}
-out:
-	ALLLCTX_UNLOCK;
-
-	return (error);
-}
-
-SYSCTL_NODE(_kern, KERN_LCTX, lctx, CTLFLAG_RW|CTLFLAG_LOCKED, 0, "Login Context");
-
-SYSCTL_PROC(_kern_lctx, KERN_LCTX_ALL, all, CTLFLAG_RD|CTLTYPE_STRUCT | CTLFLAG_LOCKED,
-	    0, 0, sysctl_kern_lctx, "S,lctx",
-	    "Return entire login context table");
-SYSCTL_NODE(_kern_lctx, KERN_LCTX_LCID, lcid, CTLFLAG_RD | CTLFLAG_LOCKED,
-	    sysctl_kern_lctx, "Login Context Table");
-SYSCTL_INT(_kern_lctx, OID_AUTO, last,  CTLFLAG_RD | CTLFLAG_LOCKED, &lastlcid, 0, ""); 
-SYSCTL_INT(_kern_lctx, OID_AUTO, count, CTLFLAG_RD | CTLFLAG_LOCKED, &alllctx_cnt, 0, "");
-SYSCTL_INT(_kern_lctx, OID_AUTO, max, CTLFLAG_RW | CTLFLAG_LOCKED, &maxlcid, 0, "");
-
-#endif	/* LCTX */
+#endif /* CONFIG_COREDUMP */
 
 /* Code Signing related routines */
 
@@ -1720,16 +1883,34 @@ csops_audittoken(__unused proc_t p, struct csops_audittoken_args *uap, __unused 
 {
 	if (uap->uaudittoken == USER_ADDR_NULL)
 		return(EINVAL);
-	switch (uap->ops) {
-		case CS_OPS_PIDPATH:
-		case CS_OPS_ENTITLEMENTS_BLOB:
-			break;
-		default:
-			return(EINVAL);
-	};
-
 	return(csops_internal(uap->pid, uap->ops, uap->useraddr, 
 		uap->usersize, uap->uaudittoken));
+}
+
+static int
+csops_copy_token(void *start, size_t length, user_size_t usize, user_addr_t uaddr)
+{
+	char fakeheader[8] = { 0 };
+	int error;
+
+	if (usize < sizeof(fakeheader))
+		return ERANGE;
+
+	/* if no blob, fill in zero header */
+	if (NULL == start) {
+		start = fakeheader;
+		length = sizeof(fakeheader);
+	} else if (usize < length) {
+		/* ... if input too short, copy out length of entitlement */
+		uint32_t length32 = htonl((uint32_t)length);
+		memcpy(&fakeheader[4], &length32, sizeof(length32));
+		
+		error = copyout(fakeheader, uaddr, sizeof(fakeheader));
+		if (error == 0)
+			return ERANGE; /* input buffer to short, ERANGE signals that */
+		return error;
+	}
+	return copyout(start, uaddr, length);
 }
 
 static int
@@ -1737,12 +1918,10 @@ csops_internal(pid_t pid, int ops, user_addr_t uaddr, user_size_t usersize, user
 {
 	size_t usize = (size_t)CAST_DOWN(size_t, usersize);
 	proc_t pt;
-	uint32_t retflags;
-	int vid, forself;
+	int forself;
 	int error;
 	vnode_t tvp;
 	off_t toff;
-	char * buf;
 	unsigned char cdhash[SHA1_RESULTLEN];
 	audit_token_t token;
 	unsigned int upid=0, uidversion = 0;
@@ -1755,25 +1934,18 @@ csops_internal(pid_t pid, int ops, user_addr_t uaddr, user_size_t usersize, user
 		forself = 1;
 
 
-	/* Pre flight checks for CS_OPS_PIDPATH */
-	if (ops == CS_OPS_PIDPATH) {
-		/* usize is unsigned.. */
-	 	if (usize > 4 * PATH_MAX)
-			return(EOVERFLOW);
-		if (kauth_cred_issuser(kauth_cred_get()) != TRUE) 
-			return(EPERM);
-	} else {
-		switch (ops) {
+	switch (ops) {
 		case CS_OPS_STATUS:
 		case CS_OPS_CDHASH:
 		case CS_OPS_PIDOFFSET:
 		case CS_OPS_ENTITLEMENTS_BLOB:
-			break;	/* unrestricted */
+		case CS_OPS_IDENTITY:
+		case CS_OPS_BLOB:
+			break;	/* not restricted to root */
 		default:
 			if (forself == 0 && kauth_cred_issuser(kauth_cred_get()) != TRUE)
 				return(EPERM);
 			break;
-		}
 	}
 
 	pt = proc_find(pid);
@@ -1794,14 +1966,43 @@ csops_internal(pid_t pid, int ops, user_addr_t uaddr, user_size_t usersize, user
 		}
 	}
 
+#if CONFIG_MACF
+	switch (ops) {
+		case CS_OPS_MARKINVALID:
+		case CS_OPS_MARKHARD:
+		case CS_OPS_MARKKILL:
+		case CS_OPS_MARKRESTRICT:
+		case CS_OPS_SET_STATUS:
+		case CS_OPS_CLEARINSTALLER:
+		case CS_OPS_CLEARPLATFORM:
+			if ((error = mac_proc_check_set_cs_info(current_proc(), pt, ops)))
+				goto out;
+			break;
+		default:
+			if ((error = mac_proc_check_get_cs_info(current_proc(), pt, ops)))
+				goto out;
+	}
+#endif
+
 	switch (ops) {
 
-		case CS_OPS_STATUS:
+		case CS_OPS_STATUS: {
+			uint32_t retflags;
+
+			proc_lock(pt);
 			retflags = pt->p_csflags;
+			if (cs_enforcement(pt))
+				retflags |= CS_ENFORCEMENT;
+			if (csproc_get_platform_binary(pt))
+				retflags |= CS_PLATFORM_BINARY;
+			if (csproc_get_platform_path(pt))
+				retflags |= CS_PLATFORM_PATH;
+			proc_unlock(pt);
+
 			if (uaddr != USER_ADDR_NULL)
 				error = copyout(&retflags, uaddr, sizeof(uint32_t));
 			break;
-		
+		}
 		case CS_OPS_MARKINVALID:
 			proc_lock(pt);
 			if ((pt->p_csflags & CS_VALID) == CS_VALID) {	/* is currently valid */
@@ -1844,38 +2045,6 @@ csops_internal(pid_t pid, int ops, user_addr_t uaddr, user_size_t usersize, user
 				proc_unlock(pt);
 			break;
 
-		case CS_OPS_PIDPATH:
-			tvp = pt->p_textvp;
-			vid = vnode_vid(tvp);
-
-			if (tvp == NULLVP) {
-				proc_rele(pt);
-				return(EINVAL);
-			}
-
-			buf = (char *)kalloc(usize);
-			if (buf == NULL)  {
-				proc_rele(pt);
-				return(ENOMEM);
-			}
-			bzero(buf, usize);
-
-			error = vnode_getwithvid(tvp, vid);
-			if (error == 0) {
-				int len; 
-				len = usize;
-				error = vn_getpath(tvp, buf, &len);
-				vnode_put(tvp);
-				if (error == 0) {
-					error = copyout(buf, uaddr, usize);
-				}
-				kfree(buf, usize);
-			}
-
-			proc_rele(pt);
-
-			return(error);
-
 		case CS_OPS_PIDOFFSET:
 			toff = pt->p_textoff;
 			proc_rele(pt);
@@ -1903,44 +2072,155 @@ csops_internal(pid_t pid, int ops, user_addr_t uaddr, user_size_t usersize, user
 			return error;
 
 		case CS_OPS_ENTITLEMENTS_BLOB: {
-			char fakeheader[8] = { 0 };
 			void *start;
 			size_t length;
 
-			if ((pt->p_csflags & CS_VALID) == 0) {
+			proc_lock(pt);
+
+			if ((pt->p_csflags & (CS_VALID | CS_DEBUGGED)) == 0) {
+				proc_unlock(pt);
 				error = EINVAL;
 				break;
 			}
-			if (usize < sizeof(fakeheader)) {
-				error = ERANGE;
-				break;
-			}
-			if (0 != (error = cs_entitlements_blob_get(pt,
-			    &start, &length)))
-				break;
-			/* if no entitlement, fill in zero header */
-			if (NULL == start) {
-				start = fakeheader;
-				length = sizeof(fakeheader);
-			} else if (usize < length) {
-				/* ... if input too short, copy out length of entitlement */
-				uint32_t length32 = htonl((uint32_t)length);
-				memcpy(&fakeheader[4], &length32, sizeof(length32));
 
-				error = copyout(fakeheader, uaddr, sizeof(fakeheader));
-				if (error == 0)
-					error = ERANGE; /* input buffer to short, ERANGE signals that */
+			error = cs_entitlements_blob_get(pt, &start, &length);
+			proc_unlock(pt);
+			if (error)
 				break;
-			}
-			error = copyout(start, uaddr, length);
+
+			error = csops_copy_token(start, length, usize, uaddr);
 			break;
 		}
-
 		case CS_OPS_MARKRESTRICT:
 			proc_lock(pt);
 			pt->p_csflags |= CS_RESTRICT;
 			proc_unlock(pt);
 			break;
+
+		case CS_OPS_SET_STATUS: {
+			uint32_t flags;
+
+			if (usize < sizeof(flags)) {
+				error = ERANGE;
+				break;
+			}
+
+			error = copyin(uaddr, &flags, sizeof(flags));
+			if (error)
+				break;
+
+			/* only allow setting a subset of all code sign flags */
+			flags &=
+			    CS_HARD | CS_EXEC_SET_HARD |
+			    CS_KILL | CS_EXEC_SET_KILL |
+			    CS_RESTRICT |
+			    CS_REQUIRE_LV |
+			    CS_ENFORCEMENT | CS_EXEC_SET_ENFORCEMENT;
+
+			proc_lock(pt);
+			if (pt->p_csflags & CS_VALID)
+				pt->p_csflags |= flags;
+			else
+				error = EINVAL;
+			proc_unlock(pt);
+
+			break;
+		}
+		case CS_OPS_BLOB: {
+			void *start;
+			size_t length;
+
+			proc_lock(pt);
+			if ((pt->p_csflags & (CS_VALID | CS_DEBUGGED)) == 0) {
+				proc_unlock(pt);
+				error = EINVAL;
+				break;
+			}
+
+			error = cs_blob_get(pt, &start, &length);
+			proc_unlock(pt);
+			if (error)
+				break;
+
+			error = csops_copy_token(start, length, usize, uaddr);
+			break;
+		}
+		case CS_OPS_IDENTITY: {
+			const char *identity;
+			uint8_t fakeheader[8];
+			uint32_t idlen;
+			size_t length;
+
+			/*
+			 * Make identity have a blob header to make it
+			 * easier on userland to guess the identity
+			 * length.
+			 */
+			if (usize < sizeof(fakeheader)) {
+			    error = ERANGE;
+			    break;
+			}
+			memset(fakeheader, 0, sizeof(fakeheader));
+
+			proc_lock(pt);
+			if ((pt->p_csflags & (CS_VALID | CS_DEBUGGED)) == 0) {
+				proc_unlock(pt);
+				error = EINVAL;
+				break;
+			}
+
+			identity = cs_identity_get(pt);
+			proc_unlock(pt);
+			if (identity == NULL) {
+				error = ENOENT;
+				break;
+			}
+
+			length = strlen(identity) + 1; /* include NUL */
+			idlen = htonl(length + sizeof(fakeheader));
+			memcpy(&fakeheader[4], &idlen, sizeof(idlen));
+
+			error = copyout(fakeheader, uaddr, sizeof(fakeheader));
+			if (error)
+				break;
+
+			if (usize < sizeof(fakeheader) + length)
+				error = ERANGE;
+			else if (usize > sizeof(fakeheader))
+				error = copyout(identity, uaddr + sizeof(fakeheader), length);
+
+			break;
+		}
+
+		case CS_OPS_CLEARINSTALLER:
+			proc_lock(pt);
+			pt->p_csflags &= ~(CS_INSTALLER | CS_DATAVAULT_CONTROLLER | CS_EXEC_INHERIT_SIP);
+			proc_unlock(pt);
+			break;
+
+		case CS_OPS_CLEARPLATFORM:
+#if DEVELOPMENT || DEBUG
+			if (cs_enforcement_enable) {
+				error = ENOTSUP;
+				break;
+			}
+
+#if CONFIG_CSR
+			if (csr_check(CSR_ALLOW_APPLE_INTERNAL) != 0) {
+				error = ENOTSUP;
+				break;
+			}
+#endif
+
+			proc_lock(pt);
+			pt->p_csflags &= ~(CS_PLATFORM_BINARY|CS_PLATFORM_PATH);
+			csproc_clear_platform_binary(pt);
+			proc_unlock(pt);
+			break;
+#else
+			error = ENOTSUP;
+			break;
+#endif /* !DEVELOPMENT || DEBUG */
 
 		default:
 			error = EINVAL;
@@ -1952,366 +2232,370 @@ out:
 }
 
 int
-proc_iterate(flags, callout, arg, filterfn, filterarg)
-	int flags;
-	int (*callout)(proc_t, void *);
-	void * arg;
-	int (*filterfn)(proc_t, void *);
-	void * filterarg;
+proc_iterate(
+	unsigned int flags,
+	proc_iterate_fn_t callout,
+	void *arg,
+	proc_iterate_fn_t filterfn,
+	void *filterarg)
 {
-	proc_t p;
-	pid_t * pid_list;
-	int count, pidcount, alloc_count, i, retval;
+	pid_t *pid_list;
+	vm_size_t pid_list_size = 0;
+	vm_size_t pid_list_size_needed = 0;
+	int pid_count = 0;
+	int pid_count_available = 0;
 
-	count = nprocs+ 10;
-	if (count > hard_maxproc)
-		count = hard_maxproc;
-	alloc_count = count * sizeof(pid_t);
-	pid_list = (pid_t *)kalloc(alloc_count);
-	bzero(pid_list, alloc_count);
+	assert(callout != NULL);
 
+	/* allocate outside of the proc_list_lock */
+	for (;;) {
+		proc_list_lock();
 
-	proc_list_lock();
+		pid_count_available = nprocs + 1; //kernel_task is not counted in nprocs
+		assert(pid_count_available > 0);
 
+		pid_list_size_needed = pid_count_available * sizeof(pid_t);
+		if (pid_list_size >= pid_list_size_needed) {
+			break;
+		}
+		proc_list_unlock();
 
-	pidcount = 0;
+		if (pid_list_size != 0) {
+			kfree(pid_list, pid_list_size);
+		}
+		pid_list = kalloc(pid_list_size_needed);
+		if (!pid_list) {
+			return 1;
+		}
+		pid_list_size = pid_list_size_needed;
+	}
+
+	/* filter pids into pid_list */
+
 	if (flags & PROC_ALLPROCLIST) {
-		for (p = allproc.lh_first; (p != 0); p = p->p_list.le_next) {
-			if (p->p_stat == SIDL)
+		proc_t p;
+		ALLPROC_FOREACH(p) {
+			/* ignore processes that are being forked */
+			if (p->p_stat == SIDL) {
 				continue;
-			if ( (filterfn == 0 ) || (filterfn(p, filterarg) != 0)) {
-				pid_list[pidcount] = p->p_pid;
-				pidcount++;
-				if (pidcount >= count)
-					break;
+			}
+			if ((filterfn != NULL) && (filterfn(p, filterarg) == 0)) {
+				continue;
+			}
+
+			pid_list[pid_count++] = proc_pid(p);
+			if (pid_count >= pid_count_available) {
+				break;
 			}
 		}
 	}
-	if ((pidcount <  count ) && (flags & PROC_ZOMBPROCLIST)) {
-		for (p = zombproc.lh_first; p != 0; p = p->p_list.le_next) {
-			if ( (filterfn == 0 ) || (filterfn(p, filterarg) != 0)) {
-				pid_list[pidcount] = p->p_pid;
-				pidcount++;
-				if (pidcount >= count)
-					break;
+
+	if ((pid_count < pid_count_available) &&
+	    (flags & PROC_ZOMBPROCLIST))
+	{
+		proc_t p;
+		ZOMBPROC_FOREACH(p) {
+			if ((filterfn != NULL) && (filterfn(p, filterarg) == 0)) {
+				continue;
+			}
+
+			pid_list[pid_count++] = proc_pid(p);
+			if (pid_count >= pid_count_available) {
+				break;
 			}
 		}
 	}
-		
 
 	proc_list_unlock();
 
+	/* call callout on processes in the pid_list */
 
-	for (i = 0; i< pidcount; i++) {
-		p = proc_find(pid_list[i]);
+	for (int i = 0; i < pid_count; i++) {
+		proc_t p = proc_find(pid_list[i]);
 		if (p) {
-			if ((flags & PROC_NOWAITTRANS) == 0)
+			if ((flags & PROC_NOWAITTRANS) == 0) {
 				proc_transwait(p, 0);
-			retval = callout(p, arg);
+			}
+			int callout_ret = callout(p, arg);
 
-			switch (retval) {
-		  		case PROC_RETURNED:
-		  		case PROC_RETURNED_DONE:
-			  		proc_rele(p);
-			  		if (retval == PROC_RETURNED_DONE) {
-						goto out;
-			  		}
-			  		break;
+			switch (callout_ret) {
+			case PROC_RETURNED_DONE:
+				proc_rele(p);
+				/* FALLTHROUGH */
+			case PROC_CLAIMED_DONE:
+				goto out;
 
-		  		case PROC_CLAIMED_DONE:
-					goto out;
-		  		case PROC_CLAIMED:
-		  		default:
-					break;
+			case PROC_RETURNED:
+				proc_rele(p);
+				/* FALLTHROUGH */
+			case PROC_CLAIMED:
+				break;
+
+			default:
+				panic("proc_iterate: callout returned %d for pid %d",
+				      callout_ret, pid_list[i]);
+				break;
 			}
 		} else if (flags & PROC_ZOMBPROCLIST) {
 			p = proc_find_zombref(pid_list[i]);
-			if (p != PROC_NULL) {
-				retval = callout(p, arg);
-		
-				switch (retval) {
-		  			case PROC_RETURNED:
-		  			case PROC_RETURNED_DONE:
-						proc_drop_zombref(p);
-			  			if (retval == PROC_RETURNED_DONE) {
-							goto out;
-			  			}
-			  			break;
+			if (!p) {
+				continue;
+			}
+			int callout_ret = callout(p, arg);
 
-		  			case PROC_CLAIMED_DONE:
-						goto out;
-		  			case PROC_CLAIMED:
-		  			default:
-						break;
-				}
+			switch (callout_ret) {
+			case PROC_RETURNED_DONE:
+				proc_drop_zombref(p);
+				/* FALLTHROUGH */
+			case PROC_CLAIMED_DONE:
+				goto out;
+
+			case PROC_RETURNED:
+				proc_drop_zombref(p);
+				/* FALLTHROUGH */
+			case PROC_CLAIMED:
+				break;
+
+			default:
+				panic("proc_iterate: callout returned %d for zombie pid %d",
+					callout_ret, pid_list[i]);
+				break;
 			}
 		}
 	}
 
-out: 
-	kfree(pid_list, alloc_count);
-	return(0);
-
-}
-
-
-#if 0
-/* This is for iteration in case of trivial non blocking callouts */
-int
-proc_scanall(flags, callout, arg)
-	int flags;
-	int (*callout)(proc_t, void *);
-	void * arg;
-{
-	proc_t p;
-	int retval;
-
-
-	proc_list_lock();
-
-
-	if (flags & PROC_ALLPROCLIST) {
-		for (p = allproc.lh_first; (p != 0); p = p->p_list.le_next) {
-			retval = callout(p, arg);
-			if (retval == PROC_RETURNED_DONE)
-				goto out;
-		}
-	}
-	if (flags & PROC_ZOMBPROCLIST) {
-		for (p = zombproc.lh_first; p != 0; p = p->p_list.le_next) {
-			retval = callout(p, arg);
-			if (retval == PROC_RETURNED_DONE)
-				goto out;
-		}
-	}
 out:
+	kfree(pid_list, pid_list_size);
+	return 0;
 
-	proc_list_unlock();
-
-	return(0);
 }
-#endif
 
-
-int
-proc_rebootscan(callout, arg, filterfn, filterarg)
-	int (*callout)(proc_t, void *);
-	void * arg;
-	int (*filterfn)(proc_t, void *);
-	void * filterarg;
+void
+proc_rebootscan(
+	proc_iterate_fn_t callout,
+	void *arg,
+	proc_iterate_fn_t filterfn,
+	void *filterarg)
 {
 	proc_t p;
-	int lockheld = 0, retval;
+
+	assert(callout != NULL);
 
 	proc_shutdown_exitcount = 0;
 
-ps_allprocscan:
+restart_foreach:
 
 	proc_list_lock();
 
-	lockheld = 1;
+	ALLPROC_FOREACH(p) {
+		if ((filterfn != NULL) && filterfn(p, filterarg) == 0) {
+			continue;
+		}
+		p = proc_ref_locked(p);
+		if (!p) {
+		    continue;
+		}
 
-	for (p = allproc.lh_first; (p != 0); p = p->p_list.le_next) {
-		if ( (filterfn == 0 ) || (filterfn(p, filterarg) != 0)) {
-			p = proc_ref_locked(p);
-
-			proc_list_unlock();
-			lockheld = 0;
-
-			if (p) {
-				proc_transwait(p, 0);
-				retval = callout(p, arg);
-				proc_rele(p);
-	
-				switch (retval) {
-					case PROC_RETURNED_DONE:
-					case PROC_CLAIMED_DONE:
-						goto out;
-				}
-			}
-			goto ps_allprocscan;	
-		} /* filter pass */
-	} /* allproc walk thru */
-
-	if (lockheld == 1) {
 		proc_list_unlock();
-		lockheld = 0;
+
+		proc_transwait(p, 0);
+		(void)callout(p, arg);
+		proc_rele(p);
+
+		goto restart_foreach;
 	}
 
-out: 
-	return(0);
-
+	proc_list_unlock();
 }
 
-
 int
-proc_childrenwalk(parent, callout, arg)
-	struct proc * parent;
-	int (*callout)(proc_t, void *);
-	void * arg;
+proc_childrenwalk(
+	proc_t parent,
+	proc_iterate_fn_t callout,
+	void *arg)
 {
-	register struct proc *p;
-	pid_t * pid_list;
-	int count, pidcount, alloc_count, i, retval;
+	pid_t *pid_list;
+	vm_size_t pid_list_size = 0;
+	vm_size_t pid_list_size_needed = 0;
+	int pid_count = 0;
+	int pid_count_available = 0;
 
-	count = nprocs+ 10;
-	if (count > hard_maxproc)
-		count = hard_maxproc;
-	alloc_count = count * sizeof(pid_t);
-	pid_list = (pid_t *)kalloc(alloc_count);
-	bzero(pid_list, alloc_count);
+	assert(parent != NULL);
+	assert(callout != NULL);
 
+	for (;;) {
+		proc_list_lock();
 
-	proc_list_lock();
+		pid_count_available = parent->p_childrencnt;
+		if (pid_count_available == 0) {
+			proc_list_unlock();
+			return 0;
+		}
 
-
-	pidcount = 0;
-	for (p = parent->p_children.lh_first; (p != 0); p = p->p_sibling.le_next) {
-		if (p->p_stat == SIDL)
-			continue;
-		pid_list[pidcount] = p->p_pid;
-		pidcount++;
-		if (pidcount >= count)
+		pid_list_size_needed = pid_count_available * sizeof(pid_t);
+		if (pid_list_size >= pid_list_size_needed) {
 			break;
+		}
+		proc_list_unlock();
+
+		if (pid_list_size != 0) {
+			kfree(pid_list, pid_list_size);
+		}
+		pid_list = kalloc(pid_list_size_needed);
+		if (!pid_list) {
+			return 1;
+		}
+		pid_list_size = pid_list_size_needed;
 	}
+
+	proc_t p;
+	PCHILDREN_FOREACH(parent, p) {
+		if (p->p_stat == SIDL) {
+			continue;
+		}
+
+		pid_list[pid_count++] = proc_pid(p);
+		if (pid_count >= pid_count_available) {
+			break;
+		}
+	}
+
 	proc_list_unlock();
 
-
-	for (i = 0; i< pidcount; i++) {
+	for (int i = 0; i < pid_count; i++) {
 		p = proc_find(pid_list[i]);
-		if (p) {
-			proc_transwait(p, 0);
-			retval = callout(p, arg);
+		if (!p) {
+			continue;
+		}
 
-			switch (retval) {
-		  		case PROC_RETURNED:
-		  		case PROC_RETURNED_DONE:
-			  		proc_rele(p);
-			  		if (retval == PROC_RETURNED_DONE) {
-						goto out;
-			  		}
-			  		break;
+		int callout_ret = callout(p, arg);
 
-		  		case PROC_CLAIMED_DONE:
-					goto out;
-		  		case PROC_CLAIMED:
-		  		default:
-					break;
-			}
+		switch (callout_ret) {
+		case PROC_RETURNED_DONE:
+			proc_rele(p);
+			/* FALLTHROUGH */
+		case PROC_CLAIMED_DONE:
+			goto out;
+
+		case PROC_RETURNED:
+			proc_rele(p);
+			/* FALLTHROUGH */
+		case PROC_CLAIMED:
+			break;
+		default:
+			panic("proc_childrenwalk: callout returned %d for pid %d",
+			      callout_ret, pid_list[i]);
+			break;
 		}
 	}
 
-out: 
-	kfree(pid_list, alloc_count);
-	return(0);
-
+out:
+	kfree(pid_list, pid_list_size);
+	return 0;
 }
 
-/*
- */
-/* PGRP_BLOCKITERATE is not implemented yet */
 int
-pgrp_iterate(pgrp, flags, callout, arg, filterfn, filterarg)
-	struct pgrp *pgrp;
-	int flags;
-	int (*callout)(proc_t, void *);
-	void * arg;
-	int (*filterfn)(proc_t, void *);
-	void * filterarg;
+pgrp_iterate(
+	struct pgrp *pgrp,
+	unsigned int flags,
+	proc_iterate_fn_t callout,
+	void * arg,
+	proc_iterate_fn_t filterfn,
+	void * filterarg)
 {
+	pid_t *pid_list;
 	proc_t p;
-	pid_t * pid_list;
-	int count, pidcount, i, alloc_count;
-	int retval;
-	pid_t pgid;
-	int dropref = flags & PGRP_DROPREF;
-#if 0
-	int serialize = flags & PGRP_BLOCKITERATE;
-#else
-	int serialize = 0;
-#endif
+	vm_size_t pid_list_size = 0;
+	vm_size_t pid_list_size_needed = 0;
+	int pid_count = 0;
+	int pid_count_available = 0;
 
-	if (pgrp == 0)
-		return(0);
-	count = pgrp->pg_membercnt + 10;
-	if (count > hard_maxproc)
-		count = hard_maxproc;
-	alloc_count = count * sizeof(pid_t);
-	pid_list = (pid_t *)kalloc(alloc_count);
-	bzero(pid_list, alloc_count);
-	
-	pgrp_lock(pgrp);
-	if (serialize  != 0) {
-		while ((pgrp->pg_listflags & PGRP_FLAG_ITERABEGIN) == PGRP_FLAG_ITERABEGIN) {
-			pgrp->pg_listflags |= PGRP_FLAG_ITERWAIT;
-			msleep(&pgrp->pg_listflags, &pgrp->pg_mlock, 0, "pgrp_iterate", 0);
+	pid_t pgid;
+
+	assert(pgrp != NULL);
+	assert(callout != NULL);
+
+	for (;;) {
+		pgrp_lock(pgrp);
+
+		pid_count_available = pgrp->pg_membercnt;
+		if (pid_count_available == 0) {
+			pgrp_unlock(pgrp);
+			return 0;
 		}
-		pgrp->pg_listflags |= PGRP_FLAG_ITERABEGIN;
+
+		pid_list_size_needed = pid_count_available * sizeof(pid_t);
+		if (pid_list_size >= pid_list_size_needed) {
+			break;
+		}
+		pgrp_unlock(pgrp);
+
+		if (pid_list_size != 0) {
+			kfree(pid_list, pid_list_size);
+		}
+		pid_list = kalloc(pid_list_size_needed);
+		if (!pid_list) {
+			return 1;
+		}
+		pid_list_size = pid_list_size_needed;
 	}
 
 	pgid = pgrp->pg_id;
 
-	pidcount = 0;
-	for (p = pgrp->pg_members.lh_first; p != 0;
-	     p = p->p_pglist.le_next) {
-		if ( (filterfn == 0 ) || (filterfn(p, filterarg) != 0)) {
-			pid_list[pidcount] = p->p_pid;
-			pidcount++;
-			if (pidcount >= count)
-				break;
+	PGMEMBERS_FOREACH(pgrp, p) {
+		if ((filterfn != NULL) && (filterfn(p, filterarg) == 0)) {
+			continue;;
+		}
+		pid_list[pid_count++] = proc_pid(p);
+		if (pid_count >= pid_count_available) {
+			break;
 		}
 	}
-		
 
 	pgrp_unlock(pgrp);
-	if ((serialize == 0) && (dropref != 0))
+
+	if (flags & PGRP_DROPREF) {
 		pg_rele(pgrp);
+	}
 
-
-	for (i = 0; i< pidcount; i++) {
-		/* No handling or proc0 */
-		if (pid_list[i] == 0)
+	for (int i = 0; i< pid_count; i++) {
+		/* do not handle kernproc */
+		if (pid_list[i] == 0) {
 			continue;
+		}
 		p = proc_find(pid_list[i]);
-		if (p) {
-			if (p->p_pgrpid != pgid) {
-				proc_rele(p);
-				continue;
-			}
-			proc_transwait(p, 0);
-			retval = callout(p, arg);
+		if (!p) {
+			continue;
+		}
+		if (p->p_pgrpid != pgid) {
+			proc_rele(p);
+			continue;
+		}
 
-			switch (retval) {
-		  		case PROC_RETURNED:
-		  		case PROC_RETURNED_DONE:
-			  		proc_rele(p);
-			  		if (retval == PROC_RETURNED_DONE) {
-						goto out;
-			  		}
-			  		break;
+		int callout_ret = callout(p, arg);
 
-		  		case PROC_CLAIMED_DONE:
-					goto out;
-		  		case PROC_CLAIMED:
-		  		default:
-					break;
-			}
+		switch (callout_ret) {
+		case PROC_RETURNED:
+			proc_rele(p);
+			/* FALLTHROUGH */
+		case PROC_CLAIMED:
+			break;
+
+		case PROC_RETURNED_DONE:
+			proc_rele(p);
+			/* FALLTHROUGH */
+		case PROC_CLAIMED_DONE:
+			goto out;
+
+		default:
+			panic("pgrp_iterate: callout returned %d for pid %d",
+			      callout_ret, pid_list[i]);
 		}
 	}
+
 out:
-	if (serialize != 0) {
-		pgrp_lock(pgrp);
-		pgrp->pg_listflags &= ~PGRP_FLAG_ITERABEGIN;
-		if ((pgrp->pg_listflags & PGRP_FLAG_ITERWAIT) == PGRP_FLAG_ITERWAIT) {
-			pgrp->pg_listflags &= ~PGRP_FLAG_ITERWAIT;
-			wakeup(&pgrp->pg_listflags);
-		}
-		pgrp_unlock(pgrp);
-		if (dropref != 0)
-			pg_rele(pgrp);
-	}
-	kfree(pid_list, alloc_count);
-	return(0);
+	kfree(pid_list, pid_list_size);
+	return 0;
 }
 
 static void
@@ -2589,12 +2873,12 @@ session_rele(struct session *sess)
 }
 
 int
-proc_transstart(proc_t p, int locked)
+proc_transstart(proc_t p, int locked, int non_blocking)
 {
 	if (locked == 0)
 		proc_lock(p);
 	while ((p->p_lflag & P_LINTRANSIT) == P_LINTRANSIT) {
-		if ((p->p_lflag & P_LTRANSCOMMIT) == P_LTRANSCOMMIT) {
+		if (((p->p_lflag & P_LTRANSCOMMIT) == P_LTRANSCOMMIT) || non_blocking) {
 			if (locked == 0)
 				proc_unlock(p);
 			return EDEADLK;
@@ -2699,107 +2983,6 @@ proc_knote_drain(struct proc *p)
 	proc_klist_unlock();
 }
 
-unsigned long cs_procs_killed = 0;
-unsigned long cs_procs_invalidated = 0;
-int cs_force_kill = 0;
-int cs_force_hard = 0;
-int cs_debug = 0;
-SYSCTL_INT(_vm, OID_AUTO, cs_force_kill, CTLFLAG_RW | CTLFLAG_LOCKED, &cs_force_kill, 0, "");
-SYSCTL_INT(_vm, OID_AUTO, cs_force_hard, CTLFLAG_RW | CTLFLAG_LOCKED, &cs_force_hard, 0, "");
-SYSCTL_INT(_vm, OID_AUTO, cs_debug, CTLFLAG_RW | CTLFLAG_LOCKED, &cs_debug, 0, "");
-
-int
-cs_allow_invalid(struct proc *p)
-{
-#if MACH_ASSERT
-	lck_mtx_assert(&p->p_mlock, LCK_MTX_ASSERT_NOTOWNED);
-#endif
-#if CONFIG_MACF && CONFIG_ENFORCE_SIGNED_CODE
-	/* There needs to be a MAC policy to implement this hook, or else the
-	 * kill bits will be cleared here every time. If we have 
-	 * CONFIG_ENFORCE_SIGNED_CODE, we can assume there is a policy
-	 * implementing the hook. 
-	 */
-	if( 0 != mac_proc_check_run_cs_invalid(p)) {
-		if(cs_debug) printf("CODE SIGNING: cs_allow_invalid() "
-				    "not allowed: pid %d\n", 
-				    p->p_pid);
-		return 0;
-	}
-	if(cs_debug) printf("CODE SIGNING: cs_allow_invalid() "
-			    "allowed: pid %d\n", 
-			    p->p_pid);
-	proc_lock(p);
-	p->p_csflags &= ~(CS_KILL | CS_HARD | CS_VALID);
-	proc_unlock(p);
-	vm_map_switch_protect(get_task_map(p->task), FALSE);
-#endif
-	return (p->p_csflags & (CS_KILL | CS_HARD)) == 0;
-}
-
-int
-cs_invalid_page(
-	addr64_t vaddr)
-{
-	struct proc	*p;
-	int		retval;
-
-	p = current_proc();
-
-	/*
-	 * XXX revisit locking when proc is no longer protected
-	 * by the kernel funnel...
-	 */
-
-	/* XXX for testing */
-	proc_lock(p);
-	if (cs_force_kill)
-		p->p_csflags |= CS_KILL;
-	if (cs_force_hard)
-		p->p_csflags |= CS_HARD;
-
-	/* CS_KILL triggers us to send a kill signal. Nothing else. */
-	if (p->p_csflags & CS_KILL) {
-		p->p_csflags |= CS_KILLED;
-		proc_unlock(p);
-		if (cs_debug) {
-			printf("CODE SIGNING: cs_invalid_page(0x%llx): "
-			       "p=%d[%s] honoring CS_KILL, final status 0x%x\n",
-			       vaddr, p->p_pid, p->p_comm, p->p_csflags);
-		}
-		cs_procs_killed++;
-		psignal(p, SIGKILL);
-		proc_lock(p);
-	}
-	
-	/* CS_HARD means fail the mapping operation so the process stays valid. */
-	if (p->p_csflags & CS_HARD) {
-		proc_unlock(p);
-		if (cs_debug) {
-			printf("CODE SIGNING: cs_invalid_page(0x%llx): "
-			       "p=%d[%s] honoring CS_HARD\n",
-			       vaddr, p->p_pid, p->p_comm);
-		}
-		retval = 1;
-	} else {
-		if (p->p_csflags & CS_VALID) {
-			p->p_csflags &= ~CS_VALID;
-			
-			proc_unlock(p);
-			cs_procs_invalidated++;
-			printf("CODE SIGNING: cs_invalid_page(0x%llx): "
-			       "p=%d[%s] clearing CS_VALID\n",
-			       vaddr, p->p_pid, p->p_comm);
-		} else {
-			proc_unlock(p);
-		}
-		
-		retval = 0;
-	}
-
-	return retval;
-}
-
 void 
 proc_setregister(proc_t p)
 {
@@ -2846,7 +3029,7 @@ proc_getpcontrol(int pid, int * pcontrolp)
 }
 
 int
-proc_dopcontrol(proc_t p, void *num_found)
+proc_dopcontrol(proc_t p)
 {
 	int pcontrol;
 
@@ -2854,13 +3037,12 @@ proc_dopcontrol(proc_t p, void *num_found)
 
 	pcontrol = PROC_CONTROL_STATE(p);
 
-	if (PROC_ACTION_STATE(p) ==0) {
+	if (PROC_ACTION_STATE(p) == 0) {
 		switch(pcontrol) {
 			case P_PCTHROTTLE:
 				PROC_SETACTION_STATE(p);
 				proc_unlock(p);
 				printf("low swap: throttling pid %d (%s)\n", p->p_pid, p->p_comm);
-				(*(int *)num_found)++;
 				break;
 
 			case P_PCSUSP:
@@ -2868,7 +3050,6 @@ proc_dopcontrol(proc_t p, void *num_found)
 				proc_unlock(p);
 				printf("low swap: suspending pid %d (%s)\n", p->p_pid, p->p_comm);
 				task_suspend(p->task);
-				(*(int *)num_found)++;
 				break;
 
 			case P_PCKILL:
@@ -2876,7 +3057,6 @@ proc_dopcontrol(proc_t p, void *num_found)
 				proc_unlock(p);
 				printf("low swap: killing pid %d (%s)\n", p->p_pid, p->p_comm);
 				psignal(p, SIGKILL);
-				(*(int *)num_found)++;
 				break;
 
 			default:
@@ -2950,97 +3130,302 @@ proc_resetpcontrol(int pid)
 }
 
 
-/*
- * Return true if the specified process has an action state specified for it and it isn't
- * already in an action state and it's using more physical memory than the specified threshold.
- * Note: the memory_threshold argument is specified in bytes and is of type uint64_t.
- */
+
+struct no_paging_space
+{
+	uint64_t	pcs_max_size;
+	uint64_t	pcs_uniqueid;
+	int		pcs_pid;
+	int		pcs_proc_count;
+	uint64_t	pcs_total_size;
+
+	uint64_t	npcs_max_size;
+	uint64_t	npcs_uniqueid;
+	int		npcs_pid;
+	int		npcs_proc_count;
+	uint64_t	npcs_total_size;
+
+	int		apcs_proc_count;
+	uint64_t	apcs_total_size;
+};
+
 
 static int
-proc_pcontrol_filter(proc_t p, void *memory_thresholdp)
+proc_pcontrol_filter(proc_t p, void *arg)
 {
-	
-	return PROC_CONTROL_STATE(p) && 						/* if there's an action state specified... */
-	      (PROC_ACTION_STATE(p) == 0) && 						/* and we're not in the action state yet... */
-	      (get_task_resident_size(p->task) > *((uint64_t *)memory_thresholdp)); 	/* and this proc is over the mem threshold, */
-											/* then return true to take action on this proc */
+	struct no_paging_space *nps;
+	uint64_t	compressed;
+
+	nps = (struct no_paging_space *)arg;
+
+	compressed = get_task_compressed(p->task);
+
+	if (PROC_CONTROL_STATE(p)) {
+		if (PROC_ACTION_STATE(p) == 0) {
+			if (compressed > nps->pcs_max_size) {
+				nps->pcs_pid = p->p_pid;
+				nps->pcs_uniqueid = p->p_uniqueid;
+				nps->pcs_max_size = compressed;
+			}
+			nps->pcs_total_size += compressed;
+			nps->pcs_proc_count++;
+		} else {
+			nps->apcs_total_size += compressed;
+			nps->apcs_proc_count++;
+		}
+	} else {
+		if (compressed > nps->npcs_max_size) {
+			nps->npcs_pid = p->p_pid;
+			nps->npcs_uniqueid = p->p_uniqueid;
+			nps->npcs_max_size = compressed;
+		}
+		nps->npcs_total_size += compressed;
+		nps->npcs_proc_count++;
+
+	}
+	return (0);
 }
 
 
+static int
+proc_pcontrol_null(__unused proc_t p, __unused void *arg)
+{
+	return(PROC_RETURNED);
+}
+
 
 /*
- * Deal with the out of swap space condition.  This routine gets called when
- * we want to swap something out but there's no more space left.  Since this
- * creates a memory deadlock situtation, we need to take action to free up
- * some memory resources in order to prevent the system from hanging completely.
- * The action we take is based on what the system processes running at user level
- * have specified.  Processes are marked in one of four categories: ones that
- * can be killed immediately, ones that should be suspended, ones that should
- * be throttled, and all the rest which are basically none of the above.  Which
- * processes are marked as being in which category is a user level policy decision;
- * we just take action based on those decisions here.
+ * Deal with the low on compressor pool space condition... this function
+ * gets called when we are approaching the limits of the compressor pool or
+ * we are unable to create a new swap file.
+ * Since this eventually creates a memory deadlock situtation, we need to take action to free up
+ * memory resources (both compressed and uncompressed) in order to prevent the system from hanging completely.
+ * There are 2 categories of processes to deal with.  Those that have an action
+ * associated with them by the task itself and those that do not.  Actionable 
+ * tasks can have one of three categories specified:  ones that
+ * can be killed immediately, ones that should be suspended, and ones that should
+ * be throttled.  Processes that do not have an action associated with them are normally
+ * ignored unless they are utilizing such a large percentage of the compressor pool (currently 50%)
+ * that only by killing them can we hope to put the system back into a usable state.
  */
 
-#define STARTING_PERCENTAGE	50	/* memory threshold expressed as a percentage */
-					/* of physical memory			      */
+#define	NO_PAGING_SPACE_DEBUG	0
+
+extern uint64_t	vm_compressor_pages_compressed(void);
 
 struct timeval	last_no_space_action = {0, 0};
 
-void
-no_paging_space_action(void)
-{
+#if DEVELOPMENT || DEBUG
+extern boolean_t kill_on_no_paging_space;
+#endif /* DEVELOPMENT || DEBUG */
 
-	uint64_t	memory_threshold;
-	int		num_found;
+#define MB_SIZE	(1024 * 1024ULL)
+boolean_t	memorystatus_kill_on_VM_thrashing(boolean_t);
+
+extern int32_t	max_kill_priority;
+extern int	memorystatus_get_proccnt_upto_priority(int32_t max_bucket_index);
+
+int
+no_paging_space_action()
+{
+	proc_t		p;
+	struct no_paging_space nps;
 	struct timeval	now;
 
 	/*
-	 * Throttle how often we come through here.  Once every 20 seconds should be plenty.
+	 * Throttle how often we come through here.  Once every 5 seconds should be plenty.
 	 */
-
 	microtime(&now);
 
-	if (now.tv_sec <= last_no_space_action.tv_sec + 20)
-		return;
-
-	last_no_space_action = now;
+	if (now.tv_sec <= last_no_space_action.tv_sec + 5)
+		return (0);
 
 	/*
-	 * Examine all processes and find those that have been marked to have some action
-	 * taken when swap space runs out.  Of those processes, select one or more and 
-	 * apply the specified action to them.  The idea is to only take action against
-	 * a few processes rather than hitting too many at once.  If the low swap condition
-	 * persists, this routine will get called again and we'll take action against more
-	 * processes.
+	 * Examine all processes and find the biggest (biggest is based on the number of pages this 
+	 * task has in the compressor pool) that has been marked to have some action
+	 * taken when swap space runs out... we also find the biggest that hasn't been marked for
+	 * action.
 	 *
-	 * Of the processes that have been marked, we choose which ones to take action 
-	 * against according to how much physical memory they're presently using.  We
-	 * start with the STARTING_THRESHOLD and any processes using more physical memory
-	 * than the percentage threshold will have action taken against it.  If there
-	 * are no processes over the threshold, then the threshold is cut in half and we
-	 * look again for processes using more than this threshold.  We continue in
-	 * this fashion until we find at least one process to take action against.  This
-	 * iterative approach is less than ideally efficient, however we only get here
-	 * when the system is almost in a memory deadlock and is pretty much just
-	 * thrashing if it's doing anything at all.  Therefore, the cpu overhead of
-	 * potentially multiple passes here probably isn't revelant.
+	 * If the biggest non-actionable task is over the "dangerously big" threashold (currently 50% of
+	 * the total number of pages held by the compressor, we go ahead and kill it since no other task
+	 * can have any real effect on the situation.  Otherwise, we go after the actionable process.
 	 */
+	bzero(&nps, sizeof(nps));
 
-	memory_threshold = (sane_size * STARTING_PERCENTAGE) / 100;	/* resident threshold in bytes */
+	proc_iterate(PROC_ALLPROCLIST, proc_pcontrol_null, (void *)NULL, proc_pcontrol_filter, (void *)&nps);
 
-	for (num_found = 0; num_found == 0; memory_threshold = memory_threshold / 2) {
-		proc_iterate(PROC_ALLPROCLIST, proc_dopcontrol, (void *)&num_found, proc_pcontrol_filter, (void *)&memory_threshold);
-
+#if NO_PAGING_SPACE_DEBUG
+	printf("low swap: npcs_proc_count = %d, npcs_total_size = %qd, npcs_max_size = %qd\n",
+	       nps.npcs_proc_count, nps.npcs_total_size, nps.npcs_max_size);
+	printf("low swap: pcs_proc_count = %d, pcs_total_size = %qd, pcs_max_size = %qd\n",
+	       nps.pcs_proc_count, nps.pcs_total_size, nps.pcs_max_size);
+	printf("low swap: apcs_proc_count = %d, apcs_total_size = %qd\n",
+	       nps.apcs_proc_count, nps.apcs_total_size);
+#endif
+	if (nps.npcs_max_size > (vm_compressor_pages_compressed() * 50) / 100) {
 		/*
-		 * If we just looked with memory_threshold == 0, then there's no need to iterate any further since
-		 * we won't find any eligible processes at this point.
+		 * for now we'll knock out any task that has more then 50% of the pages
+		 * held by the compressor
 		 */
+		if ((p = proc_find(nps.npcs_pid)) != PROC_NULL) {
+	
+			if (nps.npcs_uniqueid == p->p_uniqueid) {
+				/*
+				 * verify this is still the same process
+				 * in case the proc exited and the pid got reused while
+				 * we were finishing the proc_iterate and getting to this point
+				 */
+				last_no_space_action = now;
 
-		if (memory_threshold == 0) {
-			if (num_found == 0)	/* log that we couldn't do anything in this case */
-				printf("low swap: unable to find any eligible processes to take action on\n");
+				printf("low swap: killing largest compressed process with pid %d (%s) and size %llu MB\n", p->p_pid, p->p_comm, (nps.pcs_max_size/MB_SIZE));
+				psignal(p, SIGKILL);
+			
+				proc_rele(p);
 
-			break;
+				return (0);
+			}
+				
+			proc_rele(p);
 		}
 	}
+
+	/*
+	 * We have some processes within our jetsam bands of consideration and hence can be killed.
+	 * So we will invoke the memorystatus thread to go ahead and kill something.
+	 */
+	if (memorystatus_get_proccnt_upto_priority(max_kill_priority) > 0) {
+
+		last_no_space_action = now;
+		memorystatus_kill_on_VM_thrashing(TRUE /* async */);
+		return (1);
+	}
+
+	/*
+	 * No eligible processes to kill. So let's suspend/kill the largest
+	 * process depending on its policy control specifications.
+	 */
+
+	if (nps.pcs_max_size > 0) {
+		if ((p = proc_find(nps.pcs_pid)) != PROC_NULL) {
+
+			if (nps.pcs_uniqueid == p->p_uniqueid) {
+				/*
+				 * verify this is still the same process
+				 * in case the proc exited and the pid got reused while
+				 * we were finishing the proc_iterate and getting to this point
+				 */
+				last_no_space_action = now;
+		
+				proc_dopcontrol(p);
+			
+				proc_rele(p);
+				
+				return (1);
+			}
+	
+			proc_rele(p);
+		}
+	}
+	last_no_space_action = now;
+
+	printf("low swap: unable to find any eligible processes to take action on\n");
+
+	return (0);
+}
+
+int 
+proc_trace_log(__unused proc_t p,  struct proc_trace_log_args *uap, __unused int *retval)
+{
+	int ret = 0;
+	proc_t target_proc = PROC_NULL;
+	pid_t target_pid = uap->pid;
+	uint64_t target_uniqueid = uap->uniqueid;
+	task_t target_task = NULL;
+
+	if (priv_check_cred(kauth_cred_get(), PRIV_PROC_TRACE_INSPECT, 0)) {
+		ret = EPERM;
+		goto out;
+	}
+	target_proc = proc_find(target_pid);
+	if (target_proc != PROC_NULL) {
+		if (target_uniqueid != proc_uniqueid(target_proc)) {
+			ret = ENOENT;
+			goto out;
+		}
+
+		target_task = proc_task(target_proc);
+		if (task_send_trace_memory(target_task, target_pid, target_uniqueid)) {
+			ret = EINVAL;
+			goto out;
+		}
+	} else
+		ret = ENOENT;
+
+out:
+	if (target_proc != PROC_NULL)
+		proc_rele(target_proc);
+	return (ret);
+}
+
+#if VM_SCAN_FOR_SHADOW_CHAIN
+extern int vm_map_shadow_max(vm_map_t map);
+int proc_shadow_max(void);
+int proc_shadow_max(void)
+{
+	int		retval, max;
+	proc_t		p;
+	task_t		task;
+	vm_map_t	map;
+
+	max = 0;
+	proc_list_lock();
+	for (p = allproc.lh_first; (p != 0); p = p->p_list.le_next) {
+		if (p->p_stat == SIDL)
+			continue;
+		task = p->task;
+		if (task == NULL) {
+			continue;
+		}
+		map = get_task_map(task);
+		if (map == NULL) {
+			continue;
+		}
+		retval = vm_map_shadow_max(map);
+		if (retval > max) {
+			max = retval;
+		}
+	}
+	proc_list_unlock();
+	return max;
+}
+#endif /* VM_SCAN_FOR_SHADOW_CHAIN */
+
+void proc_set_responsible_pid(proc_t target_proc, pid_t responsible_pid);
+void proc_set_responsible_pid(proc_t target_proc, pid_t responsible_pid)
+{
+	if (target_proc != NULL) {
+		target_proc->p_responsible_pid = responsible_pid;
+	}
+	return;
+}
+
+int
+proc_chrooted(proc_t p)
+{
+	int retval = 0;
+
+	if (p) {
+		proc_fdlock(p);
+		retval = (p->p_fd->fd_rdir != NULL) ? 1 : 0;
+		proc_fdunlock(p);
+	}
+
+	return retval;
+}
+
+void *
+proc_get_uthread_uu_threadlist(void * uthread_v)
+{
+	uthread_t uth = (uthread_t)uthread_v;
+	return (uth != NULL) ? uth->uu_threadlist : NULL;
 }

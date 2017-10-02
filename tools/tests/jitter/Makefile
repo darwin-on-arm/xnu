@@ -1,16 +1,29 @@
+include ../Makefile.common
 
-ARCHS=x86_64 i386
-SDKROOT=/
-CC=xcrun -sdk "$(SDKROOT)" cc
-CFLAGS=$(patsubst %, -arch %,$(ARCHS)) -g -Wall -Os -isysroot $(SDKROOT)
+DSTROOT?=$(shell /bin/pwd)
+SYMROOT?=$(shell /bin/pwd)
+OBJROOT?=$(shell /bin/pwd)
 
-all: jitter
+CC:=$(shell xcrun -sdk "$(SDKROOT)" -find cc)
 
-timer_jitter.o: timer_jitter.c
-	$(CC) -c -o $@ $< $(CFLAGS)
+ifdef RC_ARCHS
+    ARCHS:=$(RC_ARCHS)
+  else
+    ifeq "$(Embedded)" "YES"
+      ARCHS:=armv7 armv7s arm64
+    else
+      ARCHS:=x86_64 i386
+  endif
+endif
 
-cpu_number.o: cpu_number.s
-	$(CC) -c -o $@ $< $(CFLAGS)
 
-jitter: timer_jitter.o cpu_number.o
+CFLAGS:=$(patsubst %, -arch %,$(ARCHS)) -g -Wall -Os -isysroot $(SDKROOT) -I$(SDKROOT)/System/Library/Frameworks/System.framework/PrivateHeaders
+
+all: $(DSTROOT)/jitter
+
+$(DSTROOT)/jitter: timer_jitter.c
 	$(CC) -o $@ $^ $(CFLAGS)
+
+clean:
+	rm -f $(DSTROOT)/jitter $(OBJROOT)/*.o
+	rm -rf $(SYMROOT)/*.dSYM

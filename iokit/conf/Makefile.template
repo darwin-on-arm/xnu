@@ -5,16 +5,6 @@
 # the terms and conditions for use and redistribution.
 #
 
-#
-# Export IDENT for sub-makefiles
-#
-export IDENT
-
-#
-# XXX: INCFLAGS 
-#
-INCFLAGS_MAKEFILE=  $(INCFLAGS_POSIX) -I$(SOURCE) -I$(SOURCE)include
-
 export MakeInc_cmd=${SRCROOT}/makedefs/MakeInc.cmd
 export MakeInc_def=${SRCROOT}/makedefs/MakeInc.def
 export MakeInc_rule=${SRCROOT}/makedefs/MakeInc.rule
@@ -27,22 +17,40 @@ include $(MakeInc_def)
 # XXX: CFLAGS
 #
 CFLAGS+= -include meta_features.h -DDRIVER_PRIVATE		\
-	-DIOMATCHDEBUG=1 -DIOALLOCDEBUG=1			\
-	-include meta_features.h $(CFLAGS_INLINE_CONFIG)
+	-DIOKIT_KERNEL_PRIVATE -DIOMATCHDEBUG=1 -DIOALLOCDEBUG=1
+SFLAGS+= -include meta_features.h
 #-DIOKITDEBUG=-1
 
 CWARNFLAGS   = $(CWARNFLAGS_STD) -Wno-unused-parameter
 CXXWARNFLAGS = $(CXXWARNFLAGS_STD) -Wno-unused-parameter -Wno-cast-qual -Wno-shadow
 
+# Objects that don't want -Wcast-align warning (8474835)
+IOHibernateRestoreKernel.o_CWARNFLAGS_ADD = -Wno-cast-align
+CXXOBJS_NO_CAST_ALIGN =				\
+		IODMACommand.cpo		\
+		IODataQueue.cpo			\
+		IOHibernateIO.cpo		\
+		IOMemoryDescriptor.cpo		\
+		IONVRAM.cpo			\
+		IOPMrootDomain.cpo		\
+		IOSharedDataQueue.cpo		\
+		IOUserClient.cpo
+
+$(foreach file,$(CXXOBJS_NO_CAST_ALIGN),$(eval $(call add_perfile_cxxflags,$(file),-Wno-cast-align)))
+
 CFLAGS_RELEASE += -DIOASSERT=0
+CFLAGS_DEVELOPMENT += -DIOASSERT=1
 CFLAGS_DEBUG += -DIOASSERT=1
 
-SFLAGS+= -DKERNEL
+IOUserClient.cpo_CXXWARNFLAGS_ADD += -Wno-missing-prototypes
+IOKitDebug.cpo_CXXWARNFLAGS_ADD += -Wno-missing-prototypes
+IOKitBSDInit.cpo_CXXWARNFLAGS_ADD += -Wno-missing-prototypes -Wno-documentation
+IOPMrootDomain.cpo_CXXWARNFLAGS_ADD += -Wno-missing-prototypes
 
 #
 # Directories for mig generated files
 #
-COMP_SUBDIRS = 
+COMP_SUBDIRS =
 
 #
 #  Make sure we don't remove this by accident if interrupted at the wrong
@@ -62,47 +70,40 @@ COMP_SUBDIRS =
 
 %CFILES
 
-%MFILES
+%CXXFILES
 
 %SFILES
 
-%BFILES
-
-%ORDERED
 %MACHDEP
 
-#
-#  OBJSDEPS is the set of files (defined in the machine dependent
-#  template if necessary) which all objects depend on (such as an
-#  in-line assembler expansion filter)
-#
-${OBJS}: ${OBJSDEPS}
+# Rebuild if per-file overrides change
+${OBJS}: $(firstword $(MAKEFILE_LIST))
 
+# Rebuild if global compile flags change
+$(COBJS): .CFLAGS
+.CFLAGS: ALWAYS
+	$(_v)$(REPLACECONTENTS) $@ $(KCC) $(CFLAGS) $(INCFLAGS)
+$(CXXOBJS): .CXXFLAGS
+.CXXFLAGS: ALWAYS
+	$(_v)$(REPLACECONTENTS) $@ $(KC++) $(CXXFLAGS) $(INCFLAGS)
+$(SOBJS): .SFLAGS
+.SFLAGS: ALWAYS
+	$(_v)$(REPLACECONTENTS) $@ $(S_KCC) $(SFLAGS) $(INCFLAGS)
 
-%LOAD
-
-LDOBJS = $(OBJS)
-
-$(COMPONENT).filelist: $(LDOBJS)
-	$(_v)if [ $(BUILD_MACHO_OBJ) -eq 1 ]; then \
-	for hib_file in ${HIB_FILES};		\
+$(COMPONENT).filelist: $(OBJS)
+	$(_v)for hib_file in ${HIB_FILES};		\
 	do	\
-                $(SEG_HACK) __HIB $${hib_file} -o $${hib_file}__; \
-                mv $${hib_file}__ $${hib_file} ; \
-	done; \
-	fi
-	@echo LDFILELIST $(COMPONENT)
-	$(_v)( for obj in ${LDOBJS}; do	\
-		 echo $(TARGET)$(COMP_OBJ_DIR)/$(KERNEL_CONFIG)/$${obj}; \
-	done; ) > $(COMPONENT).filelist
+                $(SEG_HACK) -n __HIB -o $${hib_file}__ $${hib_file} || exit 1; \
+                mv $${hib_file}__ $${hib_file} || exit 1; \
+	done
+	@echo "$(ColorL)LDFILELIST$(Color0) $(ColorLF)$(COMPONENT)$(Color0)"
+	$(_v)for obj in ${OBJS}; do	\
+		 echo $(TARGET)/$(CURRENT_KERNEL_CONFIG)/$${obj}; \
+	done > $(COMPONENT).filelist
 
-do_depend: do_all
-	$(_v)${MD} -u Makedep -f -d `ls *.d`
-	
-	
 do_all: $(COMPONENT).filelist
 
-do_build_all: do_depend
+do_build_all:: do_all
 
 %RULES
 

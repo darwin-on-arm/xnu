@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998-2008 Apple Inc. All rights reserved.
+ * Copyright (c) 1998-2016 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -86,7 +86,6 @@ long strtol(const char *nptr, char **endptr, int base);
 unsigned long strtoul(const char *nptr, char **endptr, int base);
 quad_t strtoq(const char *nptr, char **endptr, int base);
 u_quad_t strtouq(const char *nptr, char **endptr, int base);
-char *strchr(const char *str, int ch);
 char *strncat(char *s1, const char *s2, unsigned long n);
 
 
@@ -126,11 +125,11 @@ isdigit(char c)
 long
 strtol(const char *nptr, char **endptr, int base)
 {
-	register const char *s = nptr;
-	register unsigned long acc;
-	register int c;
-	register unsigned long cutoff;
-	register int neg = 0, any, cutlim;
+	const char *s = nptr;
+	unsigned long acc;
+	char c;
+	unsigned long cutoff;
+	int neg = 0, any, cutlim;
 
 	/*
 	 * Skip white space and pick up leading +/- sign if any.
@@ -218,11 +217,11 @@ strtol(const char *nptr, char **endptr, int base)
 unsigned long
 strtoul(const char *nptr, char **endptr, int base)
 {
-	register const char *s = nptr;
-	register unsigned long acc;
-	register int c;
-	register unsigned long cutoff;
-	register int neg = 0, any, cutlim;
+	const char *s = nptr;
+	unsigned long acc;
+	char c;
+	unsigned long cutoff;
+	int neg = 0, any, cutlim;
 
 	/*
 	 * See strtol for comments as to the logic used.
@@ -296,11 +295,11 @@ strtoul(const char *nptr, char **endptr, int base)
 quad_t
 strtoq(const char *nptr, char **endptr, int base)
 {
-	register const char *s;
-	register u_quad_t acc;
-	register int c;
-	register u_quad_t qbase, cutoff;
-	register int neg, any, cutlim;
+	const char *s;
+	u_quad_t acc;
+	char c;
+	u_quad_t qbase, cutoff;
+	int neg, any, cutlim;
 
 	/*
 	 * Skip white space and pick up leading +/- sign if any.
@@ -397,13 +396,13 @@ strtoq(const char *nptr, char **endptr, int base)
 u_quad_t
 strtouq(const char *nptr,
 	char **endptr,
-	register int base)
+	int base)
 {
-	register const char *s = nptr;
-	register u_quad_t acc;
-	register int c;
-	register u_quad_t qbase, cutoff;
-	register int neg, any, cutlim;
+	const char *s = nptr;
+	u_quad_t acc;
+	char c;
+	u_quad_t qbase, cutoff;
+	int neg, any, cutlim;
 
 	/*
 	 * See strtoq for comments as to the logic used.
@@ -468,19 +467,6 @@ strtouq(const char *nptr,
 	return (acc);
 }
 
-
-/*
- *
- */
-
-char *strchr(const char *str, int ch)
-{
-    do {
-	if (*str == ch)
-	    return(__CAST_AWAY_QUALIFIER(str, const, char *));
-    } while (*str++);
-    return ((char *) 0);
-}
 
 /*
  *

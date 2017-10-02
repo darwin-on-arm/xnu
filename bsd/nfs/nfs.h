@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2011 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2016 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -78,7 +78,7 @@
 
 #define NFS_TICKINTVL	5		/* Desired time for a tick (msec) */
 #define NFS_HZ		(hz / nfs_ticks) /* Ticks/sec */
-__private_extern__ int nfs_ticks;
+extern int nfs_ticks;
 #define	NFS_TIMEO	(1 * NFS_HZ)	/* Default timeout = 1 second */
 #define	NFS_MINTIMEO	(1 * NFS_HZ)	/* Min timeout to use */
 #define	NFS_MAXTIMEO	(60 * NFS_HZ)	/* Max timeout to backoff to */
@@ -106,7 +106,6 @@ __private_extern__ int nfs_ticks;
 #define	NFS_ASYNCTHREADMAXIDLE	60	/* Seconds before idle nfsiods are reaped */
 #define	NFS_DEFSTATFSRATELIMIT 	10	/* Def. max # statfs RPCs per second */
 #define NFS_REQUESTDELAY	10	/* ms interval to check request queue */
-#define NFSRV_DEADSOCKDELAY	5	/* Seconds before dead sockets are reaped */
 #define NFSRV_MAXWGATHERDELAY	100	/* Max. write gather delay (msec) */
 #ifndef NFSRV_WGATHERDELAY
 #define NFSRV_WGATHERDELAY	1	/* Default write gather delay (msec) */
@@ -183,6 +182,11 @@ __private_extern__ int nfs_ticks;
 #define NFS_MATTR_FS_LOCATIONS		21	/* list of locations for the file system */
 #define NFS_MATTR_MNTFLAGS		22	/* VFS mount flags (MNT_*) */
 #define NFS_MATTR_MNTFROM		23	/* fixed string to use for "f_mntfromname" */
+#define NFS_MATTR_REALM			24	/* Realm to authenticate with */
+#define NFS_MATTR_PRINCIPAL		25	/* GSS principal to authenticate with */
+#define NFS_MATTR_SVCPRINCIPAL		26	/* GSS principal to authenticate to, the server principal */
+#define NFS_MATTR_NFS_VERSION_RANGE	27	/* Packed version range to try */
+#define NFS_MATTR_KERB_ETYPE		28	/* Enctype to use for kerberos mounts */
 
 /* NFS mount flags */
 #define NFS_MFLAG_SOFT			0	/* soft mount (requests fail if unresponsive) */
@@ -196,7 +200,7 @@ __private_extern__ int nfs_ticks;
 #define NFS_MFLAG_MUTEJUKEBOX		8	/* don't treat jukebox errors as unresponsive */
 #define NFS_MFLAG_EPHEMERAL		9	/* ephemeral (mirror) mount */
 #define NFS_MFLAG_NOCALLBACK		10	/* don't provide callback RPC service */
-#define NFS_MFLAG_NONAMEDATTR		11	/* don't use named attributes */
+#define NFS_MFLAG_NAMEDATTR		11	/* don't use named attributes */
 #define NFS_MFLAG_NOACL			12	/* don't support ACLs */
 #define NFS_MFLAG_ACLONLY		13	/* only support ACLs - not mode */
 #define NFS_MFLAG_NFC			14	/* send NFC strings */
@@ -204,10 +208,31 @@ __private_extern__ int nfs_ticks;
 #define NFS_MFLAG_MNTUDP		16	/* MOUNT protocol should use UDP */
 #define NFS_MFLAG_MNTQUICK		17	/* use short timeouts while mounting */
 
+/* Macros for packing and unpacking packed versions */
+#define PVER2MAJOR(M) ((uint32_t)(((M) >> 16) & 0xffff))
+#define PVER2MINOR(m) ((uint32_t)((m) & 0xffff))
+#define VER2PVER(M, m) ((uint32_t)((M) << 16) | ((m) & 0xffff))
+
 /* NFS advisory file locking modes */
 #define NFS_LOCK_MODE_ENABLED		0	/* advisory file locking enabled */
 #define NFS_LOCK_MODE_DISABLED		1	/* do not support advisory file locking */
 #define NFS_LOCK_MODE_LOCAL		2	/* perform advisory file locking locally */
+
+
+/* Supported encryption types for kerberos session keys */
+typedef enum  nfs_supported_kerberos_etypes {
+	NFS_DES3_CBC_SHA1_KD = 16,
+	NFS_AES128_CTS_HMAC_SHA1_96 = 17,
+	NFS_AES256_CTS_HMAC_SHA1_96 = 18
+} nfs_supported_kerberos_etypes;
+
+/* Structure to hold an array of kerberos enctypes to allow on a mount */
+#define NFS_MAX_ETYPES 3
+struct nfs_etype {
+	uint32_t count;
+	uint32_t selected;  /* index in etypes that is being used. Set to count if nothing has been selected */
+	nfs_supported_kerberos_etypes etypes[NFS_MAX_ETYPES];
+};
 
 /*
  * Old-style arguments to mount NFS
@@ -562,7 +587,7 @@ struct nfs_export_stat_counters {
 	struct nfsstatcount64 ops;		/* Count of NFS Requests received for this export  */
 	struct nfsstatcount64 bytes_read;	/* Count of bytes read from this export */
 	struct nfsstatcount64 bytes_written;	/* Count of bytes written to his export */
-}__attribute__((__packed__));
+};
 
 /* Macro for updating nfs export stat counters */
 #define NFSStatAdd64(PTR, VAL) \
@@ -578,11 +603,11 @@ struct nfs_export_stat_counters {
 #define NFSRV_USER_STAT_DEF_IDLE_SEC  7200	/* default idle seconds (node no longer considered active) */
 
 /* active user list globals */
-__private_extern__ uint32_t nfsrv_user_stat_enabled;		/* enable/disable active user list */
-__private_extern__ uint32_t nfsrv_user_stat_node_count;		/* current count of user stat nodes */
-__private_extern__ uint32_t nfsrv_user_stat_max_idle_sec;	/* idle seconds (node no longer considered active) */
-__private_extern__ uint32_t nfsrv_user_stat_max_nodes;		/* active user list size limit */
-__private_extern__ lck_grp_t *nfsrv_active_user_mutex_group;
+extern uint32_t nfsrv_user_stat_enabled;		/* enable/disable active user list */
+extern uint32_t nfsrv_user_stat_node_count;		/* current count of user stat nodes */
+extern uint32_t nfsrv_user_stat_max_idle_sec;	/* idle seconds (node no longer considered active) */
+extern uint32_t nfsrv_user_stat_max_nodes;		/* active user list size limit */
+extern lck_grp_t *nfsrv_active_user_mutex_group;
 
 /* An active user node represented in the kernel */
 struct nfs_user_stat_node {
@@ -643,15 +668,15 @@ struct nfs_exportfs {
 	LIST_HEAD(,nfs_export)		nxfs_exports;	/* list of exports for this file system */
 };
 
-__private_extern__ LIST_HEAD(nfsrv_expfs_list, nfs_exportfs) nfsrv_exports;
-__private_extern__ lck_rw_t nfsrv_export_rwlock;  // lock for export data structures
+extern LIST_HEAD(nfsrv_expfs_list, nfs_exportfs) nfsrv_exports;
+extern lck_rw_t nfsrv_export_rwlock;  // lock for export data structures
 #define NFSRVEXPHASHSZ	64
 #define	NFSRVEXPHASHVAL(FSID, EXPID)	\
 	(((FSID) >> 24) ^ ((FSID) >> 16) ^ ((FSID) >> 8) ^ (EXPID))
 #define	NFSRVEXPHASH(FSID, EXPID)	\
 	(&nfsrv_export_hashtbl[NFSRVEXPHASHVAL((FSID),(EXPID)) & nfsrv_export_hash])
-__private_extern__ LIST_HEAD(nfsrv_export_hashhead, nfs_export) *nfsrv_export_hashtbl;
-__private_extern__ u_long nfsrv_export_hash;
+extern LIST_HEAD(nfsrv_export_hashhead, nfs_export) *nfsrv_export_hashtbl;
+extern u_long nfsrv_export_hash;
 
 #if CONFIG_FSE
 /*
@@ -666,22 +691,22 @@ struct nfsrv_fmod {
 
 #define NFSRVFMODHASHSZ	128
 #define NFSRVFMODHASH(vp) (((uintptr_t) vp) & nfsrv_fmod_hash)
-__private_extern__ LIST_HEAD(nfsrv_fmod_hashhead, nfsrv_fmod) *nfsrv_fmod_hashtbl;
-__private_extern__ u_long nfsrv_fmod_hash;
-__private_extern__ lck_mtx_t *nfsrv_fmod_mutex;
-__private_extern__ int nfsrv_fmod_pending, nfsrv_fsevents_enabled;
+extern LIST_HEAD(nfsrv_fmod_hashhead, nfsrv_fmod) *nfsrv_fmod_hashtbl;
+extern u_long nfsrv_fmod_hash;
+extern lck_mtx_t *nfsrv_fmod_mutex;
+extern int nfsrv_fmod_pending, nfsrv_fsevents_enabled;
 #endif
 
-__private_extern__ int nfsrv_async, nfsrv_export_hash_size, 
+extern int nfsrv_async, nfsrv_export_hash_size, 
 			nfsrv_reqcache_size, nfsrv_sock_max_rec_queue_length;
-__private_extern__ uint32_t nfsrv_gss_context_ttl;
-__private_extern__ struct nfsstats nfsstats;
+extern uint32_t nfsrv_gss_context_ttl;
+extern struct nfsstats nfsstats;
 #define NFS_UC_Q_DEBUG
 #ifdef NFS_UC_Q_DEBUG
-__private_extern__ int nfsrv_uc_use_proxy;
-__private_extern__ uint32_t nfsrv_uc_queue_limit;
-__private_extern__ uint32_t nfsrv_uc_queue_max_seen;
-__private_extern__ volatile uint32_t nfsrv_uc_queue_count;						      
+extern int nfsrv_uc_use_proxy;
+extern uint32_t nfsrv_uc_queue_limit;
+extern uint32_t nfsrv_uc_queue_max_seen;
+extern volatile uint32_t nfsrv_uc_queue_count;						      
 #endif
 
 #endif // KERNEL
@@ -741,6 +766,23 @@ struct nfsstats {
  */
 #define NFSCLNT_LOCKDANS	0x200
 #define NFSCLNT_LOCKDNOTIFY	0x400
+#define NFSCLNT_TESTIDMAP	0x001
+
+#include <sys/_types/_guid_t.h> /* for guid_t below */
+#define MAXIDNAMELEN		1024
+struct nfs_testmapid {
+	uint32_t		ntm_lookup;	/* lookup name 2 id or id 2 name */
+	uint32_t		ntm_grpflag;	/* Is this a group or user maping */
+	uint32_t		ntm_id;		/* id to map or return */
+	uint32_t		pad;	
+	guid_t			ntm_guid;	/* intermidiate guid used in conversion */
+	char			ntm_name[MAXIDNAMELEN]; /* name to map or return */
+};
+
+#define NTM_ID2NAME	0
+#define NTM_NAME2ID	1
+#define NTM_NAME2GUID	2
+#define NTM_GUID2NAME	3
 
 /*
  * fs.nfs sysctl(3) identifiers
@@ -811,7 +853,7 @@ struct nfsrv_uc_arg;
 #define	NFSINT_SIGMASK	(sigmask(SIGINT)|sigmask(SIGTERM)|sigmask(SIGKILL)| \
 			 sigmask(SIGHUP)|sigmask(SIGQUIT))
 
-__private_extern__ size_t nfs_mbuf_mhlen, nfs_mbuf_minclsize;
+extern size_t nfs_mbuf_mhlen, nfs_mbuf_minclsize;
 
 /*
  * NFS mbuf chain structure used for managing the building/dissection of RPCs
@@ -909,12 +951,13 @@ struct nfsreq {
  * Queue head for nfsreq's
  */
 TAILQ_HEAD(nfs_reqqhead, nfsreq);
-__private_extern__ struct nfs_reqqhead nfs_reqq;
-__private_extern__ lck_grp_t *nfs_request_grp;
+extern struct nfs_reqqhead nfs_reqq;
+extern lck_grp_t *nfs_request_grp;
 
 #define R_XID32(x)	((x) & 0xffffffff)
 
-#define NFSREQNOLIST ((struct nfsreq *)0xdeadbeef)	/* sentinel value for nfsreq lists */
+#define NFSNOLIST	((void *)0x0badcafe)	/* sentinel value for nfs lists */
+#define NFSREQNOLIST	NFSNOLIST		/* sentinel value for nfsreq lists */
 
 /* Flag values for r_flags */
 #define R_TIMING	0x00000001	/* timing request (in mntp) */
@@ -933,6 +976,8 @@ __private_extern__ lck_grp_t *nfs_request_grp;
 #define R_ASYNCWAIT	0x00002000	/* async request now being waited on */
 #define R_RESENDQ	0x00004000	/* async request currently on resendq */
 #define R_SENDING	0x00008000	/* request currently being sent */
+#define R_SOFT		0x00010000	/* request is soft - don't retry or reconnect */
+#define R_IOD		0x00020000	/* request is being managed by an IOD */
 
 #define R_NOINTR	0x20000000	/* request should not be interupted by a signal */
 #define R_RECOVER	0x40000000	/* a state recovery RPC - during NFSSTA_RECOVER */
@@ -944,22 +989,20 @@ __private_extern__ lck_grp_t *nfs_request_grp;
 #define RL_WAITING	0x0002		/* Someone waiting for lock. */
 #define RL_QUEUED	0x0004		/* request is on the queue */
 
-__private_extern__ u_int32_t nfs_xid, nfs_xidwrap;
-__private_extern__ int nfs_iosize, nfs_allow_async, nfs_statfs_rate_limit;
-__private_extern__ int nfs_access_cache_timeout, nfs_access_delete, nfs_access_dotzfs, nfs_access_for_getattr;
-__private_extern__ int nfs_lockd_mounts, nfs_lockd_request_sent, nfs_single_des;
-__private_extern__ int nfs_tprintf_initial_delay, nfs_tprintf_delay;
-__private_extern__ int nfsiod_thread_count, nfsiod_thread_max, nfs_max_async_writes;
-__private_extern__ int nfs_idmap_ctrl, nfs_callback_port;
-__private_extern__ int nfs_is_mobile;
-__private_extern__ uint32_t nfs_squishy_flags;
+extern u_int32_t nfs_xid, nfs_xidwrap;
+extern int nfs_iosize, nfs_allow_async, nfs_statfs_rate_limit;
+extern int nfs_access_cache_timeout, nfs_access_delete, nfs_access_dotzfs, nfs_access_for_getattr;
+extern int nfs_lockd_mounts, nfs_lockd_request_sent;
+extern int nfs_tprintf_initial_delay, nfs_tprintf_delay;
+extern int nfsiod_thread_count, nfsiod_thread_max, nfs_max_async_writes;
+extern int nfs_idmap_ctrl, nfs_callback_port;
+extern int nfs_is_mobile, nfs_readlink_nocache, nfs_root_steals_ctx;
+extern uint32_t nfs_squishy_flags;
+extern uint32_t nfs_debug_ctl;
 
 /* bits for nfs_idmap_ctrl: */
 #define NFS_IDMAP_CTRL_USE_IDMAP_SERVICE		0x00000001 /* use the ID mapping service */
 #define NFS_IDMAP_CTRL_FALLBACK_NO_COMMON_IDS		0x00000002 /* fallback should NOT handle common IDs like "root" and "nobody" */
-#define NFS_IDMAP_CTRL_FALLBACK_NO_WELLKNOWN_IDS	0x00000004 /* fallback should NOT handle the well known "XXX@" IDs */
-#define NFS_IDMAP_CTRL_UNKNOWN_IS_99			0x00000008 /* for unknown IDs use uid/gid 99 instead of -2/nobody */
-#define NFS_IDMAP_CTRL_COMPARE_RESULTS			0x00000010 /* compare results of ID mapping service and fallback */
 #define NFS_IDMAP_CTRL_LOG_FAILED_MAPPINGS		0x00000020 /* log failed ID mapping attempts */
 #define NFS_IDMAP_CTRL_LOG_SUCCESSFUL_MAPPINGS		0x00000040 /* log successful ID mapping attempts */
 
@@ -1020,7 +1063,7 @@ struct nfsrv_sock {
 
 #define SLPNOLIST ((struct nfsrv_sock *)0xdeadbeef)	/* sentinel value for sockets not in the nfsrv_sockwg list */
 
-__private_extern__ struct nfsrv_sock *nfsrv_udpsock, *nfsrv_udp6sock;
+extern struct nfsrv_sock *nfsrv_udpsock, *nfsrv_udp6sock;
 
 /*
  * global NFS server socket lists:
@@ -1030,12 +1073,12 @@ __private_extern__ struct nfsrv_sock *nfsrv_udpsock, *nfsrv_udp6sock;
  * nfsrv_sockwork - sockets being worked on which may have more work to do (ns_svcq)
  * nfsrv_sockwg - sockets with pending write gather input (ns_wgq)
  */
-__private_extern__ TAILQ_HEAD(nfsrv_sockhead, nfsrv_sock) nfsrv_socklist, nfsrv_deadsocklist,
-						nfsrv_sockwg, nfsrv_sockwait, nfsrv_sockwork;
+extern TAILQ_HEAD(nfsrv_sockhead, nfsrv_sock) nfsrv_socklist, nfsrv_sockwg,
+						nfsrv_sockwait, nfsrv_sockwork;
 
 /* lock groups for nfsrv_sock's */
-__private_extern__ lck_grp_t *nfsrv_slp_rwlock_group;
-__private_extern__ lck_grp_t *nfsrv_slp_mutex_group;
+extern lck_grp_t *nfsrv_slp_rwlock_group;
+extern lck_grp_t *nfsrv_slp_mutex_group;
 
 /*
  * One of these structures is allocated for each nfsd.
@@ -1082,31 +1125,34 @@ struct nfsrv_descript {
 	kauth_cred_t		nd_cr;		/* Credentials */
 };
 
-__private_extern__ TAILQ_HEAD(nfsd_head, nfsd) nfsd_head, nfsd_queue;
+extern TAILQ_HEAD(nfsd_head, nfsd) nfsd_head, nfsd_queue;
 
 /* mutex for nfs server */
-__private_extern__ lck_mtx_t *nfsd_mutex;
-__private_extern__ int nfsd_thread_count, nfsd_thread_max;
+extern lck_mtx_t *nfsd_mutex;
+extern int nfsd_thread_count, nfsd_thread_max;
 
 /* request list mutex */
-__private_extern__ lck_mtx_t *nfs_request_mutex;
-__private_extern__ int nfs_request_timer_on;
+extern lck_mtx_t *nfs_request_mutex;
+extern int nfs_request_timer_on;
 
 /* mutex for nfs client globals */
-__private_extern__ lck_mtx_t *nfs_global_mutex;
+extern lck_mtx_t *nfs_global_mutex;
 
 /* NFSv4 callback globals */
-__private_extern__ int nfs4_callback_timer_on;
-__private_extern__ in_port_t nfs4_cb_port, nfs4_cb_port6;
+extern int nfs4_callback_timer_on;
+extern in_port_t nfs4_cb_port, nfs4_cb_port6;
 
 /* nfs timer call structures */
-__private_extern__ thread_call_t	nfs_request_timer_call;
-__private_extern__ thread_call_t	nfs_buf_timer_call;
-__private_extern__ thread_call_t	nfs4_callback_timer_call;
-__private_extern__ thread_call_t	nfsrv_deadsock_timer_call;
+extern thread_call_t	nfs_request_timer_call;
+extern thread_call_t	nfs_buf_timer_call;
+extern thread_call_t	nfs4_callback_timer_call;
+extern thread_call_t	nfsrv_idlesock_timer_call;
 #if CONFIG_FSE
-__private_extern__ thread_call_t	nfsrv_fmod_timer_call;
+extern thread_call_t	nfsrv_fmod_timer_call;
 #endif
+
+/* nfs 4 default domain for user mapping */
+extern char nfs4_default_domain[MAXPATHLEN];
 
 __BEGIN_DECLS
 
@@ -1139,7 +1185,12 @@ int	nfs_connect(struct nfsmount *, int, int);
 void	nfs_disconnect(struct nfsmount *);
 void	nfs_need_reconnect(struct nfsmount *);
 void	nfs_mount_sock_thread_wake(struct nfsmount *);
-void	nfs_mount_check_dead_timeout(struct nfsmount *);
+int	nfs_mount_check_dead_timeout(struct nfsmount *);
+int	nfs_mount_gone(struct nfsmount *);
+void	nfs_mount_rele(struct nfsmount *);
+void	nfs_mount_zombie(struct nfsmount *, int);
+void	nfs_mount_make_zombie(struct nfsmount *);
+
 void	nfs_rpc_record_state_init(struct nfs_rpc_record_state *);
 void	nfs_rpc_record_state_cleanup(struct nfs_rpc_record_state *);
 int	nfs_rpc_record_read(socket_t, struct nfs_rpc_record_state *, int, int *, mbuf_t *);
@@ -1212,7 +1263,7 @@ uint32_t nfs4_ace_vfsflags_to_nfsflags(uint32_t);
 uint32_t nfs4_ace_nfsmask_to_vfsrights(uint32_t);
 uint32_t nfs4_ace_vfsrights_to_nfsmask(uint32_t);
 int nfs4_id2guid(char *, guid_t *, int);
-int nfs4_guid2id(guid_t *, char *, int *, int);
+int nfs4_guid2id(guid_t *, char *, size_t *, int);
 
 int	nfs_parsefattr(struct nfsm_chain *, int, struct nfs_vattr *);
 int	nfs4_parsefattr(struct nfsm_chain *, struct nfs_fsattr *, struct nfs_vattr *, fhandle_t *, struct dqblk *, struct nfs_fs_locations *);
@@ -1325,8 +1376,8 @@ int	nfs_read_rpc(nfsnode_t, uio_t, vfs_context_t);
 int	nfs_write_rpc(nfsnode_t, uio_t, vfs_context_t, int *, uint64_t *);
 int	nfs_write_rpc2(nfsnode_t, uio_t, thread_t, kauth_cred_t, int *, uint64_t *);
 
-int	nfs3_access_rpc(nfsnode_t, u_int32_t *, vfs_context_t);
-int	nfs4_access_rpc(nfsnode_t, u_int32_t *, vfs_context_t);
+int	nfs3_access_rpc(nfsnode_t, u_int32_t *, int, vfs_context_t);
+int	nfs4_access_rpc(nfsnode_t, u_int32_t *, int, vfs_context_t);
 int	nfs3_getattr_rpc(nfsnode_t, mount_t, u_char *, size_t, int, vfs_context_t, struct nfs_vattr *, u_int64_t *);
 int	nfs4_getattr_rpc(nfsnode_t, mount_t, u_char *, size_t, int, vfs_context_t, struct nfs_vattr *, u_int64_t *);
 int	nfs3_setattr_rpc(nfsnode_t, struct vnode_attr *, vfs_context_t);
@@ -1367,13 +1418,14 @@ void	nfsrv_cleancache(void);
 void	nfsrv_cleanup(void);
 int	nfsrv_credcheck(struct nfsrv_descript *, vfs_context_t, struct nfs_export *,
 			struct nfs_export_options *);
-void	nfsrv_deadsock_timer(void *, void *);
+void	nfsrv_idlesock_timer(void *, void *);
 int	nfsrv_dorec(struct nfsrv_sock *, struct nfsd *, struct nfsrv_descript **);
 int	nfsrv_errmap(struct nfsrv_descript *, int);
 int	nfsrv_export(struct user_nfs_export_args *, vfs_context_t);
 int	nfsrv_fhmatch(struct nfs_filehandle *, struct nfs_filehandle *);
 int	nfsrv_fhtovp(struct nfs_filehandle *, struct nfsrv_descript *, vnode_t *,
 			struct nfs_export **, struct nfs_export_options **);
+int	nfsrv_check_exports_allow_address(mbuf_t);
 #if CONFIG_FSE
 void	nfsrv_fmod_timer(void *, void *);
 #endif
@@ -1423,8 +1475,9 @@ int	nfsrv_symlink(struct nfsrv_descript *, struct nfsrv_sock *, vfs_context_t, m
 int	nfsrv_write(struct nfsrv_descript *, struct nfsrv_sock *, vfs_context_t, mbuf_t *);
 
 void	nfs_interval_timer_start(thread_call_t, int);
+int	nfs_use_cache(struct nfsmount *);
 void	nfs_up(struct nfsmount *, thread_t, int, const char *);
-void	nfs_down(struct nfsmount *, thread_t, int, int, const char *);
+void	nfs_down(struct nfsmount *, thread_t, int, int, const char *, int);
 int	nfs_msg(thread_t, const char *, const char *, int);
 
 int	nfs_mountroot(void);
@@ -1447,6 +1500,25 @@ void nfsrv_uc_cleanup(void);
 void nfsrv_uc_addsock(struct nfsrv_sock *, int);
 void nfsrv_uc_dequeue(struct nfsrv_sock *);
     
+/* Debug support */
+#define NFS_DEBUG_LEVEL   (nfs_debug_ctl & 0xf)
+#define NFS_DEBUG_FACILITY ((nfs_debug_ctl >> 4) & 0xff)
+#define NFS_DEBUG_FLAGS ((nfs_debug_ctl >> 12) & 0xff)
+#define NFS_DEBUG_VALUE ((nfs_debug_ctl >> 20) & 0xfff)
+#define NFS_FAC_SOCK	0x01
+#define NFS_FAC_STATE	0x02
+#define NFS_FAC_NODE	0x04
+#define NFS_FAC_VNOP	0x08
+#define NFS_FAC_BIO	0x10
+#define NFS_FAC_GSS	0x20
+#define NFS_FAC_VFS	0x40
+
+#define NFS_DBG(fac, lev, fmt, ...) \
+	if (__builtin_expect(NFS_DEBUG_LEVEL, 0)) nfs_printf(fac, lev, "%s: %d: " fmt, __func__, __LINE__, ## __VA_ARGS__)
+
+void nfs_printf(int, int, const char *, ...) __printflike(3,4);
+int  nfs_mountopts(struct nfsmount *, char *, int);
+
 __END_DECLS
 
 #endif	/* KERNEL */

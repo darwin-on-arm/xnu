@@ -33,6 +33,7 @@
 #include <libkern/c++/OSDictionary.h>
 #include <libkern/c++/OSSerialize.h>
 #include <libkern/c++/OSLib.h>
+#include <libkern/OSDebug.h>
 
 #define super OSCollection
 
@@ -46,27 +47,23 @@ OSMetaClassDefineReservedUnused(OSArray, 5);
 OSMetaClassDefineReservedUnused(OSArray, 6);
 OSMetaClassDefineReservedUnused(OSArray, 7);
 
-#if OSALLOCDEBUG
-extern "C" {
-    extern int debug_container_malloc_size;
-};
-#define ACCUMSIZE(s) do { debug_container_malloc_size += (s); } while(0)
-#else
-#define ACCUMSIZE(s)
-#endif
 
 #define EXT_CAST(obj) \
     reinterpret_cast<OSObject *>(const_cast<OSMetaClassBase *>(obj))
 
 bool OSArray::initWithCapacity(unsigned int inCapacity)
 {
-    int size;
+    unsigned int size;
 
     if (!super::init())
         return false;
 
+    // integer overflow check
+    if (inCapacity > (UINT_MAX / sizeof(const OSMetaClassBase*)))
+        return false;
+
     size = sizeof(const OSMetaClassBase *) * inCapacity;
-    array = (const OSMetaClassBase **) kalloc(size);
+    array = (const OSMetaClassBase **) kalloc_container(size);
     if (!array)
         return false;
 
@@ -75,7 +72,7 @@ bool OSArray::initWithCapacity(unsigned int inCapacity)
     capacityIncrement = (inCapacity)? inCapacity : 16;
 
     bzero(array, size);
-    ACCUMSIZE(size);
+    OSCONTAINER_ACCUMSIZE(size);
 
     return true;
 }
@@ -167,7 +164,7 @@ void OSArray::free()
 
     if (array) {
         kfree(array, sizeof(const OSMetaClassBase *) * capacity);
-        ACCUMSIZE( -(sizeof(const OSMetaClassBase *) * capacity) );
+        OSCONTAINER_ACCUMSIZE( -(sizeof(const OSMetaClassBase *) * capacity) );
     }
 
     super::free();
@@ -187,27 +184,36 @@ unsigned int OSArray::setCapacityIncrement(unsigned int increment)
 unsigned int OSArray::ensureCapacity(unsigned int newCapacity)
 {
     const OSMetaClassBase **newArray;
-    int oldSize, newSize;
+    unsigned int finalCapacity;
+    vm_size_t    oldSize, newSize;
 
     if (newCapacity <= capacity)
         return capacity;
 
     // round up
-    newCapacity = (((newCapacity - 1) / capacityIncrement) + 1)
+    finalCapacity = (((newCapacity - 1) / capacityIncrement) + 1)
                 * capacityIncrement;
-    newSize = sizeof(const OSMetaClassBase *) * newCapacity;
 
-    newArray = (const OSMetaClassBase **) kalloc(newSize);
+    // integer overflow check
+    if ((finalCapacity < newCapacity) || (finalCapacity > (UINT_MAX / sizeof(const OSMetaClassBase*))))
+        return capacity;
+
+    newSize = sizeof(const OSMetaClassBase *) * finalCapacity;
+
+    newArray = (const OSMetaClassBase **) kallocp_container(&newSize);
     if (newArray) {
+        // use all of the actual allocation size
+        finalCapacity = newSize / sizeof(const OSMetaClassBase *);
+
         oldSize = sizeof(const OSMetaClassBase *) * capacity;
 
-        ACCUMSIZE(newSize - oldSize);
+        OSCONTAINER_ACCUMSIZE(((size_t)newSize) - ((size_t)oldSize));
 
         bcopy(array, newArray, oldSize);
         bzero(&newArray[capacity], newSize - oldSize);
         kfree(array, oldSize);
         array = newArray;
-        capacity = newCapacity;
+        capacity = finalCapacity;
     }
 
     return capacity;
@@ -260,6 +266,9 @@ bool OSArray::merge(const OSArray * otherArray)
 
     if (!otherCount)
         return true;
+
+    if (newCount < count)
+        return false;
 
     // do we need more space?
     if (newCount > capacity && newCount > ensureCapacity(newCount))
@@ -399,8 +408,8 @@ bool OSArray::serialize(OSSerialize *s) const
     
     if (!s->addXMLStartTag(this, "array")) return false;
 
-    for (unsigned i = 0; i < count; i++) { 
-        if (!array[i]->serialize(s)) return false;
+    for (unsigned i = 0; i < count; i++) {
+        if (array[i] == NULL || !array[i]->serialize(s)) return false;
     }
 
     return s->addXMLEndTag("array");

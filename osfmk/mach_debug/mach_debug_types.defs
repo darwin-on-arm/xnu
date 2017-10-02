@@ -83,6 +83,7 @@ type hash_info_bucket_t = struct[1] of natural_t;
 type hash_info_bucket_array_t = array[] of hash_info_bucket_t;
 
 type ipc_info_space_t = struct[6] of natural_t;
+type ipc_info_space_basic_t = struct[6] of natural_t;
 
 type ipc_info_name_t = struct[7] of natural_t;
 type ipc_info_name_array_t = array[] of ipc_info_name_t;
@@ -101,8 +102,11 @@ type page_address_array_t = ^array[] of integer_t;
 
 type symtab_name_t = c_string[*:32];
 
-type lockgroup_info_t = struct[63] of integer_t;
+type lockgroup_info_t = struct[33] of uint64_t;
 type lockgroup_info_array_t = array[] of lockgroup_info_t;
+
+type mach_memory_info_t = struct[22] of uint64_t;
+type mach_memory_info_array_t = array[] of mach_memory_info_t;
 
 import <mach_debug/mach_debug_types.h>;
 

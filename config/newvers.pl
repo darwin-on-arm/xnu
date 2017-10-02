@@ -47,43 +47,84 @@ die("SRCROOT not defined") unless defined($ENV{'SRCROOT'});
 die("OBJROOT not defined") unless defined($ENV{'OBJROOT'});
 
 my $versfile = "MasterVersion";
-
-$versfile = "$ENV{'SRCROOT'}/config/$versfile";
+$versfile = "$ENV{'SRCROOT'}/config/$versfile" if ($ENV{'SRCROOT'});
 my $BUILD_SRCROOT=$ENV{'SRCROOT'};
 $BUILD_SRCROOT =~ s,/+$,,;
 my $BUILD_OBJROOT=$ENV{'OBJROOT'};
 $BUILD_OBJROOT =~ s,/+$,,;
-my $BUILD_OBJPATH=$ENV{'OBJPATH'} || $ENV{'OBJROOT'};
+my $BUILD_OBJPATH=$ENV{'TARGET'} || $ENV{'OBJROOT'};
 $BUILD_OBJPATH =~ s,/+$,,;
 my $BUILD_DATE = `date`;
 $BUILD_DATE =~ s/[\n\t]//g;
-my $BUILDER2=`whoami`;
-$BUILDER2 =~ s/[\n\t]//g;
-my $HOST=`hostname -f`;
-$HOST =~ s/[\n\t]//g;
+my $BUILDER=`whoami`;
+$BUILDER =~ s/[\n\t]//g;
+my $RC_STRING = $ENV{'RC_ProjectNameAndSourceVersion'} . "~" . $ENV{'RC_ProjectBuildVersion'} if defined($ENV{'RC_XBS'});
 
-my $BUILDER = $BUILDER2;
-
-# Handle two scenarios:
+# Handle four scenarios:
 # SRCROOT=/tmp/xnu
 # OBJROOT=/tmp/xnu/BUILD/obj
 # OBJPATH=/tmp/xnu/BUILD/obj/RELEASE_X86_64
 #
-# SRCROOT=/SourceCache/xnu/xnu-1234
-# OBJROOT=/tmp/xnu/xnu-1234~1.obj
-# OBJPATH=/tmp/xnu/xnu-1234~1.obj/RELEASE_X86_64
+# SRCROOT=/SourceCache/xnu/xnu-2706
+# OBJROOT=/BinaryCache/xnu/xnu-2706~3/Objects
+# OBJPATH=/BinaryCache/xnu/xnu-2706~3/Objects/DEVELOPMENT_X86_64
+# RC_XBS=YES (XBS-16.3+)
+# RC_ProjectNameAndSourceVersion=xnu-2706
+# RC_ProjectBuildVersion=3
+#
+# SRCROOT=/SourceCache/xnu/xnu-2706
+# OBJROOT=/private/var/tmp/xnu/xnu-2706~2
+# OBJPATH=/private/var/tmp/xnu/xnu-2706~2/DEVELOPMENT_ARM_S5L8940X
+# RC_XBS=YES (<XBS-16.3)
+# RC_ProjectNameAndSourceVersion=xnu-2706
+# RC_ProjectBuildVersion=2
+#
+# SRCROOT=/tmp/xnu-2800.0.1_xnu-svn.roots/Sources/xnu-2800.0.1
+# OBJROOT=/private/tmp/xnu-2800.0.1_xnu-svn.roots/BuildRecords/xnu-2800.0.1_install/Objects
+# OBJPATH=/private/tmp/xnu-2800.0.1_xnu-svn.roots/BuildRecords/xnu-2800.0.1_install/Objects/DEVELOPMENT_X86_64
+# RC_XBS=YES (buildit)
+# RC_BUILDIT=YES
+# RC_ProjectNameAndSourceVersion=xnu-2800.0.1
+# RC_ProjectBuildVersion=1
+#
 #
 # If SRCROOT is a strict prefix of OBJPATH, we
 # want to preserve the "interesting" part
 # starting with "xnu". If it's not a prefix,
 # the basename of OBJROOT itself is "interesting".
+# Newer versions of XBS just set this to "Objects", so we
+# need to synthesize the directory name to be more interesting.
+#
+
+sub describe {
+  my ($basename) = @_;
+
+  # get a git tag if we can
+  my $tag = `git describe --dirty 2>/dev/null`;
+  chomp $tag;
+  if ($? != 0 or $tag !~ /^xnu-([^\s\n]+)$/) {
+    return $basename;
+  }
+
+  # If basename is just 'xnu' then replace it with the tag.  Otherwise add
+  # the tag in brackets.
+  if ($basename eq 'xnu') {
+    return $tag
+  } else {
+    return "${basename}[$tag]"
+  }
+}
 
 if ($BUILD_OBJPATH =~ m,^$BUILD_SRCROOT/(.*)$,) {
-    $BUILD_OBJROOT = basename($BUILD_SRCROOT) . "/" . $1;
+    $BUILD_OBJROOT = describe(basename($BUILD_SRCROOT)) . "/" . $1;
 } elsif ($BUILD_OBJPATH =~ m,^$BUILD_OBJROOT/(.*)$,) {
-    $BUILD_OBJROOT = basename($BUILD_OBJROOT) . "/" . $1;
+  if (defined($RC_STRING)) {
+	$BUILD_OBJROOT = $RC_STRING . "/" . $1;
+  } else {
+	$BUILD_OBJROOT = describe(basename($BUILD_OBJROOT)) . "/" . $1;
+  }
 } else {
-    # Use original OBJROOT
+  # Use original OBJROOT
 }
 
 my $rawvers = &ReadFile($versfile);

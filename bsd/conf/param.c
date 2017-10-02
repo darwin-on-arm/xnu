@@ -65,7 +65,6 @@
  *	@(#)param.c	8.3 (Berkeley) 8/20/94
  */
 
-#include <confdep.h>
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/socket.h>
@@ -81,13 +80,27 @@
 #include <sys/shm_internal.h>
 #include <sys/aio_kern.h>
 
-struct	timezone tz = { TIMEZONE, PST };
+struct	timezone tz = { 0, 0 };
 
-#define	NPROC (20 + 16 * MAXUSERS)
+#if CONFIG_EMBEDDED
+#define	NPROC 1000          /* Account for TOTAL_CORPSES_ALLOWED by making this slightly lower than we can. */
+#define	NPROC_PER_UID 950
+#else
+#define	NPROC (20 + 16 * 32)
+#define	NPROC_PER_UID (NPROC/2)
+#endif
+
+/* NOTE: maxproc and hard_maxproc values are subject to device specific scaling in bsd_scale_setup */
 #define HNPROC 2500	/* based on thread_max */
 int	maxproc = NPROC;
-int	maxprocperuid = NPROC/2;
-/*__private_extern__*/ int hard_maxproc = HNPROC;	/* hardcoded limit */
+int	maxprocperuid = NPROC_PER_UID;
+
+#if CONFIG_EMBEDDED
+int hard_maxproc = NPROC;	/* hardcoded limit -- for embedded the number of processes is limited by the ASID space */
+#else
+int hard_maxproc = HNPROC;	/* hardcoded limit */
+#endif
+
 int nprocs = 0; /* XXX */
 
 //#define	NTEXT (80 + NPROC / 8)			/* actually the object cache */
@@ -100,9 +113,6 @@ int	maxfiles = MAXFILES;
 unsigned int	ncallout = 16 + 2*NPROC;
 unsigned int nmbclusters = NMBCLUSTERS;
 int	nport = NPROC / 2;
-
-#define MAXSOCKETS NMBCLUSTERS
-int	maxsockets = MAXSOCKETS;
 
 /*
  *  async IO (aio) configurable limits
@@ -121,5 +131,4 @@ struct	cblock *cfree;
 struct	cblock *cfreelist = NULL;
 int	cfreecount = 0;
 struct	buf *buf_headers;
-struct	domain *domains;
-
+struct domains_head domains = TAILQ_HEAD_INITIALIZER(domains);

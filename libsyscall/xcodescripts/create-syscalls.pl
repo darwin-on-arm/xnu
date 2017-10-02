@@ -1,6 +1,6 @@
 #!/usr/bin/perl
 #
-# Copyright (c) 2006 Apple Computer, Inc. All rights reserved.
+# Copyright (c) 2006-2014 Apple Inc. All rights reserved.
 #
 # @APPLE_OSREFERENCE_LICENSE_HEADER_START@
 # 
@@ -23,7 +23,7 @@
 #
 ##########################################################################
 #
-# % create-syscalls.pl syscalls.master custom-directory out-directory
+# % create-syscalls.pl syscalls.master custom-directory platforms-directory platform-name out-directory
 #
 # This script fills the the out-directory with a Makefile.inc and *.s
 # files to create the double-underbar syscall stubs.  It reads the
@@ -61,7 +61,9 @@ my $OutDir;
 # size in bytes of known types (only used for i386)
 my %TypeBytes = (
     'au_asid_t'		=> 4,
+    'sae_associd_t'	=> 4,
     'caddr_t'		=> 4,
+    'sae_connid_t'	=> 4,
     'gid_t'		=> 4,
     'id_t'		=> 4,
     'idtype_t'		=> 4,
@@ -89,31 +91,12 @@ my %TypeBytes = (
     'user_size_t'	=> 4,
     'user_ssize_t'	=> 4,
     'user_ulong_t'	=> 4,
+    'uuid_t'		=> 4,
 );
 
 # Moving towards storing all data in this hash, then we always know
 # if data is aliased or not, or promoted or not.
 my %Symbols = (
-    "quota" => {
-        c_sym => "quota",
-        syscall => "quota",
-        asm_sym => "_quota",
-        is_private => undef,
-        is_custom => undef,
-        nargs => 4,
-        bytes => 0,
-        aliases => {},
-    },
-    "setquota" => {
-        c_sym => "setquota",
-        syscall => "setquota",
-        asm_sym => "_setquota",
-        is_private => undef,
-        is_custom => undef,
-        nargs => 2,
-        bytes => 0,
-        aliases => {},
-    },
     "syscall" => {
         c_sym => "syscall",
         syscall => "syscall",
@@ -130,23 +113,25 @@ my %Symbols = (
 # cancellable version of cerror.
 my @Cancelable = qw/
 	accept access aio_suspend
-	close connect
-	fcntl fdatasync fpathconf fstat fsync
+	close connect connectx
+	disconnectx
+	faccessat fcntl fdatasync fpathconf fstat fstatat fsync
 	getlogin
 	ioctl
-	link lseek lstat
+	link linkat lseek lstat
 	msgrcv msgsnd msync
-	open
-	pathconf poll posix_spawn pread pwrite
-	read readv recvfrom recvmsg rename
+	open openat
+	pathconf peeloff poll posix_spawn pread pselect pwrite
+	read readv recvfrom recvmsg rename renameat
+	rename_ext
 	__semwait_signal __sigwait
-	select sem_wait semop sendmsg sendto sigsuspend stat symlink sync
-	unlink
+	select sem_wait semop sendmsg sendto sigsuspend stat symlink symlinkat sync
+	unlink unlinkat
 	wait4 waitid write writev
 /;
 
 sub usage {
-    die "Usage: $MyName syscalls.master custom-directory platforms-directory out-directory\n";
+    die "Usage: $MyName syscalls.master custom-directory platforms-directory platform-name out-directory\n";
 }
 
 ##########################################################################
@@ -236,6 +221,8 @@ sub checkForCustomStubs {
         if (!$$sym{is_private}) {
             foreach my $subarch (@Architectures) {
                 (my $arch = $subarch) =~ s/arm(v.*)/arm/;
+                $arch =~ s/x86_64(.*)/x86_64/;
+                $arch =~ s/arm64(.*)/arm64/;
                 $$sym{aliases}{$arch} = [] unless $$sym{aliases}{$arch};
                 push(@{$$sym{aliases}{$arch}}, $$sym{asm_sym});
             }
@@ -257,6 +244,8 @@ sub readAliases {
     my @a = ();
     for my $arch (@Architectures) {
         (my $new_arch = $arch) =~ s/arm(v.*)/arm/g;
+        $new_arch =~ s/x86_64(.*)/x86_64/g;
+        $new_arch =~ s/arm64(.*)/arm64/g;
         push(@a, $new_arch) unless grep { $_ eq $new_arch } @a;
     }
     
@@ -314,6 +303,8 @@ sub writeStubForSymbol {
     my @conditions;
     for my $subarch (@Architectures) {
         (my $arch = $subarch) =~ s/arm(v.*)/arm/;
+        $arch =~ s/x86_64(.*)/x86_64/;
+        $arch =~ s/arm64(.*)/arm64/;
         push(@conditions, "defined(__${arch}__)") unless grep { $_ eq $arch } @{$$symbol{except}};
     }
 
@@ -323,6 +314,9 @@ sub writeStubForSymbol {
     print $f "#define __SYSCALL_32BIT_ARG_BYTES $$symbol{bytes}\n";
     print $f "#include \"SYS.h\"\n\n";
     if (scalar(@conditions)) {
+        printf $f "#ifndef SYS_%s\n", $$symbol{syscall};
+        printf $f "#error \"SYS_%s not defined. The header files libsyscall is building against do not match syscalls.master.\"\n", $$symbol{syscall};
+        printf $f "#endif\n\n";    
         my $nc = ($is_cancel{$$symbol{syscall}} ? "cerror" : "cerror_nocancel");
         printf $f "#if " . join(" || ", @conditions) . "\n";
         printf $f "__SYSCALL2(%s, %s, %d, %s)\n", $$symbol{asm_sym}, $$symbol{syscall}, $$symbol{nargs}, $nc;
@@ -342,6 +336,8 @@ sub writeAliasesForSymbol {
     
     foreach my $subarch (@Architectures) {
         (my $arch = $subarch) =~ s/arm(v.*)/arm/;
+        $arch =~ s/x86_64(.*)/x86_64/;
+        $arch =~ s/arm64(.*)/arm64/;
         
         next unless scalar($$symbol{aliases}{$arch});
         

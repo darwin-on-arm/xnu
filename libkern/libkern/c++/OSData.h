@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000 Apple Computer, Inc. All rights reserved.
+ * Copyright (c) 2000-2016 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -73,7 +73,19 @@ class OSString;
  */
 class OSData : public OSObject
 {
+    friend class OSSerialize;
+
     OSDeclareDefaultStructors(OSData)
+
+#if APPLE_KEXT_ALIGN_CONTAINERS
+
+protected:
+    unsigned int   length;
+    unsigned int   capacity;
+    unsigned int   capacityIncrement;
+    void         * data;
+
+#else /* APPLE_KEXT_ALIGN_CONTAINERS */
 
 protected:
     void         * data;
@@ -81,7 +93,24 @@ protected:
     unsigned int   capacity;
     unsigned int   capacityIncrement;
 
-    struct ExpansionData;
+#endif /* APPLE_KEXT_ALIGN_CONTAINERS */
+
+#ifdef XNU_KERNEL_PRIVATE
+    /* Available within xnu source only */
+public:
+    typedef void (*DeallocFunction)(void * ptr, unsigned int length);
+protected:
+	struct ExpansionData
+	{
+		DeallocFunction deallocFunction;
+		bool            disableSerialization;
+	};
+#else /* XNU_KERNEL_PRIVATE */
+private:
+    typedef void (*DeallocFunction)(void * ptr, unsigned int length);
+protected:
+	struct ExpansionData;
+#endif /* XNU_KERNEL_PRIVATE */
     
    /* Reserved for future use. (Internal use only)  */
     ExpansionData * reserved;
@@ -148,7 +177,7 @@ public:
     * @result
     * A instance of OSData that shares the provided byte array,
     * with a reference count of 1;
-    * <code>NULL</coe> on failure.
+    * <code>NULL</code> on failure.
     *
     * @discussion
     * An OSData object created with this function
@@ -362,7 +391,7 @@ public:
     *
     * @abstract
     * Deallocates or releases any resources
-    * used by the OSDictionary instance.
+    * used by the OSData instance.
     *
     * @discussion
     * This function should not be called directly;
@@ -372,7 +401,7 @@ public:
     * release@/link</code>
     * instead.
     */
-    virtual void free();
+    virtual void free() APPLE_KEXT_OVERRIDE;
 
 
    /*!
@@ -641,7 +670,7 @@ public:
     * if that object is derived from OSData
     * and contains the equivalent bytes of the same length.
     */
-    virtual bool isEqualTo(const OSMetaClassBase * anObject) const;
+    virtual bool isEqualTo(const OSMetaClassBase * anObject) const APPLE_KEXT_OVERRIDE;
 
 
    /*!
@@ -682,7 +711,7 @@ public:
     * @result
     * <code>true</code> if serialization succeeds, <code>false</code> if not.
     */
-    virtual bool serialize(OSSerialize * serializer) const;
+    virtual bool serialize(OSSerialize * serializer) const APPLE_KEXT_OVERRIDE;
 
 
    /*!
@@ -720,10 +749,9 @@ public:
 #else
 private:
 #endif
-    // xxx - DO NOT USE - This interface may change
-    typedef void (*DeallocFunction)(void * ptr, unsigned int length);
     virtual void setDeallocFunction(DeallocFunction func);
     OSMetaClassDeclareReservedUsed(OSData, 0);
+    bool isSerializable(void);
 
 private:
     OSMetaClassDeclareReservedUnused(OSData, 1);

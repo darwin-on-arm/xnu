@@ -44,13 +44,12 @@
 #include <sys/vnode.h>
 #include <sys/ubc.h>
 #include <sys/mman.h>
+#include <sys/codesign.h>
 
 #include <sys/cdefs.h>
 
 #include <kern/locks.h>
 #include <mach/memory_object_types.h>
-
-#include <libkern/crypto/sha1.h>
 
 
 #define UBC_INFO_NULL	((struct ubc_info *) 0)
@@ -95,6 +94,9 @@ struct cl_writebehind {
 	struct cl_wextent cl_clusters[MAX_CLUSTERS];	/* packed write behind clusters */
 };
 
+struct cs_hash;
+
+uint8_t cs_hash_type(struct cs_hash const *);
 
 struct cs_blob {
 	struct cs_blob	*csb_next;
@@ -103,11 +105,24 @@ struct cs_blob {
 	off_t		csb_base_offset;	/* Offset of Mach-O binary in fat binary */
 	off_t		csb_start_offset;	/* Blob coverage area start, from csb_base_offset */
 	off_t		csb_end_offset;		/* Blob coverage area end, from csb_base_offset */
-	ipc_port_t	csb_mem_handle;
 	vm_size_t	csb_mem_size;
 	vm_offset_t	csb_mem_offset;
 	vm_address_t	csb_mem_kaddr;
-	unsigned char	csb_sha1[SHA1_RESULTLEN];
+	unsigned char	csb_cdhash[CS_CDHASH_LEN];
+	const struct cs_hash  *csb_hashtype;
+	vm_size_t	csb_hash_pagesize;	/* each hash entry represent this many bytes in the file */
+	vm_size_t	csb_hash_pagemask;
+	vm_size_t	csb_hash_pageshift;
+	vm_size_t	csb_hash_firstlevel_pagesize;	/* First hash this many bytes, then hash the hashes together */
+	const CS_CodeDirectory *csb_cd;
+	const char 	*csb_teamid;
+	const CS_GenericBlob *csb_entitlements_blob;	/* raw blob, subrange of csb_mem_kaddr */
+	void *          csb_entitlements;	/* The entitlements as an OSDictionary */
+	unsigned int	csb_signer_type;
+
+	/* The following two will be replaced by the csb_signer_type. */
+	unsigned int	csb_platform_binary:1;
+	unsigned int	csb_platform_path:1;
 };
 
 /*
@@ -117,14 +132,17 @@ struct cs_blob {
 struct ubc_info {
 	memory_object_t		ui_pager;	/* pager */
 	memory_object_control_t	ui_control;	/* VM control for the pager */
-	uint32_t		ui_flags;	/* flags */
 	vnode_t 		ui_vnode;	/* vnode for this ubc_info */
 	kauth_cred_t	 	ui_ucred;	/* holds credentials for NFS paging */
 	off_t			ui_size;	/* file size for the vnode */
+	uint32_t		ui_flags;	/* flags */
+	uint32_t		cs_add_gen;	/* generation count when csblob was validated */
 
         struct	cl_readahead   *cl_rahead;	/* cluster read ahead context */
         struct	cl_writebehind *cl_wbehind;	/* cluster write behind context */
 
+	struct timespec		cs_mtime;	/* modify time of file when
+						   first cs_blob was loaded */
 	struct	cs_blob		*cs_blobs; 	/* for CODE SIGNING */
 #if CHECK_CS_VALIDATION_BITMAP
 	void			*cs_valid_bitmap;     /* right now: used only for signed files on the read-only root volume */
@@ -144,13 +162,14 @@ struct ubc_info {
 #define	UI_ISMAPPED	0x00000010	/* vnode is currently mapped */
 #define UI_MAPBUSY	0x00000020	/* vnode is being mapped or unmapped */
 #define UI_MAPWAITING	0x00000040	/* someone waiting for UI_MAPBUSY */
+#define UI_MAPPEDWRITE	0x00000080	/* it's mapped with PROT_WRITE */
 
 /*
  * exported primitives for loadable file systems.
  */
 
 __BEGIN_DECLS
-__private_extern__ void ubc_init(void) __attribute__((section("__TEXT, initcode")));;
+__private_extern__ void ubc_init(void);
 __private_extern__ int	ubc_umount(mount_t mp);
 __private_extern__ void	ubc_unmountall(void);
 __private_extern__ memory_object_t ubc_getpager(vnode_t);
@@ -158,8 +177,7 @@ __private_extern__ void	ubc_destroy_named(vnode_t);
 
 /* internal only */
 __private_extern__ void	cluster_release(struct ubc_info *);
-__private_extern__ uint32_t cluster_max_io_size(mount_t, int);
-__private_extern__ uint32_t cluster_hard_throttle_limit(vnode_t, uint32_t *, uint32_t);
+__private_extern__ uint32_t cluster_throttle_io_limit(vnode_t, uint32_t *);
 
 
 /* Flags for ubc_getobject() */
@@ -180,16 +198,19 @@ int	ubc_isinuse_locked(vnode_t, int, int);
 int	ubc_getcdhash(vnode_t, off_t, unsigned char *);
 
 #ifdef XNU_KERNEL_PRIVATE
-int UBCINFOEXISTS(vnode_t);
+int UBCINFOEXISTS(const struct vnode *);
 #endif /* XNU_KERNEL_PRIVATE */
 
 /* code signing */
 struct cs_blob;
-int	ubc_cs_blob_add(vnode_t, cpu_type_t, off_t, vm_address_t, vm_size_t);
+int	ubc_cs_blob_add(vnode_t, cpu_type_t, off_t, vm_address_t *, vm_size_t, struct image_params *, int, struct cs_blob **);
+int	ubc_cs_sigpup_add(vnode_t, vm_address_t, vm_size_t);
 struct cs_blob *ubc_get_cs_blobs(vnode_t);
+void	ubc_get_cs_mtime(vnode_t, struct timespec *);
 int	ubc_cs_getcdhash(vnode_t, off_t, unsigned char *);
 kern_return_t ubc_cs_blob_allocate(vm_offset_t *, vm_size_t *);
 void ubc_cs_blob_deallocate(vm_offset_t, vm_size_t);
+boolean_t ubc_cs_is_range_codesigned(vnode_t, mach_vm_offset_t, mach_vm_size_t);
 
 kern_return_t	ubc_cs_validation_bitmap_allocate( vnode_t );
 void		ubc_cs_validation_bitmap_deallocate( vnode_t );

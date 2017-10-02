@@ -20,8 +20,15 @@
  */
 
 /*
+ * Portions copyright (c) 2013, Joyent, Inc. All rights reserved.
+ * Portions Copyright (c) 2013 by Delphix. All rights reserved.
+ */
+
+/*
  * Copyright 2007 Sun Microsystems, Inc.  All rights reserved.
  * Use is subject to license terms.
+ *
+ * Portions Copyright (c) 2012 by Delphix. All rights reserved.
  */
 
 #ifndef _SYS_DTRACE_H
@@ -85,6 +92,7 @@ extern "C" {
 #endif
 
 #include <sys/types.h>
+#include <sys/param.h>
 #include <stdint.h>
 
 #ifndef NULL
@@ -98,6 +106,7 @@ extern "C" {
 
 #define S_ROUND(x, a)   ((x) + (((a) ? (a) : 1) - 1) & ~(((a) ? (a) : 1) - 1))
 #define P2ROUNDUP(x, align)             (-(-(x) & -(align)))
+#define	P2PHASEUP(x, align, phase)	((phase) - (((phase) - (x)) & -(align)))
 
 #define	CTF_MODEL_ILP32	1	/* object data model is ILP32 */
 #define	CTF_MODEL_LP64	2	/* object data model is LP64 */
@@ -331,6 +340,12 @@ typedef enum dtrace_probespec {
 #if defined(__APPLE__)
 #define DIF_VAR_PTHREAD_SELF	0x0200	/* Apple specific PTHREAD_SELF (Not currently supported!) */
 #define DIF_VAR_DISPATCHQADDR	0x0201	/* Apple specific dispatch queue addr */
+#define DIF_VAR_MACHTIMESTAMP	0x0202	/* mach_absolute_timestamp() */
+#define DIF_VAR_CPU		0x0203	/* cpu number */
+#define DIF_VAR_CPUINSTRS	0x0204	/* cpu instructions */
+#define DIF_VAR_CPUCYCLES	0x0205	/* cpu cycles */
+#define DIF_VAR_VINSTRS		0x0206	/* virtual instructions */
+#define DIF_VAR_VCYCLES		0x0207	/* virtual cycles */
 #endif /* __APPLE __ */
 
 #define	DIF_SUBR_RAND			0
@@ -377,13 +392,17 @@ typedef enum dtrace_probespec {
 #define	DIF_SUBR_INET_NTOP		41
 #define	DIF_SUBR_INET_NTOA		42
 #define	DIF_SUBR_INET_NTOA6		43
-#if !defined(__APPLE__)
+#define	DIF_SUBR_TOUPPER		44
+#define	DIF_SUBR_TOLOWER		45
+#define DIF_SUBR_MAX			46      /* max subroutine value */
 
-#define DIF_SUBR_MAX			43      /* max subroutine value */
-#else
-#define DIF_SUBR_COREPROFILE	44
-
-#define DIF_SUBR_MAX			44      /* max subroutine value */
+/* Apple-specific subroutines */
+#if defined(__APPLE__)
+#define DIF_SUBR_APPLE_MIN		200	/* min apple-specific subroutine value */
+#define DIF_SUBR_VM_KERNEL_ADDRPERM	200
+#define DIF_SUBR_KDEBUG_TRACE		201
+#define DIF_SUBR_KDEBUG_TRACE_STRING	202
+#define DIF_SUBR_APPLE_MAX		202      /* max apple-specific subroutine value */
 #endif /* __APPLE__ */
 
 typedef uint32_t dif_instr_t;
@@ -446,6 +465,7 @@ typedef struct dtrace_diftype {
 #define DIF_TYPE_STRING         1       /* type is a D string */
 
 #define DIF_TF_BYREF            0x1     /* type is passed by reference */
+#define DIF_TF_BYUREF           0x2     /* user type is passed by reference */
 
 /*
  * A DTrace Intermediate Format variable record is used to describe each of the
@@ -493,6 +513,8 @@ typedef struct dtrace_difv {
 #define DTRACEACT_PRINTF                3       /* printf() action */
 #define DTRACEACT_PRINTA                4       /* printa() action */
 #define DTRACEACT_LIBACT                5       /* library-controlled action */
+#define DTRACEACT_TRACEMEM              6       /* tracemem() action */
+#define DTRACEACT_TRACEMEM_DYNSIZE      7       /* dynamic tracemem() size */
 
 #if defined(__APPLE__)
 #define DTRACEACT_APPLEBINARY           50      /* Apple DT perf. tool action */
@@ -571,6 +593,7 @@ typedef struct dtrace_difv {
 #define DTRACEAGG_STDDEV                (DTRACEACT_AGGREGATION + 6)
 #define DTRACEAGG_QUANTIZE              (DTRACEACT_AGGREGATION + 7)
 #define DTRACEAGG_LQUANTIZE             (DTRACEACT_AGGREGATION + 8)
+#define DTRACEAGG_LLQUANTIZE            (DTRACEACT_AGGREGATION + 9)
 
 #define DTRACEACT_ISAGG(x)              \
         (DTRACEACT_CLASS(x) == DTRACEACT_AGGREGATION)
@@ -611,6 +634,31 @@ typedef struct dtrace_difv {
 #define DTRACE_LQUANTIZE_BASE(x)                \
         (int32_t)(((x) & DTRACE_LQUANTIZE_BASEMASK) >> \
         DTRACE_LQUANTIZE_BASESHIFT)
+
+#define  DTRACE_LLQUANTIZE_FACTORSHIFT          48
+#define  DTRACE_LLQUANTIZE_FACTORMASK           ((uint64_t)UINT16_MAX << 48)
+#define  DTRACE_LLQUANTIZE_LOWSHIFT             32
+#define  DTRACE_LLQUANTIZE_LOWMASK              ((uint64_t)UINT16_MAX << 32)
+#define  DTRACE_LLQUANTIZE_HIGHSHIFT            16
+#define  DTRACE_LLQUANTIZE_HIGHMASK             ((uint64_t)UINT16_MAX << 16)
+#define  DTRACE_LLQUANTIZE_NSTEPSHIFT           0
+#define  DTRACE_LLQUANTIZE_NSTEPMASK            UINT16_MAX
+
+#define  DTRACE_LLQUANTIZE_FACTOR(x)   \
+        (uint16_t)(((x) & DTRACE_LLQUANTIZE_FACTORMASK) >> \
+        DTRACE_LLQUANTIZE_FACTORSHIFT)
+
+#define  DTRACE_LLQUANTIZE_LOW(x)    \
+        (uint16_t)(((x) & DTRACE_LLQUANTIZE_LOWMASK) >> \
+        DTRACE_LLQUANTIZE_LOWSHIFT)
+
+#define  DTRACE_LLQUANTIZE_HIGH(x)   \
+        (uint16_t)(((x) & DTRACE_LLQUANTIZE_HIGHMASK) >> \
+        DTRACE_LLQUANTIZE_HIGHSHIFT)
+
+#define  DTRACE_LLQUANTIZE_NSTEP(x)    \
+        (uint16_t)(((x) & DTRACE_LLQUANTIZE_NSTEPMASK) >> \
+        DTRACE_LLQUANTIZE_NSTEPSHIFT)
 
 #define DTRACE_USTACK_NFRAMES(x)        (uint32_t)((x) & UINT32_MAX)
 #define DTRACE_USTACK_STRSIZE(x)        (uint32_t)((x) >> 32)
@@ -998,22 +1046,29 @@ typedef struct dtrace_actdesc {
         int dtad_refcnt;                        /* reference count */
 } dtrace_actdesc_t;
 
+
 typedef struct dtrace_ecbdesc {
         dtrace_actdesc_t *dted_action;          /* action description(s) */
         dtrace_preddesc_t dted_pred;            /* predicate description */
         dtrace_probedesc_t dted_probe;          /* probe description */
         uint64_t dted_uarg;                     /* library argument */
         int dted_refcnt;                        /* reference count */
+        uint64_t dted_probegen;                 /* matched probe generation */
 } dtrace_ecbdesc_t;
+
+/*
+ * APPLE NOTE: The kernel always rebuild dtrace_ecbdesc structures
+ * coming from userspace, so there is no dted_probegen manipulation risk
+ */
 
 /*
  * DTrace Metadata Description Structures
  *
  * DTrace separates the trace data stream from the metadata stream.  The only
- * metadata tokens placed in the data stream are enabled probe identifiers
- * (EPIDs) or (in the case of aggregations) aggregation identifiers.  In order
- * to determine the structure of the data, DTrace consumers pass the token to
- * the kernel, and receive in return a corresponding description of the enabled
+ * metadata tokens placed in the data stream are the dtrace_rechdr_t (EPID +
+ * timestamp) or (in the case of aggregations) aggregation identifiers.  To
+ * determine the structure of the data, DTrace consumers pass the token to the
+ * kernel, and receive in return a corresponding description of the enabled
  * probe (via the dtrace_eprobedesc structure) or the aggregation (via the
  * dtrace_aggdesc structure).  Both of these structures are expressed in terms
  * of record descriptions (via the dtrace_recdesc structure) that describe the
@@ -1108,11 +1163,16 @@ typedef struct dtrace_fmtdesc {
 #define	DTRACEOPT_AGGSORTREV	24	/* reverse-sort aggregations */
 #define	DTRACEOPT_AGGSORTPOS	25	/* agg. position to sort on */
 #define	DTRACEOPT_AGGSORTKEYPOS	26	/* agg. key position to sort on */
+#define	DTRACEOPT_AGGHIST	27 	/* histogram aggregation output */
+#define	DTRACEOPT_AGGPACK	28 	/* packed aggregation output */
+#define	DTRACEOPT_AGGZOOM	29 	/* zoomed aggregation scaling */
+#define	DTRACEOPT_TEMPORAL	30	/* temporally ordered output */
 #if !defined(__APPLE__)
-#define DTRACEOPT_MAX           27      /* number of options */
+#define DTRACEOPT_MAX           31      /* number of options */
 #else
-#define DTRACEOPT_STACKSYMBOLS  27      /* clear to prevent stack symbolication */
-#define DTRACEOPT_MAX           28      /* number of options */
+#define DTRACEOPT_STACKSYMBOLS  31      /* clear to prevent stack symbolication */
+#define DTRACEOPT_BUFLIMIT      32	/* buffer signaling limit in % of the size */
+#define DTRACEOPT_MAX           33      /* number of options */
 #endif /* __APPLE__ */
 
 #define	DTRACEOPT_UNSET		(dtrace_optval_t)-2	/* unset option */
@@ -1133,7 +1193,9 @@ typedef struct dtrace_fmtdesc {
  * where user-level wishes the kernel to snapshot the buffer to (the
  * dtbd_data field).  The kernel uses the same structure to pass back some
  * information regarding the buffer:  the size of data actually copied out, the
- * number of drops, the number of errors, and the offset of the oldest record.
+ * number of drops, the number of errors, the offset of the oldest record,
+ * and the time of the snapshot.
+ *
  * If the buffer policy is a "switch" policy, taking a snapshot of the
  * principal buffer has the additional effect of switching the active and
  * inactive buffers.  Taking a snapshot of the aggregation buffer _always_ has
@@ -1146,7 +1208,28 @@ typedef struct dtrace_bufdesc {
         uint64_t dtbd_drops;                    /* number of drops */
         DTRACE_PTR(char, dtbd_data);            /* data */
         uint64_t dtbd_oldest;                   /* offset of oldest record */
+	uint64_t dtbd_timestamp;		/* hrtime of snapshot */
 } dtrace_bufdesc_t;
+
+/*
+ * Each record in the buffer (dtbd_data) begins with a header that includes
+ * the epid and a timestamp.  The timestamp is split into two 4-byte parts
+ * so that we do not require 8-byte alignment.
+ */
+typedef struct dtrace_rechdr {
+	dtrace_epid_t dtrh_epid;		/* enabled probe id */
+	uint32_t dtrh_timestamp_hi;		/* high bits of hrtime_t */
+	uint32_t dtrh_timestamp_lo;		/* low bits of hrtime_t */
+} dtrace_rechdr_t;
+
+#define	DTRACE_RECORD_LOAD_TIMESTAMP(dtrh)			\
+	((dtrh)->dtrh_timestamp_lo +				\
+	((uint64_t)(dtrh)->dtrh_timestamp_hi << 32))
+
+#define	DTRACE_RECORD_STORE_TIMESTAMP(dtrh, hrtime) {		\
+	(dtrh)->dtrh_timestamp_lo = (uint32_t)hrtime;		\
+	(dtrh)->dtrh_timestamp_hi = hrtime >> 32;		\
+}
 
 /*
  * DTrace Status
@@ -1353,11 +1436,14 @@ typedef struct dtrace_providerdesc {
 #define DTRACEIOC_REPLICATE     (DTRACEIOC | 18)        /* replicate enab */
 #define DTRACEIOC_MODUUIDSLIST	(DTRACEIOC | 30)	/* APPLE ONLY, query for modules with missing symbols */
 #define DTRACEIOC_PROVMODSYMS	(DTRACEIOC | 31)	/* APPLE ONLY, provide missing symbols for a given module */
-	
+#define DTRACEIOC_PROCWAITFOR	(DTRACEIOC | 32)	/* APPLE ONLY, wait for process exec */
+#define DTRACEIOC_SLEEP 	(DTRACEIOC | 33)	/* APPLE ONLY, sleep */
+#define DTRACEIOC_SIGNAL	(DTRACEIOC | 34)	/* APPLE ONLY, signal sleeping process */
+
 /*
  * The following structs are used to provide symbol information to the kernel from userspace.
  */
-	
+
 typedef struct dtrace_symbol {
 	uint64_t	dtsym_addr;			/* address of the symbol */
 	uint64_t	dtsym_size;			/* size of the symbol, must be uint64_t to maintain alignment when called by 64b uproc in i386 kernel */
@@ -1369,15 +1455,32 @@ typedef struct dtrace_module_symbols {
 	uint64_t	dtmodsyms_count;
 	dtrace_symbol_t	dtmodsyms_symbols[1];
 } dtrace_module_symbols_t;
-	
+
 #define DTRACE_MODULE_SYMBOLS_SIZE(count) (sizeof(dtrace_module_symbols_t) + ((count - 1) * sizeof(dtrace_symbol_t)))
-		
+
 typedef struct dtrace_module_uuids_list {
 	uint64_t	dtmul_count;
 	UUID		dtmul_uuid[1];
 } dtrace_module_uuids_list_t;
-		
+
 #define DTRACE_MODULE_UUIDS_LIST_SIZE(count) (sizeof(dtrace_module_uuids_list_t) + ((count - 1) * sizeof(UUID)))
+
+typedef struct dtrace_procdesc {
+	/* Must be specified by user-space */
+	char		p_name[128];
+	/* Set or modified by the Kernel */
+	int		p_name_length;
+	pid_t		p_pid;
+} dtrace_procdesc_t;
+
+/**
+ * DTrace wake reasons.
+ * This is used in userspace to determine what's the reason why it woke up,
+ * to start aggregating / switching buffer right away if it is because a buffer
+ * got over its limit
+ */
+#define DTRACE_WAKE_TIMEOUT 0 /* dtrace client woke up because of a timeout */
+#define DTRACE_WAKE_BUF_LIMIT 1 /* dtrace client woke up because of a over limit buffer */
 
 #endif /* __APPLE__ */
 
@@ -2234,8 +2337,8 @@ extern void dtrace_probe(dtrace_id_t, uint64_t arg0, uint64_t arg1,
  * a meta provider. This structure consists of the following members:
  *
  *   dtms_create_probe()        <-- Add a new probe to a created provider
- *   dtms_provide_pid()         <-- Create a new provider for a given process
- *   dtms_remove_pid()          <-- Remove a previously created provider
+ *   dtms_provide_proc()         <-- Create a new provider for a given process
+ *   dtms_remove_proc()          <-- Remove a previously created provider
  *
  * 1.2  void dtms_create_probe(void *arg, void *parg,
  *           dtrace_helper_probedesc_t *probedesc);
@@ -2249,7 +2352,7 @@ extern void dtrace_probe(dtrace_id_t, uint64_t arg0, uint64_t arg1,
  *
  *   The first argument is the cookie as passed to dtrace_meta_register().
  *   The second argument is the provider cookie for the associated provider;
- *   this is obtained from the return value of dtms_provide_pid(). The third
+ *   this is obtained from the return value of dtms_provide_proc(). The third
  *   argument is the helper probe description.
  *
  * 1.2.3  Return value
@@ -2265,8 +2368,8 @@ extern void dtrace_probe(dtrace_id_t, uint64_t arg0, uint64_t arg1,
  *   such that the provider may (and is expected to) call provider-related
  *   DTrace provider APIs including dtrace_probe_create().
  *
- * 1.3  void *dtms_provide_pid(void *arg, dtrace_meta_provider_t *mprov,
- *            pid_t pid)
+ * 1.3  void *dtms_provide_proc(void *arg, dtrace_meta_provider_t *mprov,
+ *            proc_t *proc)
  *
  * 1.3.1  Overview
  *
@@ -2292,15 +2395,15 @@ extern void dtrace_probe(dtrace_id_t, uint64_t arg0, uint64_t arg1,
  *
  * 1.3.4  Caller's context
  *
- *   dtms_provide_pid() is called from either ioctl() or module load context.
+ *   dtms_provide_proc() is called from either ioctl() or module load context.
  *   The DTrace framework is locked in such a way that meta providers may not
  *   register or unregister. This means that the meta provider cannot call
  *   dtrace_meta_register() or dtrace_meta_unregister(). However, the context
  *   is such that the provider may -- and is expected to --  call
  *   provider-related DTrace provider APIs including dtrace_register().
  *
- * 1.4  void dtms_remove_pid(void *arg, dtrace_meta_provider_t *mprov,
- *           pid_t pid)
+ * 1.4  void dtms_remove_proc(void *arg, dtrace_meta_provider_t *mprov,
+ *           proc_t proc)
  *
  * 1.4.1  Overview
  *
@@ -2323,7 +2426,7 @@ extern void dtrace_probe(dtrace_id_t, uint64_t arg0, uint64_t arg1,
  *
  * 1.4.4  Caller's context
  *
- *   dtms_remove_pid() is called from either ioctl() or exit() context.
+ *   dtms_remove_proc() is called from either ioctl() or exit() context.
  *   The DTrace framework is locked in such a way that meta providers may not
  *   register or unregister. This means that the meta provider cannot call
  *   dtrace_meta_register() or dtrace_meta_unregister(). However, the context
@@ -2356,10 +2459,19 @@ typedef struct dtrace_helper_provdesc {
         dtrace_pattr_t dthpv_pattr;             /* stability attributes */
 } dtrace_helper_provdesc_t;
 
+/*
+ * APPLE NOTE: dtms_provide_pid and dtms_remove_pid are replaced with
+ * dtms_provide_proc on Darwin, and a proc reference need to be held
+ * for the duration of the call.
+ *
+ * This is due to the fact that proc_find is not re-entrant on Darwin.
+ */
+
 typedef struct dtrace_mops {
         void (*dtms_create_probe)(void *, void *, dtrace_helper_probedesc_t *);
-        void *(*dtms_provide_pid)(void *, dtrace_helper_provdesc_t *, pid_t);
-        void (*dtms_remove_pid)(void *, dtrace_helper_provdesc_t *, pid_t);
+        void *(*dtms_provide_proc)(void *, dtrace_helper_provdesc_t *, proc_t*);
+        void (*dtms_remove_proc)(void *, dtrace_helper_provdesc_t *, proc_t*);
+        char* (*dtms_provider_name)(void *);
 } dtrace_mops_t;
 
 typedef uintptr_t       dtrace_meta_provider_id_t;
@@ -2400,9 +2512,11 @@ extern int (*dtrace_return_probe_ptr)(struct regs *);
 #if defined (__i386__) || defined(__x86_64__)
 extern int (*dtrace_pid_probe_ptr)(x86_saved_state_t *regs);
 extern int (*dtrace_return_probe_ptr)(x86_saved_state_t* regs);
-#else
+#elif defined (__arm__) || defined(__arm64__)
 extern int (*dtrace_pid_probe_ptr)(arm_saved_state_t *regs);
-extern int (*dtrace_return_probe_ptr)(arm_saved_state_t* regs);
+extern int (*dtrace_return_probe_ptr)(arm_saved_state_t *regs);
+#else
+#error architecture not supported
 #endif
 #endif /* __APPLE__ */
 extern void (*dtrace_fasttrap_fork_ptr)(proc_t *, proc_t *);
@@ -2472,6 +2586,13 @@ extern void *dtrace_invop_callsite_pre;
 extern void *dtrace_invop_callsite_post;
 #endif
 
+#if defined(__arm__) || defined(__arm64__)
+extern int dtrace_instr_size(uint32_t instr, int thumb_mode);
+extern void dtrace_invop_add(int (*)(uintptr_t, uintptr_t *, uintptr_t));    
+extern void dtrace_invop_remove(int (*)(uintptr_t, uintptr_t *, uintptr_t));
+extern void *dtrace_invop_callsite_pre;
+extern void *dtrace_invop_callsite_post;
+#endif
     
 #undef proc_t
 #endif /* __APPLE__ */
@@ -2510,6 +2631,13 @@ extern void *dtrace_invop_callsite_post;
 
 #endif
 
+#if defined(__arm__) || defined(__arm64__)
+
+#define DTRACE_INVOP_NOP                4
+#define DTRACE_INVOP_RET                5
+#define DTRACE_INVOP_B			6
+
+#endif
 
 #endif /* __APPLE__ */
 

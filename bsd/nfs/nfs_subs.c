@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2011 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2016 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -1029,14 +1029,63 @@ nfsm_rpchead(
 			req->r_auth, req->r_cred, req, mrest, xidp, mreqp);
 }
 
+/*
+ * get_auiliary_groups:	Gets the supplementary groups from a credential.
+ *
+ * IN:		cred:	credential to get the associated groups from.
+ * OUT:		groups:	An array of gids of NGROUPS size.
+ * IN:		count:	The number of groups to get; i.e.; the number of groups the server supports
+ *
+ * returns:	The number of groups found. 
+ *
+ * Just a wrapper around kauth_cred_getgroups to handle the case of a server supporting less
+ * than NGROUPS. 
+ */
+static int
+get_auxiliary_groups(kauth_cred_t cred, gid_t groups[NGROUPS], int count)
+{
+	gid_t pgid;
+	int maxcount = count < NGROUPS ? count + 1 : NGROUPS;
+	int i;
+	
+	for (i = 0; i < NGROUPS; i++)
+		groups[i] = -2; /* Initialize to the nobody group */
+
+	(void)kauth_cred_getgroups(cred, groups, &maxcount);
+	if (maxcount < 1)
+		return (maxcount);
+	
+	/*
+	 * kauth_get_groups returns the primary group followed by the
+	 * users auxiliary groups. If the number of groups the server supports
+	 * is less than NGROUPS, then we will drop the first group so that
+	 * we can send one more group over the wire.
+	 */
+
+
+	if (count < NGROUPS) {
+		pgid = kauth_cred_getgid(cred);
+		if (pgid == groups[0]) {
+			maxcount -= 1;
+			for (i = 0;  i < maxcount; i++) {
+				groups[i] = groups[i+1];
+			}
+		}
+	}
+	
+	return (maxcount);
+}
+
 int
 nfsm_rpchead2(struct nfsmount *nmp, int sotype, int prog, int vers, int proc, int auth_type,
 	kauth_cred_t cred, struct nfsreq *req, mbuf_t mrest, u_int64_t *xidp, mbuf_t *mreqp)
 {
 	mbuf_t mreq, mb;
-	int error, i, grpsiz, auth_len = 0, authsiz, reqlen;
+	int error, i, auth_len = 0, authsiz, reqlen;
 	size_t headlen;
 	struct nfsm_chain nmreq;
+	gid_t grouplist[NGROUPS];
+	int groupcount;
 
 	/* calculate expected auth length */
 	switch (auth_type) {
@@ -1045,19 +1094,14 @@ nfsm_rpchead2(struct nfsmount *nmp, int sotype, int prog, int vers, int proc, in
 			break;
 		case RPCAUTH_SYS:
 		    {
-			gid_t grouplist[NGROUPS];
-			int groupcount = NGROUPS;
+			int count = nmp->nm_numgrps < NGROUPS ? nmp->nm_numgrps : NGROUPS;
 
 			if (!cred)
 				return (EINVAL);
-
-			(void)kauth_cred_getgroups(cred, grouplist, &groupcount);
-			if (groupcount < 1)
+  			groupcount = get_auxiliary_groups(cred, grouplist, count);
+			if (groupcount < 0)
 				return (EINVAL);
-
-			auth_len = (((((uint32_t)groupcount - 1) > nmp->nm_numgrps) ?
-				nmp->nm_numgrps : (groupcount - 1)) << 2) +
-				5 * NFSX_UNSIGNED;
+ 			auth_len = ((uint32_t)groupcount + 5) * NFSX_UNSIGNED;
 			break;
 		    }
 		case RPCAUTH_KRB5:
@@ -1129,21 +1173,14 @@ add_cred:
 			error = mbuf_setnext(nmreq.nmc_mcur, mrest);
 		break;
 	case RPCAUTH_SYS: {
-		gid_t grouplist[NGROUPS];
-		int groupcount;
-
 		nfsm_chain_add_32(error, &nmreq, RPCAUTH_SYS);
 		nfsm_chain_add_32(error, &nmreq, authsiz);
 		nfsm_chain_add_32(error, &nmreq, 0);	/* stamp */
 		nfsm_chain_add_32(error, &nmreq, 0);	/* zero-length hostname */
 		nfsm_chain_add_32(error, &nmreq, kauth_cred_getuid(cred));	/* UID */
 		nfsm_chain_add_32(error, &nmreq, kauth_cred_getgid(cred));	/* GID */
-		grpsiz = (auth_len >> 2) - 5;
-		nfsm_chain_add_32(error, &nmreq, grpsiz);/* additional GIDs */
-		memset(grouplist, 0, sizeof(grouplist));
-		groupcount = grpsiz;
-		(void)kauth_cred_getgroups(cred, grouplist, &groupcount);
-		for (i = 1; i <= grpsiz; i++)
+		nfsm_chain_add_32(error, &nmreq, groupcount);/* additional GIDs */
+		for (i = 0; i < groupcount; i++)
 			nfsm_chain_add_32(error, &nmreq, grouplist[i]);
 
 		/* And the verifier... */
@@ -1161,17 +1198,17 @@ add_cred:
 	case RPCAUTH_KRB5P:
 		error = nfs_gss_clnt_cred_put(req, &nmreq, mrest);
 		if (error == ENEEDAUTH) {
-			gid_t grouplist[NGROUPS];
-			int groupcount = NGROUPS;
+			int count = nmp->nm_numgrps < NGROUPS ? nmp->nm_numgrps : NGROUPS;
+
 			/*
 			 * Use sec=sys for this user
 			 */
 			error = 0;
 			req->r_auth = auth_type = RPCAUTH_SYS;
-			(void)kauth_cred_getgroups(cred, grouplist, &groupcount);
-			auth_len = (((((uint32_t)groupcount - 1) > nmp->nm_numgrps) ?
-				nmp->nm_numgrps : (groupcount - 1)) << 2) +
-				5 * NFSX_UNSIGNED;
+ 			groupcount = get_auxiliary_groups(cred, grouplist, count);
+			if (groupcount < 0)
+				return (EINVAL);
+ 			auth_len = ((uint32_t)groupcount + 5) * NFSX_UNSIGNED;
 			authsiz = nfsm_rndup(auth_len);
 			goto add_cred;
 		}
@@ -1587,7 +1624,8 @@ nfs_attrcachetimeout(nfsnode_t np)
 	int isdir;
 	uint32_t timeo;
 
-	if (!(nmp = NFSTONMP(np)))
+	nmp = NFSTONMP(np);
+	if (nfs_mount_gone(nmp))
 		return (0);
 
 	isdir = vnode_isdir(NFSTOV(np));
@@ -1632,6 +1670,7 @@ nfs_getattrcache(nfsnode_t np, struct nfs_vattr *nvaper, int flags)
 	struct nfs_vattr *nvap;
 	struct timeval nowup;
 	int32_t timeo;
+	struct nfsmount *nmp;
 
 	/* Check if the attributes are valid. */
 	if (!NATTRVALID(np) || ((flags & NGA_ACL) && !NACLVALID(np))) {
@@ -1640,18 +1679,27 @@ nfs_getattrcache(nfsnode_t np, struct nfs_vattr *nvaper, int flags)
 		return (ENOENT);
 	}
 
-	/* Verify the cached attributes haven't timed out. */
-	timeo = nfs_attrcachetimeout(np);
-	microuptime(&nowup);
-	if ((nowup.tv_sec - np->n_attrstamp) >= timeo) {
-		FSDBG(528, np, 0, 0xffffff02, ENOENT);
-		OSAddAtomic64(1, &nfsstats.attrcache_misses);
-		return (ENOENT);
-	}
-	if ((flags & NGA_ACL) && ((nowup.tv_sec - np->n_aclstamp) >= timeo)) {
-		FSDBG(528, np, 0, 0xffffff02, ENOENT);
-		OSAddAtomic64(1, &nfsstats.attrcache_misses);
-		return (ENOENT);
+	nmp = NFSTONMP(np);
+	if (nfs_mount_gone(nmp))
+		return (ENXIO);
+	/*
+	 * Verify the cached attributes haven't timed out.
+	 * If the server isn't responding, skip the check
+	 * and return cached attributes.
+	 */
+	if (!nfs_use_cache(nmp)) {
+		timeo = nfs_attrcachetimeout(np);
+		microuptime(&nowup);
+		if ((nowup.tv_sec - np->n_attrstamp) >= timeo) {
+			FSDBG(528, np, 0, 0xffffff02, ENOENT);
+			OSAddAtomic64(1, &nfsstats.attrcache_misses);
+			return (ENOENT);
+		}
+		if ((flags & NGA_ACL) && ((nowup.tv_sec - np->n_aclstamp) >= timeo)) {
+			FSDBG(528, np, 0, 0xffffff02, ENOENT);
+			OSAddAtomic64(1, &nfsstats.attrcache_misses);
+			return (ENOENT);
+		}
 	}
 
 	nvap = &np->n_vattr;
@@ -1939,6 +1987,61 @@ nfs_uaddr2sockaddr(const char *uaddr, struct sockaddr *addr)
 }
 
 
+/* NFS Client debugging support */
+uint32_t nfs_debug_ctl;
+
+#include <libkern/libkern.h>
+#include <stdarg.h>
+
+void
+nfs_printf(int facility, int level, const char *fmt, ...)
+{
+	va_list ap;
+	
+	if ((uint32_t)level > NFS_DEBUG_LEVEL)
+		return;
+	if (NFS_DEBUG_FACILITY && !((uint32_t)facility & NFS_DEBUG_FACILITY))
+		return;
+	
+	va_start(ap, fmt);
+	vprintf(fmt, ap);
+	va_end(ap);
+}
+
+/* Is a mount gone away? */
+int
+nfs_mount_gone(struct nfsmount *nmp)
+{
+	return (!nmp || vfs_isforce(nmp->nm_mountp) || (nmp->nm_state & (NFSSTA_FORCE | NFSSTA_DEAD)));
+}
+
+/*
+ * Return some of the more significant mount options
+ * as a string, e.g. "'ro,hard,intr,tcp,vers=3,sec=krb5,deadtimeout=0'
+ */
+int
+nfs_mountopts(struct nfsmount *nmp, char *buf, int buflen)
+{
+	int c;
+
+	c = snprintf(buf, buflen, "%s,%s,%s,%s,vers=%d,sec=%s,%sdeadtimeout=%d",
+		(vfs_flags(nmp->nm_mountp) & MNT_RDONLY) ? "ro" : "rw",
+		NMFLAG(nmp, SOFT) ? "soft" : "hard",
+		NMFLAG(nmp, INTR) ? "intr" : "nointr",
+		nmp->nm_sotype == SOCK_STREAM ? "tcp" : "udp",
+		nmp->nm_vers,
+		nmp->nm_auth == RPCAUTH_KRB5  ? "krb5" :
+		nmp->nm_auth == RPCAUTH_KRB5I ? "krb5i" :
+		nmp->nm_auth == RPCAUTH_KRB5P ? "krb5p" :
+		nmp->nm_auth == RPCAUTH_SYS   ? "sys" : "none",
+		nmp->nm_lockmode == NFS_LOCK_MODE_ENABLED ?  "locks," :
+		nmp->nm_lockmode == NFS_LOCK_MODE_DISABLED ? "nolocks," :
+		nmp->nm_lockmode == NFS_LOCK_MODE_LOCAL ? "locallocks," : "",
+		nmp->nm_deadtimeout);
+
+	return (c > buflen ? ENOMEM : 0);
+}
+
 #endif /* NFSCLIENT */
 
 /*
@@ -2085,6 +2188,7 @@ nfsrv_namei(
 	cnp->cn_flags |= NOCROSSMOUNT;
 	cnp->cn_nameptr = cnp->cn_pnbuf;
 	nip->ni_usedvp = nip->ni_startdir = dp;
+	nip->ni_rootdir = rootvnode;
 
 	/*
 	 * And call lookup() to do the real work
@@ -2100,12 +2204,6 @@ nfsrv_namei(
 
 	/* Check for encountering a symbolic link */
 	if (cnp->cn_flags & ISSYMLINK) {
-#if CONFIG_VFS_FUNNEL
-	        if ((cnp->cn_flags & FSNODELOCKHELD)) {
-		        cnp->cn_flags &= ~FSNODELOCKHELD;
-			unlock_fsnode(nip->ni_dvp, NULL);
-		}
-#endif /* CONFIG_VFS_FUNNEL */
 		if (cnp->cn_flags & (LOCKPARENT | WANTPARENT))
 			vnode_put(nip->ni_dvp);
 		if (nip->ni_vp) {
@@ -2295,7 +2393,7 @@ nfsm_chain_get_sattr(
 {
 	int error = 0;
 	uint32_t val = 0;
-	uint64_t val64;
+	uint64_t val64 = 0;
 	struct timespec now;
 
 	if (nd->nd_vers == NFS_VER2) {
@@ -2430,6 +2528,12 @@ nfsrv_hang_addrlist(struct nfs_export *nx, struct user_nfs_export_args *unxa)
 		if (error)
 			return (error);
 
+		if (nxna.nxna_addr.ss_len > sizeof(struct sockaddr_storage) ||
+		    nxna.nxna_mask.ss_len > sizeof(struct sockaddr_storage) ||
+		    nxna.nxna_addr.ss_family > AF_MAX ||
+		    nxna.nxna_mask.ss_family > AF_MAX)
+			return (EINVAL);
+
 		if (nxna.nxna_flags & (NX_MAPROOT|NX_MAPALL)) {
 			struct posix_cred temp_pcred;
 		        bzero(&temp_pcred, sizeof(temp_pcred));
@@ -2486,12 +2590,13 @@ nfsrv_hang_addrlist(struct nfs_export *nx, struct user_nfs_export_args *unxa)
 			 * Seems silly to initialize every AF when most are not
 			 * used, do so on demand here
 			 */
-			for (dom = domains; dom; dom = dom->dom_next)
+			TAILQ_FOREACH(dom, &domains, dom_entry) {
 				if (dom->dom_family == i && dom->dom_rtattach) {
 					dom->dom_rtattach((void **)&nx->nx_rtable[i],
 						dom->dom_rtoffset);
 					break;
 				}
+			}
 			if ((rnh = nx->nx_rtable[i]) == 0) {
 			        if (IS_VALID_CRED(cred))
 				        kauth_cred_unref(&cred);
@@ -3005,6 +3110,7 @@ nfsrv_export(struct user_nfs_export_args *unxa, vfs_context_t ctx)
 					xnd.ni_cnd.cn_nameptr = xnd.ni_cnd.cn_pnbuf = path;
 					xnd.ni_startdir = mvp;
 					xnd.ni_usedvp   = mvp;
+					xnd.ni_rootdir = rootvnode;
 					xnd.ni_cnd.cn_context = ctx;
 					while ((error = lookup(&xnd)) == ERECYCLE) {
 						xnd.ni_cnd.cn_flags = LOCKLEAF;
@@ -3121,6 +3227,38 @@ unlock_out:
 		mount_drop(mp, 0);
 	lck_rw_done(&nfsrv_export_rwlock);
 	return (error);
+}
+
+/*
+ * Check if there is a least one export that will allow this address.
+ *
+ * Return 0, if there is an export that will allow this address,
+ * else return EACCES
+ */
+int
+nfsrv_check_exports_allow_address(mbuf_t nam)
+{
+	struct nfs_exportfs		*nxfs;
+	struct nfs_export		*nx;
+	struct nfs_export_options	*nxo = NULL;
+
+	if (nam == NULL)
+		return (EACCES);
+
+	lck_rw_lock_shared(&nfsrv_export_rwlock);
+	LIST_FOREACH(nxfs, &nfsrv_exports, nxfs_next) {
+		LIST_FOREACH(nx, &nxfs->nxfs_exports, nx_next) {
+			/* A little optimizing by checking for the default first */
+			if (nx->nx_flags & NX_DEFAULTEXPORT)
+				nxo = &nx->nx_defopt;
+			if (nxo || (nxo = nfsrv_export_lookup(nx, nam)))
+				goto found;
+		}
+	}
+found:
+	lck_rw_done(&nfsrv_export_rwlock);
+
+	return (nxo ? 0 : EACCES);
 }
 
 struct nfs_export_options *

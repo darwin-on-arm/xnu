@@ -72,8 +72,6 @@
 
 #include  <sys/appleapiopts.h>
 
-#include <security/mac.h>
-
 __BEGIN_DECLS
 #ifdef __APPLE_API_PRIVATE
 #define DEVMAXNAMESIZE 	32 		/* XXX */
@@ -119,6 +117,8 @@ union devnode_type {
     }Slnk;
 };
 
+#define DEV_MAX_VNODE_RETRY  8          /* Max number of retries when we try to
+                                           get a vnode for the devnode */
 struct devnode
 {
     devfstype_t		dn_type;

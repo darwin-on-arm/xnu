@@ -70,23 +70,123 @@
 #include <mach/mach_types.h>
 #include <kern/macro_help.h>
 
+#include <sys/cdefs.h>
+
+__BEGIN_DECLS
+
 /*
- *	Queue of abstract objects.  Queue is maintained
- *	within that object.
+ * Queue Management APIs
  *
- *	Supports fast removal from within the queue.
+ * There are currently two subtly different methods of maintining
+ * a queue of objects. Both APIs are contained in this file, and
+ * unfortunately overlap.
+ * (there is also a third way maintained in bsd/sys/queue.h)
  *
- *	How to declare a queue of elements of type "foo_t":
- *		In the "*foo_t" type, you must have a field of
- *		type "queue_chain_t" to hold together this queue.
- *		There may be more than one chain through a
- *		"foo_t", for use by different queues.
+ * Both methods use a common queue head and linkage pattern:
+ * 	The head of a queue is declared as:
+ * 		queue_head_t q_head;
  *
- *		Declare the queue as a "queue_t" type.
+ * 	Elements in this queue are chained together using
+ * 	struct queue_entry objects embedded within a structure:
+ * 		struct some_data {
+ * 			int field1;
+ * 			int field2;
+ * 			...
+ * 			queue_chain_t link;
+ * 			...
+ * 			int last_field;
+ * 		};
+ * 	struct some_data is referred to as the queue "element."
+ * 	(note that queue_chain_t is typedef'd to struct queue_entry)
  *
- *		Elements of the queue (of type "foo_t", that is)
- *		are referred to by reference, and cast to type
- *		"queue_entry_t" within this module.
+ * IMPORTANT: The two queue iteration methods described below are not
+ *            compatible with one another. You must choose one and be careful
+ *            to use only the supported APIs for that method.
+ *
+ * Method 1: chaining of queue_chain_t (linkage chains)
+ * 	This method uses the next and prev pointers of the struct queue_entry
+ * 	linkage object embedded in a queue element to point to the next or
+ * 	previous queue_entry structure in the chain. The head of the queue
+ * 	(the queue_head_t object) will point to the first and last
+ * 	struct queue_entry object, and both the next and prev pointer will
+ * 	point back to the head if the queue is empty.
+ *
+ * 	This method is the most flexible method of chaining objects together
+ * 	as it allows multiple chains through a given object, by embedding
+ * 	multiple queue_chain_t objects in the structure, while simultaneously
+ * 	providing fast removal and insertion into the queue using only
+ * 	struct queue_entry object pointers.
+ *
+ * 	++ Valid APIs for this style queue ++
+ * 	-------------------------------------
+ * 		[C] queue_init
+ * 		[C] queue_first
+ * 		[C] queue_next
+ * 		[C] queue_last
+ * 		[C] queue_prev
+ * 		[C] queue_end
+ * 		[C] queue_empty
+ *
+ * 		[1] enqueue
+ * 		[1] dequeue
+ * 		[1] enqueue_head
+ * 		[1] enqueue_tail
+ * 		[1] dequeue_head
+ * 		[1] dequeue_tail
+ * 		[1] remqueue
+ * 		[1] insque
+ * 		[1] remque
+ * 		[1] re_queue_head
+ * 		[1] re_queue_tail
+ * 		[1] movqueue
+ * 		[1] qe_element
+ * 		[1] qe_foreach
+ * 		[1] qe_foreach_safe
+ * 		[1] qe_foreach_element
+ * 		[1] qe_foreach_element_safe
+ *
+ * Method 2: chaining of elements (element chains)
+ * 	This method uses the next and prev pointers of the struct queue_entry
+ * 	linkage object embedded in a queue element to point to the next or
+ * 	previous queue element (not another queue_entry). The head of the
+ * 	queue will point to the first and last queue element (struct some_data
+ * 	from the above example) NOT the embedded queue_entry structure. The
+ * 	first queue element will have a prev pointer that points to the
+ * 	queue_head_t, and the last queue element will have a next pointer
+ * 	that points to the queue_head_t.
+ *
+ * 	This method requires knowledge of the queue_head_t of the queue on
+ * 	which an element resides in order to remove the element. Iterating
+ * 	through the elements of the queue is also more cumbersome because
+ * 	a check against the head pointer plus a cast then offset operation
+ * 	must be performed at each step of the iteration.
+ *
+ * 	++ Valid APIs for this style queue ++
+ * 	-------------------------------------
+ * 		[C] queue_init
+ * 		[C] queue_first
+ * 		[C] queue_next
+ * 		[C] queue_last
+ * 		[C] queue_prev
+ * 		[C] queue_end
+ * 		[C] queue_empty
+ *
+ * 		[2] queue_enter
+ * 		[2] queue_enter_first
+ * 		[2] queue_insert_before
+ * 		[2] queue_insert_after
+ * 		[2] queue_field
+ * 		[2] queue_remove
+ * 		[2] queue_remove_first
+ * 		[2] queue_remove_last
+ * 		[2] queue_assign
+ * 		[2] queue_new_head
+ * 		[2] queue_iterate
+ *
+ * Legend:
+ * 	[C] -> API common to both methods
+ * 	[1] -> API used only in method 1 (linkage chains)
+ * 	[2] -> API used only in method 2 (element chains)
  */
 
 /*
@@ -96,7 +196,19 @@
 struct queue_entry {
 	struct queue_entry	*next;		/* next element */
 	struct queue_entry	*prev;		/* previous element */
+
+#if __arm__ && (__BIGGEST_ALIGNMENT__ > 4)
+/* For the newer ARMv7k ABI where 64-bit types are 64-bit aligned, but pointers
+ * are 32-bit:
+ * Since this type is so often cast to various 64-bit aligned types
+ * aligning it to 64-bits will avoid -wcast-align without needing
+ * to disable it entirely. The impact on memory footprint should be 
+ * negligible.
+ */
+} __attribute__ ((aligned (8)));
+#else
 };
+#endif
 
 typedef struct queue_entry	*queue_t;
 typedef	struct queue_entry	queue_head_t;
@@ -112,52 +224,34 @@ typedef	struct queue_entry	*queue_entry_t;
 #define enqueue(queue,elt)	enqueue_tail(queue, elt)
 #define	dequeue(queue)		dequeue_head(queue)
 
-#if	!defined(__GNUC__)
-
-#include <sys/cdefs.h>
-__BEGIN_DECLS
-
-/* Enqueue element to head of queue */
-extern void		enqueue_head(
-				queue_t		que,
-				queue_entry_t	elt);
-
-/* Enqueue element to tail of queue */
-extern void		enqueue_tail(
-				queue_t		que,
-				queue_entry_t	elt);
-
-/* Dequeue element from head of queue */
-extern queue_entry_t	dequeue_head(
-				queue_t	que);
-
-/* Dequeue element from tail of queue */
-extern queue_entry_t	dequeue_tail(
-				queue_t	que);
-
-/* Dequeue element */
-extern void		remqueue(
-				queue_entry_t	elt);
-
-/* Enqueue element after a particular elem */
-extern void		insque(
-				queue_entry_t	entry,
-				queue_entry_t	pred);
-
-/* Dequeue element */
-extern void		remque(
-				queue_entry_t elt);
-
-__END_DECLS
-
-#else	/* !__GNUC__ */
-
 #ifdef XNU_KERNEL_PRIVATE
-#define __DEQUEUE_ELT_CLEANUP(elt) do { \
-		(elt)->next = (queue_entry_t) 0; \
-		(elt)->prev = (queue_entry_t) 0; \
-	} while (0)
+#include <kern/debug.h>
+#include <mach/branch_predicates.h>
+static inline void __QUEUE_ELT_VALIDATE(queue_entry_t elt) {
+	queue_entry_t	elt_next, elt_prev;
+	
+	if (__improbable(elt == (queue_entry_t)0)) {
+		panic("Invalid queue element %p", elt);
+	}
+	
+	elt_next = elt->next;
+	elt_prev = elt->prev;
+	
+	if (__improbable(elt_next == (queue_entry_t)0 || elt_prev == (queue_entry_t)0)) {
+		panic("Invalid queue element pointers for %p: next %p prev %p", elt, elt_next, elt_prev);
+	}
+	if (__improbable(elt_next->prev != elt || elt_prev->next != elt)) {
+		panic("Invalid queue element linkage for %p: next %p next->prev %p prev %p prev->next %p", 
+			  elt, elt_next, elt_next->prev, elt_prev, elt_prev->next);
+	}
+}
+
+static inline void __DEQUEUE_ELT_CLEANUP(queue_entry_t elt) {
+	(elt)->next = (queue_entry_t) 0;
+	(elt)->prev = (queue_entry_t) 0;
+}
 #else
+#define __QUEUE_ELT_VALIDATE(elt) do { } while (0)
 #define __DEQUEUE_ELT_CLEANUP(elt) do { } while(0)
 #endif /* !XNU_KERNEL_PRIVATE */
 
@@ -166,9 +260,13 @@ enqueue_head(
 	queue_t		que,
 	queue_entry_t	elt)
 {
-	elt->next = que->next;
+	queue_entry_t	old_head;
+
+	__QUEUE_ELT_VALIDATE((queue_entry_t)que);
+	old_head = que->next;
+	elt->next = old_head;
 	elt->prev = que;
-	elt->next->prev = elt;
+	old_head->prev = elt;
 	que->next = elt;
 }
 
@@ -177,9 +275,13 @@ enqueue_tail(
 		queue_t		que,
 		queue_entry_t	elt)
 {
+	queue_entry_t	old_tail;
+
+	__QUEUE_ELT_VALIDATE((queue_entry_t)que);
+	old_tail = que->prev;
 	elt->next = que;
-	elt->prev = que->prev;
-	elt->prev->next = elt;
+	elt->prev = old_tail;
+	old_tail->next = elt;
 	que->prev = elt;
 }
 
@@ -187,12 +289,15 @@ static __inline__ queue_entry_t
 dequeue_head(
 	queue_t	que)
 {
-	register queue_entry_t	elt = (queue_entry_t) 0;
+	queue_entry_t	elt = (queue_entry_t) 0;
+	queue_entry_t	new_head;
 
 	if (que->next != que) {
 		elt = que->next;
-		elt->next->prev = que;
-		que->next = elt->next;
+		__QUEUE_ELT_VALIDATE(elt);
+		new_head = elt->next; /* new_head may point to que if elt was the only element */
+		new_head->prev = que;
+		que->next = new_head;
 		__DEQUEUE_ELT_CLEANUP(elt);
 	}
 
@@ -203,12 +308,15 @@ static __inline__ queue_entry_t
 dequeue_tail(
 	queue_t	que)
 {
-	register queue_entry_t	elt = (queue_entry_t) 0;
+	queue_entry_t	elt = (queue_entry_t) 0;
+	queue_entry_t	new_tail;
 
 	if (que->prev != que) {
 		elt = que->prev;
-		elt->prev->next = que;
-		que->prev = elt->prev;
+		__QUEUE_ELT_VALIDATE(elt);
+		new_tail = elt->prev; /* new_tail may point to queue if elt was the only element */
+		new_tail->next = que;
+		que->prev = new_tail;
 		__DEQUEUE_ELT_CLEANUP(elt);
 	}
 
@@ -219,8 +327,13 @@ static __inline__ void
 remqueue(
 	queue_entry_t	elt)
 {
-	elt->next->prev = elt->prev;
-	elt->prev->next = elt->next;
+	queue_entry_t	next_elt, prev_elt;
+
+	__QUEUE_ELT_VALIDATE(elt);
+	next_elt = elt->next;
+	prev_elt = elt->prev; /* next_elt may equal prev_elt (and the queue head) if elt was the only element */
+	next_elt->prev = prev_elt;
+	prev_elt->next = next_elt;
 	__DEQUEUE_ELT_CLEANUP(elt);
 }
 
@@ -229,22 +342,234 @@ insque(
 	queue_entry_t	entry,
 	queue_entry_t	pred)
 {
-	entry->next = pred->next;
+	queue_entry_t	successor;
+
+	__QUEUE_ELT_VALIDATE(pred);
+	successor = pred->next;
+	entry->next = successor;
 	entry->prev = pred;
-	(pred->next)->prev = entry;
+	successor->prev = entry;
 	pred->next = entry;
 }
 
 static __inline__ void
 remque(
-	register queue_entry_t elt)
+	queue_entry_t elt)
 {
-	(elt->next)->prev = elt->prev;
-	(elt->prev)->next = elt->next;
+	queue_entry_t	next_elt, prev_elt;
+
+	__QUEUE_ELT_VALIDATE(elt);
+	next_elt = elt->next;
+	prev_elt = elt->prev; /* next_elt may equal prev_elt (and the queue head) if elt was the only element */
+	next_elt->prev = prev_elt;
+	prev_elt->next = next_elt;
 	__DEQUEUE_ELT_CLEANUP(elt);
 }
 
-#endif	/* !__GNUC__ */
+/*
+ *	Function:	re_queue_head
+ *	Parameters:
+ *		queue_t que       : queue onto which elt will be pre-pended
+ *		queue_entry_t elt : element to re-queue
+ *	Description:
+ *		Remove elt from its current queue and put it onto the
+ *		head of a new queue
+ *	Note:
+ *		This should only be used with Method 1 queue iteration (linkage chains)
+ */
+static __inline__ void
+re_queue_head(queue_t que, queue_entry_t elt)
+{
+	queue_entry_t	n_elt, p_elt;
+
+	__QUEUE_ELT_VALIDATE(elt);
+	__QUEUE_ELT_VALIDATE((queue_entry_t)que);
+
+	/* remqueue */
+	n_elt = elt->next;
+	p_elt = elt->prev; /* next_elt may equal prev_elt (and the queue head) if elt was the only element */
+	n_elt->prev = p_elt;
+	p_elt->next = n_elt;
+
+	/* enqueue_head */
+	n_elt = que->next;
+	elt->next = n_elt;
+	elt->prev = que;
+	n_elt->prev = elt;
+	que->next = elt;
+}
+
+/*
+ *	Function:	re_queue_tail
+ *	Parameters:
+ *		queue_t que       : queue onto which elt will be appended
+ *		queue_entry_t elt : element to re-queue
+ *	Description:
+ *		Remove elt from its current queue and put it onto the
+ *		end of a new queue
+ *	Note:
+ *		This should only be used with Method 1 queue iteration (linkage chains)
+ */
+static __inline__ void
+re_queue_tail(queue_t que, queue_entry_t elt)
+{
+	queue_entry_t	n_elt, p_elt;
+
+	__QUEUE_ELT_VALIDATE(elt);
+	__QUEUE_ELT_VALIDATE((queue_entry_t)que);
+
+	/* remqueue */
+	n_elt = elt->next;
+	p_elt = elt->prev; /* next_elt may equal prev_elt (and the queue head) if elt was the only element */
+	n_elt->prev = p_elt;
+	p_elt->next = n_elt;
+
+	/* enqueue_tail */
+	p_elt = que->prev;
+	elt->next = que;
+	elt->prev = p_elt;
+	p_elt->next = elt;
+	que->prev = elt;
+}
+
+/*
+ *	Macro:		qe_element
+ *	Function:
+ *		Convert a queue_entry_t to a queue element pointer.
+ *		Get a pointer to the user-defined element containing
+ *		a given queue_entry_t
+ *	Header:
+ *		<type> * qe_element(queue_entry_t qe, <type>, field)
+ *			qe      - queue entry to convert
+ *			<type>  - what's in the queue (e.g., struct some_data)
+ *			<field> - is the chain field in <type>
+ *	Note:
+ *		Do not use pointer types for <type>
+ */
+#define	qe_element(qe, type, field) \
+	((type *)((void *)((char *)(qe) - __offsetof(type, field))))
+
+/*
+ *	Macro:		qe_foreach
+ *	Function:
+ *		Iterate over each queue_entry_t structure.
+ *		Generates a 'for' loop, setting 'qe' to
+ *		each queue_entry_t in the queue.
+ *	Header:
+ *		qe_foreach(queue_entry_t qe, queue_t head)
+ *			qe   - iteration variable
+ *			head - pointer to queue_head_t (head of queue)
+ *	Note:
+ *		This should only be used with Method 1 queue iteration (linkage chains)
+ */
+#define qe_foreach(qe, head) \
+	for (qe = (head)->next; qe != (head); qe = (qe)->next)
+
+/*
+ *	Macro:		qe_foreach_safe
+ *	Function:
+ *		Safely iterate over each queue_entry_t structure.
+ *
+ *		Use this iterator macro if you plan to remove the
+ *		queue_entry_t, qe, from the queue during the
+ *		iteration.
+ *	Header:
+ *		qe_foreach_safe(queue_entry_t qe, queue_t head)
+ *			qe   - iteration variable
+ *			head - pointer to queue_head_t (head of queue)
+ *	Note:
+ *		This should only be used with Method 1 queue iteration (linkage chains)
+ */
+#define qe_foreach_safe(qe, head) \
+	for (queue_entry_t _ne = ((head)->next)->next, \
+	         __ ## qe ## _unused_shadow __unused = (qe = (head)->next); \
+	     qe != (head); \
+	     qe = _ne, _ne = (qe)->next)
+
+/*
+ *	Macro:		qe_foreach_element
+ *	Function:
+ *		Iterate over each _element_ in a queue
+ *		where each queue_entry_t points to another
+ *		queue_entry_t, i.e., managed by the [de|en]queue_head/
+ *		[de|en]queue_tail / remqueue / etc. function.
+ *	Header:
+ *		qe_foreach_element(<type> *elt, queue_t head, <field>)
+ *			elt     - iteration variable
+ *			<type>  - what's in the queue (e.g., struct some_data)
+ *			<field> - is the chain field in <type>
+ *	Note:
+ *		This should only be used with Method 1 queue iteration (linkage chains)
+ */
+#define qe_foreach_element(elt, head, field) \
+	for (elt = qe_element((head)->next, typeof(*(elt)), field); \
+	     &((elt)->field) != (head); \
+	     elt = qe_element((elt)->field.next, typeof(*(elt)), field))
+
+/*
+ *	Macro:		qe_foreach_element_safe
+ *	Function:
+ *		Safely iterate over each _element_ in a queue
+ *		where each queue_entry_t points to another
+ *		queue_entry_t, i.e., managed by the [de|en]queue_head/
+ *		[de|en]queue_tail / remqueue / etc. function.
+ *
+ *		Use this iterator macro if you plan to remove the
+ *		element, elt, from the queue during the iteration.
+ *	Header:
+ *		qe_foreach_element_safe(<type> *elt, queue_t head, <field>)
+ *			elt     - iteration variable
+ *			<type>  - what's in the queue (e.g., struct some_data)
+ *			<field> - is the chain field in <type>
+ *	Note:
+ *		This should only be used with Method 1 queue iteration (linkage chains)
+ */
+#define qe_foreach_element_safe(elt, head, field) \
+	for (typeof(*(elt)) *_nelt = qe_element(((head)->next)->next, typeof(*(elt)), field), \
+	     *__ ## elt ## _unused_shadow __unused = \
+	         (elt = qe_element((head)->next, typeof(*(elt)), field)); \
+	     &((elt)->field) != (head); \
+	     elt = _nelt, _nelt = qe_element((elt)->field.next, typeof(*(elt)), field)) \
+
+#ifdef XNU_KERNEL_PRIVATE
+
+/* Dequeue an element from head, or return NULL if the queue is empty */
+#define qe_dequeue_head(head, type, field) ({ \
+	queue_entry_t _tmp_entry = dequeue_head((head)); \
+	type *_tmp_element = (type*) NULL; \
+	if (_tmp_entry != (queue_entry_t) NULL) \
+		_tmp_element = qe_element(_tmp_entry, type, field); \
+	_tmp_element; \
+})
+
+/* Dequeue an element from tail, or return NULL if the queue is empty */
+#define qe_dequeue_tail(head, type, field) ({ \
+	queue_entry_t _tmp_entry = dequeue_tail((head)); \
+	type *_tmp_element = (type*) NULL; \
+	if (_tmp_entry != (queue_entry_t) NULL) \
+		_tmp_element = qe_element(_tmp_entry, type, field); \
+	_tmp_element; \
+})
+
+/* Peek at the first element, or return NULL if the queue is empty */
+#define qe_queue_first(head, type, field) ({ \
+	queue_entry_t _tmp_entry = queue_first((head)); \
+	type *_tmp_element = (type*) NULL; \
+	if (_tmp_entry != (queue_entry_t) head) \
+		_tmp_element = qe_element(_tmp_entry, type, field); \
+	_tmp_element; \
+})
+
+/* Peek at the last element, or return NULL if the queue is empty */
+#define qe_queue_last(head, type, field) ({ \
+	queue_entry_t _tmp_entry = queue_last((head)); \
+	type *_tmp_element = (type*) NULL; \
+	if (_tmp_entry != (queue_entry_t) head) \
+		_tmp_element = qe_element(_tmp_entry, type, field); \
+	_tmp_element; \
+})
+
+#endif /* XNU_KERNEL_PRIVATE */
 
 /*
  *	Macro:		queue_init
@@ -259,6 +584,28 @@ MACRO_BEGIN		\
 	(q)->next = (q);\
 	(q)->prev = (q);\
 MACRO_END
+
+/*
+ *	Macro:		queue_head_init
+ *	Function:
+ *		Initialize the given queue head
+ *	Header:
+ *		void queue_head_init(q)
+ *			queue_head_t	q;	\* MODIFIED *\
+ */
+#define queue_head_init(q) \
+	queue_init(&(q))
+
+/*
+ *	Macro:		queue_chain_init
+ *	Function:
+ *		Initialize the given queue chain element
+ *	Header:
+ *		void queue_chain_init(q)
+ *			queue_chain_t	q;	\* MODIFIED *\
+ */
+#define queue_chain_init(q) \
+	queue_init(&(q))
 
 /*
  *	Macro:		queue_first
@@ -322,6 +669,47 @@ MACRO_END
  */
 #define	queue_empty(q)		queue_end((q), queue_first(q))
 
+/*
+ *	Function:	movqueue
+ *	Parameters:
+ *		queue_t _old : head of a queue whose items will be moved
+ *		queue_t _new : new queue head onto which items will be moved
+ *	Description:
+ *		Rebase queue items in _old onto _new then re-initialize
+ *		the _old object to an empty queue.
+ *		Equivalent to the queue_new_head Method 2 macro
+ *	Note:
+ *		Similar to the queue_new_head macro, this macros is intented
+ *		to function as an initializer method for '_new' and thus may
+ *		leak any list items that happen to be on the '_new' list.
+ *		This should only be used with Method 1 queue iteration (linkage chains)
+ */
+static __inline__ void
+movqueue(queue_t _old, queue_t _new)
+{
+	queue_entry_t	next_elt, prev_elt;
+
+	__QUEUE_ELT_VALIDATE((queue_entry_t)_old);
+
+	if (queue_empty(_old)) {
+		queue_init(_new);
+		return;
+	}
+
+	/*
+	 * move the queue at _old to _new
+	 * and re-initialize _old
+	 */
+	next_elt = _old->next;
+	prev_elt = _old->prev;
+
+	_new->next = next_elt;
+	_new->prev = prev_elt;
+	next_elt->prev = _new;
+	prev_elt->next = _new;
+
+	queue_init(_old);
+}
 
 /*----------------------------------------------------------------*/
 /*
@@ -340,17 +728,20 @@ MACRO_END
  *			<type> elt;
  *			<type> is what's in our queue
  *			<field> is the chain field in (*<type>)
+ *	Note:
+ *		This should only be used with Method 2 queue iteration (element chains)
  */
 #define queue_enter(head, elt, type, field)			\
 MACRO_BEGIN							\
-	register queue_entry_t __prev;				\
+	queue_entry_t __prev;					\
 								\
 	__prev = (head)->prev;					\
 	if ((head) == __prev) {					\
 		(head)->next = (queue_entry_t) (elt);		\
 	}							\
 	else {							\
-		((type)__prev)->field.next = (queue_entry_t)(elt);\
+		((type)(void *)__prev)->field.next =		\
+			(queue_entry_t)(elt);			\
 	}							\
 	(elt)->field.prev = __prev;				\
 	(elt)->field.next = head;				\
@@ -367,17 +758,20 @@ MACRO_END
  *			<type> elt;
  *			<type> is what's in our queue
  *			<field> is the chain field in (*<type>)
+ *	Note:
+ *		This should only be used with Method 2 queue iteration (element chains)
  */
 #define queue_enter_first(head, elt, type, field)		\
 MACRO_BEGIN							\
-	register queue_entry_t __next;				\
+	queue_entry_t __next;					\
 								\
 	__next = (head)->next;					\
 	if ((head) == __next) {					\
 		(head)->prev = (queue_entry_t) (elt);		\
 	}							\
 	else {							\
-		((type)__next)->field.prev = (queue_entry_t)(elt);\
+		((type)(void *)__next)->field.prev =		\
+			(queue_entry_t)(elt);			\
 	}							\
 	(elt)->field.next = __next;				\
 	(elt)->field.prev = head;				\
@@ -395,10 +789,12 @@ MACRO_END
  *			<type> cur;
  *			<type> is what's in our queue
  *			<field> is the chain field in (*<type>)
+ *	Note:
+ *		This should only be used with Method 2 queue iteration (element chains)
  */
 #define queue_insert_before(head, elt, cur, type, field)		\
 MACRO_BEGIN								\
-	register queue_entry_t __prev;					\
+	queue_entry_t __prev;						\
 									\
 	if ((head) == (queue_entry_t)(cur)) {				\
 		(elt)->field.next = (head);				\
@@ -407,7 +803,8 @@ MACRO_BEGIN								\
 			(head)->next = (queue_entry_t)(elt);		\
 		} else {			/* last element */	\
 			__prev = (elt)->field.prev = (head)->prev;	\
-			((type)__prev)->field.next = (queue_entry_t)(elt);\
+			((type)(void *)__prev)->field.next =		\
+				(queue_entry_t)(elt);			\
 		}							\
 		(head)->prev = (queue_entry_t)(elt);			\
 	} else {							\
@@ -418,7 +815,8 @@ MACRO_BEGIN								\
 			(head)->next = (queue_entry_t)(elt);		\
 		} else {			/* middle element */	\
 			__prev = (elt)->field.prev = (cur)->field.prev;	\
-			((type)__prev)->field.next = (queue_entry_t)(elt);\
+			((type)(void *)__prev)->field.next =		\
+				(queue_entry_t)(elt);			\
 		}							\
 		(cur)->field.prev = (queue_entry_t)(elt);		\
 	}								\
@@ -435,10 +833,12 @@ MACRO_END
  *			<type> cur;
  *			<type> is what's in our queue
  *			<field> is the chain field in (*<type>)
+ *	Note:
+ *		This should only be used with Method 2 queue iteration (element chains)
  */
 #define queue_insert_after(head, elt, cur, type, field)			\
 MACRO_BEGIN								\
-	register queue_entry_t __next;					\
+	queue_entry_t __next;						\
 									\
 	if ((head) == (queue_entry_t)(cur)) {				\
 		(elt)->field.prev = (head);				\
@@ -447,7 +847,8 @@ MACRO_BEGIN								\
 			(head)->prev = (queue_entry_t)(elt);		\
 		} else {			/* first element */	\
 			__next = (elt)->field.next = (head)->next;	\
-			((type)__next)->field.prev = (queue_entry_t)(elt);\
+			((type)(void *)__next)->field.prev =		\
+				(queue_entry_t)(elt);			\
 		}							\
 		(head)->next = (queue_entry_t)(elt);			\
 	} else {							\
@@ -458,7 +859,8 @@ MACRO_BEGIN								\
 			(head)->prev = (queue_entry_t)(elt);		\
 		} else {			/* middle element */	\
 			__next = (elt)->field.next = (cur)->field.next;	\
-			((type)__next)->field.prev = (queue_entry_t)(elt);\
+			((type)(void *)__next)->field.prev =		\
+				(queue_entry_t)(elt);			\
 		}							\
 		(cur)->field.next = (queue_entry_t)(elt);		\
 	}								\
@@ -469,9 +871,11 @@ MACRO_END
  *	Function:
  *		Find the queue_chain_t (or queue_t) for the
  *		given element (thing) in the given queue (head)
+ *	Note:
+ *		This should only be used with Method 2 queue iteration (element chains)
  */
 #define	queue_field(head, thing, type, field)			\
-		(((head) == (thing)) ? (head) : &((type)(thing))->field)
+		(((head) == (thing)) ? (head) : &((type)(void *)(thing))->field)
 
 /*
  *	Macro:		queue_remove
@@ -480,10 +884,12 @@ MACRO_END
  *	Header:
  *		void queue_remove(q, qe, type, field)
  *			arguments as in queue_enter
+ *	Note:
+ *		This should only be used with Method 2 queue iteration (element chains)
  */
 #define	queue_remove(head, elt, type, field)			\
 MACRO_BEGIN							\
-	register queue_entry_t	__next, __prev;			\
+	queue_entry_t	__next, __prev;				\
 								\
 	__next = (elt)->field.next;				\
 	__prev = (elt)->field.prev;				\
@@ -491,12 +897,12 @@ MACRO_BEGIN							\
 	if ((head) == __next)					\
 		(head)->prev = __prev;				\
 	else							\
-		((type)__next)->field.prev = __prev;		\
+		((type)(void *)__next)->field.prev = __prev;	\
 								\
 	if ((head) == __prev)					\
 		(head)->next = __next;				\
 	else							\
-		((type)__prev)->field.next = __next;		\
+		((type)(void *)__prev)->field.next = __next;	\
 								\
 	(elt)->field.next = NULL;				\
 	(elt)->field.prev = NULL;				\
@@ -510,18 +916,20 @@ MACRO_END
  *	Header:
  *		queue_remove_first(head, entry, type, field)
  *		entry is returned by reference
+ *	Note:
+ *		This should only be used with Method 2 queue iteration (element chains)
  */
 #define	queue_remove_first(head, entry, type, field)		\
 MACRO_BEGIN							\
-	register queue_entry_t	__next;				\
+	queue_entry_t	__next;					\
 								\
-	(entry) = (type) ((head)->next);			\
+	(entry) = (type)(void *) ((head)->next);		\
 	__next = (entry)->field.next;				\
 								\
 	if ((head) == __next)					\
 		(head)->prev = (head);				\
 	else							\
-		((type)(__next))->field.prev = (head);		\
+		((type)(void *)(__next))->field.prev = (head);	\
 	(head)->next = __next;					\
 								\
 	(entry)->field.next = NULL;				\
@@ -536,18 +944,20 @@ MACRO_END
  *	Header:
  *		queue_remove_last(head, entry, type, field)
  *		entry is returned by reference
+ *	Note:
+ *		This should only be used with Method 2 queue iteration (element chains)
  */
 #define	queue_remove_last(head, entry, type, field)		\
 MACRO_BEGIN							\
-	register queue_entry_t	__prev;				\
+	queue_entry_t	__prev;					\
 								\
-	(entry) = (type) ((head)->prev);			\
+	(entry) = (type)(void *) ((head)->prev);		\
 	__prev = (entry)->field.prev;				\
 								\
 	if ((head) == __prev)					\
 		(head)->next = (head);				\
 	else							\
-		((type)(__prev))->field.next = (head);		\
+		((type)(void *)(__prev))->field.next = (head);	\
 	(head)->prev = __prev;					\
 								\
 	(entry)->field.next = NULL;				\
@@ -556,11 +966,13 @@ MACRO_END
 
 /*
  *	Macro:		queue_assign
+ *	Note:
+ *		This should only be used with Method 2 queue iteration (element chains)
  */
 #define	queue_assign(to, from, type, field)			\
 MACRO_BEGIN							\
-	((type)((from)->prev))->field.next = (to);		\
-	((type)((from)->next))->field.prev = (to);		\
+	((type)(void *)((from)->prev))->field.next = (to);	\
+	((type)(void *)((from)->next))->field.prev = (to);	\
 	*to = *from;						\
 MACRO_END
 
@@ -574,13 +986,17 @@ MACRO_END
  *			queue_t new;
  *			<type> is what's in our queue
  *                      <field> is the chain field in (*<type>)
+ *	Note:
+ *		This should only be used with Method 2 queue iteration (element chains)
  */
 #define queue_new_head(old, new, type, field)			\
 MACRO_BEGIN							\
 	if (!queue_empty(old)) {				\
 		*(new) = *(old);				\
-		((type)((new)->next))->field.prev = (new);	\
-		((type)((new)->prev))->field.next = (new);	\
+		((type)(void *)((new)->next))->field.prev =	\
+			(new);					\
+		((type)(void *)((new)->prev))->field.next =	\
+			(new);					\
 	} else {						\
 		queue_init(new);				\
 	}							\
@@ -598,15 +1014,17 @@ MACRO_END
  *			<type> elt;
  *			<type> is what's in our queue
  *			<field> is the chain field in (*<type>)
+ *	Note:
+ *		This should only be used with Method 2 queue iteration (element chains)
  */
 #define queue_iterate(head, elt, type, field)			\
-	for ((elt) = (type) queue_first(head);			\
+	for ((elt) = (type)(void *) queue_first(head);		\
 	     !queue_end((head), (queue_entry_t)(elt));		\
-	     (elt) = (type) queue_next(&(elt)->field))
+	     (elt) = (type)(void *) queue_next(&(elt)->field))
 
 #ifdef	MACH_KERNEL_PRIVATE
 
-#include <kern/lock.h>
+#include <kern/locks.h>
 
 /*----------------------------------------------------------------*/
 /*
@@ -614,11 +1032,11 @@ MACRO_END
  */
 struct mpqueue_head {
 	struct queue_entry	head;		/* header for queue */
-#if defined(__i386__) || defined(__x86_64__)
+	uint64_t		earliest_soft_deadline;
+	uint64_t		count;
 	lck_mtx_t		lock_data;
+#if defined(__i386__) || defined(__x86_64__)
 	lck_mtx_ext_t		lock_data_ext;
-#else
-	lck_spin_t		lock_data;
 #endif
 };
 
@@ -636,6 +1054,8 @@ MACRO_BEGIN						\
 			 &(q)->lock_data_ext,		\
 			 lck_grp,			\
 			 lck_attr);			\
+	(q)->earliest_soft_deadline = UINT64_MAX;	\
+	(q)->count = 0;					\
 MACRO_END
 
 #else
@@ -643,7 +1063,7 @@ MACRO_END
 #define mpqueue_init(q, lck_grp, lck_attr)		\
 MACRO_BEGIN						\
 	queue_init(&(q)->head);				\
-        lck_spin_init(&(q)->lock_data,			\
+        lck_mtx_init(&(q)->lock_data,			\
 		      lck_grp,				\
 		      lck_attr);			\
 MACRO_END
@@ -668,5 +1088,7 @@ MACRO_BEGIN						\
 MACRO_END
 
 #endif	/* MACH_KERNEL_PRIVATE */
+
+__END_DECLS
 
 #endif	/* _KERN_QUEUE_H_ */

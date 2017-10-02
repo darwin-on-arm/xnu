@@ -64,10 +64,6 @@
  *	control.  
  */
 
-#ifdef	MACH_KERNEL
-#include <advisory_pageout.h>
-#endif	/* MACH_KERNEL */
-
 subsystem
 #if	KERNEL_SERVER
 	  KernelServer
@@ -165,18 +161,8 @@ routine	kmod_get_info(
 		host		: host_t;
 	out	modules		: kmod_args_t);
 
-/*
- *	Returns information about the memory allocation zones.
- *      Supported in all kernels..
- *
- *	DEPRECATED!  Use mach_zone_info() instead.
- */
-routine host_zone_info(
-		host		: host_priv_t;
-	out	names		: zone_name_array_t,
-					Dealloc;
-	out	info		: zone_info_array_t,
-					Dealloc);
+
+skip; /* was host_zone_info */
 
 /*
  *	Returns information about the global VP table.
@@ -254,7 +240,7 @@ routine host_statistics64(
 /*
  *	Returns information about the memory allocation zones.
  *      Data returned is compatible with various caller and kernel
- *	address space sizes (unlike host_zone_info()).
+ *	address space sizes.
  */
 routine mach_zone_info(
 		host		: host_priv_t;
@@ -274,5 +260,86 @@ routine mach_zone_force_gc(
 #else
 skip;
 #endif
+
+/*
+ *	Create a new voucher by running a series of commands against
+ *	<key, previous-voucher> pairs of resource attributes.
+ */
+#if !KERNEL && !LIBSYSCALL_INTERFACE
+routine _kernelrpc_host_create_mach_voucher(
+#else
+routine host_create_mach_voucher(
+#endif
+		host		: host_t;
+		recipes		: mach_voucher_attr_raw_recipe_array_t;
+	out	voucher		: ipc_voucher_t);
+
+/*
+ *	Register a resource manager with the kernel.  A new key is selected.
+ */
+routine host_register_mach_voucher_attr_manager(
+		host		: host_t;
+		attr_manager	: mach_voucher_attr_manager_t;
+		default_value	: mach_voucher_attr_value_handle_t;
+	out	new_key		: mach_voucher_attr_key_t;
+	out	new_attr_control: ipc_voucher_attr_control_t);
+
+/*
+ *	Register a resource manager (with a well-known key value) with the kernel.
+ */
+routine host_register_well_known_mach_voucher_attr_manager(
+		host		: host_t;
+		attr_manager	: mach_voucher_attr_manager_t;
+		default_value	: mach_voucher_attr_value_handle_t;
+		key		: mach_voucher_attr_key_t;
+	out	new_attr_control: ipc_voucher_attr_control_t);
+
+
+/*
+ * Update the global ATM diagnostic flag, readable from the commpage
+ */
+routine host_set_atm_diagnostic_flag(
+        host_priv      : host_priv_t;
+    in  diagnostic_flag : uint32_t);
+
+#if !KERNEL && LIBSYSCALL_INTERFACE
+routine host_get_atm_diagnostic_flag(
+		host		: host_t;
+	out	diagnostic_flag : uint32_t);
+#else
+skip;
+#endif
+
+routine mach_memory_info(
+		host		: host_priv_t;
+	out	names		: mach_zone_name_array_t,
+					Dealloc;
+	out	info		: mach_zone_info_array_t,
+					Dealloc;
+	out	memory_info	: mach_memory_info_array_t,
+					Dealloc);
+
+/*
+ * Update the global multiuser flags, readable from the commpage
+ */
+routine host_set_multiuser_config_flags(
+		host_priv		: host_priv_t;
+	in	multiuser_flags	: uint32_t);
+
+#if !KERNEL && LIBSYSCALL_INTERFACE
+routine host_get_multiuser_config_flags(
+		host			: host_t;
+	out	multiuser_flags	: uint32_t);
+#else
+skip;
+#endif // !KERNEL && LIBSYSCALL_INTERFACE
+
+#if !KERNEL && LIBSYSCALL_INTERFACE
+routine host_check_multiuser_mode(
+		host			: host_t;
+	out	multiuser_mode	: uint32_t);
+#else
+skip;
+#endif // !KERNEL && LIBSYSCALL_INTERFACE
 
 /* vim: set ft=c : */

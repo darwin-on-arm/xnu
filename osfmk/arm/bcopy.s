@@ -1,15 +1,20 @@
 /*
- * Copyright (c) 2006, 2009 Apple Inc. All rights reserved.
+ * Copyright (c) 2007 Apple Inc. All rights reserved.
  *
- * @APPLE_LICENSE_HEADER_START@
- * 
+ * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
+ *
  * This file contains Original Code and/or Modifications of Original Code
  * as defined in and that are subject to the Apple Public Source License
  * Version 2.0 (the 'License'). You may not use this file except in
- * compliance with the License. Please obtain a copy of the License at
- * http://www.opensource.apple.com/apsl/ and read it before using this
- * file.
- * 
+ * compliance with the License. The rights granted to you under the License
+ * may not be used to create, or enable the creation or redistribution of,
+ * unlawful or unlicensed copies of an Apple operating system, or to
+ * circumvent, violate, or enable the circumvention or violation of, any
+ * terms of an Apple operating system software license agreement.
+ *
+ * Please obtain a copy of the License at
+ * http://www.opensource.apple.com/apsl/ and read it before using this file.
+ *
  * The Original Code and all software distributed under the License are
  * distributed on an 'AS IS' basis, WITHOUT WARRANTY OF ANY KIND, EITHER
  * EXPRESS OR IMPLIED, AND APPLE HEREBY DISCLAIMS ALL SUCH WARRANTIES,
@@ -17,36 +22,36 @@
  * FITNESS FOR A PARTICULAR PURPOSE, QUIET ENJOYMENT OR NON-INFRINGEMENT.
  * Please see the License for the specific language governing rights and
  * limitations under the License.
- * 
- * @APPLE_LICENSE_HEADER_END@
+ *
+ * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
 
-/*****************************************************************************
- * ARMv5 and ARMv6 implementation, also used in dyld on later archs          *
- *****************************************************************************/
- 
-#include <arm/arch.h>
+#include <arm/proc_reg.h>
 
+.syntax unified
 .text
 .align 2
 	
+	.globl _ovbcopy
 	.globl _memcpy
 	.globl _bcopy
 	.globl _memmove
 
 _bcopy:		/* void bcopy(const void *src, void *dest, size_t len); */
+_ovbcopy:
 	mov		r3, r0
 	mov		r0, r1
 	mov		r1, r3
 
 _memcpy:		/* void *memcpy(void *dest, const void *src, size_t len); */
+_memmove: 	/* void *memmove(void *dest, const void *src, size_t len); */
 	/* check for zero len or if the pointers are the same */
 	cmp		r2, #0
 	cmpne	r0, r1
 	bxeq	lr
 
 	/* save r0 (return value), r4 (scratch), and r5 (scratch) */
-	stmfd	sp!, { r0, r4, r5, r7, lr }
+	stmfd   sp!, { r0, r4, r5, r7, lr }
 	add	r7, sp, #12
 	
 	/* check for overlap. r3 <- distance between src & dest */
@@ -83,15 +88,11 @@ Lmorethan64_aligned:
 L64loop:
 	/* copy 64 bytes at a time */
 	ldmia	r1!, { r3, r4, r5, r6, r8, r10, r11, r12 }
-#ifdef _ARM_ARCH_6
 	pld		[r1, #32]
-#endif
 	stmia	r0!, { r3, r4, r5, r6, r8, r10, r11, r12 }
 	ldmia	r1!, { r3, r4, r5, r6, r8, r10, r11, r12 }
 	subs	r2, r2, #64
-#ifdef _ARM_ARCH_6
 	pld		[r1, #32]
-#endif
 	stmia	r0!, { r3, r4, r5, r6, r8, r10, r11, r12 }
 	bge		L64loop
 
@@ -248,15 +249,13 @@ Lmorethan64_aligned_reverse:
 L64loop_reverse:
 	/* copy 64 bytes at a time */
 	ldmdb	r1!, { r3, r4, r5, r6, r8, r10, r11, r12 }
-#ifdef _ARM_ARCH_6
+#if ARCH_ARMv5 || ARCH_ARMv5e || ARCH_ARMv6
 	pld		[r1, #-32]
 #endif
 	stmdb	r0!, { r3, r4, r5, r6, r8, r10, r11, r12 }	
 	ldmdb	r1!, { r3, r4, r5, r6, r8, r10, r11, r12 }	
 	subs	r2, r2, #64
-#ifdef _ARM_ARCH_6
 	pld		[r1, #-32]
-#endif
 	stmdb	r0!, { r3, r4, r5, r6, r8, r10, r11, r12 }	
 	bge		L64loop_reverse
 
@@ -399,5 +398,5 @@ Lalign3_forward_loop:
 	b		Lbytewise2
 
 Lexit:
-	ldmfd	sp!, {r0, r4, r5, r7, pc}
+	ldmfd	sp!, { r0, r4, r5, r7, pc }
 

@@ -33,6 +33,7 @@
 #include <sys/user.h>
 #include <sys/dtrace_ptss.h>
 
+#include <mach/vm_map.h>
 #include <mach/vm_param.h>
 #include <mach/mach_vm.h>
 
@@ -48,7 +49,7 @@
  */
 struct dtrace_ptss_page_entry*
 dtrace_ptss_claim_entry_locked(struct proc* p) {
-	lck_mtx_assert(&p->p_dtrace_sprlock, LCK_MTX_ASSERT_OWNED);
+	LCK_MTX_ASSERT(&p->p_dtrace_sprlock, LCK_MTX_ASSERT_OWNED);
 
 	struct dtrace_ptss_page_entry* entry = NULL;
 
@@ -97,8 +98,8 @@ dtrace_ptss_claim_entry_locked(struct proc* p) {
 struct dtrace_ptss_page_entry*
 dtrace_ptss_claim_entry(struct proc* p) {
 	// Verify no locks held on entry
-	lck_mtx_assert(&p->p_dtrace_sprlock, LCK_MTX_ASSERT_NOTOWNED);
-	lck_mtx_assert(&p->p_mlock, LCK_MTX_ASSERT_NOTOWNED);
+	LCK_MTX_ASSERT(&p->p_dtrace_sprlock, LCK_MTX_ASSERT_NOTOWNED);
+	LCK_MTX_ASSERT(&p->p_mlock, LCK_MTX_ASSERT_NOTOWNED);
 
 	struct dtrace_ptss_page_entry* entry = NULL;
 
@@ -161,36 +162,48 @@ dtrace_ptss_allocate_page(struct proc* p)
 	// Now allocate a page in user space and set its protections to allow execute.
 	task_t task = p->task;
 	vm_map_t map = get_task_map_reference(task);
+	if (map == NULL)
+	  goto err;
 
-	mach_vm_address_t addr = 0LL;
-	mach_vm_size_t size = PAGE_SIZE; // We need some way to assert that this matches vm_map_round_page() !!!
-
+	mach_vm_size_t size = PAGE_MAX_SIZE;
+	mach_vm_offset_t addr = 0;
 #if CONFIG_EMBEDDED
-	/* The embedded OS has extra permissions for writable and executable pages. We can't pass in the flags
-	 * we need for the correct permissions from mach_vm_allocate, so need to call mach_vm_map directly. */
-	mach_vm_offset_t map_addr = 0;
-	kern_return_t kr = mach_vm_map(map, &map_addr, size, 0, VM_FLAGS_ANYWHERE, IPC_PORT_NULL, 0, FALSE, VM_PROT_READ|VM_PROT_EXECUTE, VM_PROT_READ|VM_PROT_EXECUTE, VM_INHERIT_DEFAULT);
-	if (kr != KERN_SUCCESS) {
-		goto err;
-	}
-	addr = map_addr;
+	mach_vm_offset_t write_addr = 0;
+	/* 
+	 * The embedded OS has extra permissions for writable and executable pages.
+	 * To ensure correct permissions, we must set the page protections separately.
+	 */
+	vm_prot_t cur_protection = VM_PROT_READ|VM_PROT_EXECUTE;
+	vm_prot_t max_protection = VM_PROT_READ|VM_PROT_EXECUTE|VM_PROT_WRITE;
 #else
-	kern_return_t kr = mach_vm_allocate(map, &addr, size, VM_FLAGS_ANYWHERE);
+	vm_prot_t cur_protection = VM_PROT_READ|VM_PROT_WRITE|VM_PROT_EXECUTE;
+	vm_prot_t max_protection = VM_PROT_READ|VM_PROT_WRITE|VM_PROT_EXECUTE;
+#endif /* CONFIG_EMBEDDED */
+
+	kern_return_t kr = mach_vm_map_kernel(map, &addr, size, 0, VM_FLAGS_ANYWHERE, VM_KERN_MEMORY_NONE, IPC_PORT_NULL, 0, FALSE, cur_protection, max_protection, VM_INHERIT_DEFAULT);
 	if (kr != KERN_SUCCESS) {
 		goto err;
 	}
-
-	kr = mach_vm_protect(map, addr, size, 0, VM_PROT_READ|VM_PROT_WRITE|VM_PROT_EXECUTE);
-	if (kr != KERN_SUCCESS) {
-		mach_vm_deallocate(map, addr, size);
+#if CONFIG_EMBEDDED
+	/*
+	 * If on embedded, remap the scratch space as writable at another
+	 * virtual address
+	 */
+	 kr = mach_vm_remap_kernel(map, &write_addr, size, 0, VM_FLAGS_ANYWHERE, VM_KERN_MEMORY_NONE, map, addr, FALSE, &cur_protection, &max_protection, VM_INHERIT_DEFAULT);
+	if (kr != KERN_SUCCESS || !(max_protection & VM_PROT_WRITE))
 		goto err;
-	}	
-#endif
 
+	kr = mach_vm_protect (map, (mach_vm_offset_t)write_addr, (mach_vm_size_t)size, 0, VM_PROT_READ | VM_PROT_WRITE);
+	if (kr != KERN_SUCCESS)
+		goto err;
+#endif
 	// Chain the page entries.
 	int i;
 	for (i=0; i<DTRACE_PTSS_ENTRIES_PER_PAGE; i++) {
 		ptss_page->entries[i].addr = addr + (i * DTRACE_PTSS_SCRATCH_SPACE_PER_THREAD);
+#if CONFIG_EMBEDDED
+		ptss_page->entries[i].write_addr = write_addr + (i * DTRACE_PTSS_SCRATCH_SPACE_PER_THREAD);
+#endif
 		ptss_page->entries[i].next = &ptss_page->entries[i+1];
 	}
 
@@ -204,7 +217,8 @@ dtrace_ptss_allocate_page(struct proc* p)
 err:
 	_FREE(ptss_page, M_TEMP);
 
-	vm_map_deallocate(map);
+	if (map)
+	  vm_map_deallocate(map);
 
 	return NULL;
 }
@@ -229,6 +243,11 @@ dtrace_ptss_free_page(struct proc* p, struct dtrace_ptss_page* ptss_page)
 	// Silent failures, no point in checking return code.
 	mach_vm_deallocate(map, addr, size);
 
+#ifdef CONFIG_EMBEDDED
+	mach_vm_address_t write_addr = ptss_page->entries[0].write_addr;
+	mach_vm_deallocate(map, write_addr, size);
+#endif
+
 	vm_map_deallocate(map);
 }
 
@@ -238,8 +257,8 @@ dtrace_ptss_free_page(struct proc* p, struct dtrace_ptss_page* ptss_page)
  */
 void
 dtrace_ptss_enable(struct proc* p) {
-	lck_mtx_assert(&p->p_dtrace_sprlock, LCK_MTX_ASSERT_OWNED);
-	lck_mtx_assert(&p->p_mlock, LCK_MTX_ASSERT_OWNED);
+	LCK_MTX_ASSERT(&p->p_dtrace_sprlock, LCK_MTX_ASSERT_OWNED);
+	LCK_MTX_ASSERT(&p->p_mlock, LCK_MTX_ASSERT_OWNED);
 
 	struct uthread* uth;
 	/*
@@ -263,8 +282,8 @@ dtrace_ptss_exec_exit(struct proc* p) {
 	 * Should hold sprlock to touch the pages list. Must not
 	 * hold the proc lock to avoid deadlock.
 	 */
-	lck_mtx_assert(&p->p_dtrace_sprlock, LCK_MTX_ASSERT_OWNED);
-	lck_mtx_assert(&p->p_mlock, LCK_MTX_ASSERT_NOTOWNED);
+	LCK_MTX_ASSERT(&p->p_dtrace_sprlock, LCK_MTX_ASSERT_OWNED);
+	LCK_MTX_ASSERT(&p->p_mlock, LCK_MTX_ASSERT_NOTOWNED);
 
 	p->p_dtrace_ptss_free_list = NULL;
 
@@ -306,10 +325,10 @@ dtrace_ptss_fork(struct proc* parent, struct proc* child) {
 	 * Finally, to prevent a deadlock with the fasttrap cleanup code,
 	 * neither the parent or child proc_lock should be held.
 	 */
-	lck_mtx_assert(&parent->p_dtrace_sprlock, LCK_MTX_ASSERT_OWNED);
-	lck_mtx_assert(&parent->p_mlock, LCK_MTX_ASSERT_NOTOWNED);
-	lck_mtx_assert(&child->p_dtrace_sprlock, LCK_MTX_ASSERT_OWNED);
-	lck_mtx_assert(&child->p_mlock, LCK_MTX_ASSERT_NOTOWNED);
+	LCK_MTX_ASSERT(&parent->p_dtrace_sprlock, LCK_MTX_ASSERT_OWNED);
+	LCK_MTX_ASSERT(&parent->p_mlock, LCK_MTX_ASSERT_NOTOWNED);
+	LCK_MTX_ASSERT(&child->p_dtrace_sprlock, LCK_MTX_ASSERT_OWNED);
+	LCK_MTX_ASSERT(&child->p_mlock, LCK_MTX_ASSERT_NOTOWNED);
 
 	// Get page list from *PARENT*
 	struct dtrace_ptss_page* temp = parent->p_dtrace_ptss_pages;

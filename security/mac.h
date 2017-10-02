@@ -97,6 +97,19 @@ struct mac {
 typedef struct mac	*mac_t;
 
 #ifdef KERNEL
+
+#ifndef PRIVATE
+#warning "MAC policy is not KPI, see Technical Q&A QA1574"
+#endif
+
+#if DEBUG
+#define SECURITY_MAC_CTLFLAGS (CTLFLAG_RW | CTLFLAG_LOCKED)
+#define SECURITY_MAC_CHECK_ENFORCE 1
+#else
+#define SECURITY_MAC_CTLFLAGS (CTLFLAG_RD | CTLFLAG_LOCKED)
+#define SECURITY_MAC_CHECK_ENFORCE 0
+#endif
+
 struct user_mac {
 	user_size_t	m_buflen;
 	user_addr_t	m_string;
@@ -112,27 +125,6 @@ struct user64_mac {
 	uint64_t	m_string;
 };
 #endif /* KERNEL */
-
-/*
- * Flags to control which MAC subsystems are enforced
- * on a per-process/thread/credential basis.
- */
-#define MAC_SYSTEM_ENFORCE	0x0001	/* system management */
-#define MAC_PROC_ENFORCE	0x0002	/* process management */
-#define MAC_MACH_ENFORCE	0x0004	/* mach interfaces */
-#define MAC_VM_ENFORCE		0x0008	/* VM interfaces */
-#define MAC_FILE_ENFORCE	0x0010	/* file operations */
-#define MAC_SOCKET_ENFORCE	0x0020	/* socket operations */
-#define MAC_PIPE_ENFORCE	0x0040	/* pipes */
-#define MAC_VNODE_ENFORCE	0x0080	/* vnode operations */
-#define MAC_NET_ENFORCE		0x0100	/* network management */
-#define MAC_MBUF_ENFORCE	0x0200	/* network traffic */
-#define MAC_POSIXSEM_ENFORCE	0x0400	/* posix semaphores */
-#define MAC_POSIXSHM_ENFORCE	0x0800	/* posix shared memory */
-#define MAC_SYSVMSG_ENFORCE	0x1000	/* SysV message queues */
-#define MAC_SYSVSEM_ENFORCE	0x2000	/* SysV semaphores */
-#define MAC_SYSVSHM_ENFORCE	0x4000	/* SysV shared memory */
-#define MAC_ALL_ENFORCE		0x7fff	/* enforce everything */
 
 /*
  * Device types for mac_iokit_check_device()
@@ -167,14 +159,11 @@ __BEGIN_DECLS
 int	 __mac_execve(char *fname, char **argv, char **envv, mac_t _label);
 int	 __mac_get_fd(int _fd, mac_t _label);
 int	 __mac_get_file(const char *_path, mac_t _label);
-int	 __mac_get_lcid(pid_t _lcid, mac_t _label);
-int	 __mac_get_lctx(mac_t _label);
 int	 __mac_get_link(const char *_path, mac_t _label);
 int	 __mac_get_pid(pid_t _pid, mac_t _label);
 int	 __mac_get_proc(mac_t _label);
 int	 __mac_set_fd(int _fildes, const mac_t _label);
 int	 __mac_set_file(const char *_path, mac_t _label);
-int	 __mac_set_lctx(mac_t _label);
 int	 __mac_set_link(const char *_path, mac_t _label);
 int	 __mac_mount(const char *type, const char *path, int flags, void *data,
     struct mac *label);

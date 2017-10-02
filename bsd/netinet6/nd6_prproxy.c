@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2012 Apple Inc. All rights reserved.
+ * Copyright (c) 2011-2016 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -285,18 +285,21 @@ nd6_prproxy_prelist_setroute(boolean_t enable,
 	struct nd6_prproxy_prelist *up, *down, *ndprl_tmp;
 	struct nd_prefix *pr;
 
-	lck_mtx_assert(&proxy6_lock, LCK_MTX_ASSERT_OWNED);
-	lck_mtx_assert(nd6_mutex, LCK_MTX_ASSERT_NOTOWNED);
+	LCK_MTX_ASSERT(&proxy6_lock, LCK_MTX_ASSERT_OWNED);
+	LCK_MTX_ASSERT(nd6_mutex, LCK_MTX_ASSERT_NOTOWNED);
 
 	SLIST_FOREACH_SAFE(up, up_head, ndprl_le, ndprl_tmp) {
 		struct rtentry *rt;
-		boolean_t prproxy;
+		boolean_t prproxy, set_allmulti = FALSE;
+		int allmulti_sw = FALSE;
+		struct ifnet *ifp = NULL;
 
 		SLIST_REMOVE(up_head, up, nd6_prproxy_prelist, ndprl_le);
 		pr = up->ndprl_pr;
 		VERIFY(up->ndprl_up == NULL);
 
 		NDPR_LOCK(pr);
+		ifp = pr->ndpr_ifp;
 		prproxy = (pr->ndpr_stateflags & NDPRF_PRPROXY);
 		VERIFY(!prproxy || ((pr->ndpr_stateflags & NDPRF_ONLINK) &&
 		    !(pr->ndpr_stateflags & NDPRF_IFSCOPE)));
@@ -308,11 +311,13 @@ nd6_prproxy_prelist_setroute(boolean_t enable,
 		if (enable && pr->ndpr_allmulti_cnt == 0) {
 			nd6_prproxy++;
 			pr->ndpr_allmulti_cnt++;
-			if_allmulti(pr->ndpr_ifp, TRUE);
+			set_allmulti = TRUE;
+			allmulti_sw = TRUE;
 		} else if (!enable && pr->ndpr_allmulti_cnt > 0) {
 			nd6_prproxy--;
 			pr->ndpr_allmulti_cnt--;
-			if_allmulti(pr->ndpr_ifp, FALSE);
+			set_allmulti = TRUE;
+			allmulti_sw = FALSE;
 		}
 
 		if ((rt = pr->ndpr_rt) != NULL) {
@@ -324,6 +329,12 @@ nd6_prproxy_prelist_setroute(boolean_t enable,
 		} else {
 			NDPR_UNLOCK(pr);
 		}
+
+		/* Call the following ioctl after releasing NDPR lock */ 
+		if (set_allmulti && ifp != NULL)
+			if_allmulti(ifp, allmulti_sw);
+
+		
 		NDPR_REMREF(pr);
 		if (rt != NULL) {
 			rt_set_proxy(rt, enable);
@@ -335,7 +346,9 @@ nd6_prproxy_prelist_setroute(boolean_t enable,
 	SLIST_FOREACH_SAFE(down, down_head, ndprl_le, ndprl_tmp) {
 		struct nd_prefix *pr_up;
 		struct rtentry *rt;
-		boolean_t prproxy;
+		boolean_t prproxy, set_allmulti = FALSE;
+		int allmulti_sw = FALSE;
+		struct ifnet *ifp = NULL;
 
 		SLIST_REMOVE(down_head, down, nd6_prproxy_prelist, ndprl_le);
 		pr = down->ndprl_pr;
@@ -343,6 +356,7 @@ nd6_prproxy_prelist_setroute(boolean_t enable,
 		VERIFY(pr_up != NULL);
 
 		NDPR_LOCK(pr_up);
+		ifp = pr->ndpr_ifp;
 		prproxy = (pr_up->ndpr_stateflags & NDPRF_PRPROXY);
 		VERIFY(!prproxy || ((pr_up->ndpr_stateflags & NDPRF_ONLINK) &&
 		    !(pr_up->ndpr_stateflags & NDPRF_IFSCOPE)));
@@ -351,10 +365,12 @@ nd6_prproxy_prelist_setroute(boolean_t enable,
 		NDPR_LOCK(pr);
 		if (enable && pr->ndpr_allmulti_cnt == 0) {
 			pr->ndpr_allmulti_cnt++;
-			if_allmulti(pr->ndpr_ifp, TRUE);
+			set_allmulti = TRUE;
+			allmulti_sw = TRUE;
 		} else if (!enable && pr->ndpr_allmulti_cnt > 0) {
 			pr->ndpr_allmulti_cnt--;
-			if_allmulti(pr->ndpr_ifp, FALSE);
+			set_allmulti = TRUE;
+			allmulti_sw = FALSE;
 		}
 
 		if ((rt = pr->ndpr_rt) != NULL) {
@@ -366,6 +382,9 @@ nd6_prproxy_prelist_setroute(boolean_t enable,
 		} else {
 			NDPR_UNLOCK(pr);
 		}
+		if (set_allmulti && ifp != NULL)
+			if_allmulti(ifp, allmulti_sw);
+
 		NDPR_REMREF(pr);
 		NDPR_REMREF(pr_up);
 		if (rt != NULL) {
@@ -442,7 +461,7 @@ nd6_if_prproxy(struct ifnet *ifp, boolean_t enable)
 		}
 
 		if (pr == NULL)
-			continue;
+			break;
 
 		up = nd6_ndprl_alloc(M_WAITOK);
 		if (up == NULL) {
@@ -513,7 +532,7 @@ nd6_if_prproxy(struct ifnet *ifp, boolean_t enable)
 
 /*
  * Called from the input path to determine whether the packet is destined
- * to a proxied node; if so, mark the mbuf with MAUXF_PROXY_DST so that
+ * to a proxied node; if so, mark the mbuf with PKTFF_PROXY_DST so that
  * icmp6_input() knows that this is not to be delivered to socket(s).
  */
 boolean_t
@@ -541,13 +560,11 @@ nd6_prproxy_isours(struct mbuf *m, struct ip6_hdr *ip6, struct route_in6 *ro6,
 	if ((rt = ro6->ro_rt) != NULL)
 		RT_LOCK(rt);
 
-	if (rt == NULL || !(rt->rt_flags & RTF_UP) ||
-	    rt->generation_id != route_generation) {
-		if (rt != NULL) {
+	if (ROUTE_UNUSABLE(ro6)) {
+		if (rt != NULL)
 			RT_UNLOCK(rt);
-			rtfree(rt);
-			rt = ro6->ro_rt = NULL;
-		}
+
+		ROUTE_RELEASE(ro6);
 
 		/* Caller must have ensured this condition (not srcrt) */
 		VERIFY(IN6_ARE_ADDR_EQUAL(&ip6->ip6_dst,
@@ -565,9 +582,146 @@ nd6_prproxy_isours(struct mbuf *m, struct ip6_hdr *ip6, struct route_in6 *ro6,
 
 done:
 	if (ours)
-		m->m_pkthdr.aux_flags |= MAUXF_PROXY_DST;
+		m->m_pkthdr.pkt_flags |= PKTF_PROXY_DST;
 
 	return (ours);
+}
+
+/*
+ * Called from the input path to determine whether or not the proxy
+ * route entry is pointing to the correct interface, and to perform
+ * the necessary route fixups otherwise.
+ */
+void
+nd6_proxy_find_fwdroute(struct ifnet *ifp, struct route_in6 *ro6)
+{
+	struct in6_addr *dst6 = &ro6->ro_dst.sin6_addr;
+	struct ifnet *fwd_ifp = NULL;
+	struct nd_prefix *pr;
+	struct rtentry *rt;
+
+	if ((rt = ro6->ro_rt) != NULL) {
+		RT_LOCK(rt);
+		if (!(rt->rt_flags & RTF_PROXY) || rt->rt_ifp == ifp) {
+			nd6log2((LOG_DEBUG, "%s: found incorrect prefix "
+			    "proxy route for dst %s on %s\n", if_name(ifp),
+			    ip6_sprintf(dst6),
+			    if_name(rt->rt_ifp)));
+			RT_UNLOCK(rt);
+			/* look it up below */
+		} else {
+			RT_UNLOCK(rt);
+			/*
+			 * The route is already marked with RTF_PRPROXY and
+			 * it isn't pointing back to the inbound interface;
+			 * optimistically return (see notes below).
+			 */
+			return;
+		}
+	}
+
+	/*
+	 * Find out where we should forward this packet to, by searching
+	 * for another interface that is proxying for the prefix.  Our
+	 * current implementation assumes that the proxied prefix is shared
+	 * to no more than one downstream interfaces (typically a bridge
+	 * interface).
+	 */
+	lck_mtx_lock(nd6_mutex);
+	for (pr = nd_prefix.lh_first; pr; pr = pr->ndpr_next) {
+		struct in6_addr pr_addr;
+		struct nd_prefix *fwd;
+		u_char pr_len;
+
+		NDPR_LOCK(pr);
+		if (!(pr->ndpr_stateflags & NDPRF_ONLINK) ||
+		    !(pr->ndpr_stateflags & NDPRF_PRPROXY) ||
+		    !IN6_ARE_MASKED_ADDR_EQUAL(&pr->ndpr_prefix.sin6_addr,
+		    dst6, &pr->ndpr_mask)) {
+			NDPR_UNLOCK(pr);
+			continue;
+		}
+
+		VERIFY(!(pr->ndpr_stateflags & NDPRF_IFSCOPE));
+		bcopy(&pr->ndpr_prefix.sin6_addr, &pr_addr, sizeof (pr_addr));
+		pr_len = pr->ndpr_plen;
+		NDPR_UNLOCK(pr);
+
+		for (fwd = nd_prefix.lh_first; fwd; fwd = fwd->ndpr_next) {
+			NDPR_LOCK(fwd);
+			if (!(fwd->ndpr_stateflags & NDPRF_ONLINK) ||
+			    fwd->ndpr_ifp == ifp ||
+			    fwd->ndpr_plen != pr_len ||
+			    !in6_are_prefix_equal(&fwd->ndpr_prefix.sin6_addr,
+			    &pr_addr, pr_len)) {
+				NDPR_UNLOCK(fwd);
+				continue;
+			}
+
+			fwd_ifp = fwd->ndpr_ifp;
+			NDPR_UNLOCK(fwd);
+			break;
+		}
+		break;
+	}
+	lck_mtx_unlock(nd6_mutex);
+
+	lck_mtx_lock(rnh_lock);
+	ROUTE_RELEASE_LOCKED(ro6);
+
+	/*
+	 * Lookup a forwarding route; delete the route if it's incorrect,
+	 * or return to caller if the correct one got created prior to
+	 * our acquiring the rnh_lock.
+	 */
+	if ((rt = rtalloc1_scoped_locked(SA(&ro6->ro_dst), 0,
+	    RTF_CLONING | RTF_PRCLONING, IFSCOPE_NONE)) != NULL) {
+		RT_LOCK(rt);
+		if (rt->rt_ifp != fwd_ifp || !(rt->rt_flags & RTF_PROXY)) {
+			rt->rt_flags |= RTF_CONDEMNED;
+			RT_UNLOCK(rt);
+			(void) rtrequest_locked(RTM_DELETE, rt_key(rt),
+			    rt->rt_gateway, rt_mask(rt), rt->rt_flags, NULL);
+			rtfree_locked(rt);
+			rt = NULL;
+		} else {
+			nd6log2((LOG_DEBUG, "%s: found prefix proxy route "
+			    "for dst %s\n", if_name(rt->rt_ifp),
+			    ip6_sprintf(dst6)));
+			RT_UNLOCK(rt);
+			ro6->ro_rt = rt;	/* refcnt held by rtalloc1 */
+			lck_mtx_unlock(rnh_lock);
+			return;
+		}
+	}
+	VERIFY(rt == NULL && ro6->ro_rt == NULL);
+
+	/*
+	 * Clone a route from the correct parent prefix route and return it.
+	 */
+	if (fwd_ifp != NULL && (rt = rtalloc1_scoped_locked(SA(&ro6->ro_dst), 1,
+	    RTF_PRCLONING, fwd_ifp->if_index)) != NULL) {
+		RT_LOCK(rt);
+		if (!(rt->rt_flags & RTF_PROXY)) {
+			RT_UNLOCK(rt);
+			rtfree_locked(rt);
+			rt = NULL;
+		} else {
+			nd6log2((LOG_DEBUG, "%s: allocated prefix proxy "
+			    "route for dst %s\n", if_name(rt->rt_ifp),
+			    ip6_sprintf(dst6)));
+			RT_UNLOCK(rt);
+			ro6->ro_rt = rt;	/* refcnt held by rtalloc1 */
+		}
+	}
+	VERIFY(rt != NULL || ro6->ro_rt == NULL);
+
+	if (fwd_ifp == NULL || rt == NULL) {
+		nd6log2((LOG_ERR, "%s: failed to find forwarding prefix "
+		    "proxy entry for dst %s\n", if_name(ifp),
+		    ip6_sprintf(dst6)));
+	}
+	lck_mtx_unlock(rnh_lock);
 }
 
 /*
@@ -590,7 +744,7 @@ nd6_prproxy_prelist_update(struct nd_prefix *pr_cur, struct nd_prefix *pr_up)
 	SLIST_INIT(&down_head);
 	VERIFY(pr_cur != NULL);
 
-	lck_mtx_assert(&proxy6_lock, LCK_MTX_ASSERT_OWNED);
+	LCK_MTX_ASSERT(&proxy6_lock, LCK_MTX_ASSERT_OWNED);
 
 	/*
 	 * Upstream prefix.  If caller did not specify one, search for one
@@ -703,7 +857,7 @@ nd6_prproxy_ifaddr(struct in6_ifaddr *ia)
 	u_int32_t pr_len;
 	boolean_t proxied = FALSE;
 
-	lck_mtx_assert(nd6_mutex, LCK_MTX_ASSERT_NOTOWNED);
+	LCK_MTX_ASSERT(nd6_mutex, LCK_MTX_ASSERT_NOTOWNED);
 
 	IFA_LOCK(&ia->ia_ifa);
 	bcopy(&ia->ia_addr.sin6_addr, &addr, sizeof (addr));
@@ -739,8 +893,8 @@ nd6_prproxy_ifaddr(struct in6_ifaddr *ia)
  * the original interface.
  */
 void
-nd6_prproxy_ns_output(struct ifnet *ifp, struct in6_addr *daddr,
-    struct in6_addr *taddr, struct llinfo_nd6 *ln)
+nd6_prproxy_ns_output(struct ifnet *ifp, struct ifnet *exclifp,
+    struct in6_addr *daddr, struct in6_addr *taddr, struct llinfo_nd6 *ln)
 {
 	SLIST_HEAD(, nd6_prproxy_prelist) ndprl_head;
 	struct nd6_prproxy_prelist *ndprl, *ndprl_tmp;
@@ -748,6 +902,21 @@ nd6_prproxy_ns_output(struct ifnet *ifp, struct in6_addr *daddr,
 	struct ifnet *fwd_ifp;
 	struct in6_addr pr_addr;
 	u_char pr_len;
+
+	/*
+	 * Ignore excluded interface if it's the same as the original;
+	 * we always send a NS on the original interface down below.
+	 */
+	if (exclifp != NULL && exclifp == ifp)
+		exclifp = NULL;
+
+	if (exclifp == NULL)
+		nd6log2((LOG_DEBUG, "%s: sending NS who has %s on ALL\n",
+		    if_name(ifp), ip6_sprintf(taddr)));
+	else
+		nd6log2((LOG_DEBUG, "%s: sending NS who has %s on ALL "
+		    "(except %s)\n", if_name(ifp),
+		    ip6_sprintf(taddr), if_name(exclifp)));
 
 	SLIST_INIT(&ndprl_head);
 
@@ -771,7 +940,7 @@ nd6_prproxy_ns_output(struct ifnet *ifp, struct in6_addr *daddr,
 		for (fwd = nd_prefix.lh_first; fwd; fwd = fwd->ndpr_next) {
 			NDPR_LOCK(fwd);
 			if (!(fwd->ndpr_stateflags & NDPRF_ONLINK) ||
-			    fwd->ndpr_ifp == ifp ||
+			    fwd->ndpr_ifp == ifp || fwd->ndpr_ifp == exclifp ||
 			    fwd->ndpr_plen != pr_len ||
 			    !in6_are_prefix_equal(&fwd->ndpr_prefix.sin6_addr,
 			    &pr_addr, pr_len)) {
@@ -813,12 +982,11 @@ nd6_prproxy_ns_output(struct ifnet *ifp, struct in6_addr *daddr,
 		if (pr->ndpr_stateflags & NDPRF_ONLINK) {
 			NDPR_UNLOCK(pr);
 			nd6log2((LOG_DEBUG,
-			    "%s%d: Sending cloned NS who has %s on %s%d\n",
-			    fwd_ifp->if_name, fwd_ifp->if_unit,
-			    ip6_sprintf(taddr), ifp->if_name,
-			    ifp->if_unit));
+			    "%s: Sending cloned NS who has %s, originally "
+			    "on %s\n", if_name(fwd_ifp),
+			    ip6_sprintf(taddr), if_name(ifp)));
 
-			nd6_ns_output(fwd_ifp, daddr, taddr, NULL, 0);
+			nd6_ns_output(fwd_ifp, daddr, taddr, NULL, NULL);
 		} else {
 			NDPR_UNLOCK(pr);
 		}
@@ -828,7 +996,7 @@ nd6_prproxy_ns_output(struct ifnet *ifp, struct in6_addr *daddr,
 	}
 	VERIFY(SLIST_EMPTY(&ndprl_head));
 
-	nd6_ns_output(ifp, daddr, taddr, ln, 0);
+	nd6_ns_output(ifp, daddr, taddr, ln, NULL);
 }
 
 /*
@@ -841,7 +1009,8 @@ nd6_prproxy_ns_output(struct ifnet *ifp, struct in6_addr *daddr,
  */
 void
 nd6_prproxy_ns_input(struct ifnet *ifp, struct in6_addr *saddr,
-    char *lladdr, int lladdrlen, struct in6_addr *daddr, struct in6_addr *taddr)
+    char *lladdr, int lladdrlen, struct in6_addr *daddr,
+    struct in6_addr *taddr, uint8_t *nonce)
 {
 	SLIST_HEAD(, nd6_prproxy_prelist) ndprl_head;
 	struct nd6_prproxy_prelist *ndprl, *ndprl_tmp;
@@ -944,14 +1113,14 @@ nd6_prproxy_ns_input(struct ifnet *ifp, struct in6_addr *saddr,
 		if (pr->ndpr_stateflags & NDPRF_ONLINK) {
 			NDPR_UNLOCK(pr);
 			nd6log2((LOG_DEBUG,
-			    "%s%d: Forwarding NS (%s) from %s to %s who has %s "
-			    "on %s%d\n", fwd_ifp->if_name, fwd_ifp->if_unit,
-			    ndprl->ndprl_sol ? "NUD/AR" : "DAD",
-			    ip6_sprintf(saddr), ip6_sprintf(daddr),
-			    ip6_sprintf(taddr), ifp->if_name, ifp->if_unit));
+			    "%s: Forwarding NS (%s) from %s to %s who "
+			    "has %s, originally on %s\n", if_name(fwd_ifp),
+			    ndprl->ndprl_sol ? "NUD/AR" :
+			    "DAD", ip6_sprintf(saddr), ip6_sprintf(daddr),
+			    ip6_sprintf(taddr), if_name(ifp)));
 
 			nd6_ns_output(fwd_ifp, ndprl->ndprl_sol ? taddr : NULL,
-			    taddr, NULL, !ndprl->ndprl_sol);
+			    taddr, NULL, nonce);
 		} else {
 			NDPR_UNLOCK(pr);
 		}
@@ -1088,20 +1257,19 @@ nd6_prproxy_na_input(struct ifnet *ifp, struct in6_addr *saddr,
 		if (send_na) {
 			if (!ndprl->ndprl_sol) {
 				nd6log2((LOG_DEBUG,
-				    "%s%d: Forwarding NA (DAD) from %s to %s "
-				    "tgt is %s on %s%d\n",
-				    fwd_ifp->if_name, fwd_ifp->if_unit,
+				    "%s: Forwarding NA (DAD) from %s to %s "
+				    "tgt is %s, originally on %s\n",
+				    if_name(fwd_ifp),
 				    ip6_sprintf(saddr), ip6_sprintf(&daddr),
-				    ip6_sprintf(taddr), ifp->if_name,
-				    ifp->if_unit));
+				    ip6_sprintf(taddr), if_name(ifp)));
 			} else {
 				nd6log2((LOG_DEBUG,
-				    "%s%d: Forwarding NA (NUD/AR) from %s to "
-				    "%s (was %s) tgt is %s on %s%d\n",
-				    fwd_ifp->if_name, fwd_ifp->if_unit,
-				    ip6_sprintf(saddr), ip6_sprintf(&daddr),
-				    ip6_sprintf(daddr0), ip6_sprintf(taddr),
-				    ifp->if_name, ifp->if_unit));
+				    "%s: Forwarding NA (NUD/AR) from %s to "
+				    "%s (was %s) tgt is %s, originally on "
+				    "%s\n", if_name(fwd_ifp),
+				    ip6_sprintf(saddr),
+				    ip6_sprintf(&daddr), ip6_sprintf(daddr0),
+				    ip6_sprintf(taddr), if_name(ifp)));
 			}
 
 			nd6_na_output(fwd_ifp, &daddr, taddr, flags, 1, NULL);

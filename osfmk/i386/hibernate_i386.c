@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2004 Apple Computer, Inc. All rights reserved.
+ * Copyright (c) 2004-2012 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -43,6 +43,7 @@
 #include <IOKit/IOHibernatePrivate.h>
 #include <vm/vm_page.h>
 #include <i386/i386_lowmem.h>
+#include <san/kasan.h>
 
 extern ppnum_t max_ppnum;
 
@@ -64,6 +65,8 @@ hibernate_page_list_allocate(boolean_t log)
     uint32_t		    mcount, msize, i;
     hibernate_bitmap_t	    dram_ranges[MAX_BANKS];
     boot_args *		    args = (boot_args *) PE_state.bootArgs;
+    uint32_t		    non_os_pagecount;
+    ppnum_t		    pnmax = max_ppnum;
 
     mptr = (EfiMemoryRange *)ml_static_ptovirt(args->MemoryMap);
     if (args->MemoryMapDescriptorSize == 0)
@@ -71,29 +74,50 @@ hibernate_page_list_allocate(boolean_t log)
     msize = args->MemoryMapDescriptorSize;
     mcount = args->MemoryMapSize / msize;
 
+#if KASAN
+    /* adjust max page number to include stolen memory */
+    if (atop(shadow_ptop) > pnmax) {
+	pnmax = (ppnum_t)atop(shadow_ptop);
+    }
+#endif
+
     num_banks = 0;
+    non_os_pagecount = 0;
     for (i = 0; i < mcount; i++, mptr = (EfiMemoryRange *)(((vm_offset_t)mptr) + msize))
     {
 	base = (ppnum_t) (mptr->PhysicalStart >> I386_PGSHIFT);
 	num = (ppnum_t) mptr->NumberOfPages;
 
-	if (base > max_ppnum)
+#if KASAN
+	if (i == shadow_stolen_idx) {
+	    /*
+	     * Add all stolen pages to the bitmap. Later we will prune the unused
+	     * pages.
+	     */
+	    num += shadow_pages_total;
+	}
+#endif
+
+	if (base > pnmax)
 		continue;
-	if ((base + num - 1) > max_ppnum)
-		num = max_ppnum - base + 1;
+	if ((base + num - 1) > pnmax)
+		num = pnmax - base + 1;
 	if (!num)
 		continue;
 
 	switch (mptr->Type)
 	{
 	    // any kind of dram
+	    case kEfiACPIMemoryNVS:
+	    case kEfiPalCode:
+		non_os_pagecount += num;
+
+	    // OS used dram
 	    case kEfiLoaderCode:
 	    case kEfiLoaderData:
 	    case kEfiBootServicesCode:
 	    case kEfiBootServicesData:
 	    case kEfiConventionalMemory:
-	    case kEfiACPIMemoryNVS:
-	    case kEfiPalCode:
 
 		for (bank = 0; bank < num_banks; bank++)
 		{
@@ -171,6 +195,7 @@ hibernate_page_list_allocate(boolean_t log)
         		  bank, bitmap->first_page, bitmap->last_page);
 	bitmap = (hibernate_bitmap_t *) &bitmap->bitmap[bitmap->bitmapwords];
     }
+    if (log) printf("efi pagecount %d\n", non_os_pagecount);
 
     return (list);
 }
@@ -192,13 +217,6 @@ hibernate_page_list_set_volatile( hibernate_page_list_t * page_list,
 				  uint32_t * pagesOut)
 {
     boot_args * args = (boot_args *) PE_state.bootArgs;
-
-#if !defined(x86_64)
-    hibernate_set_page_state(page_list, page_list_wired, 
-		I386_HIB_PAGETABLE, I386_HIB_PAGETABLE_COUNT, 
-		kIOHibernatePageStateFree);
-    *pagesOut -= I386_HIB_PAGETABLE_COUNT;
-#endif
 
     if (args->efiRuntimeServicesPageStart)
     {
@@ -226,14 +244,40 @@ hibernate_processor_setup(IOHibernateImageHeader * header)
     return (KERN_SUCCESS);
 }
 
+static boolean_t hibernate_vm_locks_safe;
+
 void
 hibernate_vm_lock(void)
 {
-    if (current_cpu_datap()->cpu_hibernate) hibernate_vm_lock_queues();
+    if (current_cpu_datap()->cpu_hibernate) {
+	hibernate_vm_lock_queues();
+	hibernate_vm_locks_safe = TRUE;
+    }
 }
 
 void
 hibernate_vm_unlock(void)
 {
+    assert(FALSE == ml_get_interrupts_enabled());
     if (current_cpu_datap()->cpu_hibernate)  hibernate_vm_unlock_queues();
+    ml_set_is_quiescing(TRUE);
+}
+
+// ACPI calls hibernate_vm_lock(), interrupt disable, hibernate_vm_unlock() on sleep,
+// hibernate_vm_lock_end() and interrupt enable on wake.
+// VM locks are safely single threaded between hibernate_vm_lock() and hibernate_vm_lock_end().
+
+void
+hibernate_vm_lock_end(void)
+{
+    assert(FALSE == ml_get_interrupts_enabled());
+    hibernate_vm_locks_safe = FALSE;
+    ml_set_is_quiescing(FALSE);
+}
+
+boolean_t
+hibernate_vm_locks_are_safe(void)
+{
+    assert(FALSE == ml_get_interrupts_enabled());
+    return (hibernate_vm_locks_safe);
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2011 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2017 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -118,6 +118,9 @@
 
 #include <kern/task.h>
 #include <kern/sched_prim.h>
+
+#define NFS_VNOP_DBG(...) NFS_DBG(NFS_FAC_VNOP, 7, ## __VA_ARGS__)
+#define DEFAULT_READLINK_NOCACHE 0
 
 /*
  * NFS vnode ops
@@ -443,8 +446,9 @@ struct vnodeopv_desc fifo_nfsv4nodeop_opv_desc =
 	{ &fifo_nfsv4nodeop_p, fifo_nfsv4nodeop_entries };
 #endif /* FIFO */
 
-
 int	nfs_sillyrename(nfsnode_t,nfsnode_t,struct componentname *,vfs_context_t);
+int	nfs_getattr_internal(nfsnode_t, struct nfs_vattr *, vfs_context_t, int);
+int	nfs_refresh_fh(nfsnode_t, vfs_context_t);
 
 /*
  * Find the slot in the access cache for this UID.
@@ -469,12 +473,13 @@ nfs_node_access_slot(nfsnode_t np, uid_t uid, int add)
 }
 
 int
-nfs3_access_rpc(nfsnode_t np, u_int32_t *access, vfs_context_t ctx)
+nfs3_access_rpc(nfsnode_t np, u_int32_t *access, int rpcflags, vfs_context_t ctx)
 {
 	int error = 0, lockerror = ENOENT, status, slot;
 	uint32_t access_result = 0;
 	u_int64_t xid;
 	struct nfsm_chain nmreq, nmrep;
+	struct nfsmount *nmp;
 	struct timeval now;
 	uid_t uid;
 
@@ -486,7 +491,9 @@ nfs3_access_rpc(nfsnode_t np, u_int32_t *access, vfs_context_t ctx)
 	nfsm_chain_add_32(error, &nmreq, *access);
 	nfsm_chain_build_done(error, &nmreq);
 	nfsmout_if(error);
-	error = nfs_request(np, NULL, &nmreq, NFSPROC_ACCESS, ctx, NULL, &nmrep, &xid, &status);
+	error = nfs_request2(np, NULL, &nmreq, NFSPROC_ACCESS,
+		vfs_context_thread(ctx), vfs_context_ucred(ctx),
+		NULL, rpcflags, &nmrep, &xid, &status);
 	if ((lockerror = nfs_node_lock(np)))
 		error = lockerror;
 	nfsm_chain_postop_attr_update(error, &nmrep, np, &xid);
@@ -495,7 +502,18 @@ nfs3_access_rpc(nfsnode_t np, u_int32_t *access, vfs_context_t ctx)
 	nfsm_chain_get_32(error, &nmrep, access_result);
 	nfsmout_if(error);
 
-	uid = kauth_cred_getuid(vfs_context_ucred(ctx));
+	/* XXXab do we really need mount here, also why are we doing access cache management here? */
+	nmp = NFSTONMP(np);
+	if (nfs_mount_gone(nmp)) {
+		error = ENXIO;
+	}
+	nfsmout_if(error);
+
+	if (auth_is_kerberized(np->n_auth) || auth_is_kerberized(nmp->nm_auth)) {
+		uid = nfs_cred_getasid2uid(vfs_context_ucred(ctx));
+	} else {
+		uid = kauth_cred_getuid(vfs_context_ucred(ctx));
+	}
 	slot = nfs_node_access_slot(np, uid, 1);
 	np->n_accessuid[slot] = uid;
 	microuptime(&now);
@@ -542,7 +560,7 @@ nfs_vnop_access(
 {
 	vfs_context_t ctx = ap->a_context;
 	vnode_t vp = ap->a_vp;
-	int error = 0, slot, dorpc;
+	int error = 0, slot, dorpc, rpcflags = 0;
 	u_int32_t access, waccess;
 	nfsnode_t np = VTONFS(vp);
 	struct nfsmount *nmp;
@@ -551,7 +569,7 @@ nfs_vnop_access(
 	uid_t uid;
 
 	nmp = VTONMP(vp);
-	if (!nmp)
+	if (nfs_mount_gone(nmp))
 		return (ENXIO);
 	nfsvers = nmp->nm_vers;
 
@@ -630,7 +648,10 @@ nfs_vnop_access(
 	 * Does our cached result allow us to give a definite yes to
 	 * this request?
 	 */
-	uid = kauth_cred_getuid(vfs_context_ucred(ctx));
+	if (auth_is_kerberized(np->n_auth) || auth_is_kerberized(nmp->nm_auth))
+		uid = nfs_cred_getasid2uid(vfs_context_ucred(ctx));
+	else
+		uid = kauth_cred_getuid(vfs_context_ucred(ctx));
 	slot = nfs_node_access_slot(np, uid, 0);
 	dorpc = 1;
 	if (access == 0) {
@@ -640,8 +661,8 @@ nfs_vnop_access(
 		waccess = 0;
 	} else if (NACCESSVALID(np, slot)) {
 		microuptime(&now);
-		if ((now.tv_sec < (np->n_accessstamp[slot] + nfs_access_cache_timeout)) &&
-		    ((np->n_access[slot] & access) == access)) {
+		if (((now.tv_sec < (np->n_accessstamp[slot] + nfs_access_cache_timeout)) &&
+		    ((np->n_access[slot] & access) == access)) || nfs_use_cache(nmp)) {
 			/* OSAddAtomic(1, &nfsstats.accesscache_hits); */
 			dorpc = 0;
 			waccess = np->n_access[slot];
@@ -651,7 +672,23 @@ nfs_vnop_access(
 	if (dorpc) {
 		/* Either a no, or a don't know.  Go to the wire. */
 		/* OSAddAtomic(1, &nfsstats.accesscache_misses); */
-		error = nmp->nm_funcs->nf_access_rpc(np, &waccess, ctx);
+
+		/*
+		 * Allow an access call to timeout if we have it cached
+		 * so we won't hang if the server isn't responding.
+		 */
+		if (NACCESSVALID(np, slot))
+			rpcflags |= R_SOFT;
+
+		error = nmp->nm_funcs->nf_access_rpc(np, &waccess, rpcflags, ctx);
+
+		/*
+		 * If the server didn't respond return the cached access.
+		 */
+		if ((error == ETIMEDOUT) && (rpcflags & R_SOFT)) {
+			error = 0;
+			waccess = np->n_access[slot];
+		}
 	}
 	if (!error && ((waccess & access) != access))
 		error = EACCES;
@@ -689,7 +726,7 @@ nfs_vnop_open(
 		return (EINVAL);
 
 	nmp = VTONMP(vp);
-	if (!nmp)
+	if (nfs_mount_gone(nmp))
 		return (ENXIO);
 	if (np->n_flag & NREVOKE)
 		return (EIO);
@@ -1017,7 +1054,7 @@ nfs_vnop_close(
 		 */
 		uint32_t writers;
 		mount_t mp = vnode_mount(vp);
-		int force = (!mp || (mp->mnt_kern_flag & MNTK_FRCUNMOUNT));
+		int force = (!mp || vfs_isforce(mp));
 
 		writers = nfs_no_of_open_file_writers(np);
 		nfs_release_open_state_for_node(np, force);
@@ -1246,8 +1283,6 @@ v3close:
 }
 
 
-
-
 int
 nfs3_getattr_rpc(
 	nfsnode_t np,
@@ -1263,12 +1298,15 @@ nfs3_getattr_rpc(
 	int error = 0, status, nfsvers, rpcflags = 0;
 	struct nfsm_chain nmreq, nmrep;
 
-	if (!nmp)
+	if (nfs_mount_gone(nmp))
 		return (ENXIO);
 	nfsvers = nmp->nm_vers;
 
 	if (flags & NGA_MONITOR) /* vnode monitor requests should be soft */
 		rpcflags = R_RECOVER;
+
+	if (flags & NGA_SOFT) /* Return ETIMEDOUT if server not responding */
+		rpcflags |= R_SOFT;
 
 	nfsm_chain_null(&nmreq);
 	nfsm_chain_null(&nmrep);
@@ -1292,9 +1330,159 @@ nfsmout:
 	return (error);
 }
 
+/*
+ * nfs_refresh_fh will attempt to update the file handle for the node.
+ *
+ * It only does this for symbolic links and regular files that are not currently opened.
+ *
+ * On Success returns 0 and the nodes file handle is updated, or ESTALE on failure.
+ */ 
+int
+nfs_refresh_fh(nfsnode_t np, vfs_context_t ctx)
+{
+	vnode_t dvp, vp = NFSTOV(np);
+	nfsnode_t dnp;
+	const char *v_name = vnode_getname(vp);
+	char *name;
+	int namelen, fhsize, refreshed;
+	int error, wanted = 0;
+	uint8_t *fhp;
+	struct timespec ts = {2, 0};
+
+	NFS_VNOP_DBG("vnode is %d\n", vnode_vtype(vp));
+
+	dvp = vnode_parent(vp);
+	if ((vnode_vtype(vp) != VREG && vnode_vtype(vp) != VLNK) ||
+	    v_name == NULL || *v_name == '\0' || dvp == NULL) {
+		if (v_name != NULL)
+			vnode_putname(v_name);
+		return (ESTALE);
+	}
+	dnp = VTONFS(dvp);
+	
+	namelen = strlen(v_name);
+	MALLOC(name, char *, namelen + 1, M_TEMP, M_WAITOK);
+	if (name == NULL) {
+		vnode_putname(v_name);
+		return (ESTALE);
+	}
+	bcopy(v_name, name, namelen+1);
+	NFS_VNOP_DBG("Trying to refresh %s : %s\n", v_name, name);
+	vnode_putname(v_name);
+
+	/* Allocate the maximum size file handle */
+	MALLOC(fhp, uint8_t *, NFS4_FHSIZE, M_TEMP, M_WAITOK);
+	if (fhp == NULL) {
+		FREE(name, M_TEMP);
+		return (ESTALE);
+	}
+	
+	if ((error = nfs_node_lock(np))) {
+		FREE(name, M_TEMP);
+		FREE(fhp, M_TEMP);
+		return (ESTALE);
+	}
+	
+	fhsize = np->n_fhsize;
+	bcopy(np->n_fhp, fhp, fhsize);
+	while (ISSET(np->n_flag, NREFRESH)) {
+		SET(np->n_flag, NREFRESHWANT);
+		NFS_VNOP_DBG("Waiting for refresh of %s\n", name);
+		msleep(np, &np->n_lock, PZERO-1, "nfsrefreshwant", &ts);
+		if ((error = nfs_sigintr(NFSTONMP(np), NULL,  vfs_context_thread(ctx), 0)))
+			break;
+	}
+	refreshed = error ? 0 : !NFS_CMPFH(np, fhp, fhsize);
+	SET(np->n_flag, NREFRESH);
+	nfs_node_unlock(np);
+
+	NFS_VNOP_DBG("error = %d, refreshed = %d\n", error, refreshed);
+	if (error || refreshed)
+		goto nfsmout;
+	
+	/* Check that there are no open references for this file */
+	lck_mtx_lock(&np->n_openlock);
+	if (np->n_openrefcnt || !TAILQ_EMPTY(&np->n_opens) || !TAILQ_EMPTY(&np->n_lock_owners)) {
+		int cnt = 0;
+		struct nfs_open_file *ofp;
+		
+		TAILQ_FOREACH(ofp, &np->n_opens, nof_link) {
+			cnt += ofp->nof_opencnt;
+		}
+		if (cnt) {
+			lck_mtx_unlock(&np->n_openlock);
+			NFS_VNOP_DBG("Can not refresh file handle for %s with open state\n", name);
+			NFS_VNOP_DBG("\topenrefcnt = %d, opens = %d lock_owners = %d\n", 
+					  np->n_openrefcnt, cnt, !TAILQ_EMPTY(&np->n_lock_owners));
+			error = ESTALE;
+			goto nfsmout;
+		}
+	}
+	lck_mtx_unlock(&np->n_openlock);
+	/* 
+	 * Since the FH is currently stale we should not be able to
+	 * establish any open state until the FH is refreshed.
+	 */
+
+	error = nfs_node_lock(np);
+	nfsmout_if(error);
+	/*
+	 * Symlinks should never need invalidations and are holding
+	 * the one and only nfsbuf in an uncached acquired state
+	 * trying to do a readlink. So we will hang if we invalidate
+	 * in that case. Only in in the VREG case do we need to
+	 * invalidate.
+	 */
+	if (vnode_vtype(vp) == VREG) {
+		np->n_flag &= ~NNEEDINVALIDATE;
+		nfs_node_unlock(np);
+		error = nfs_vinvalbuf(vp, V_IGNORE_WRITEERR, ctx, 1);
+		if (error)
+			NFS_VNOP_DBG("nfs_vinvalbuf returned %d\n", error);
+		nfsmout_if(error);
+	} else {
+		nfs_node_unlock(np);
+	}
+
+	NFS_VNOP_DBG("Looking up %s\n", name);
+	error = nfs_lookitup(dnp, name, namelen, ctx, &np);
+	if (error)
+		NFS_VNOP_DBG("nfs_lookitup returned %d\n", error);
+
+nfsmout:
+	nfs_node_lock_force(np);
+	wanted = ISSET(np->n_flag, NREFRESHWANT);
+	CLR(np->n_flag, NREFRESH|NREFRESHWANT);
+	nfs_node_unlock(np);
+	if (wanted)
+		wakeup(np);
+	
+	if (error == 0)
+		NFS_VNOP_DBG("%s refreshed file handle\n", name);
+
+	FREE(name, M_TEMP);
+	FREE(fhp, M_TEMP);
+	
+	return (error ? ESTALE : 0);
+}
 
 int
 nfs_getattr(nfsnode_t np, struct nfs_vattr *nvap, vfs_context_t ctx, int flags)
+{
+	int error;
+	
+retry:
+	error = nfs_getattr_internal(np, nvap, ctx, flags);
+	if (error == ESTALE) {
+		error = nfs_refresh_fh(np, ctx);
+		if (!error)
+			goto retry;
+	}
+	return (error);
+}
+
+int
+nfs_getattr_internal(nfsnode_t np, struct nfs_vattr *nvap, vfs_context_t ctx, int flags)
 {
 	struct nfsmount *nmp;
 	int error = 0, nfsvers, inprogset = 0, wanted = 0, avoidfloods;
@@ -1304,7 +1492,9 @@ nfs_getattr(nfsnode_t np, struct nfs_vattr *nvap, vfs_context_t ctx, int flags)
 
 	FSDBG_TOP(513, np->n_size, np, np->n_vattr.nva_size, np->n_flag);
 
-	if (!(nmp = NFSTONMP(np)))
+	nmp = NFSTONMP(np);
+	
+	if (nfs_mount_gone(nmp))
 		return (ENXIO);
 	nfsvers = nmp->nm_vers;
 
@@ -1328,7 +1518,8 @@ nfs_getattr(nfsnode_t np, struct nfs_vattr *nvap, vfs_context_t ctx, int flags)
 		/*
 		 * Use the cache or wait for any getattr in progress if:
 		 * - it's a cached request, or
-		 * - we have a delegation
+		 * - we have a delegation, or
+		 * - the server isn't responding
 		 */
 		while (1) {
 			error = nfs_getattrcache(np, nvap, flags);
@@ -1364,10 +1555,18 @@ nfs_getattr(nfsnode_t np, struct nfs_vattr *nvap, vfs_context_t ctx, int flags)
 	nfs_node_unlock(np);
 
 	nmp = NFSTONMP(np);
-	if (!nmp)
+	if (nfs_mount_gone(nmp))
 		error = ENXIO;
 	if (error)
 		goto nfsmout;
+
+	/*
+	 * Return cached attributes if they are valid,
+	 * if the server doesn't respond, and this is
+	 * some softened up style of mount.
+	 */
+	if (NATTRVALID(np) && nfs_use_cache(nmp))
+		flags |= NGA_SOFT;
 
 	/*
 	 * We might want to try to get both the attributes and access info by
@@ -1379,7 +1578,17 @@ nfs_getattr(nfsnode_t np, struct nfs_vattr *nvap, vfs_context_t ctx, int flags)
 		if (nfs_attrcachetimeout(np) > 0) {
 			/*  OSAddAtomic(1, &nfsstats.accesscache_misses); */
 			u_int32_t access = NFS_ACCESS_ALL;
-			error = nmp->nm_funcs->nf_access_rpc(np, &access, ctx);
+			int rpcflags = 0;
+
+			/* Return cached attrs if server doesn't respond */
+			if (flags & NGA_SOFT)
+				rpcflags |= R_SOFT;
+
+			error = nmp->nm_funcs->nf_access_rpc(np, &access, rpcflags, ctx);
+
+			if (error == ETIMEDOUT)
+				goto returncached;
+
 			if (error)
 				goto nfsmout;
 			nfs_node_lock_force(np);
@@ -1393,6 +1602,7 @@ nfs_getattr(nfsnode_t np, struct nfs_vattr *nvap, vfs_context_t ctx, int flags)
 	}
 
 	avoidfloods = 0;
+
 tryagain:
 	error = nmp->nm_funcs->nf_getattr_rpc(np, NULL, np->n_fhp, np->n_fhsize, flags, ctx, nvap, &xid);
 	if (!error) {
@@ -1400,7 +1610,22 @@ tryagain:
 		error = nfs_loadattrcache(np, nvap, &xid, 0);
 		nfs_node_unlock(np);
 	}
+
+	/*
+	 * If the server didn't respond, return cached attributes.
+	 */
+returncached:
+	if ((flags & NGA_SOFT) && (error == ETIMEDOUT)) {
+		nfs_node_lock_force(np);
+		error = nfs_getattrcache(np, nvap, flags);
+		if (!error || (error != ENOENT)) {
+			nfs_node_unlock(np);
+			goto nfsmout;
+		}
+		nfs_node_unlock(np);
+	}
 	nfsmout_if(error);
+
 	if (!xid) { /* out-of-order rpc - attributes were dropped */
 		FSDBG(513, -1, np, np->n_xid >> 32, np->n_xid);
 		if (avoidfloods++ < 20)
@@ -1424,11 +1649,16 @@ nfsmout:
 			cache_purge(vp);
 			np->n_ncgen++;
 			NFS_CHANGED_UPDATE_NC(nfsvers, np, nvap);
+			NFS_VNOP_DBG("Purge directory 0x%llx\n", 
+			      (uint64_t)VM_KERNEL_ADDRPERM(vp));
 		}
 		if (NFS_CHANGED(nfsvers, np, nvap)) {
 			FSDBG(513, -1, np, -1, np);
-			if (vtype == VDIR)
+			if (vtype == VDIR) {
+				NFS_VNOP_DBG("Invalidate directory 0x%llx\n", 
+			               (uint64_t)VM_KERNEL_ADDRPERM(vp));
 				nfs_invaldir(np);
+			}
 			nfs_node_unlock(np);
 			if (wanted)
 				wakeup(np);
@@ -1467,6 +1697,28 @@ nfsmout:
 /*
  * NFS getattr call from vfs.
  */
+
+/*
+ * The attributes we support over the wire.
+ * We also get fsid but the vfs layer gets it out of the mount 
+ * structure after this calling us so there's no need to return it,
+ * and Finder expects to call getattrlist just looking for the FSID
+ * with out hanging on a non responsive server.
+ */
+#define NFS3_SUPPORTED_VATTRS \
+	(VNODE_ATTR_va_rdev |		\
+	 VNODE_ATTR_va_nlink |		\
+	 VNODE_ATTR_va_data_size |	\
+	 VNODE_ATTR_va_data_alloc |	\
+	 VNODE_ATTR_va_uid |		\
+	 VNODE_ATTR_va_gid |		\
+	 VNODE_ATTR_va_mode |		\
+	 VNODE_ATTR_va_modify_time |	\
+	 VNODE_ATTR_va_change_time |	\
+	 VNODE_ATTR_va_access_time |	\
+	 VNODE_ATTR_va_fileid |		\
+	 VNODE_ATTR_va_type)
+
 int
 nfs3_vnop_getattr(
 	struct vnop_getattr_args /* {
@@ -1479,13 +1731,29 @@ nfs3_vnop_getattr(
 	int error;
 	struct nfs_vattr nva;
 	struct vnode_attr *vap = ap->a_vap;
+	struct nfsmount *nmp;
 	dev_t rdev;
 
+	/*
+	 * Lets don't go over the wire if we don't support any of the attributes.
+	 * Just fall through at the VFS layer and let it cons up what it needs.
+	 */
+	/* Return the io size no matter what, since we don't go over the wire for this */
+	VATTR_RETURN(vap, va_iosize, nfs_iosize);
+	if ((vap->va_active & NFS3_SUPPORTED_VATTRS) == 0)
+		return (0);
+
+	if (VATTR_IS_ACTIVE(ap->a_vap, va_name))
+	    NFS_VNOP_DBG("Getting attrs for 0x%llx, vname is %s\n", 
+	          (uint64_t)VM_KERNEL_ADDRPERM(ap->a_vp),
+	          ap->a_vp->v_name ? ap->a_vp->v_name : "empty");
 	error = nfs_getattr(VTONFS(ap->a_vp), &nva, ap->a_context, NGA_CACHED);
 	if (error)
 		return (error);
 
 	/* copy nva to *a_vap */
+	nmp = VTONMP(ap->a_vp);
+	vap->va_flags |= nmp ? (nmp->nm_vers > 2 ? VA_64BITOBJIDS : 0) : 0;
 	VATTR_RETURN(vap, va_type, nva.nva_type);
 	VATTR_RETURN(vap, va_mode, nva.nva_mode);
 	rdev = makedev(nva.nva_rawdev.specdata1, nva.nva_rawdev.specdata2);
@@ -1496,7 +1764,6 @@ nfs3_vnop_getattr(
 	VATTR_RETURN(vap, va_fileid, nva.nva_fileid);
 	VATTR_RETURN(vap, va_data_size, nva.nva_size);
 	VATTR_RETURN(vap, va_data_alloc, nva.nva_bytes);
-	VATTR_RETURN(vap, va_iosize, nfs_iosize);
 	vap->va_access_time.tv_sec = nva.nva_timesec[NFSTIME_ACCESS];
 	vap->va_access_time.tv_nsec = nva.nva_timensec[NFSTIME_ACCESS];
 	VATTR_SET_SUPPORTED(vap, va_access_time);
@@ -1533,13 +1800,14 @@ nfs_vnop_setattr(
 	u_quad_t origsize, vapsize;
 	struct nfs_dulookup dul;
 	nfsnode_t dnp = NULL;
+	int dul_in_progress = 0;
 	vnode_t dvp = NULL;
 	const char *vname = NULL;
 	struct nfs_open_owner *noop = NULL;
 	struct nfs_open_file *nofp = NULL;
 
 	nmp = VTONMP(vp);
-	if (!nmp)
+	if (nfs_mount_gone(nmp))
 		return (ENXIO);
 	nfsvers = nmp->nm_vers;
 	namedattrs = (nmp->nm_fsattr.nfsa_flags & NFS_FSFLAG_NAMED_ATTR);
@@ -1741,15 +2009,19 @@ restart:
 			vname = vnode_getname(vp);
 			dnp = (dvp && vname) ? VTONFS(dvp) : NULL;
 			if (dnp) {
-				error = nfs_node_set_busy(dnp, vfs_context_thread(ctx));
-				if (error) {
-					dnp = NULL;
-					error = 0;
+				if (nfs_node_set_busy(dnp, vfs_context_thread(ctx))) {
+					vnode_put(dvp);
+					vnode_putname(vname);
+				} else {
+					nfs_dulookup_init(&dul, dnp, vname, strlen(vname), ctx);
+					nfs_dulookup_start(&dul, dnp, ctx);
+					dul_in_progress = 1;
 				}
-			}
-			if (dnp) {
-				nfs_dulookup_init(&dul, dnp, vname, strlen(vname), ctx);
-				nfs_dulookup_start(&dul, dnp, ctx);
+			} else {
+				if (dvp)
+					vnode_put(dvp);
+				if (vname)
+					vnode_putname(vname);
 			}
 		}
 	}
@@ -1757,18 +2029,11 @@ restart:
 	if (!error)
 		error = nmp->nm_funcs->nf_setattr_rpc(np, vap, ctx);
 
-	if (VATTR_IS_ACTIVE(vap, va_mode) || VATTR_IS_ACTIVE(vap, va_uid) || VATTR_IS_ACTIVE(vap, va_gid) ||
-	    VATTR_IS_ACTIVE(vap, va_acl) || VATTR_IS_ACTIVE(vap, va_uuuid) || VATTR_IS_ACTIVE(vap, va_guuid)) {
-		if (!namedattrs) {
-			if (dnp) {
-				nfs_dulookup_finish(&dul, dnp, ctx);
-				nfs_node_clear_busy(dnp);
-			}
-			if (dvp != NULLVP)
-				vnode_put(dvp);
-			if (vname != NULL)
-				vnode_putname(vname);
-		}
+	if (dul_in_progress) {
+		nfs_dulookup_finish(&dul, dnp, ctx);
+		nfs_node_clear_busy(dnp);
+		vnode_put(dvp);
+		vnode_putname(vname);
 	}
 
 	FSDBG_BOT(512, np->n_size, vap->va_data_size, np->n_vattr.nva_size, error);
@@ -1842,7 +2107,7 @@ nfs3_setattr_rpc(
 	u_int64_t xid, nextxid;
 	struct nfsm_chain nmreq, nmrep;
 
-	if (!nmp)
+	if (nfs_mount_gone(nmp))
 		return (ENXIO);
 	nfsvers = nmp->nm_vers;
 
@@ -2028,7 +2293,7 @@ nfs_vnop_lookup(
 
 	mp = vnode_mount(dvp);
 	nmp = VFSTONFS(mp);
-	if (!nmp) {
+	if (nfs_mount_gone(nmp)) {
 		error = ENXIO;
 		goto error_return;
 	}
@@ -2101,7 +2366,7 @@ nfs_vnop_lookup(
 
 	/* do we know this name is too long? */
 	nmp = VTONMP(dvp);
-	if (!nmp) {
+	if (nfs_mount_gone(nmp)) {
 		error = ENXIO;
 		goto error_return;
 	}
@@ -2194,6 +2459,8 @@ error_return:
 	return (error);
 }
 
+int nfs_readlink_nocache = DEFAULT_READLINK_NOCACHE;
+
 /*
  * NFS readlink call
  */
@@ -2213,6 +2480,8 @@ nfs_vnop_readlink(
 	uint32_t buflen;
 	uio_t uio = ap->a_uio;
 	struct nfsbuf *bp = NULL;
+	struct timespec ts;
+	int timeo;
 
 	if (vnode_vtype(ap->a_vp) != VLNK)
 		return (EPERM);
@@ -2223,34 +2492,66 @@ nfs_vnop_readlink(
 		return (EINVAL);
 
 	nmp = VTONMP(ap->a_vp);
-	if (!nmp)
+	if (nfs_mount_gone(nmp))
 		return (ENXIO);
 	nfsvers = nmp->nm_vers;
 
+	
 	/* nfs_getattr() will check changed and purge caches */
-	if ((error = nfs_getattr(np, NULL, ctx, NGA_CACHED))) {
+	if ((error = nfs_getattr(np, NULL, ctx, nfs_readlink_nocache ? NGA_UNCACHED : NGA_CACHED))) {
 		FSDBG(531, np, 0xd1e0001, 0, error);
 		return (error);
 	}
 
+	if (nfs_readlink_nocache) {
+		timeo = nfs_attrcachetimeout(np);
+		nanouptime(&ts);
+	}
+	
+retry:
 	OSAddAtomic64(1, &nfsstats.biocache_readlinks);
-	error = nfs_buf_get(np, 0, NFS_MAXPATHLEN, vfs_context_thread(ctx), NBLK_READ, &bp);
+	error = nfs_buf_get(np, 0, NFS_MAXPATHLEN, vfs_context_thread(ctx), NBLK_META, &bp);
 	if (error) {
 		FSDBG(531, np, 0xd1e0002, 0, error);
 		return (error);
 	}
+
+	if (nfs_readlink_nocache) {
+		NFS_VNOP_DBG("timeo = %d ts.tv_sec = %ld need refresh = %d cached = %d\n", timeo, ts.tv_sec,
+			     (np->n_rltim.tv_sec + timeo) < ts.tv_sec || nfs_readlink_nocache > 1, 
+			     ISSET(bp->nb_flags, NB_CACHE) == NB_CACHE);
+		/* n_rltim is synchronized by the associated nfs buf */
+		if (ISSET(bp->nb_flags, NB_CACHE) && ((nfs_readlink_nocache > 1)  || ((np->n_rltim.tv_sec + timeo) < ts.tv_sec))) {
+			SET(bp->nb_flags, NB_INVAL);
+			nfs_buf_release(bp, 0);
+			goto retry;
+		}
+	}
 	if (!ISSET(bp->nb_flags, NB_CACHE)) {
+readagain:
 		OSAddAtomic64(1, &nfsstats.readlink_bios);
 		buflen = bp->nb_bufsize;
 		error = nmp->nm_funcs->nf_readlink_rpc(np, bp->nb_data, &buflen, ctx);
 		if (error) {
+			if (error == ESTALE) {
+				NFS_VNOP_DBG("Stale FH from readlink rpc\n");
+				error = nfs_refresh_fh(np, ctx);
+				if (error == 0)
+					goto readagain;
+			}
 			SET(bp->nb_flags, NB_ERROR);
 			bp->nb_error = error;
+			NFS_VNOP_DBG("readlink failed %d\n", error);
 		} else {
 			bp->nb_validoff = 0;
 			bp->nb_validend = buflen;
+			np->n_rltim = ts;
+			NFS_VNOP_DBG("readlink of %.*s\n", bp->nb_validend, (char *)bp->nb_data);
 		}
+	} else {
+		NFS_VNOP_DBG("got cached link of %.*s\n", bp->nb_validend, (char *)bp->nb_data);
 	}
+	
 	if (!error && (bp->nb_validend > 0))
 		error = uiomove(bp->nb_data, bp->nb_validend, uio);
 	FSDBG(531, np, bp->nb_validend, 0, error);
@@ -2271,7 +2572,7 @@ nfs3_readlink_rpc(nfsnode_t np, char *buf, uint32_t *buflenp, vfs_context_t ctx)
 	struct nfsm_chain nmreq, nmrep;
 
 	nmp = NFSTONMP(np);
-	if (!nmp)
+	if (nfs_mount_gone(nmp))
 		return (ENXIO);
 	nfsvers = nmp->nm_vers;
 	nfsm_chain_null(&nmreq);
@@ -2328,7 +2629,7 @@ nfs_read_rpc(nfsnode_t np, uio_t uio, vfs_context_t ctx)
 
 	FSDBG_TOP(536, np, uio_offset(uio), uio_resid(uio), 0);
 	nmp = NFSTONMP(np);
-	if (!nmp)
+	if (nfs_mount_gone(nmp))
 		return (ENXIO);
 	nfsvers = nmp->nm_vers;
 	nmrsize = nmp->nm_rsize;
@@ -2400,7 +2701,7 @@ nfs3_read_rpc_async(
 	struct nfsm_chain nmreq;
 
 	nmp = NFSTONMP(np);
-	if (!nmp)
+	if (nfs_mount_gone(nmp))
 		return (ENXIO);
 	nfsvers = nmp->nm_vers;
 
@@ -2438,7 +2739,7 @@ nfs3_read_rpc_async_finish(
 	struct nfsm_chain nmrep;
 
 	nmp = NFSTONMP(np);
-	if (!nmp) {
+	if (nfs_mount_gone(nmp)) {
 		nfs_request_async_cancel(req);
 		return (ENXIO);
 	}
@@ -2587,9 +2888,59 @@ nfs_vnop_write(
 		goto out;
 
 	if (((uio_offset(uio) + uio_resid(uio)) > (off_t)np->n_size) && !(ioflag & IO_APPEND)) {
-		/* it looks like we'll be extending the file, so take the data lock exclusive */
+		/*
+		 * It looks like we'll be extending the file, so take the data lock exclusive.
+		 */
 		nfs_data_unlock(np);
 		nfs_data_lock(np, NFS_DATA_LOCK_EXCLUSIVE);
+
+		/*
+		 * Also, if the write begins after the previous EOF buffer, make sure to zero
+		 * and validate the new bytes in that buffer.
+		 */
+		struct nfsbuf *eofbp = NULL;
+		daddr64_t eofbn = np->n_size / biosize;
+		int eofoff = np->n_size % biosize;
+		lbn = uio_offset(uio) / biosize;
+
+		if (eofoff && (eofbn < lbn)) {
+			if ((error = nfs_buf_get(np, eofbn, biosize, thd, NBLK_WRITE|NBLK_ONLYVALID, &eofbp)))
+				goto out;
+			np->n_size += (biosize - eofoff);
+			nfs_node_lock_force(np);
+			CLR(np->n_flag, NUPDATESIZE);
+			np->n_flag |= NMODIFIED;
+			nfs_node_unlock(np);
+			FSDBG(516, np, np->n_size, np->n_vattr.nva_size, 0xf00d0001);
+			ubc_setsize(vp, (off_t)np->n_size); /* XXX errors */
+			if (eofbp) {
+				/*
+				 * For the old last page, don't zero bytes if there
+				 * are invalid bytes in that page (i.e. the page isn't
+				 * currently valid).
+				 * For pages after the old last page, zero them and
+				 * mark them as valid.
+				 */
+				char *d;
+				int i;
+				if (ioflag & IO_NOCACHE)
+					SET(eofbp->nb_flags, NB_NOCACHE);
+				NFS_BUF_MAP(eofbp);
+				FSDBG(516, eofbp, eofoff, biosize - eofoff, 0xe0fff01e);
+				d = eofbp->nb_data;
+				i = eofoff/PAGE_SIZE;
+				while (eofoff < biosize) {
+					int poff = eofoff & PAGE_MASK;
+					if (!poff || NBPGVALID(eofbp,i)) {
+						bzero(d + eofoff, PAGE_SIZE - poff);
+						NBPGVALID_SET(eofbp, i);
+					}
+					eofoff += PAGE_SIZE - poff;
+					i++;
+				}
+				nfs_buf_release(eofbp, 1);
+			}
+		}
 	}
 
 	do {
@@ -2689,16 +3040,10 @@ again:
 		 * and zero the new bytes.
 		 */
 		if ((uio_offset(uio) + n) > (off_t)np->n_size) {
-			struct nfsbuf *eofbp = NULL;
 			daddr64_t eofbn = np->n_size / biosize;
-			int eofoff = np->n_size % biosize;
 			int neweofoff = (uio_offset(uio) + n) % biosize;
 
 			FSDBG(515, 0xb1ffa000, uio_offset(uio) + n, eofoff, neweofoff);
-
-			if (eofoff && (eofbn < lbn) &&
-			    ((error = nfs_buf_get(np, eofbn, biosize, thd, NBLK_WRITE|NBLK_ONLYVALID, &eofbp))))
-				goto out;
 
 			/* if we're extending within the same last block */
 			/* and the block is flagged as being cached... */
@@ -2736,38 +3081,6 @@ again:
 			nfs_node_unlock(np);
 			FSDBG(516, np, np->n_size, np->n_vattr.nva_size, 0xf00d0001);
 			ubc_setsize(vp, (off_t)np->n_size); /* XXX errors */
-			if (eofbp) {
-				/*
-				 * We may need to zero any previously invalid data
-				 * after the old EOF in the previous EOF buffer.
-				 *
-				 * For the old last page, don't zero bytes if there
-				 * are invalid bytes in that page (i.e. the page isn't
-				 * currently valid).
-				 * For pages after the old last page, zero them and
-				 * mark them as valid.
-				 */
-				char *d;
-				int i;
-				if (ioflag & IO_NOCACHE)
-					SET(eofbp->nb_flags, NB_NOCACHE);
-				NFS_BUF_MAP(eofbp);
-				FSDBG(516, eofbp, eofoff, biosize - eofoff, 0xe0fff01e);
-				d = eofbp->nb_data;
-				i = eofoff/PAGE_SIZE;
-				while (eofoff < biosize) {
-					int poff = eofoff & PAGE_MASK;
-					if (!poff || NBPGVALID(eofbp,i)) {
-						bzero(d + eofoff, PAGE_SIZE - poff);
-						NBPGVALID_SET(eofbp, i);
-					}
-					if (bp->nb_validend == eofoff)
-						bp->nb_validend += PAGE_SIZE - poff;
-					eofoff += PAGE_SIZE - poff;
-					i++;
-				}
-				nfs_buf_release(eofbp, 1);
-			}
 		}
 		/*
 		 * If dirtyend exceeds file size, chop it down.  This should
@@ -3071,11 +3384,12 @@ nfs_write_rpc2(
 {
 	struct nfsmount *nmp;
 	int error = 0, nfsvers;
-	int backup, wverfset, commit, committed;
+	int wverfset, commit, committed;
 	uint64_t wverf = 0, wverf2;
 	size_t nmwsize, totalsize, tsiz, len, rlen;
 	struct nfsreq rq, *req = &rq;
 	uint32_t stategenid = 0, vrestart = 0, restart = 0;
+	uio_t uio_save = NULL;
 
 #if DIAGNOSTIC
 	/* XXX limitation based on need to back up uio on short write */
@@ -3084,7 +3398,7 @@ nfs_write_rpc2(
 #endif
 	FSDBG_TOP(537, np, uio_offset(uio), uio_resid(uio), *iomodep);
 	nmp = NFSTONMP(np);
-	if (!nmp)
+	if (nfs_mount_gone(nmp))
 		return (ENXIO);
 	nfsvers = nmp->nm_vers;
 	nmwsize = nmp->nm_wsize;
@@ -3096,6 +3410,11 @@ nfs_write_rpc2(
 	if ((nfsvers == NFS_VER2) && ((uint64_t)(uio_offset(uio) + tsiz) > 0xffffffffULL)) {
 		FSDBG_BOT(537, np, uio_offset(uio), uio_resid(uio), EFBIG);
 		return (EFBIG);
+	}
+
+	uio_save = uio_duplicate(uio);
+	if (uio_save == NULL) {
+		return (EIO);
 	}
 
 	while (tsiz > 0) {
@@ -3111,7 +3430,7 @@ nfs_write_rpc2(
 		if (!error)
 			error = nmp->nm_funcs->nf_write_rpc_async_finish(np, req, &commit, &rlen, &wverf2);
 		nmp = NFSTONMP(np);
-		if (!nmp)
+		if (nfs_mount_gone(nmp))
 			error = ENXIO;
 		if ((nmp->nm_vers >= NFS_VER4) && nfs_mount_state_error_should_restart(error) &&
 		    (++restart <= nfs_mount_state_max_restarts(nmp))) { /* guard against no progress */
@@ -3139,8 +3458,9 @@ nfs_write_rpc2(
 
 		/* check for a short write */
 		if (rlen < len) {
-			backup = len - rlen;
-			uio_pushback(uio, backup);
+			/* Reset the uio to reflect the actual transfer */
+			*uio = *uio_save;
+			uio_update(uio, totalsize - (tsiz - rlen));
 			len = rlen;
 		}
 
@@ -3161,13 +3481,14 @@ nfs_write_rpc2(
 				error = EIO;
 				break;
 			}
-			backup = totalsize - tsiz;
-			uio_pushback(uio, backup);
+			*uio = *uio_save;	// Reset the uio back to the start
 			committed = NFS_WRITE_FILESYNC;
 			wverfset = 0;
 			tsiz = totalsize;
 		}
 	}
+	if (uio_save)
+		uio_free(uio_save);
 	if (wverfset && wverfp)
 		*wverfp = wverf;
 	*iomodep = committed;
@@ -3194,7 +3515,7 @@ nfs3_write_rpc_async(
 	struct nfsm_chain nmreq;
 
 	nmp = NFSTONMP(np);
-	if (!nmp)
+	if (nfs_mount_gone(nmp))
 		return (ENXIO);
 	nfsvers = nmp->nm_vers;
 
@@ -3243,7 +3564,7 @@ nfs3_write_rpc_async_finish(
 	struct nfsm_chain nmrep;
 
 	nmp = NFSTONMP(np);
-	if (!nmp) {
+	if (nfs_mount_gone(nmp)) {
 		nfs_request_async_cancel(req);
 		return (ENXIO);
 	}
@@ -3255,7 +3576,7 @@ nfs3_write_rpc_async_finish(
 	if (error == EINPROGRESS) /* async request restarted */
 		return (error);
 	nmp = NFSTONMP(np);
-	if (!nmp)
+	if (nfs_mount_gone(nmp))
 		error = ENXIO;
 	if (!error && (lockerror = nfs_node_lock(np)))
 		error = lockerror;
@@ -3334,13 +3655,13 @@ nfs3_vnop_mknod(
 	int error = 0, lockerror = ENOENT, busyerror = ENOENT, status, wccpostattr = 0;
 	struct timespec premtime = { 0, 0 };
 	u_int32_t rdev;
-	u_int64_t xid, dxid;
+	u_int64_t xid = 0, dxid;
 	int nfsvers, gotuid, gotgid;
 	struct nfsm_chain nmreq, nmrep;
 	struct nfsreq rq, *req = &rq;
 
 	nmp = VTONMP(dvp);
-	if (!nmp)
+	if (nfs_mount_gone(nmp))
 		return (ENXIO);
 	nfsvers = nmp->nm_vers;
 
@@ -3490,7 +3811,7 @@ nfs3_vnop_create(
 	struct nfs_dulookup dul;
 
 	nmp = VTONMP(dvp);
-	if (!nmp)
+	if (nfs_mount_gone(nmp))
 		return (ENXIO);
 	nfsvers = nmp->nm_vers;
 
@@ -3669,7 +3990,7 @@ nfs_vnop_remove(
 	/* XXX prevent removing a sillyrenamed file? */
 
 	nmp = NFSTONMP(dnp);
-	if (!nmp)
+	if (nfs_mount_gone(nmp))
 		return (ENXIO);
 	nfsvers = nmp->nm_vers;
 	namedattrs = (nmp->nm_fsattr.nfsa_flags & NFS_FSFLAG_NAMED_ATTR);
@@ -3823,7 +4144,7 @@ int
 nfs_removeit(struct nfs_sillyrename *nsp)
 {
 	struct nfsmount *nmp = NFSTONMP(nsp->nsr_dnp);
-	if (!nmp)
+	if (nfs_mount_gone(nmp))
 		return (ENXIO);
 	return nmp->nm_funcs->nf_remove_rpc(nsp->nsr_dnp, nsp->nsr_name, nsp->nsr_namlen, NULL, nsp->nsr_cred);
 }
@@ -3847,7 +4168,7 @@ nfs3_remove_rpc(
 	struct nfsm_chain nmreq, nmrep;
 
 	nmp = NFSTONMP(dnp);
-	if (!nmp)
+	if (nfs_mount_gone(nmp))
 		return (ENXIO);
 	nfsvers = nmp->nm_vers;
 	if ((nfsvers == NFS_VER2) && (namelen > NFS_MAXNAMLEN))
@@ -3921,7 +4242,7 @@ nfs_vnop_rename(
 	tnp = tvp ? VTONFS(tvp) : NULL;
 
 	nmp = NFSTONMP(fdnp);
-	if (!nmp)
+	if (nfs_mount_gone(nmp))
 		return (ENXIO);
 	nfsvers = nmp->nm_vers;
 
@@ -4080,7 +4401,7 @@ nfs3_rename_rpc(
 	struct nfsm_chain nmreq, nmrep;
 
 	nmp = NFSTONMP(fdnp);
-	if (!nmp)
+	if (nfs_mount_gone(nmp))
 		return (ENXIO);
 	nfsvers = nmp->nm_vers;
 	if ((nfsvers == NFS_VER2) &&
@@ -4162,7 +4483,7 @@ nfs3_vnop_link(
 		return (EXDEV);
 
 	nmp = VTONMP(vp);
-	if (!nmp)
+	if (nfs_mount_gone(nmp))
 		return (ENXIO);
 	nfsvers = nmp->nm_vers;
 	if ((nfsvers == NFS_VER2) && (cnp->cn_namelen > NFS_MAXNAMLEN))
@@ -4254,7 +4575,7 @@ nfs3_vnop_symlink(
 	struct timespec premtime = { 0, 0 };
 	vnode_t newvp = NULL;
 	int nfsvers, gotuid, gotgid;
-	u_int64_t xid, dxid;
+	u_int64_t xid = 0, dxid;
 	nfsnode_t np = NULL;
 	nfsnode_t dnp = VTONFS(dvp);
 	struct nfsmount *nmp;
@@ -4263,7 +4584,7 @@ nfs3_vnop_symlink(
 	struct nfs_dulookup dul;
 
 	nmp = VTONMP(dvp);
-	if (!nmp)
+	if (nfs_mount_gone(nmp))
 		return (ENXIO);
 	nfsvers = nmp->nm_vers;
 
@@ -4412,14 +4733,14 @@ nfs3_vnop_mkdir(
 	int error = 0, lockerror = ENOENT, busyerror = ENOENT, status, wccpostattr = 0;
 	struct timespec premtime = { 0, 0 };
 	int nfsvers, gotuid, gotgid;
-	u_int64_t xid, dxid;
+	u_int64_t xid= 0, dxid;
 	fhandle_t fh;
 	struct nfsm_chain nmreq, nmrep;
 	struct nfsreq rq, *req = &rq;
 	struct nfs_dulookup dul;
 
 	nmp = VTONMP(dvp);
-	if (!nmp)
+	if (nfs_mount_gone(nmp))
 		return (ENXIO);
 	nfsvers = nmp->nm_vers;
 	if ((nfsvers == NFS_VER2) && (cnp->cn_namelen > NFS_MAXNAMLEN))
@@ -4564,7 +4885,7 @@ nfs3_vnop_rmdir(
 	struct nfs_dulookup dul;
 
 	nmp = VTONMP(vp);
-	if (!nmp)
+	if (nfs_mount_gone(nmp))
 		return (ENXIO);
 	nfsvers = nmp->nm_vers;
 	if ((nfsvers == NFS_VER2) && (cnp->cn_namelen > NFS_MAXNAMLEN))
@@ -4687,7 +5008,7 @@ nfs_vnop_readdir(
 	thread_t thd;
 
 	nmp = VTONMP(dvp);
-	if (!nmp)
+	if (nfs_mount_gone(nmp))
 		return (ENXIO);
 	nfsvers = nmp->nm_vers;
 	bigcookies = (nmp->nm_state & NFSSTA_BIGCOOKIES);
@@ -5049,7 +5370,7 @@ nfs_dir_cookie_to_lbn(nfsnode_t dnp, uint64_t cookie, int *ptc, uint64_t *lbnp)
 	 * Let's search the directory's buffers for the cookie.
 	 */
 	nmp = NFSTONMP(dnp);
-	if (!nmp)
+	if (nfs_mount_gone(nmp))
 		return (ENXIO);
 	dpptc = NULL;
 	found = 0;
@@ -5220,7 +5541,8 @@ nfs_dir_buf_cache_lookup(nfsnode_t dnp, nfsnode_t *npp, struct componentname *cn
 	daddr64_t lbn, nextlbn;
 	int dotunder = (cnp->cn_namelen > 2) && (cnp->cn_nameptr[0] == '.') && (cnp->cn_nameptr[1] == '_');
 
-	if (!(nmp = NFSTONMP(dnp)))
+	nmp = NFSTONMP(dnp);
+	if (nfs_mount_gone(nmp))
 		return (ENXIO);
 	if (!purge)
 		*npp = NULL;
@@ -5361,7 +5683,7 @@ nfs3_readdir_rpc(nfsnode_t dnp, struct nfsbuf *bp, vfs_context_t ctx)
 	struct timeval now;
 
 	nmp = NFSTONMP(dnp);
-	if (!nmp)
+	if (nfs_mount_gone(nmp))
 		return (ENXIO);
 	nfsvers = nmp->nm_vers;
 	nmreaddirsize = nmp->nm_readdirsize;
@@ -5644,7 +5966,7 @@ nfs_sillyrename(
 	struct nfsmount *nmp;
 
 	nmp = NFSTONMP(dnp);
-	if (!nmp)
+	if (nfs_mount_gone(nmp))
 		return (ENXIO);
 
 	nfs_name_cache_purge(dnp, np, cnp, ctx);
@@ -5723,7 +6045,7 @@ nfs3_lookup_rpc_async(
 	int error = 0, nfsvers;
 
 	nmp = NFSTONMP(dnp);
-	if (!nmp)
+	if (nfs_mount_gone(nmp))
 		return (ENXIO);
 	nfsvers = nmp->nm_vers;
 
@@ -5759,6 +6081,8 @@ nfs3_lookup_rpc_async_finish(
 	struct nfsm_chain nmrep;
 
 	nmp = NFSTONMP(dnp);
+	if (nmp == NULL)
+		return (ENXIO);
 	nfsvers = nmp->nm_vers;
 
 	nfsm_chain_null(&nmrep);
@@ -5822,7 +6146,7 @@ nfs_lookitup(
 	struct nfsreq rq, *req = &rq;
 
 	nmp = NFSTONMP(dnp);
-	if (!nmp)
+	if (nfs_mount_gone(nmp))
 		return (ENXIO);
 
 	if (NFS_BITMAP_ISSET(nmp->nm_fsattr.nfsa_bitmap, NFS_FATTR_MAXNAME) &&
@@ -6023,7 +6347,7 @@ nfs3_commit_rpc(
 
 	nmp = NFSTONMP(np);
 	FSDBG(521, np, offset, count, nmp ? nmp->nm_state : 0);
-	if (!nmp)
+	if (nfs_mount_gone(nmp))
 		return (ENXIO);
 	if (!(nmp->nm_state & NFSSTA_HASWRITEVERF))
 		return (0);
@@ -6117,7 +6441,7 @@ nfs3_pathconf_rpc(
 	struct nfsmount *nmp = NFSTONMP(np);
 	uint32_t val = 0;
 
-	if (!nmp)
+	if (nfs_mount_gone(nmp))
 		return (ENXIO);
 	nfsvers = nmp->nm_vers;
 
@@ -6139,6 +6463,7 @@ nfs3_pathconf_rpc(
 		error = status;
 	nfsm_chain_get_32(error, &nmrep, nfsap->nfsa_maxlink);
 	nfsm_chain_get_32(error, &nmrep, nfsap->nfsa_maxname);
+	nfsap->nfsa_flags &= ~(NFS_FSFLAG_NO_TRUNC|NFS_FSFLAG_CHOWN_RESTRICTED|NFS_FSFLAG_CASE_INSENSITIVE|NFS_FSFLAG_CASE_PRESERVING);
 	nfsm_chain_get_32(error, &nmrep, val);
 	if (val)
 		nfsap->nfsa_flags |= NFS_FSFLAG_NO_TRUNC;
@@ -6169,6 +6494,7 @@ nfs3_pathconf_cache(struct nfsmount *nmp, struct nfs_fsattr *nfsap)
 {
 	nmp->nm_fsattr.nfsa_maxlink = nfsap->nfsa_maxlink;
 	nmp->nm_fsattr.nfsa_maxname = nfsap->nfsa_maxname;
+	nmp->nm_fsattr.nfsa_flags &= ~(NFS_FSFLAG_NO_TRUNC|NFS_FSFLAG_CHOWN_RESTRICTED|NFS_FSFLAG_CASE_INSENSITIVE|NFS_FSFLAG_CASE_PRESERVING);
 	nmp->nm_fsattr.nfsa_flags |= nfsap->nfsa_flags & NFS_FSFLAG_NO_TRUNC;
 	nmp->nm_fsattr.nfsa_flags |= nfsap->nfsa_flags & NFS_FSFLAG_CHOWN_RESTRICTED;
 	nmp->nm_fsattr.nfsa_flags |= nfsap->nfsa_flags & NFS_FSFLAG_CASE_INSENSITIVE;
@@ -6208,7 +6534,7 @@ nfs_vnop_pathconf(
 	uint nbits;
 
 	nmp = VTONMP(vp);
-	if (!nmp)
+	if (nfs_mount_gone(nmp))
 		return (ENXIO);
 
 	switch (ap->a_name) {
@@ -6249,7 +6575,7 @@ nfs_vnop_pathconf(
 			if (error)
 				return (error);
 			nmp = VTONMP(vp);
-			if (!nmp)
+			if (nfs_mount_gone(nmp))
 				return (ENXIO);
 			lck_mtx_lock(&nmp->nm_lock);
 			if (nmp->nm_fsattr.nfsa_flags & NFS_FSFLAG_HOMOGENEOUS) {
@@ -6269,7 +6595,7 @@ nfs_vnop_pathconf(
 		if (error)
 			return (error);
 		nmp = VTONMP(vp);
-		if (!nmp)
+		if (nfs_mount_gone(nmp))
 			return (ENXIO);
 		lck_mtx_lock(&nmp->nm_lock);
 		nfsap = &nfsa;
@@ -6373,7 +6699,7 @@ nfsspec_vnop_read(
 	} */ *ap)
 {
 	nfsnode_t np = VTONFS(ap->a_vp);
-	struct timeval now;
+	struct timespec now;
 	int error;
 
 	/*
@@ -6382,9 +6708,9 @@ nfsspec_vnop_read(
 	if ((error = nfs_node_lock(np)))
 		return (error);
 	np->n_flag |= NACC;
-	microtime(&now);
+	nanotime(&now);
 	np->n_atim.tv_sec = now.tv_sec;
-	np->n_atim.tv_nsec = now.tv_usec * 1000;
+	np->n_atim.tv_nsec = now.tv_nsec;
 	nfs_node_unlock(np);
 	return (VOCALL(spec_vnodeop_p, VOFFSET(vnop_read), ap));
 }
@@ -6403,7 +6729,7 @@ nfsspec_vnop_write(
 	} */ *ap)
 {
 	nfsnode_t np = VTONFS(ap->a_vp);
-	struct timeval now;
+	struct timespec now;
 	int error;
 
 	/*
@@ -6412,9 +6738,9 @@ nfsspec_vnop_write(
 	if ((error = nfs_node_lock(np)))
 		return (error);
 	np->n_flag |= NUPD;
-	microtime(&now);
+	nanotime(&now);
 	np->n_mtim.tv_sec = now.tv_sec;
-	np->n_mtim.tv_nsec = now.tv_usec * 1000;
+	np->n_mtim.tv_nsec = now.tv_nsec;
 	nfs_node_unlock(np);
 	return (VOCALL(spec_vnodeop_p, VOFFSET(vnop_write), ap));
 }
@@ -6481,7 +6807,7 @@ nfsfifo_vnop_read(
 	} */ *ap)
 {
 	nfsnode_t np = VTONFS(ap->a_vp);
-	struct timeval now;
+	struct timespec now;
 	int error;
 
 	/*
@@ -6490,9 +6816,9 @@ nfsfifo_vnop_read(
 	if ((error = nfs_node_lock(np)))
 		return (error);
 	np->n_flag |= NACC;
-	microtime(&now);
+	nanotime(&now);
 	np->n_atim.tv_sec = now.tv_sec;
-	np->n_atim.tv_nsec = now.tv_usec * 1000;
+	np->n_atim.tv_nsec = now.tv_nsec;
 	nfs_node_unlock(np);
 	return (VOCALL(fifo_vnodeop_p, VOFFSET(vnop_read), ap));
 }
@@ -6511,7 +6837,7 @@ nfsfifo_vnop_write(
 	} */ *ap)
 {
 	nfsnode_t np = VTONFS(ap->a_vp);
-	struct timeval now;
+	struct timespec now;
 	int error;
 
 	/*
@@ -6520,9 +6846,9 @@ nfsfifo_vnop_write(
 	if ((error = nfs_node_lock(np)))
 		return (error);
 	np->n_flag |= NUPD;
-	microtime(&now);
+	nanotime(&now);
 	np->n_mtim.tv_sec = now.tv_sec;
-	np->n_mtim.tv_nsec = now.tv_usec * 1000;
+	np->n_mtim.tv_nsec = now.tv_nsec;
 	nfs_node_unlock(np);
 	return (VOCALL(fifo_vnodeop_p, VOFFSET(vnop_write), ap));
 }
@@ -6544,21 +6870,21 @@ nfsfifo_vnop_close(
 	vnode_t vp = ap->a_vp;
 	nfsnode_t np = VTONFS(vp);
 	struct vnode_attr vattr;
-	struct timeval now;
+	struct timespec now;
 	mount_t mp;
 	int error;
 
 	if ((error = nfs_node_lock(np)))
 		return (error);
 	if (np->n_flag & (NACC | NUPD)) {
-		microtime(&now);
+		nanotime(&now);
 		if (np->n_flag & NACC) {
 			np->n_atim.tv_sec = now.tv_sec;
-			np->n_atim.tv_nsec = now.tv_usec * 1000;
+			np->n_atim.tv_nsec = now.tv_nsec;
 		}
 		if (np->n_flag & NUPD) {
 			np->n_mtim.tv_sec = now.tv_sec;
-			np->n_mtim.tv_nsec = now.tv_usec * 1000;
+			np->n_mtim.tv_nsec = now.tv_nsec;
 		}
 		np->n_flag |= NCHG;
 		if (!vnode_isinuse(vp, 1) && (mp = vnode_mount(vp)) && !vfs_isrdonly(mp)) {
@@ -6597,18 +6923,102 @@ nfs_vnop_ioctl(
 {
 	vfs_context_t ctx = ap->a_context;
 	vnode_t vp = ap->a_vp;
+	struct nfsmount *mp = VTONMP(vp);
+	struct user_nfs_gss_principal gprinc;
+	uint32_t len;
 	int error = ENOTTY;
 
+	if (mp == NULL)
+		return (ENXIO);
+	
 	switch (ap->a_command) {
 
 	case F_FULLFSYNC:
 		if (vnode_vfsisrdonly(vp))
 			return (EROFS);
-		if (!VTONMP(vp))
-			return (ENXIO);
 		error = nfs_flush(VTONFS(vp), MNT_WAIT, vfs_context_thread(ctx), 0);
 		break;
-
+	case NFS_IOC_DESTROY_CRED:
+		if (!auth_is_kerberized(mp->nm_auth))
+			return (ENOTSUP);
+		error = nfs_gss_clnt_ctx_remove(mp, vfs_context_ucred(ctx));
+		break;
+	case NFS_IOC_SET_CRED:
+	case NFS_IOC_SET_CRED64:
+		if (!auth_is_kerberized(mp->nm_auth))
+			return (ENOTSUP);
+		if ((ap->a_command == NFS_IOC_SET_CRED && vfs_context_is64bit(ctx)) ||
+		    (ap->a_command == NFS_IOC_SET_CRED64 && !vfs_context_is64bit(ctx)))
+			return (EINVAL);
+		if (vfs_context_is64bit(ctx)) {
+			gprinc = *(struct user_nfs_gss_principal *)ap->a_data;
+		} else {
+			struct nfs_gss_principal *tp;
+			tp = (struct nfs_gss_principal *)ap->a_data;
+			gprinc.princlen = tp->princlen;
+			gprinc.nametype = tp->nametype;
+			gprinc.principal = CAST_USER_ADDR_T(tp->principal);
+		}
+		NFS_DBG(NFS_FAC_GSS, 7, "Enter NFS_FSCTL_SET_CRED (64-bit=%d): principal length %d name type %d usr pointer 0x%llx\n", vfs_context_is64bit(ctx), gprinc.princlen, gprinc.nametype, (unsigned long long)gprinc.principal);
+		if (gprinc.princlen > MAXPATHLEN)
+			return (EINVAL);
+		uint8_t *p;
+		MALLOC(p, uint8_t *, gprinc.princlen+1, M_TEMP, M_WAITOK|M_ZERO);
+		if (p == NULL)
+			return (ENOMEM);
+		error = copyin(gprinc.principal, p, gprinc.princlen);
+		if (error) {
+			NFS_DBG(NFS_FAC_GSS, 7, "NFS_FSCTL_SET_CRED could not copy in princiapl data of len %d: %d\n",
+				gprinc.princlen, error);
+			FREE(p, M_TEMP);
+			return (error);
+		}
+		NFS_DBG(NFS_FAC_GSS, 7, "Seting credential to principal %s\n", p);
+		error = nfs_gss_clnt_ctx_set_principal(mp, ctx, p, gprinc.princlen, gprinc.nametype);
+		NFS_DBG(NFS_FAC_GSS, 7, "Seting credential to principal %s returned %d\n", p, error);
+		FREE(p, M_TEMP);
+		break;
+	case NFS_IOC_GET_CRED:
+	case NFS_IOC_GET_CRED64:
+		if (!auth_is_kerberized(mp->nm_auth))
+			return (ENOTSUP);
+		if ((ap->a_command == NFS_IOC_GET_CRED && vfs_context_is64bit(ctx)) ||
+		    (ap->a_command == NFS_IOC_GET_CRED64 && !vfs_context_is64bit(ctx)))
+			return (EINVAL);
+		error = nfs_gss_clnt_ctx_get_principal(mp, ctx, &gprinc);
+		if (error)
+			break;
+		if (vfs_context_is64bit(ctx)) {
+			struct user_nfs_gss_principal *upp = (struct user_nfs_gss_principal *)ap->a_data;
+			len = upp->princlen;
+			if (gprinc.princlen < len)
+				len = gprinc.princlen;
+			upp->princlen = gprinc.princlen;
+			upp->nametype = gprinc.nametype;
+			upp->flags = gprinc.flags;
+			if (gprinc.principal)
+				error = copyout((void *)gprinc.principal, upp->principal, len);
+			else
+				upp->principal = USER_ADDR_NULL;
+		} else {
+			struct nfs_gss_principal *u32pp = (struct nfs_gss_principal *)ap->a_data;
+			len = u32pp->princlen;
+			if (gprinc.princlen < len)
+				len = gprinc.princlen;
+			u32pp->princlen = gprinc.princlen;
+			u32pp->nametype = gprinc.nametype;
+			u32pp->flags = gprinc.flags;
+			if (gprinc.principal)
+				error = copyout((void *)gprinc.principal, u32pp->principal, len);
+			else
+				u32pp->principal = (user32_addr_t)0;
+		}
+		if (error) {
+			NFS_DBG(NFS_FAC_GSS, 7, "NFS_FSCTL_GET_CRED could not copy out princiapl data of len %d: %d\n",
+				gprinc.princlen, error);
+		}
+		if (gprinc.principal)
+			FREE(gprinc.principal, M_TEMP);
 	}
 
 	return (error);
@@ -6701,7 +7111,7 @@ nfs_vnop_pagein(
 		&uio_buf, sizeof(uio_buf));
 
 	nmp = VTONMP(vp);
-	if (!nmp) {
+	if (nfs_mount_gone(nmp)) {
 		if (!nofreeupl)
 			ubc_upl_abort_range(pl, pl_offset, size,
 				UPL_ABORT_ERROR | UPL_ABORT_FREE_ON_EMPTY);
@@ -6829,7 +7239,7 @@ cancel:
  * erroneous.
  */
 char nfs_pageouterrorhandler(int);
-enum actiontype {NOACTION, DUMP, DUMPANDLOG, RETRY, RETRYWITHSLEEP, SEVER};
+enum actiontype {NOACTION, DUMP, DUMPANDLOG, RETRY, SEVER};
 #define NFS_ELAST 88
 static u_char errorcount[NFS_ELAST+1]; /* better be zeros when initialized */
 static const char errortooutcome[NFS_ELAST+1] = {
@@ -7372,11 +7782,6 @@ cancel:
 				case RETRY:
 					abortflags = UPL_ABORT_FREE_ON_EMPTY;
 					break;
-				case RETRYWITHSLEEP:
-					abortflags = UPL_ABORT_FREE_ON_EMPTY;
-					/* pri unused. PSOCK for placeholder. */
-					tsleep(&lbolt, PSOCK, "nfspageout", 0);
-					break;
 				case SEVER: /* not implemented */
 				default:
 					NP(np, "nfs_pageout: action %d not expected", action);
@@ -7409,7 +7814,7 @@ nfs_vnop_blktooff(
 	vnode_t vp = ap->a_vp;
 	struct nfsmount *nmp = VTONMP(vp);
 
-	if (!nmp)
+	if (nfs_mount_gone(nmp))
 		return (ENXIO);
 	biosize = nmp->nm_biosize;
 
@@ -7431,7 +7836,7 @@ nfs_vnop_offtoblk(
 	vnode_t vp = ap->a_vp;
 	struct nfsmount *nmp = VTONMP(vp);
 
-	if (!nmp)
+	if (nfs_mount_gone(nmp))
 		return (ENXIO);
 	biosize = nmp->nm_biosize;
 
@@ -7458,7 +7863,7 @@ nfs_vnop_monitor(
 	struct nfsmount *nmp = VTONMP(ap->a_vp);
 	int error = 0;
 
-	if (!nmp)
+	if (nfs_mount_gone(nmp))
 		return (ENXIO);
 
 	/* make sure that the vnode's monitoring status is up to date */
@@ -7512,6 +7917,8 @@ nfs_vnode_notify(nfsnode_t np, uint32_t events)
 	if (!nfs_getattrcache(np, &nvattr, 0)) {
 		vap = &vattr;
 		VATTR_INIT(vap);
+
+		vap->va_flags |= nmp->nm_vers > 2 ? VA_64BITOBJIDS : 0;
 		VATTR_RETURN(vap, va_fsid, vfs_statfs(nmp->nm_mountp)->f_fsid.val[0]);
 		VATTR_RETURN(vap, va_fileid, nvattr.nva_fileid);
 		VATTR_RETURN(vap, va_mode, nvattr.nva_mode);

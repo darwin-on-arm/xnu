@@ -16,12 +16,13 @@
 .\"
 .\"     @(#)getattrlist.2
 .
-.Dd October 14, 2004
+.Dd February 25, 2014
 .Dt GETATTRLIST 2
 .Os Darwin
 .Sh NAME
 .Nm getattrlist ,
-.Nm fgetattrlist
+.Nm fgetattrlist ,
+.Nm getattrlistat
 .Nd get file system attributes
 .Sh SYNOPSIS
 .Fd #include <sys/attr.h>
@@ -31,6 +32,11 @@
 .
 .Ft int
 .Fn fgetattrlist "int fd" "struct attrlist * attrList" "void * attrBuf" "size_t attrBufSize" "unsigned long options"
+.Ft int
+.Fo getattrlistat
+.Fa "int fd" "const char *path" "struct attrlist * attrList" "void * attrBuf"
+.Fa "size_t attrBufSize" "unsigned long options"
+.Fc
 .Sh DESCRIPTION
 The
 .Fn getattrlist
@@ -42,6 +48,28 @@ while
 .Fn fgetattrlist
 works on the provided file descriptor
 .Fa fd .
+.Pp
+The
+.Fn getattrlistat
+system call is equivalent to
+.Fn getattrlist
+except in the case where
+.Fa path
+specifies a relative path.
+In this case the attributes are returned for the file system object named by
+path relative to the directory associated with the file descriptor
+.Fa fd
+instead of the current working directory.
+If
+.Fn getattrlistat
+is passed the special value
+.Dv AT_FDCWD
+in the
+.Fa fd
+parameter, the current working directory is used and the behavior is
+identical to a call to
+.Fn getattrlist .
+.Pp
 You can think of
 .Fn getattrlist
 as a seriously enhanced version of
@@ -57,18 +85,6 @@ parameter determines what attributes are returned.
 The
 .Fa options
 parameter lets you control specific aspects of the function's behavior.
-.Pp
-.
-The
-.Fn getattrlist
-and
-.Fn fgetattrlist
-functions are only supported by certain volume format implementations.
-For maximum compatibility, client programs should use high-level APIs
-(such as the Carbon File Manager) to access file system attributes.
-These high-level APIs include logic to emulate file system attributes
-on volumes that don't support
-the calls.
 .Pp
 .
 Not all volumes support all attributes.
@@ -166,6 +182,8 @@ A bit set that specifies the fork attributes that you require.
 Fork attributes relate to the actual data in the file,
 which can be held in multiple named contiguous ranges, or forks.
 See below for a description of these attributes.
+If the FSOPT_ATTR_CMN_EXTENDED option is given, this bit set is reinterpreted
+as extended common attributes attributes, also described below.
 .
 .El
 .Pp
@@ -218,6 +236,14 @@ not supported by the object or file system, will be returned.  Default values
 will be used for the invalid ones.  Requires that
 .Dv ATTR_CMN_RETURNED_ATTRS
 be requested.
+.
+.It FSOPT_ATTR_CMN_EXTENDED
+If this is bit is set, then
+.Dv ATTR_CMN_GEN_COUNT
+and
+.Dv ATTR_CMN_DOCUMENT_ID
+can be requested. When this option is used, forkattrs are reinterpreted as a
+set of extended common attributes.
 .
 .El
 .
@@ -343,10 +369,10 @@ structure which is used to report which of the requested attributes
 were actually returned. This attribute, when requested, will always
 be the first attribute returned. By default, unsupported attributes
 will be skipped (i.e. not packed into the output buffer). This behavior
-can be over-ridden using the FSOPT_PACK_INVAL_ATTRS option flag. Only
-.Xr getattrlist 2 supports this attribute (
-.Xr getdirentriesattr 2 and
-.Xr searchfs 2 do not support it ).
+can be over-ridden using the FSOPT_PACK_INVAL_ATTRS option flag. Both
+.Xr getattrlist 2 and
+.Xr getatttrlistbulk 2 support this attribute while
+.Xr searchfs 2 does not.
 .
 .It ATTR_CMN_NAME
 An
@@ -385,15 +411,6 @@ field of the
 structure returned by
 .Xr statfs 2 .
 .
-.Pp
-This value is not related to the file system ID from traditional Mac OS (for example,
-the
-.Fa filesystemID
-field of the
-.Vt FSVolumeInfo
-structure returned by Carbon's FSGetVolumeInfo() function).
-On current versions of Mac OS X that value is synthesised by the Carbon File Manager.
-.
 .It ATTR_CMN_OBJTYPE
 An
 .Vt fsobj_type_t
@@ -415,48 +432,52 @@ in
 .It ATTR_CMN_OBJID
 An
 .Vt fsobj_id_t
-structure that uniquely identifies the file system object
-within its volume.
-The fid_generation field of this structure will be zero for all non-root callers
-(effective UID not 0).
-This identifier need not be persistent across an unmount/mount sequence.
+structure that uniquely identifies the file system object within a mounted 
+volume for the duration of it's mount; this identifier is not guaranteed to be 
+persistent for the volume and may change every time the volume is mounted.
 .Pp
-.
-Some volume formats use well known values for the
-.Fa fid_objno
-field for the root directory (2) and the parent of root directory (1).
-This is not a required behaviour of this attribute.
+On HFS+ volumes, the ATTR_CMN_OBJID of a file system object is distinct from 
+the ATTR_CMN_OBJID of any hard link to that file system object. Although the 
+ATTR_CMN_OBJID of a file system object may appear similar (in whole
+or in part) to it's ATTR_CMN_FILEID (see description of ATTR_CMN_FILEID below), 
+\fBno relation between the two attributes should ever be implied.\fP
+.Pp
+ATTR_CMN_OBJID is deprecated sarting with macOS 10.13, iOS 11.0, watchOS 4.0 and
+tvOS 11.0 and ATTR_CMNEXT_LINKID should be used in its place.
+ATTR_CMN_OBJID can only be used on older operating systems only if the file
+system doesn't 64 bit IDs. See the
+.Fn getLinkIDInfo
+function in the EXAMPLES section.
 .
 .It ATTR_CMN_OBJPERMANENTID
 An
 .Vt fsobj_id_t
-structure that uniquely identifies the file system object
-within its volume.
-The fid_generation field of this structure will be zero for all non-root callers
-(effective UID not 0).
-This identifier should be persistent across an unmount/mount sequence.
+structure that uniquely and persistently identifies the file system object
+within its volume; persistence implies that this attribute is unaffected by
+mount/unmount operations on the volume.
 .Pp
-Some file systems (for example, original HFS) may need to modify the on-disk
-structure to return a persistent identifier.
-If such a file system is mounted read-only, an attempt to get this attribute
-will fail with the error
-.Dv EROFS .
+Some file systems can not return this attribute when the volume is mounted
+read-only and will fail the request with error
+.Dv EROFS.
+.br
+(e.g. original HFS modifies on disk structures to generate persistent
+identifiers, and hence cannot do so if the volume is mounted read only.)
 .
 .It ATTR_CMN_PAROBJID
 An
 .Vt fsobj_id_t
-structure that identifies the parent directory of the file system object.
-The fid_generation field of this structure will be zero for all non-root callers
-(effective UID not 0).
-Equivalent to the ATTR_CMN_OBJID attribute of the parent directory.
-This identifier need not be persistent across an unmount/mount sequence.
+structure that uniquely identifies the parent directory of the file system
+object within a mounted volume, for the duration of the volume mount; this 
+identifier is not guaranteed to be persistent for the volume and may change 
+every time the volume is mounted.
 .Pp
 .
-On a volume that supports hard links, a multiply linked file has no unique parent.
-This attribute will return an unspecified parent.
-.Pp
+If a file system object is hard linked from multiple directories, the parent
+directory returned for this attribute is non deterministic; it can be any one
+of the parent directories of this object.
 .
-For some volume formats this attribute is very expensive to calculate.
+For some volume formats the computing cost for this attribute is significant; 
+developers are advised to request this attribute sparingly.
 .
 .It ATTR_CMN_SCRIPT
 (read/write) A
@@ -465,11 +486,8 @@ containing a text encoding hint for
 the file system object's name.
 It is included to facilitate the lossless round trip conversion of names between
 Unicode and traditional Mac OS script encodings.
-The values are defined in
-.Aq Pa CarbonCore/TextCommon.h .
 File systems that do not have an appropriate text encoding value should return
 kTextEncodingMacUnicode.
-See DTS Q&A 1173 "File Manager Text Encoding Hints".
 .
 .It ATTR_CMN_CRTIME
 (read/write) A
@@ -490,7 +508,7 @@ structure returned by
 .Xr stat 2 .
 .
 .It ATTR_CMN_CHGTIME
-(read/write) A
+A
 .Vt timespec
 structure containing the time that the file system object's
 attributes were last modified.
@@ -533,8 +551,6 @@ structure
 structure and an
 .Vt ExtendedFolderInfo
 structure).
-These structures are defined in
-.Aq Pa CarbonCore/Finder.h .
 .Pp
 This attribute is not byte swapped by the file system.
 The value of multibyte fields on disk is always big endian.
@@ -579,18 +595,6 @@ are valid; other bits should be ignored,
 e.g., by masking with
 .Dv ~S_IFMT .
 .
-.It ATTR_CMN_NAMEDATTRCOUNT
-A
-.Vt u_int32_t
-containing the number of named attributes of the file system object.
-.
-.It ATTR_CMN_NAMEDATTRLIST
-An
-.Vt attrreference
-structure containing a list of named attributes of the file system object.
-No built-in file systems on Mac OS X currently support named attributes.
-Because of this, the structure of this attribute's value is not yet defined.
-.
 .It ATTR_CMN_FLAGS
 (read/write) A
 .Vt u_int32_t
@@ -603,19 +607,38 @@ structure returned by
 .Xr stat 2 .
 For more information about these flags, see
 .Xr chflags 2 .
+.
+.It ATTR_CMN_GEN_COUNT
+A
+.Vt u_int32_t
+containing a non zero monotonically increasing generation
+count for this file system object. The generation count tracks
+the number of times the data in a file system object has been 
+modified. No meaning can be implied from its value. The
+value of the generation count for a file system object can 
+be compared against a previous value of the same file system
+object for equality; i.e. an unchanged generation 
+count indicates identical data. Requesting this attribute requires the
+FSOPT_ATTR_CMN_EXTENDED option flag.
 .Pp
 .
-The order that attributes are placed into the attribute buffer
-almost invariably matches the order of the attribute mask bit values.
-The exception is
-.Dv ATTR_CMN_FLAGS .
-If its order was based on its bit position, it would be before
-the
-.Dv ATTR_CMN_NAMEDATTRCOUNT
-/
-.Dv ATTR_CMN_NAMEDATTRLIST
-pair, however,
-it is placed in the buffer after them.
+A generation count value of 0 is invalid and cannot be used to 
+determine data change.
+.Pp
+The generation count is invalid while a file is mmap'ed. An invalid 
+generation count value of 0 will be returned for mmap'ed files.
+.
+.It ATTR_CMN_DOCUMENT_ID
+A
+.Vt u_int32_t
+containing the document id. The document id is a value assigned
+by the kernel to a document (which can be a file or directory)
+and is used to track the data regardless of where it gets moved. 
+The document id survives safe saves; i.e it is sticky to the path it 
+was assigned to. Requesting this attribute requires the
+FSOPT_ATTR_CMN_EXTENDED option flag.
+.Pp
+A document id of 0 is invalid.
 .
 .It ATTR_CMN_USERACCESS
 A
@@ -655,7 +678,13 @@ Analoguous to
 .It ATTR_CMN_FILEID
 A
 .Vt u_int64_t
-that uniquely identifies the file system object within its volume. 
+that uniquely identifies the file system object within its mounted volume.
+Equivalent to 
+.Fa st_ino
+field of the
+.Vt stat
+structure returned by
+.Xr stat 2 .
 .
 .It ATTR_CMN_PARENTID
 A
@@ -680,6 +709,11 @@ A
 that contains the time that the file system object was created or renamed into
 its containing directory.  Note that inconsistent behavior may be observed
 when this attribute is requested on hard-linked items. 
+.
+.It ATTR_CMN_DATA_PROTECT_FLAGS
+A
+.Vt u_int32_t
+that contains the file or directory's data protection class.
 .Pp
 .
 .El
@@ -717,9 +751,6 @@ A
 containing the volume signature word.
 This value is unique within a given file system type and lets you
 distinguish between different volume formats handled by the same file system.
-See
-.Aq Pa CarbonCore/Files.h
-for more details.
 .
 .It ATTR_VOL_SIZE
 An
@@ -875,6 +906,16 @@ A
 containing the file system UUID.  Typically this will be a
 version 5 UUID.
 .
+.It ATTR_VOL_QUOTA_SIZE
+An
+.Vt off_t
+containing the maximum size of the volume in bytes.
+.
+.It ATTR_VOL_RESERVED_SIZE
+An
+.Vt off_t
+containing the minimum size of the volume in bytes.
+.
 .It ATTR_VOL_ATTRIBUTES
 A
 .Vt vol_attributes_attr_t
@@ -912,6 +953,21 @@ Currently the only flag defined is
 .Dv DIR_MNTSTATUS_MNTPOINT,
 which indicates that there is a file system mounted on this directory.
 .
+.It ATTR_DIR_ALLOCSIZE
+An
+.Vt off_t
+containing the number of bytes on disk used by the directory
+(the physical size).
+.
+.It ATTR_DIR_IOBLOCKSIZE
+A
+.Vt u_int32_t
+containing the optimal block size when reading or writing data.
+.
+.It ATTR_DIR_DATALENGTH
+An
+.Vt off_t
+containing the length of the directory in bytes (the logical size).
 .El
 .
 .Pp
@@ -1055,27 +1111,77 @@ are directories.
 .
 Fork attributes relate to the actual data in the file,
 which can be held in multiple named contiguous ranges, or forks.
+These cannot be used if the FSOPT_ATTR_CMN_EXTENDED is given.
 The following fork attributes are defined.
 .
 .Bl -tag -width ATTR_VOL_ALLOCATIONCLUMP
 .
 .It ATTR_FORK_TOTALSIZE
+Deprecated.
 An
 .Vt off_t
 containing the length of the fork in bytes (the logical size).
 .
 .It ATTR_FORK_ALLOCSIZE
+Deprecated.
 An
 .Vt off_t
 containing a count of the bytes on disk used by the fork (the physical size).
 .
+.It ATTR_FORK_RESERVED
+Reserved.
+You must set this to 0.
+.
 .El
 .Pp
 .
-Fork attributes are not properly implemented by any current Mac OS X
+Fork attributes are deprecated and all bits are reserved.
+They are not properly implemented by any current Mac OS X
 volume format implementation.
 We strongly recommend that client programs do not request fork attributes.
 If you are implementing a volume format, you should not support these attributes.
+.
+.Sh COMMON EXTENDED ATTRIBUTES
+.
+Common extended attributes are like common attributes except that they are set
+in the forkattr field and can only be used if the FSOPT_ATTR_CMN_EXTENDED
+option is given. Use of these attributes is mutually exclusive with the above
+fork attributes.
+.
+.Bl -tag -width ATTR_VOL_ALLOCATIONCLUMP
+.
+.It ATTR_CMNEXT_RELPATH
+An
+.Vt attrreference
+structure containing the mount-relative path of
+the file system object as
+a UTF-8 encoded, null terminated C string.
+The attribute data length will not be greater than
+.Dv PATH_MAX.
+Inconsistent behavior may be observed when this attribute is requested on
+hard-linked items, particularly when the file system does not support
+ATTR_CMN_PARENTID natively. Callers should be aware of this when requesting the
+relative path of a hard-linked item.
+.
+.It ATTR_CMNEXT_PRIVATESIZE
+An
+.Vt off_t
+containing the number of bytes that are \fBnot\fP trapped inside a clone
+or snapshot, and which would be freed immediately if the file were deleted.
+.
+.It ATTR_CMNEXT_LINKID
+A
+.Vt u_int64_t
+that uniquely identifies the file system object within a mounted volume for the
+duration of its mount.
+.Pp
+On HFS+ and APFS volumes, the ATTR_CMNEXT_LINKID of a file system
+object is distinct from the ATTR_CMNEXT_LINKID of any hard link to that file
+system object. Although the ATTR_CMNEXT_LINKID of a file system object may appear
+similar (in whole or in part) to its ATTR_CMN_FILEID (see description of
+ATTR_CMN_FILEID above), \fBno relation between the two attributes should ever be implied.\fP
+.
+.El
 .
 .Sh VOLUME CAPABILITIES
 .
@@ -1248,7 +1354,7 @@ must also set
 Introduced with Darwin 7.0 (Mac OS X version 10.3).
 .
 .It VOL_CAP_FMT_FAST_STATFS
-This bit is used as a hint to upper layers (specifically the Carbon File Manager) to
+This bit is used as a hint to upper layers to
 indicate that
 .Xr statfs 2
 is fast enough that its results need not be cached by the caller.
@@ -1305,10 +1411,19 @@ Introduced with Darwin 10.0 (Mac OS X version 10.6).
 .
 .It VOL_CAP_FMT_64BIT_OBJECT_IDS
 If this bit is set, the volume format uses object IDs that are 64-bit. 
-This means that ATTR_CMN_FILEID and ATTR_CMN_PARENTID are the only
-legitimate attributes for obtaining object IDs from this volume and the
-32-bit fid_objno fields of the fsobj_id_t returned by ATTR_CMN_OBJID,
-ATTR_CMN_OBJPERMANENTID, and ATTR_CMN_PAROBJID are undefined.
+This means that ATTR_CMN_FILEID and ATTR_CMN_PARENTID are the primary means of
+obtaining object IDs from this volume. The values returned by ATTR_CMN_OBJID,
+ATTR_CMN_OBJPERMANENTID, and ATTR_CMN_PAROBJID can be interpreted as 64-bit
+object IDs instead of fsobj_id_t.
+.
+.It VOL_CAP_FMT_NO_IMMUTABLE_FILES
+If this bit is set, the volume format does not support setting the UF_IMMUTABLE
+flag.
+See ATTR_CMN_FLAGS for more details.
+.It VOL_CAP_FMT_NO_PERMISSIONS
+If this bit is set, the volume format does not support setting file
+permissions.
+See ATTR_CMN_USERACCESS for more details.
 .
 .El
 .Pp
@@ -1418,11 +1533,35 @@ AFP-style mandatory byte range locks via
 .It VOL_CAP_INT_EXTENDED_ATTR
 If this bit is set, the volume format implementation supports
 native extended attributes (see
-.Xr setxattr 2 ).
+.Xr setxattr 2 Ns ).
+.
+.It VOL_CAP_INT_CLONE
+If this bit is set, the file system supports cloning files and directories.
+See 
+.Xr clonefileat 2 
+for more details.
+.
+.It VOL_CAP_INT_SNAPSHOT
+If this bit is set, the file system supports snapshots.
+See
+.Xr fs_snapshot_create 2
+for more details.
 .
 .It VOL_CAP_INT_NAMEDSTREAMS
 If this bit is set, the volume format implementation supports
 native named streams.
+.
+.It VOL_CAP_INT_RENAME_SWAP
+If this bit is set, the file system supports swapping file system
+objects.  See
+.Xr rename 2
+for more details.
+.
+.It VOL_CAP_INT_RENAME_EXCL
+If this bit is set, the file system supports an exclusive rename
+operation. See
+.Xr rename 2
+for more details.
 .
 .El
 .Pp
@@ -1588,6 +1727,30 @@ The volume is read-only but must be modified in order to return this attribute.
 An I/O error occurred while reading from or writing to the file system.
 .El
 .Pp
+In addition to the errors returned by the
+.Fn getattrlist ,
+the
+.Fn getattrlistat
+function may fail if:
+.Bl -tag -width Er
+.It Bq Er EBADF
+The
+.Fa path
+argument does not specify an absolute path and the
+.Fa fd
+argument is neither
+.Dv AT_FDCWD
+nor a valid file descriptor open for searching.
+.It Bq Er ENOTDIR
+The
+.Fa path
+argument is not an absolute path and
+.Fa fd
+is neither
+.Dv AT_FDCWD
+nor a file descriptor associated with a directory.
+.El
+.Pp
 .
 .Sh CAVEATS
 .
@@ -1605,15 +1768,6 @@ For example,
 (0x00000001) comes before
 .Dv ATTR_CMN_DEVID
 (0x00000002) because its value is smaller.
-However, you can not rely on this ordering because there is one key exception:
-.Dv ATTR_CMN_FLAGS
-is placed after the
-.Dv ATTR_CMN_NAMEDATTRCOUNT
-/
-.Dv ATTR_CMN_NAMEDATTRLIST
-pair, even though its bit position indicates that it should come before.
-This is due to a bug in an early version of Mac OS X that can't be fixed for
-binary compatibility reasons.
 When ordering attributes, you should always use the order in which they
 are described above.
 .Pp
@@ -1916,6 +2070,56 @@ main(int argc, char **argv)
 }
 .Ed
 .Pp
+ The getLinkIDInfo() function determines if ATTR_CMNEXT_LINKID and ATTR_CMN_OBJID
+ are valid to use on the file system specified by path.
+.
+.Bd -literal
+int getLinkIDInfo(const char *path, bool *cmnExtLinkIDValid, bool *cmnObjIDValid)
+{
+    int result;
+    struct statfs statfsBuf;
+    struct attrlist attrList;
+    struct volAttrsBuf {
+        u_int32_t length;
+        vol_capabilities_attr_t capabilities;
+        vol_attributes_attr_t attributes;
+    } __attribute__((aligned(4), packed));
+    struct volAttrsBuf volAttrs;
+.Pp
+    memset(&attrList, 0, sizeof(attrList));
+    attrList.bitmapcount = ATTR_BIT_MAP_COUNT;
+    attrList.volattr = ATTR_VOL_INFO | ATTR_VOL_CAPABILITIES | ATTR_VOL_ATTRIBUTES;
+    // get the file system's mount point path for the input path
+    result = statfs(path, &statfsBuf);
+    if ( result == 0 ) {
+        // get the supported capabilities and attributes
+        result = getattrlist(statfsBuf.f_mntonname, &attrList, &volAttrs, sizeof(volAttrs), FSOPT_ATTR_CMN_EXTENDED);
+        if ( result == 0 ) {
+            if ( volAttrs.attributes.validattr.forkattr & ATTR_CMNEXT_LINKID ) {
+                // ATTR_CMNEXT_LINKID is available; do not use ATTR_CMN_OBJID
+                *cmnExtLinkIDValid = true;
+                *cmnObjIDValid = false;
+            }
+            else {
+                // ATTR_CMNEXT_LINKID is not available
+                cmnExtLinkIDValid = false;
+                // ATTR_CMN_OBJID can only be used if the file system does not use 64-bit object IDs
+                if ( (volAttrs.capabilities.capabilities[VOL_CAPABILITIES_FORMAT] & VOL_CAP_FMT_64BIT_OBJECT_IDS) && (volAttrs.capabilities.valid[VOL_CAPABILITIES_FORMAT] & VOL_CAP_FMT_64BIT_OBJECT_IDS) ) {
+                    *cmnObjIDValid = false;
+                }
+                else {
+                    *cmnObjIDValid = true;
+                }
+            }
+        }
+    }
+    if ( result != 0 ) {
+        *cmnExtLinkIDValid = *cmnObjIDValid = false;
+    }
+    return result;
+}
+.Ed
+.Pp
 .
 .Sh SEE ALSO
 .
@@ -1923,7 +2127,7 @@ main(int argc, char **argv)
 .Xr chflags 2 ,
 .Xr exchangedata 2 ,
 .Xr fcntl 2 ,
-.Xr getdirentriesattr 2 ,
+.Xr getattrlistbulk 2 ,
 .Xr mount 2 ,
 .Xr searchfs 2 ,
 .Xr setattrlist 2 ,
@@ -1934,4 +2138,6 @@ main(int argc, char **argv)
 A
 .Fn getattrlist
 function call appeared in Darwin 1.3.1 (Mac OS X version 10.0).
-.
+The
+.Fn getattrlistat
+function call appeared in OS X 10.10 .

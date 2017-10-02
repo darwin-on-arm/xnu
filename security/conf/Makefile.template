@@ -5,16 +5,6 @@
 # the terms and conditions for use and redistribution.
 #
 
-#
-# Export IDENT for sub-makefiles
-#
-export IDENT
-
-#
-# INCFLAGS to include security prototypes
-#
-INCFLAGS_MAKEFILE= -I$(SOURCE) -I$(SOURCE)/..
-
 export MakeInc_cmd=${SRCROOT}/makedefs/MakeInc.cmd
 export MakeInc_def=${SRCROOT}/makedefs/MakeInc.def
 export MakeInc_rule=${SRCROOT}/makedefs/MakeInc.rule
@@ -26,26 +16,31 @@ include $(MakeInc_def)
 #
 # XXX: CFLAGS
 #
-CFLAGS+= -I. -include meta_features.h -DBSD_KERNEL_PRIVATE
+CFLAGS+= -include meta_features.h -DBSD_KERNEL_PRIVATE
+SFLAGS+= -include meta_features.h
+
+# Objects that don't want -Wcast-align warning (8474835)
+OBJS_NO_CAST_ALIGN =		\
+		mac_alloc.o	\
+		mac_base.o
+
+$(foreach file,$(OBJS_NO_CAST_ALIGN),$(eval $(call add_perfile_cflags,$(file),-Wno-cast-align)))
+
+#
+# INCFLAGS to include security prototypes
+#
+INCFLAGS_MAKEFILE= -I$(SOURCE)/..
 
 #
 # Directories for mig generated files
 #
 COMP_SUBDIRS =
 
-
+#
 #  Make sure we don't remove this by accident if interrupted at the wrong
 #  time.
 #
 .PRECIOUS: Makefile
-
-VERSION_FILES= \
-	$(SOURCE_DIR)/$(COMPONENT)/conf/version.major  \
-	$(SOURCE_DIR)/$(COMPONENT)/conf/version.minor   \
-	$(SOURCE_DIR)/$(COMPONENT)/conf/version.variant
-
-COPYRIGHT_FILES = \
-	$(SOURCE_DIR)/$(COMPONENT)/conf/copyright.nai
 
 #
 #  Theses macros are filled in by the config program depending on the
@@ -59,46 +54,35 @@ COPYRIGHT_FILES = \
 
 %CFILES
 
-%MFILES
+%CXXFILES
 
 %SFILES
 
-%BFILES
-
-%ORDERED
 %MACHDEP
 
-#
-#  OBJSDEPS is the set of files (defined in the machine dependent
-#  template if necessary) which all objects depend on (such as an
-#  in-line assembler expansion filter)
-#
-${OBJS}: ${OBJSDEPS}
+# Rebuild if per-file overrides change
+${OBJS}: $(firstword $(MAKEFILE_LIST))
 
+# Rebuild if global compile flags change
+$(COBJS): .CFLAGS
+.CFLAGS: ALWAYS
+	$(_v)$(REPLACECONTENTS) $@ $(KCC) $(CFLAGS) $(INCFLAGS)
+$(CXXOBJS): .CXXFLAGS
+.CXXFLAGS: ALWAYS
+	$(_v)$(REPLACECONTENTS) $@ $(KC++) $(CXXFLAGS) $(INCFLAGS)
+$(SOBJS): .SFLAGS
+.SFLAGS: ALWAYS
+	$(_v)$(REPLACECONTENTS) $@ $(S_KCC) $(SFLAGS) $(INCFLAGS)
 
-%LOAD
-
-LDOBJS = $(OBJS)
-
-$(COMPONENT).filelist: $(LDOBJS)
-	$(_v)$(RM) $(RMFLAGS) vers.c
-	$(_v)$(SRCROOT)/SETUP/newvers \
-	`$(CAT) ${VERSION_FILES}` ${COPYRIGHT_FILES}
-	$(_v)${KCC} $(CFLAGS) $(INCLUDES) -c vers.c
-	@echo LDFILELIST $(COMPONENT)
-	$(_v)( for obj in ${LDOBJS} vers.o; do	\
-		 echo $(TARGET)$(COMP_OBJ_DIR)/$(KERNEL_CONFIG)/$${obj}; \
-	done; ) > $(COMPONENT).filelist
+$(COMPONENT).filelist: $(OBJS)
+	@echo "$(ColorL)LDFILELIST$(Color0) $(ColorLF)$(COMPONENT)$(Color0)"
+	$(_v)for obj in ${OBJS}; do	\
+		 echo $(TARGET)/$(CURRENT_KERNEL_CONFIG)/$${obj}; \
+	done > $(COMPONENT).filelist
 
 do_all: $(COMPONENT).filelist
 
-do_depend: do_all
-	$(_v)${MD} -u Makedep -f -d `ls *.d`;
-	
-do_build_all: do_depend
-
-${SOBJS}: 
-
+do_build_all:: do_all
 
 %RULES
 

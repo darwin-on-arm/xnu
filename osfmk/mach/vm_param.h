@@ -75,6 +75,9 @@
 #include <mach/vm_types.h>
 #endif	/* ASSEMBLER */
 
+#include <os/base.h>
+#include <os/overflow.h>
+
 /*
  *	The machine independent pages are refered to as PAGES.  A page
  *	is some number of hardware pages, depending on the target machine.
@@ -118,6 +121,18 @@
  */
 #define mach_vm_round_page(x) (((mach_vm_offset_t)(x) + PAGE_MASK) & ~((signed)PAGE_MASK))
 #define mach_vm_trunc_page(x) ((mach_vm_offset_t)(x) & ~((signed)PAGE_MASK))
+
+#define round_page_overflow(in, out) __os_warn_unused(({ \
+		bool __ovr = os_add_overflow(in, (__typeof__(*out))PAGE_MASK, out); \
+		*out &= ~((__typeof__(*out))PAGE_MASK); \
+		__ovr; \
+	}))
+
+static inline int OS_WARN_RESULT
+mach_vm_round_page_overflow(mach_vm_offset_t in, mach_vm_offset_t *out)
+{
+	return round_page_overflow(in, out);
+}
 
 #define memory_object_round_page(x) (((memory_object_offset_t)(x) + PAGE_MASK) & ~((signed)PAGE_MASK))
 #define memory_object_trunc_page(x) ((memory_object_offset_t)(x) & ~((signed)PAGE_MASK))
@@ -233,6 +248,8 @@ extern uint64_t		max_mem;		/* 64-bit size of memory - limited by maxmem */
 
 #ifdef	XNU_KERNEL_PRIVATE
 
+#include <kern/debug.h>
+
 extern uint64_t		mem_actual;		/* 64-bit size of memory - not limited by maxmem */
 extern uint64_t		sane_size;		/* Memory size to use for defaults calculations */
 extern addr64_t 	vm_last_addr;	/* Highest kernel virtual address known to the VM system */
@@ -240,35 +257,130 @@ extern addr64_t 	vm_last_addr;	/* Highest kernel virtual address known to the VM
 extern const vm_offset_t	vm_min_kernel_address;
 extern const vm_offset_t	vm_max_kernel_address;
 
-extern vm_offset_t		vm_kernel_stext;
-extern vm_offset_t		vm_kernel_etext;
-extern vm_offset_t		vm_kernel_base;
-extern vm_offset_t		vm_kernel_top;
+extern vm_offset_t              vm_kernel_stext;
+extern vm_offset_t              vm_kernel_etext;
+extern vm_offset_t		vm_kernel_slid_base;
+extern vm_offset_t		vm_kernel_slid_top;
 extern vm_offset_t		vm_kernel_slide;
 extern vm_offset_t		vm_kernel_addrperm;
+extern vm_offset_t		vm_kext_base;
+extern vm_offset_t		vm_kext_top;
+extern vm_offset_t		vm_kernel_base;
+extern vm_offset_t		vm_kernel_top;
+extern vm_offset_t		vm_hib_base;
 
 #define VM_KERNEL_IS_SLID(_o)						       \
-		(((vm_offset_t)(_o) >= vm_kernel_base) &&		       \
-		 ((vm_offset_t)(_o) <  vm_kernel_top))
-/*
- * VM_KERNEL_IS_KEXT is platform-specific, defined in <mach/machine/vm_param.h>.
- * Set default if undefined.
- */
-#ifndef	VM_KERNEL_IS_KEXT
-#define VM_KERNEL_IS_KEXT(_o)	(FALSE)
-#endif
-#define VM_KERNEL_UNSLIDE(_v)						       \
-		((VM_KERNEL_IS_SLID(_v) ||				       \
-		  VM_KERNEL_IS_KEXT(_v)) ?				       \
-			(vm_offset_t)(_v) - vm_kernel_slide :		       \
-			(vm_offset_t)(_v))
+		(((vm_offset_t)(_o) >= vm_kernel_slid_base) &&		       \
+		 ((vm_offset_t)(_o) <  vm_kernel_slid_top))
+
 #define VM_KERNEL_SLIDE(_u)						       \
 		((vm_offset_t)(_u) + vm_kernel_slide)
 
-#define	VM_KERNEL_ADDRPERM(_v)							\
-		(((vm_offset_t)(_v) == 0) ?					\
-			(vm_offset_t)(0) :					\
-			(vm_offset_t)(_v) + vm_kernel_addrperm)
+/*
+ * The following macros are to be used when exposing kernel addresses to
+ * userspace via any of the various debug or info facilities that might exist
+ * (e.g. stackshot, proc_info syscall, etc.). It is important to understand
+ * the goal of each macro and choose the right one depending on what you are
+ * trying to do. Misuse of these macros can result in critical data leaks
+ * which in turn lead to all sorts of system vulnerabilities. It is invalid to
+ * call these macros on a non-kernel address (NULL is allowed).
+ *
+ * VM_KERNEL_UNSLIDE:
+ *     Use this macro when you are exposing an address to userspace which is
+ *     *guaranteed* to be a "static" kernel or kext address (i.e. coming from text
+ *     or data sections). These are the addresses which get "slid" via ASLR on
+ *     kernel or kext load, and it's precisely the slide value we are trying to
+ *     protect from userspace.
+ *
+ * VM_KERNEL_ADDRHIDE:
+ *     Use when exposing an address for internal purposes: debugging, tracing,
+ *     etc. The address will be unslid if necessary. Other addresses will be
+ *     hidden on customer builds, and unmodified on internal builds.
+ *
+ * VM_KERNEL_ADDRHASH:
+ *     Use this macro when exposing a kernel address to userspace on customer
+ *     builds. The address can be from the static kernel or kext regions, or the
+ *     kernel heap. The address will be unslid or hashed as appropriate.
+ *
+ *
+ * ** SECURITY WARNING: The following macros can leak kernel secrets.
+ *                      Use *only* in performance *critical* code.
+ *
+ * VM_KERNEL_ADDRPERM:
+ * VM_KERNEL_UNSLIDE_OR_PERM:
+ *     Use these macros when exposing a kernel address to userspace on customer
+ *     builds. The address can be from the static kernel or kext regions, or the
+ *     kernel heap. The address will be unslid or permuted as appropriate.
+ *
+ * Nesting of these macros should be considered invalid.
+ */
+
+__BEGIN_DECLS
+extern vm_offset_t vm_kernel_addrhash(vm_offset_t addr);
+__END_DECLS
+
+#define __DO_UNSLIDE(_v) ((vm_offset_t)(_v) - vm_kernel_slide)
+
+#if DEBUG || DEVELOPMENT
+# define VM_KERNEL_ADDRHIDE(_v) (VM_KERNEL_IS_SLID(_v) ? __DO_UNSLIDE(_v) : (vm_address_t)(_v))
+#else
+# define VM_KERNEL_ADDRHIDE(_v) (VM_KERNEL_IS_SLID(_v) ? __DO_UNSLIDE(_v) : (vm_address_t)0)
+#endif
+
+#define VM_KERNEL_ADDRHASH(_v) vm_kernel_addrhash((vm_offset_t)(_v))
+
+#define VM_KERNEL_UNSLIDE_OR_PERM(_v) ({ \
+		VM_KERNEL_IS_SLID(_v) ? __DO_UNSLIDE(_v) : \
+		VM_KERNEL_ADDRESS(_v) ? ((vm_offset_t)(_v) + vm_kernel_addrperm) : \
+		(vm_offset_t)(_v); \
+	})
+
+#define VM_KERNEL_UNSLIDE(_v) ({ \
+		VM_KERNEL_IS_SLID(_v) ? __DO_UNSLIDE(_v) : (vm_offset_t)0; \
+	})
+
+#define VM_KERNEL_ADDRPERM(_v) VM_KERNEL_UNSLIDE_OR_PERM(_v)
+
+#undef mach_vm_round_page
+#undef round_page
+#undef round_page_32
+#undef round_page_64
+
+static inline mach_vm_offset_t
+mach_vm_round_page(mach_vm_offset_t x)
+{
+	if (round_page_overflow(x, &x)) {
+		panic("overflow detected");
+	}
+	return x;
+}
+
+static inline vm_offset_t
+round_page(vm_offset_t x)
+{
+	if (round_page_overflow(x, &x)) {
+		panic("overflow detected");
+	}
+	return x;
+}
+
+static inline mach_vm_offset_t
+round_page_64(mach_vm_offset_t x)
+{
+	if (round_page_overflow(x, &x)) {
+		panic("overflow detected");
+	}
+	return x;
+}
+
+static inline uint32_t
+round_page_32(uint32_t x)
+{
+	if (round_page_overflow(x, &x)) {
+		panic("overflow detected");
+	}
+	return x;
+}
 
 #endif	/* XNU_KERNEL_PRIVATE */
 

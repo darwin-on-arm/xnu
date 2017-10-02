@@ -104,9 +104,9 @@ struct	sigacts {
  * values should be non-intersecting with values defined in signal.h, e.g.:
  * SIG_IGN, SIG_DFL, SIG_ERR, SIG_IGN.
  */
-#define	KERN_SIG_CATCH	(void (*)(int))2
-#define	KERN_SIG_HOLD	(void (*)(int))3
-#define	KERN_SIG_WAIT	(void (*)(int))4
+#define	KERN_SIG_CATCH	CAST_USER_ADDR_T(2)
+#define	KERN_SIG_HOLD	CAST_USER_ADDR_T(3)
+#define	KERN_SIG_WAIT	CAST_USER_ADDR_T(4)
 
 /*
  * get signal action for process and signal; currently only for current process
@@ -145,7 +145,7 @@ struct	sigacts {
 #define	SA_CANTMASK	0x40		/* non-maskable, catchable */
 
 #ifdef	SIGPROP
-int sigprop[NSIG + 1] = {
+int sigprop[NSIG] = {
 	0,			/* unused */
 	SA_KILL,		/* SIGHUP */
 	SA_KILL,		/* SIGINT */
@@ -188,10 +188,16 @@ int sigprop[NSIG + 1] = {
 
 #define	sigcantmask	(sigmask(SIGKILL) | sigmask(SIGSTOP))
 
+#define SIGRESTRICTMASK (sigmask(SIGILL) | sigmask(SIGTRAP) | sigmask(SIGABRT) | \
+                         sigmask(SIGFPE) | sigmask(SIGBUS)  | sigmask(SIGSEGV) | \
+                         sigmask(SIGSYS))
+
+extern unsigned sigrestrict_arg;
+
 /*
  * Machine-independent functions:
  */
-int	coredump(struct proc *p);
+
 void	execsigs(struct proc *p, thread_t thread);
 void	gsignal(int pgid, int sig);
 int	issignal_locked(struct proc *p);
@@ -199,11 +205,13 @@ int	CURSIG(struct proc *p);
 int clear_procsiglist(struct proc *p, int bit, int in_signalstart);
 int set_procsigmask(struct proc *p, int bit);
 void	postsig_locked(int sig);
-void	siginit(struct proc *p) __attribute__((section("__TEXT, initcode")));
+void	siginit(struct proc *p);
 void	trapsignal(struct proc *p, int sig, unsigned code);
 void	pt_setrunnable(struct proc *p);
 int	hassigprop(int sig, int prop);
+int setsigvec(proc_t, thread_t, int signum, struct __kern_sigaction *, boolean_t in_sigstart);
 
+struct os_reason;
 /*
  * Machine-dependent functions:
  */
@@ -211,17 +219,21 @@ void	sendsig(struct proc *, /*sig_t*/ user_addr_t  action, int sig,
 	int returnmask, uint32_t code);
 
 void	psignal(struct proc *p, int sig);
+void	psignal_with_reason(struct proc *p, int sig, struct os_reason *signal_reason);
 void	psignal_locked(struct proc *, int);
+void	psignal_try_thread(proc_t, thread_t, int signum);
+void	psignal_try_thread_with_reason(proc_t, thread_t, int, struct os_reason*);
+void	psignal_thread_with_reason(proc_t, thread_t, int, struct os_reason*);
+void	psignal_uthread(thread_t, int);
 void	pgsignal(struct pgrp *pgrp, int sig, int checkctty);
 void	tty_pgsignal(struct tty * tp, int sig, int checkctty);
 void	threadsignal(thread_t sig_actthread, int signum, 
-		mach_exception_code_t code);
+		mach_exception_code_t code, boolean_t set_exitreason);
 int	thread_issignal(proc_t p, thread_t th, sigset_t mask);
 void	psignal_vfork(struct proc *p, task_t new_task, thread_t thread,
 		int signum);
-void	psignal_vtalarm(struct proc *);
-void	psignal_xcpu(struct proc *);
-void	psignal_sigprof(struct proc *);
+void psignal_vfork_with_reason(proc_t p, task_t new_task, thread_t thread,
+		int signum, struct os_reason *signal_reason);
 void	signal_setast(thread_t sig_actthread);
 void	pgsigio(pid_t pgid, int signalnum);
 
@@ -229,5 +241,19 @@ void sig_lock_to_exit(struct proc *p);
 int sig_try_locked(struct proc *p);
 
 #endif	/* BSD_KERNEL_PRIVATE */
+
+
+#ifdef XNU_KERNEL_PRIVATE
+
+/* Functions exported to Mach as well */
+
+#define COREDUMP_IGNORE_ULIMIT  0x0001 /* Ignore the process's core file ulimit. */
+#define COREDUMP_FULLFSYNC      0x0002 /* Run F_FULLFSYNC on the core file's vnode */
+
+int	coredump(struct proc *p, uint32_t reserve_mb, int coredump_flags);
+void set_thread_exit_reason(void *th, void *reason, boolean_t proc_locked);
+
+#endif  /* XNU_KERNEL_PRIVATE */
+
 
 #endif	/* !_SYS_SIGNALVAR_H_ */

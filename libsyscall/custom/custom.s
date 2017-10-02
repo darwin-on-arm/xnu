@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1999-2011 Apple Inc. All rights reserved.
+ * Copyright (c) 1999-2015 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -32,24 +32,29 @@
 
 #if defined(__i386__)
 
-	.globl	_errno
+/*
+ * i386 needs custom assembly to transform the return from syscalls
+ * into a proper stack for a function call out to cerror{,_nocancel}.
+ */
 
-LABEL(cerror)
-	movl	$0,%ecx
-	jmp		1f
-LABEL(cerror_nocancel)
-	movl	$1,%ecx
-1:	REG_TO_EXTERN(%eax, _errno)
-	mov		%esp,%edx
-	andl	$0xfffffff0,%esp
-	subl	$16,%esp
-	movl	%edx,8(%esp)
-	movl	%ecx,4(%esp)
-	movl	%eax,(%esp)
-	CALL_EXTERN(_cthread_set_errno_self)
-	movl	8(%esp),%esp
-	movl	$-1,%eax
-	movl	$-1,%edx /* in case a 64-bit value is returned */
+LABEL(tramp_cerror)
+	mov		%esp, %edx
+	andl	$0xfffffff0, %esp
+	subl	$16, %esp
+	movl	%edx, 4(%esp)
+	movl	%eax, (%esp)
+	CALL_EXTERN(_cerror)
+	movl	4(%esp), %esp
+	ret
+
+LABEL(tramp_cerror_nocancel)
+	mov		%esp, %edx
+	andl	$0xfffffff0, %esp
+	subl	$16, %esp
+	movl	%edx, 4(%esp)
+	movl	%eax, (%esp)
+	CALL_EXTERN(_cerror_nocancel)
+	movl	4(%esp), %esp
 	ret
 
 LABEL(__sysenter_trap)
@@ -57,59 +62,13 @@ LABEL(__sysenter_trap)
 	movl %esp, %ecx
 	sysenter
 
-#elif defined(__x86_64__)
-
-	.globl	_errno
-
-LABEL(cerror)
-	/* cancelable syscall, for arg1 to _cthread_set_errno_self */
-	movq	$0,%rsi
-	jmp		1f
-LABEL(cerror_nocancel)
-	/* non-cancelable, see above. */
-	movq	$1,%rsi
-1:	PICIFY(_errno) /* address -> %r11 */
-	movl	%eax,(%r11)
-	mov 	%rsp,%rdx
-	andq	$-16,%rsp
-	subq	$16,%rsp
-	// Preserve the original stack
-	movq	%rdx,(%rsp)
-	movq	%rax,%rdi
-	CALL_EXTERN(_cthread_set_errno_self)
-	// Restore the original stack
-	movq	(%rsp),%rsp
-	movq	$-1,%rax
-	movq	$-1,%rdx /* in case a 128-bit value is returned */
-	ret
-
-#elif defined(__arm__)
-
-	.globl	_errno
-
-MI_ENTRY_POINT(cerror)
-	stmfd	sp!, {r7, lr}
-	mov		r7, sp
-	MI_GET_ADDRESS(r3,_errno)
-	str		r0, [r3]
-	MI_CALL_EXTERNAL(_cthread_set_errno_self)
-	mov		r0, #-1
-	mov		r1, #-1
-	ldmfd	sp!, {r7, pc}
-
-#else
-#error Unsupported architecture
-#endif
-
-#if defined(__i386__) || defined(__x86_64__)
-
 	.globl _i386_get_ldt
 	ALIGN
 _i386_get_ldt:
 	movl    $6,%eax
 	MACHDEP_SYSCALL_TRAP
-	jnb	2f
-	jmp	cerror
+	jnb		2f
+	jmp		tramp_cerror
 2:	ret
 
 
@@ -118,8 +77,73 @@ _i386_get_ldt:
 _i386_set_ldt:
 	movl    $5,%eax
 	MACHDEP_SYSCALL_TRAP
-	jnb	2f
-	jmp	cerror
+	jnb		2f
+	jmp		tramp_cerror
 2:	ret
 
+	ALIGN
+	.globl __thread_set_tsd_base
+__thread_set_tsd_base:
+	pushl   4(%esp)
+	pushl   $0
+	movl    $3,%eax
+	MACHDEP_SYSCALL_TRAP
+	addl    $8,%esp
+	ret
+
+#elif defined(__x86_64__)
+
+	.globl _i386_get_ldt
+	ALIGN
+_i386_get_ldt:
+	movl    $6,%eax
+	MACHDEP_SYSCALL_TRAP
+	jnb		2f
+	movq	%rax, %rdi
+	jmp		_cerror
+2:	ret
+
+
+	.globl _i386_set_ldt
+	ALIGN
+_i386_set_ldt:
+	movl    $5,%eax
+	MACHDEP_SYSCALL_TRAP
+	jnb		2f
+	movq	%rax, %rdi
+	jmp		_cerror
+2:	ret
+
+	ALIGN
+	.globl __thread_set_tsd_base
+__thread_set_tsd_base:
+	movl	$0, %esi	// 0 as the second argument
+	movl    $ SYSCALL_CONSTRUCT_MDEP(3), %eax	// Machine-dependent syscall number 3
+	MACHDEP_SYSCALL_TRAP
+	ret
+
+#elif defined(__arm__)
+
+	.align 2
+	.globl __thread_set_tsd_base
+__thread_set_tsd_base:
+	mov	r3, #2
+	mov	r12, #0x80000000
+	swi	#SWI_SYSCALL
+	bx	lr
+
+#elif defined(__arm64__)
+
+	.align 2
+	.globl __thread_set_tsd_base
+__thread_set_tsd_base:
+	mov	x3, #2
+	mov	x16, #0x80000000
+	svc 	#SWI_SYSCALL
+	ret
+
+#else
+#error unknown architecture
 #endif
+
+.subsections_via_symbols

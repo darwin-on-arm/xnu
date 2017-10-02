@@ -34,20 +34,23 @@
 #include <pexpert/pexpert.h>
 #include <kern/debug.h>
 #include <kern/simple_lock.h>
+#include <i386/machine_cpu.h>
 #include <i386/mp.h>
 #include <machine/pal_routines.h>
 #include <i386/proc_reg.h>
+#include <os/log_private.h>
+#include <libkern/section_keywords.h>
 
 /* Globals */
 void (*PE_kputc)(char c);
 
-#if DEBUG
+#if DEVELOPMENT || DEBUG 
 /* DEBUG kernel starts with true serial, but
  * may later disable or switch to video
  * console */
-unsigned int disable_serial_output = FALSE;
+SECURITY_READ_ONLY_LATE(unsigned int) disable_serial_output = FALSE;
 #else
-unsigned int disable_serial_output = TRUE;
+SECURITY_READ_ONLY_LATE(unsigned int) disable_serial_output = TRUE;
 #endif
 
 decl_simple_lock_data(static, kprintf_lock)
@@ -100,10 +103,14 @@ static void _kprintf(const char *format, ...)
 #endif /* MP_DEBUG */
 
 static int cpu_last_locked = 0;
+
+__attribute__((noinline,not_tail_called))
 void kprintf(const char *fmt, ...)
 {
-	va_list   listp;
-	boolean_t state;
+	va_list    listp;
+	va_list    listp2;
+	boolean_t  state;
+	void      *caller = __builtin_return_address(0);
 
 	if (!disable_serial_output) {
 		boolean_t early = FALSE;
@@ -114,24 +121,29 @@ void kprintf(const char *fmt, ...)
 		 * take any locks, just dump to serial */
 		if (!PE_kputc || early) {
 			va_start(listp, fmt);
-			_doprnt(fmt, &listp, pal_serial_putc, 16);
+			va_copy(listp2, listp);
+
+			_doprnt_log(fmt, &listp, pal_serial_putc, 16);
 			va_end(listp);
+
+			// If interrupts are enabled
+			if (ml_get_interrupts_enabled()) {
+				os_log_with_args(OS_LOG_DEFAULT, OS_LOG_TYPE_DEFAULT, fmt, listp2, caller);
+			}
+			va_end(listp2);
 			return;
 		}
 
 		/*
-		 * Spin to get kprintf lock but re-enable interrupts while
-		 * failing.
-		 * This allows interrupts to be handled while waiting but
-		 * interrupts are disabled once we have the lock.
+		 * Spin to get kprintf lock but poll for incoming signals
+		 * while interrupts are masked.
 		 */
 		state = ml_set_interrupts_enabled(FALSE);
 
 		pal_preemption_assert();
 
 		while (!simple_lock_try(&kprintf_lock)) {
-			ml_set_interrupts_enabled(state);
-			ml_set_interrupts_enabled(FALSE);
+			(void) cpu_signal_handler(NULL);
 		}
 
 		if (cpu_number() != cpu_last_locked) {
@@ -140,13 +152,30 @@ void kprintf(const char *fmt, ...)
 		}
 
 		va_start(listp, fmt);
+		va_copy(listp2, listp);
 		_doprnt(fmt, &listp, PE_kputc, 16);
 		va_end(listp);
 
 		simple_unlock(&kprintf_lock);
 		ml_set_interrupts_enabled(state);
+
+		// If interrupts are enabled
+		if (ml_get_interrupts_enabled()) {
+			os_log_with_args(OS_LOG_DEFAULT, OS_LOG_TYPE_DEFAULT, fmt, listp2, caller);
+		}
+		va_end(listp2);
+
+	}
+	else {
+		if (ml_get_interrupts_enabled()) {
+			va_start(listp, fmt);
+			os_log_with_args(OS_LOG_DEFAULT, OS_LOG_TYPE_DEFAULT, fmt, listp, caller);
+			va_end(listp);
+		}
 	}
 }
+
+
 
 extern void kprintf_break_lock(void);
 void

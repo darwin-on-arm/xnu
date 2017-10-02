@@ -58,6 +58,33 @@ typedef int	vm_purgable_t;
 #define VM_PURGABLE_SET_STATE	((vm_purgable_t) 0)	/* set state of purgeable object */
 #define VM_PURGABLE_GET_STATE	((vm_purgable_t) 1)	/* get state of purgeable object */
 #define VM_PURGABLE_PURGE_ALL	((vm_purgable_t) 2)	/* purge all volatile objects now */
+#define VM_PURGABLE_SET_STATE_FROM_KERNEL ((vm_purgable_t) 3) /* set state from kernel */
+
+/*
+ * Purgeable state:
+ *
+ *  31 15 14 13 12 11 10 8 7 6 5 4 3 2 1 0
+ * +-----+--+-----+--+----+-+-+---+---+---+
+ * |     |NA|DEBUG|  | GRP| |B|ORD|   |STA|
+ * +-----+--+-----+--+----+-+-+---+---+---+
+ * " ": unused (i.e. reserved)
+ * STA: purgeable state
+ * 	see: VM_PURGABLE_NONVOLATILE=0 to VM_PURGABLE_DENY=3
+ * ORD: order
+ * 	see:VM_VOLATILE_ORDER_*
+ * B: behavior
+ * 	see: VM_PURGABLE_BEHAVIOR_*
+ * GRP: group
+ * 	see: VM_VOLATILE_GROUP_*
+ * DEBUG: debug
+ * 	see: VM_PURGABLE_DEBUG_*
+ * NA: no aging
+ * 	see: VM_PURGABLE_NO_AGING*
+ */
+
+#define VM_PURGABLE_NO_AGING_SHIFT	16
+#define VM_PURGABLE_NO_AGING_MASK	(0x1 << VM_PURGABLE_NO_AGING_SHIFT)
+#define VM_PURGABLE_NO_AGING 		(0x1 << VM_PURGABLE_NO_AGING_SHIFT)
 
 #define VM_PURGABLE_DEBUG_SHIFT	12
 #define VM_PURGABLE_DEBUG_MASK	(0x3 << VM_PURGABLE_DEBUG_SHIFT)
@@ -71,7 +98,7 @@ typedef int	vm_purgable_t;
  */
 #define VM_VOLATILE_GROUP_SHIFT		8
 #define VM_VOLATILE_GROUP_MASK		(7 << VM_VOLATILE_GROUP_SHIFT)
-#define VM_VOLATILE_GROUP_DEFAULT   VM_VOLATILE_GROUP_7
+#define VM_VOLATILE_GROUP_DEFAULT   VM_VOLATILE_GROUP_0
 
 #define VM_VOLATILE_GROUP_0			(0 << VM_VOLATILE_GROUP_SHIFT)
 #define VM_VOLATILE_GROUP_1			(1 << VM_VOLATILE_GROUP_SHIFT)
@@ -122,13 +149,14 @@ typedef int	vm_purgable_t;
 
 #define VM_PURGABLE_NONVOLATILE	0		/* purgeable object is non-volatile */
 #define VM_PURGABLE_VOLATILE	1		/* purgeable object is volatile */
-#define VM_PURGABLE_EMPTY		2		/* purgeable object is volatile and empty */
-#define VM_PURGABLE_DENY		3		/* (mark) object not purgeable */
+#define VM_PURGABLE_EMPTY	2		/* purgeable object is volatile and empty */
+#define VM_PURGABLE_DENY	3		/* (mark) object not purgeable */
 
 #define VM_PURGABLE_ALL_MASKS	(VM_PURGABLE_STATE_MASK | \
 				 VM_VOLATILE_ORDER_MASK | \
 				 VM_PURGABLE_ORDERING_MASK | \
 				 VM_PURGABLE_BEHAVIOR_MASK | \
 				 VM_VOLATILE_GROUP_MASK | \
-				 VM_PURGABLE_DEBUG_MASK)
+				 VM_PURGABLE_DEBUG_MASK | \
+				 VM_PURGABLE_NO_AGING_MASK)
 #endif	/* _MACH_VM_PURGABLE_H_ */

@@ -72,6 +72,11 @@
 #include <sys/cdefs.h>
 
 #if !defined(KERNEL) && !defined(KERNEL_PRIVATE)
+
+#if defined(__STDC_WANT_LIB_EXT1__) && __STDC_WANT_LIB_EXT1__ >= 1
+#include <sys/_types/_errno_t.h>
+#endif
+
 __BEGIN_DECLS
 extern int * __error(void);
 #define errno (*__error())
@@ -265,8 +270,10 @@ __END_DECLS
 #define	ERESTART	(-1)		/* restart syscall */
 #define	EJUSTRETURN	(-2)		/* don't modify regs, just return */
 
-#ifdef BSD_KERNEL_PRIVATE
+#ifdef KERNEL_PRIVATE
 #define ERECYCLE    (-5)		/* restart lookup under heavy vnode pressure/recycling */
+#endif
+#ifdef BSD_KERNEL_PRIVATE
 #define EREDRIVEOPEN	(-6)
 #define EKEEPLOOKING	(-7)
 /* used for cvwait error returns to Libc */

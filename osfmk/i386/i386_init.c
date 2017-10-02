@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2003-2009 Apple Inc. All rights reserved.
+ * Copyright (c) 2003-2016 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -54,7 +54,6 @@
  * the rights to redistribute these changes.
  */
 
-#include <platforms.h>
 
 #include <mach/i386/vm_param.h>
 
@@ -73,6 +72,7 @@
 #include <kern/xpr.h>
 #include <kern/cpu_data.h>
 #include <kern/processor.h>
+#include <sys/kdebug.h>
 #include <console/serial_protos.h>
 #include <vm/vm_page.h>
 #include <vm/pmap.h>
@@ -99,12 +99,15 @@
 #include <i386/pmCPU.h>
 #include <i386/tsc.h>
 #include <i386/locks.h> /* LcksOpts */
-#ifdef __i386__
-#include <i386/cpu_capabilities.h>
-#endif
 #if DEBUG
 #include <machine/pal_routines.h>
 #endif
+
+#if MONOTONIC
+#include <kern/monotonic.h>
+#endif /* MONOTONIC */
+
+#include <san/kasan.h>
 
 #if DEBUG
 #define DBG(x...)       kprintf(x)
@@ -121,16 +124,17 @@ extern const char	version[];
 extern const char	version_variant[];
 extern int		nx_enabled;
 
-uint64_t		physmap_base, physmap_max;
+/*
+ * Set initial values so that ml_phys_* routines can use the booter's ID mapping
+ * to touch physical space before the kernel's physical aperture exists.
+ */
+uint64_t		physmap_base = 0;
+uint64_t		physmap_max = 4*GB;
 
 pd_entry_t		*KPTphys;
 pd_entry_t		*IdlePTD;
-#ifdef __i386__
-pd_entry_t		*IdlePDPT64;
-#else
 pdpt_entry_t		*IdlePDPT;
 pml4_entry_t		*IdlePML4;
-#endif
 
 char *physfree;
 
@@ -144,9 +148,7 @@ ALLOCPAGES(int npages)
 	uintptr_t tmp = (uintptr_t)physfree;
 	bzero(physfree, npages * PAGE_SIZE);
 	physfree += npages * PAGE_SIZE;
-#ifdef __x86_64__
 	tmp += VM_MIN_KERNEL_ADDRESS & ~LOW_4GB_MASK;
-#endif
 	return (void *)tmp;
 }
 
@@ -163,7 +165,6 @@ fillkpt(pt_entry_t *base, int prot, uintptr_t src, int index, int count)
 
 extern pmap_paddr_t first_avail;
 
-#ifdef __x86_64__
 int break_kprintf = 0;
 
 uint64_t
@@ -182,14 +183,9 @@ x86_64_post_sleep(uint64_t new_cr3)
 	set_cr3_raw((uint32_t) new_cr3);
 }
 
-#endif
-
-#ifdef __i386__
-#define ID_MAP_VTOP(x) x
-#endif
 
 
-#ifdef __x86_64__
+
 // Set up the physical mapping - NPHYSMAP GB of memory mapped at a high address
 // NPHYSMAP is determined by the maximum supported RAM size plus 4GB to account
 // the PCI hole (which is less 4GB but not more).
@@ -208,12 +204,19 @@ physmap_init(void)
 	} * physmapL2 = ALLOCPAGES(NPHYSMAP);
 
 	uint64_t i;
-	uint8_t phys_random_L3 = ml_early_random() & 0xFF;
+	uint8_t phys_random_L3 = early_random() & 0xFF;
 
 	/* We assume NX support. Mark all levels of the PHYSMAP NX
 	 * to avoid granting executability via a single bit flip.
 	 */
-	assert(cpuid_extfeatures() & CPUID_EXTFEATURE_XD);
+#if DEVELOPMENT || DEBUG
+	uint32_t reg[4];
+	do_cpuid(0x80000000, reg);
+	if (reg[eax] >= 0x80000001) {
+		do_cpuid(0x80000001, reg);
+		assert(reg[edx] & CPUID_EXTFEATURE_XD);
+	}
+#endif /* DEVELOPMENT || DEBUG */
 
 	for(i = 0; i < NPHYSMAP; i++) {
 		physmapL3[i + phys_random_L3] =
@@ -228,7 +231,7 @@ physmap_init(void)
 			    ((i * PTE_PER_PAGE + j) << PDSHIFT)
 							| INTEL_PTE_PS
 							| INTEL_PTE_VALID
-			    				| INTEL_PTE_NX
+							| INTEL_PTE_NX
 							| INTEL_PTE_WRITE;
 		}
 	}
@@ -313,41 +316,47 @@ Idle_PTs_init(void)
 
 }
 
-#else /* __x86_64__ */
+extern void vstart_trap_handler;
+
+#define BOOT_TRAP_VECTOR(t)				\
+	[t] = {						\
+		(uintptr_t) &vstart_trap_handler,	\
+		KERNEL64_CS,				\
+		0,					\
+		ACC_P|ACC_PL_K|ACC_INTR_GATE,		\
+		0					\
+	},
+
+/* Recursive macro to iterate 0..31 */
+#define L0(x,n)	 x(n)
+#define L1(x,n)	 L0(x,n-1)     L0(x,n)
+#define L2(x,n)  L1(x,n-2)     L1(x,n)
+#define L3(x,n)  L2(x,n-4)     L2(x,n)
+#define L4(x,n)  L3(x,n-8)     L3(x,n)
+#define L5(x,n)  L4(x,n-16)    L4(x,n)
+#define FOR_0_TO_31(x) L5(x,31)
+
+/*
+ * Bootstrap IDT. Active only during early startup.
+ * Only the trap vectors are defined since interrupts are masked.
+ * All traps point to a common handler.
+ */
+struct fake_descriptor64 master_boot_idt64[IDTSZ]
+	__attribute__((section("__HIB,__desc")))
+	__attribute__((aligned(PAGE_SIZE))) = {
+	FOR_0_TO_31(BOOT_TRAP_VECTOR)
+};
 
 static void
-Idle_PTs_init(void)
+vstart_idt_init(void)
 {
-	/* Allocate the "idle" kernel page tables: */
-	KPTphys  = ALLOCPAGES(NKPT);		/* level 1 */
-	IdlePTD  = ALLOCPAGES(NPGPTD);		/* level 2 */
-
-	IdlePDPT64 = ALLOCPAGES(1);
-
-	// Recursive mapping of PTEs
-	fillkpt(IdlePTD, INTEL_PTE_WRITE, (uintptr_t)IdlePTD, PTDPTDI, NPGPTD);
-	// commpage
-	fillkpt(IdlePTD, INTEL_PTE_WRITE|INTEL_PTE_USER, (uintptr_t)ALLOCPAGES(1), _COMM_PAGE32_BASE_ADDRESS >> PDESHIFT,1);
-
-	// Fill the lowest level with everything up to physfree
-	fillkpt(KPTphys,
-		INTEL_PTE_WRITE, 0, 0, (int)(((uintptr_t)physfree) >> PAGE_SHIFT));
-
-	// Rewrite the 2nd-lowest level  to point to pages of KPTphys.
-	// This was previously filled statically by idle_pt.c, and thus
-	// must be done after the KPTphys fill since IdlePTD is in use
-	fillkpt(IdlePTD,
-		INTEL_PTE_WRITE, (uintptr_t)ID_MAP_VTOP(KPTphys), 0, NKPT);
-
-	// IdlePDPT entries
-	fillkpt(IdlePDPT, 0, (uintptr_t)IdlePTD, 0, NPGPTD);
-
-	postcode(VSTART_SET_CR3);
-
-	// Flush the TLB now we're done rewriting the page tables..
-	set_cr3_raw(get_cr3_raw());
+	x86_64_desc_register_t	vstart_idt = {
+					sizeof(master_boot_idt64),
+					master_boot_idt64 };
+	
+	fix_desc64(master_boot_idt64, 32);
+	lidt((void *)&vstart_idt);
 }
-#endif
 
 /*
  * vstart() is called in the natural mode (64bit for K64, 32 for K32)
@@ -364,23 +373,31 @@ Idle_PTs_init(void)
  * Non-bootstrap processors are called with argument boot_args_start NULL.
  * These processors switch immediately to the existing kernel page tables.
  */
+__attribute__((noreturn))
 void
 vstart(vm_offset_t boot_args_start)
 {
 	boolean_t	is_boot_cpu = !(boot_args_start == 0);
-	int		cpu;
+	int		cpu = 0;
 	uint32_t	lphysfree;
 
 	postcode(VSTART_ENTRY);
 
 	if (is_boot_cpu) {
 		/*
+		 * Set-up temporary trap handlers during page-table set-up.
+		 */
+		vstart_idt_init();
+		postcode(VSTART_IDT_INIT);
+
+		/*
 		 * Get startup parameters.
 		 */
 		kernelBootArgs = (boot_args *)boot_args_start;
 		lphysfree = kernelBootArgs->kaddr + kernelBootArgs->ksize;
 		physfree = (void *)(uintptr_t)((lphysfree + PAGE_SIZE - 1) &~ (PAGE_SIZE - 1));
-#if DEBUG
+
+#if DEVELOPMENT || DEBUG
 		pal_serial_init();
 #endif
 		DBG("revision      0x%x\n", kernelBootArgs->Revision);
@@ -395,70 +412,70 @@ vstart(vm_offset_t boot_args_start)
 			kernelBootArgs, 
 			&kernelBootArgs->ksize,
 			&kernelBootArgs->kaddr);
+		DBG("SMBIOS mem sz 0x%llx\n", kernelBootArgs->PhysicalMemorySize);
 
-		postcode(VSTART_IDLE_PTS_INIT);
-
-		Idle_PTs_init();
-
-		first_avail = (vm_offset_t)ID_MAP_VTOP(physfree);
-
-		cpu = 0;
-		cpu_data_alloc(TRUE);
-
-				
 		/*
 		 * Setup boot args given the physical start address.
+		 * Note: PE_init_platform needs to be called before Idle_PTs_init
+		 * because access to the DeviceTree is required to read the
+		 * random seed before generating a random physical map slide.
 		 */
 		kernelBootArgs = (boot_args *)
 		    ml_static_ptovirt(boot_args_start);
 		DBG("i386_init(0x%lx) kernelBootArgs=%p\n",
 		    (unsigned long)boot_args_start, kernelBootArgs);
 
+#if KASAN
+		kasan_reserve_memory(kernelBootArgs);
+#endif
+
 		PE_init_platform(FALSE, kernelBootArgs);
 		postcode(PE_INIT_PLATFORM_D);
+
+		Idle_PTs_init();
+		postcode(VSTART_IDLE_PTS_INIT);
+
+#if KASAN
+		/* Init kasan and map whatever was stolen from physfree */
+		kasan_init();
+		kasan_notify_stolen((uintptr_t)ml_static_ptovirt((vm_offset_t)physfree));
+#endif
+
+#if MONOTONIC
+		mt_init();
+#endif /* MONOTONIC */
+
+		first_avail = (vm_offset_t)ID_MAP_VTOP(physfree);
+
+		cpu_data_alloc(TRUE);
+
+		cpu_desc_init(cpu_datap(0));
+		postcode(VSTART_CPU_DESC_INIT);
+		cpu_desc_load(cpu_datap(0));
+
+		postcode(VSTART_CPU_MODE_INIT);
+		cpu_syscall_init(cpu_datap(0)); /* cpu_syscall_init() will be
+						 * invoked on the APs
+						 * via i386_init_slave()
+						 */
 	} else {
-#ifdef	__x86_64__
 		/* Switch to kernel's page tables (from the Boot PTs) */
 		set_cr3_raw((uintptr_t)ID_MAP_VTOP(IdlePML4));
-#endif
 		/* Find our logical cpu number */
 		cpu = lapic_to_cpu[(LAPIC_READ(ID)>>LAPIC_ID_SHIFT) & LAPIC_ID_MASK];
 		DBG("CPU: %d, GSBASE initial value: 0x%llx\n", cpu, rdmsr64(MSR_IA32_GS_BASE));
+		cpu_desc_load(cpu_datap(cpu));
 	}
 
-	postcode(VSTART_CPU_DESC_INIT);
-#ifdef __x86_64__
-	if(is_boot_cpu)
-		cpu_desc_init64(cpu_datap(cpu));
-	cpu_desc_load64(cpu_datap(cpu));
-#else
-	if(is_boot_cpu)
-		cpu_desc_init(cpu_datap(cpu));
-	cpu_desc_load(cpu_datap(cpu));
-#endif
-	postcode(VSTART_CPU_MODE_INIT);
-	if (is_boot_cpu)
-		cpu_mode_init(current_cpu_datap()); /* cpu_mode_init() will be
-						     * invoked on the APs
-						     * via i386_init_slave()
-						     */
 	postcode(VSTART_EXIT);
-#ifdef __i386__
-	if (cpuid_extfeatures() & CPUID_EXTFEATURE_XD) {
-		wrmsr64(MSR_IA32_EFER, rdmsr64(MSR_IA32_EFER) | MSR_IA32_EFER_NXE);
-		DBG("vstart() NX/XD enabled, i386\n");
-	}
-
-	if (is_boot_cpu)
-		i386_init();
-	else
-		i386_init_slave();
-	/*NOTREACHED*/
-#else
 	x86_init_wrapper(is_boot_cpu ? (uintptr_t) i386_init
 				     : (uintptr_t) i386_init_slave,
 			 cpu_datap(cpu)->cpu_int_stack_top);
-#endif
+}
+
+void
+pstate_trace(void)
+{
 }
 
 /*
@@ -477,14 +494,16 @@ i386_init(void)
 	postcode(I386_INIT_ENTRY);
 
 	pal_i386_init();
+	tsc_init();
+	rtclock_early_init();	/* mach_absolute_time() now functionsl */
+
+	kernel_debug_string_early("i386_init");
+	pstate_trace();
 
 #if CONFIG_MCA
 	/* Initialize machine-check handling */
 	mca_cpu_init();
 #endif
-
-
-	kernel_early_bootstrap();
 
 	master_cpu = 0;
 	cpu_init();
@@ -495,22 +514,37 @@ i386_init(void)
 	panic_init();			/* Init this in case we need debugger */
 
 	/* setup debugging output if one has been chosen */
+	kernel_debug_string_early("PE_init_kprintf");
 	PE_init_kprintf(FALSE);
+
+	kernel_debug_string_early("kernel_early_bootstrap");
+	kernel_early_bootstrap();
 
 	if (!PE_parse_boot_argn("diag", &dgWork.dgFlags, sizeof (dgWork.dgFlags)))
 		dgWork.dgFlags = 0;
 
 	serialmode = 0;
-	if(PE_parse_boot_argn("serial", &serialmode, sizeof (serialmode))) {
+	if (PE_parse_boot_argn("serial", &serialmode, sizeof(serialmode))) {
 		/* We want a serial keyboard and/or console */
 		kprintf("Serial mode specified: %08X\n", serialmode);
+		int force_sync = serialmode & SERIALMODE_SYNCDRAIN;
+		if (force_sync || PE_parse_boot_argn("drain_uart_sync", &force_sync, sizeof(force_sync))) {
+			if (force_sync) {
+				serialmode |= SERIALMODE_SYNCDRAIN;
+				kprintf(
+				    "WARNING: Forcing uart driver to output synchronously."
+				    "printf()s/IOLogs will impact kernel performance.\n"
+				    "You are advised to avoid using 'drain_uart_sync' boot-arg.\n");
+			}
+		}
 	}
-	if(serialmode & 1) {
+	if (serialmode & SERIALMODE_OUTPUT) {
 		(void)switch_to_serial_console();
-		disableConsoleOutput = FALSE;	/* Allow printfs to happen */
+		disableConsoleOutput = FALSE; /* Allow printfs to happen */
 	}
 
 	/* setup console output */
+	kernel_debug_string_early("PE_init_printf");
 	PE_init_printf(FALSE);
 
 	kprintf("version_variant = %s\n", version_variant);
@@ -529,8 +563,9 @@ i386_init(void)
 	/*
 	 * debug support for > 4G systems
 	 */
-	if (!PE_parse_boot_argn("himemory_mode", &vm_himemory_mode, sizeof (vm_himemory_mode)))
-	        vm_himemory_mode = 0;
+	PE_parse_boot_argn("himemory_mode", &vm_himemory_mode, sizeof (vm_himemory_mode));
+	if (vm_himemory_mode != 0)
+		kprintf("himemory_mode: %d\n", vm_himemory_mode);
 
 	if (!PE_parse_boot_argn("immediate_NMI", &fidn, sizeof (fidn)))
 		force_immediate_debugger_NMI = FALSE;
@@ -544,31 +579,14 @@ i386_init(void)
 	    &urgency_notification_assert_abstime_threshold,
 	    sizeof(urgency_notification_assert_abstime_threshold));
 
-#if CONFIG_YONAH
-	/*
-	 * At this point we check whether we are a 64-bit processor
-	 * and that we're not restricted to legacy mode, 32-bit operation.
-	 */
-	if (cpuid_extfeatures() & CPUID_EXTFEATURE_EM64T) {
-		boolean_t	legacy_mode;
-		kprintf("EM64T supported");
-		if (PE_parse_boot_argn("-legacy", &legacy_mode, sizeof (legacy_mode))) {
-			kprintf(" but legacy mode forced\n");
-			IA32e = FALSE;
-		} else {
-			kprintf(" and will be enabled\n");
-		}
-	} else
-		IA32e = FALSE;
-#endif
-
 	if (!(cpuid_extfeatures() & CPUID_EXTFEATURE_XD))
 		nx_enabled = 0;
 
 	/*   
 	 * VM initialization, after this we're using page tables...
-	 * The maximum number of cpus must be set beforehand.
+	 * Thn maximum number of cpus must be set beforehand.
 	 */
+	kernel_debug_string_early("i386_vm_init");
 	i386_vm_init(maxmemtouse, IA32e, kernelBootArgs);
 
 	/* create the console for verbose or pretty mode */
@@ -576,12 +594,15 @@ i386_init(void)
 	PE_init_platform(TRUE, kernelBootArgs);
 	PE_create_console();
 
-	tsc_init();
+	kernel_debug_string_early("power_management_init");
 	power_management_init();
 	processor_bootstrap();
 	thread_bootstrap();
 
+	pstate_trace();
+	kernel_debug_string_early("machine_startup");
 	machine_startup();
+	pstate_trace();
 }
 
 static void
@@ -600,7 +621,7 @@ do_init_slave(boolean_t fast_restart)
   
 		assert(!ml_get_interrupts_enabled());
   
-		cpu_mode_init(current_cpu_datap());
+		cpu_syscall_init(current_cpu_datap());
 		pmap_cpu_init();
   
 #if CONFIG_MCA
@@ -624,7 +645,7 @@ do_init_slave(boolean_t fast_restart)
 
 #if CONFIG_VMX
 	/* resume VT operation */
-	vmx_resume();
+	vmx_resume(FALSE);
 #endif
 
 #if CONFIG_MTRR
@@ -634,8 +655,7 @@ do_init_slave(boolean_t fast_restart)
 
 	cpu_thread_init();	/* not strictly necessary */
 
-	cpu_init();	/* Sets cpu_running which starter cpu waits for */ 
-
+	cpu_init();	/* Sets cpu_running which starter cpu waits for */
  	slave_main(init_param);
   
  	panic("do_init_slave() returned from slave_main()");

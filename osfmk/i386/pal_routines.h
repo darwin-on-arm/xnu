@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009 Apple Inc. All rights reserved.
+ * Copyright (c) 2009-2012 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -80,11 +80,7 @@ boolean_t pal_machine_sleep(uint8_t type_a,
 #ifdef XNU_KERNEL_PRIVATE
 
 /* Define any PAL-specific types for x86 */
-#ifdef __i386__
-typedef uint32_t pal_cr_t;
-#else
 typedef uint64_t pal_cr_t;
-#endif
 
 struct pal_cpu_data; /* Defined per-platform */
 struct pal_pcb; /* Defined per-platform */
@@ -96,6 +92,7 @@ extern struct pal_apic_table *apic_table;
 /* serial / debug output routines */
 extern int  pal_serial_init(void);
 extern void pal_serial_putc(char);
+extern void pal_serial_putc_nocr(char);
 extern int  pal_serial_getc(void);
 
 /* Generic I386 PAL functions go here */
@@ -128,9 +125,6 @@ void pal_ast_check(thread_t thread);
 /* Called by sync_iss_to_iks */
 extern void pal_get_kern_regs( x86_saved_state_t *state );
 
-/* Called by load_machfile */
-void pal_switch_pmap(thread_t, pmap_t, boolean_t);
-
 /*
  * Platform-specific hlt/sti.
  */ 
@@ -148,25 +142,22 @@ void pal_register_cache_state(thread_t thread, pal_cache_state_t state);
 /* Catch code running on the except thread that shouldn't be */
 void pal_preemption_assert(void);
 
-void hibernate_pal_prepare(void);
-void pal_efi_hibernate_prepare(void);
-
 /* Include a PAL-specific header, too, for xnu-internal overrides */
 #include <i386/pal_native.h>
 
 
 extern boolean_t virtualized;
 #define PAL_VIRTUALIZED_PROPERTY_VALUE 4
-
+	
 /* Allow for tricky IOKit property matching */
 #define PAL_AICPM_PROPERTY_NAME "intel_cpupm_matching"
 static inline void 
 pal_get_resource_property(const char **property_name, int *property_value)
 {
-        *property_name = PAL_AICPM_PROPERTY_NAME;
-        *property_value = PAL_AICPM_PROPERTY_VALUE;
-        if (virtualized)
-                *property_value = PAL_VIRTUALIZED_PROPERTY_VALUE;
+	*property_name = PAL_AICPM_PROPERTY_NAME;
+	*property_value = PAL_AICPM_PROPERTY_VALUE;
+	if (virtualized)
+		*property_value = PAL_VIRTUALIZED_PROPERTY_VALUE;
 }
 
 /* assembly function to update TSC / timebase info */

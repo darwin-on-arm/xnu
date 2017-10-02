@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2007-2011 Apple Inc. All rights reserved.
+ * Copyright (c) 2007-2016 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -230,14 +230,11 @@ void
 pfi_attach_ifnet(struct ifnet *ifp)
 {
 	struct pfi_kif *kif;
-	char if_name[IFNAMSIZ];
 
-	lck_mtx_assert(pf_lock, LCK_MTX_ASSERT_OWNED);
+	LCK_MTX_ASSERT(pf_lock, LCK_MTX_ASSERT_OWNED);
 
 	pfi_update++;
-	(void) snprintf(if_name, sizeof (if_name), "%s%d",
-	    ifp->if_name, ifp->if_unit);
-	if ((kif = pfi_kif_get(if_name)) == NULL)
+	if ((kif = pfi_kif_get(if_name(ifp))) == NULL)
 		panic("pfi_kif_get failed");
 
 	ifnet_lock_exclusive(ifp);
@@ -256,7 +253,7 @@ pfi_detach_ifnet(struct ifnet *ifp)
 {
 	struct pfi_kif		*kif;
 
-	lck_mtx_assert(pf_lock, LCK_MTX_ASSERT_OWNED);
+	LCK_MTX_ASSERT(pf_lock, LCK_MTX_ASSERT_OWNED);
 
 	if ((kif = (struct pfi_kif *)ifp->if_pf_kif) == NULL)
 		return;
@@ -287,7 +284,6 @@ pfi_match_addr(struct pfi_dynaddr *dyn, struct pf_addr *a, sa_family_t af)
 		default:
 			return (pfr_match_addr(dyn->pfid_kt, a, AF_INET));
 		}
-		break;
 #endif /* INET */
 #if INET6
 	case AF_INET6:
@@ -300,7 +296,6 @@ pfi_match_addr(struct pfi_dynaddr *dyn, struct pf_addr *a, sa_family_t af)
 		default:
 			return (pfr_match_addr(dyn->pfid_kt, a, AF_INET6));
 		}
-		break;
 #endif /* INET6 */
 	default:
 		return (0);
@@ -315,7 +310,7 @@ pfi_dynaddr_setup(struct pf_addr_wrap *aw, sa_family_t af)
 	struct pf_ruleset	*ruleset = NULL;
 	int			 rv = 0;
 
-	lck_mtx_assert(pf_lock, LCK_MTX_ASSERT_OWNED);
+	LCK_MTX_ASSERT(pf_lock, LCK_MTX_ASSERT_OWNED);
 
 	if (aw->type != PF_ADDR_DYNIFTL)
 		return (0);
@@ -383,7 +378,7 @@ pfi_kif_update(struct pfi_kif *kif)
 {
 	struct pfi_dynaddr	*p;
 
-	lck_mtx_assert(pf_lock, LCK_MTX_ASSERT_OWNED);
+	LCK_MTX_ASSERT(pf_lock, LCK_MTX_ASSERT_OWNED);
 
 	/* update all dynaddr */
 	TAILQ_FOREACH(p, &kif->pfik_dynaddrs, entry)
@@ -581,7 +576,7 @@ pfi_kifaddr_update(void *v)
 {
 	struct pfi_kif		*kif = (struct pfi_kif *)v;
 
-	lck_mtx_assert(pf_lock, LCK_MTX_ASSERT_OWNED);
+	LCK_MTX_ASSERT(pf_lock, LCK_MTX_ASSERT_OWNED);
 
 	pfi_update++;
 	pfi_kif_update(kif);
@@ -600,31 +595,30 @@ pfi_update_status(const char *name, struct pf_status *pfs)
 	struct pfi_kif_cmp	 key;
 	int			 i, j, k;
 
-	lck_mtx_assert(pf_lock, LCK_MTX_ASSERT_OWNED);
+	LCK_MTX_ASSERT(pf_lock, LCK_MTX_ASSERT_OWNED);
 
 	strlcpy(key.pfik_name, name, sizeof (key.pfik_name));
 	p = RB_FIND(pfi_ifhead, &pfi_ifs, (struct pfi_kif *)(void *)&key);
 	if (p == NULL)
 		return;
 
-	if (pfs) {
+	if (pfs != NULL) {
 		bzero(pfs->pcounters, sizeof (pfs->pcounters));
 		bzero(pfs->bcounters, sizeof (pfs->bcounters));
-	}
-	/* just clear statistics */
-	if (pfs == NULL) {
+		for (i = 0; i < 2; i++)
+			for (j = 0; j < 2; j++)
+				for (k = 0; k < 2; k++) {
+					pfs->pcounters[i][j][k] +=
+						p->pfik_packets[i][j][k];
+					pfs->bcounters[i][j] +=
+						p->pfik_bytes[i][j][k];
+				}
+	} else {
+		/* just clear statistics */
 		bzero(p->pfik_packets, sizeof (p->pfik_packets));
 		bzero(p->pfik_bytes, sizeof (p->pfik_bytes));
 		p->pfik_tzero = pf_calendar_time_second();
 	}
-	for (i = 0; i < 2; i++)
-		for (j = 0; j < 2; j++)
-			for (k = 0; k < 2; k++) {
-				pfs->pcounters[i][j][k] +=
-				    p->pfik_packets[i][j][k];
-				pfs->bcounters[i][j] +=
-				    p->pfik_bytes[i][j][k];
-			}
 }
 
 int
@@ -633,7 +627,7 @@ pfi_get_ifaces(const char *name, user_addr_t buf, int *size)
 	struct pfi_kif	 *p, *nextp;
 	int		 n = 0;
 
-	lck_mtx_assert(pf_lock, LCK_MTX_ASSERT_OWNED);
+	LCK_MTX_ASSERT(pf_lock, LCK_MTX_ASSERT_OWNED);
 
 	for (p = RB_MIN(pfi_ifhead, &pfi_ifs); p; p = nextp) {
 		nextp = RB_NEXT(pfi_ifhead, &pfi_ifs, p);
@@ -695,7 +689,7 @@ pfi_set_flags(const char *name, int flags)
 {
 	struct pfi_kif	*p;
 
-	lck_mtx_assert(pf_lock, LCK_MTX_ASSERT_OWNED);
+	LCK_MTX_ASSERT(pf_lock, LCK_MTX_ASSERT_OWNED);
 
 	RB_FOREACH(p, pfi_ifhead, &pfi_ifs) {
 		if (pfi_skip_if(name, p))
@@ -710,7 +704,7 @@ pfi_clear_flags(const char *name, int flags)
 {
 	struct pfi_kif	*p;
 
-	lck_mtx_assert(pf_lock, LCK_MTX_ASSERT_OWNED);
+	LCK_MTX_ASSERT(pf_lock, LCK_MTX_ASSERT_OWNED);
 
 	RB_FOREACH(p, pfi_ifhead, &pfi_ifs) {
 		if (pfi_skip_if(name, p))

@@ -109,6 +109,16 @@ public:
   OSMetaClassDeclareReservedUnused(IOInterruptController, 3);
   OSMetaClassDeclareReservedUnused(IOInterruptController, 4);
   OSMetaClassDeclareReservedUnused(IOInterruptController, 5);
+
+public:
+  // Generic methods (not to be overriden).
+
+  void timeStampSpuriousInterrupt(void);
+  void timeStampInterruptHandlerStart(IOInterruptVectorNumber vectorNumber, IOInterruptVector *vector);
+  void timeStampInterruptHandlerEnd(IOInterruptVectorNumber vectorNumber, IOInterruptVector *vector);
+
+private:
+  void timeStampInterruptHandlerInternal(bool isStart, IOInterruptVectorNumber vectorNumber, IOInterruptVector *vector);
 };
 
 
@@ -133,17 +143,17 @@ public:
   virtual IOReturn registerInterrupt(IOService *nub, int source,
                                      void *target,
                                      IOInterruptHandler handler,
-                                     void *refCon);
-  virtual IOReturn unregisterInterrupt(IOService *nub, int source);
+                                     void *refCon) APPLE_KEXT_OVERRIDE;
+  virtual IOReturn unregisterInterrupt(IOService *nub, int source) APPLE_KEXT_OVERRIDE;
   
   virtual IOReturn getInterruptType(IOService *nub, int source,
-				    int *interruptType);
+				    int *interruptType) APPLE_KEXT_OVERRIDE;
   
-  virtual IOReturn enableInterrupt(IOService *nub, int source);
-  virtual IOReturn disableInterrupt(IOService *nub, int source);
+  virtual IOReturn enableInterrupt(IOService *nub, int source) APPLE_KEXT_OVERRIDE;
+  virtual IOReturn disableInterrupt(IOService *nub, int source) APPLE_KEXT_OVERRIDE;
   
-  virtual IOInterruptAction getInterruptHandlerAddress(void);
-  virtual IOReturn handleInterrupt(void *refCon, IOService *nub, int source);
+  virtual IOInterruptAction getInterruptHandlerAddress(void) APPLE_KEXT_OVERRIDE;
+  virtual IOReturn handleInterrupt(void *refCon, IOService *nub, int source) APPLE_KEXT_OVERRIDE;
 
   OSMetaClassDeclareReservedUnused(IOSharedInterruptController, 0);
   OSMetaClassDeclareReservedUnused(IOSharedInterruptController, 1);

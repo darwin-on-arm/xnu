@@ -35,17 +35,17 @@ Product=$(shell tconf --product)
 Embedded=$(shell tconf --test TARGET_OS_EMBEDDED)
 
 ifeq "$(Embedded)" "YES"
-SDKPATH = $(shell xcodebuild -sdk $(SDKROOT) -version Path)
+SDKPATH = $(shell xcodebuild -sdk "$(SDKROOT)" -version Path)
 CFLAGS += -isysroot $(SDKPATH)
 EmbeddedOS=yes
 endif
 
-CC = xcrun -sdk $(SDKROOT) gcc
+CC = $(shell xcrun -sdk "$(SDKROOT)" -find gcc)
 #NOPIC=	-mdynamic-no-pic
 ARCH= i386
 
 ifeq "$(strip $(ARCH))" "fat"
-ARCH_FLAG=      -arch i386 -arch x86_64 
+ARCH_FLAG=      -arch i386 -arch x86_64
 else
 ARCH_FLAG=      -arch $(ARCH)
 endif
@@ -54,7 +54,7 @@ endif
 OPT_FLAG=	-Os
 SEMOP_FLAG=	-DUSE_SEMOP
 ifeq "$(Embedded)" "YES"
-SEMOP_FLAG= 
+SEMOP_FLAG=
 endif
 
 ###

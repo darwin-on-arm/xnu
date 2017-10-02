@@ -1,11 +1,38 @@
 /*
  * Copyright (c) 2004-2007 Apple Inc. All rights reserved.
+ *
+ * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
+ *
+ * This file contains Original Code and/or Modifications of Original Code
+ * as defined in and that are subject to the Apple Public Source License
+ * Version 2.0 (the 'License'). You may not use this file except in
+ * compliance with the License. The rights granted to you under the License
+ * may not be used to create, or enable the creation or redistribution of,
+ * unlawful or unlicensed copies of an Apple operating system, or to
+ * circumvent, violate, or enable the circumvention or violation of, any
+ * terms of an Apple operating system software license agreement.
+ *
+ * Please obtain a copy of the License at
+ * http://www.opensource.apple.com/apsl/ and read it before using this file.
+ *
+ * The Original Code and all software distributed under the License are
+ * distributed on an 'AS IS' basis, WITHOUT WARRANTY OF ANY KIND, EITHER
+ * EXPRESS OR IMPLIED, AND APPLE HEREBY DISCLAIMS ALL SUCH WARRANTIES,
+ * INCLUDING WITHOUT LIMITATION, ANY WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE, QUIET ENJOYMENT OR NON-INFRINGEMENT.
+ * Please see the License for the specific language governing rights and
+ * limitations under the License.
+ *
+ * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
 /*
  * @OSF_COPYRIGHT@
  */
 #ifndef	_MACH_ARM__STRUCTS_H_
 #define	_MACH_ARM__STRUCTS_H_
+
+#include <sys/cdefs.h> /* __DARWIN_UNIX03 */
+#include <machine/types.h> /* __uint32_t */
 
 #if __DARWIN_UNIX03
 #define _STRUCT_ARM_EXCEPTION_STATE	struct __darwin_arm_exception_state
@@ -75,6 +102,7 @@ _STRUCT_ARM_THREAD_STATE64
 	__uint64_t    __sp;		/* Stack pointer x31 */
 	__uint64_t    __pc;		/* Program counter */
 	__uint32_t    __cpsr;	/* Current program status register */
+	__uint32_t    __pad;    /* Same size for 32-bit or 64-bit clients */
 };
 #else /* !__DARWIN_UNIX03 */
 #define _STRUCT_ARM_THREAD_STATE64	struct arm_thread_state64
@@ -86,6 +114,7 @@ _STRUCT_ARM_THREAD_STATE64
 	__uint64_t    sp;		/* Stack pointer x31 */
 	__uint64_t    pc; 		/* Program counter */
 	__uint32_t    cpsr;		/* Current program status register */
+	__uint32_t    __pad;    /* Same size for 32-bit or 64-bit clients */
 };
 #endif /* __DARWIN_UNIX03 */
 
@@ -276,5 +305,19 @@ _STRUCT_ARM_DEBUG_STATE64
 	__uint64_t	  mdscr_el1; /* Bit 0 is SS (Hardware Single Step) */
 };
 #endif /* __DARWIN_UNIX03 */
+
+#if __DARWIN_UNIX03
+#define _STRUCT_ARM_CPMU_STATE64	struct __darwin_arm_cpmu_state64
+_STRUCT_ARM_CPMU_STATE64
+{
+	__uint64_t __ctrs[16];
+};
+#else /* __DARWIN_UNIX03 */
+#define _STRUCT_ARM_CPMU_STATE64	struct arm_cpmu_state64
+_STRUCT_ARM_CPMU_STATE64
+{
+	__uint64_t ctrs[16];
+};
+#endif /* !__DARWIN_UNIX03 */
 
 #endif /* _MACH_ARM__STRUCTS_H_ */

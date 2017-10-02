@@ -37,6 +37,12 @@
 
 #include <pexpert/device_tree.h>
 
+#if __arm64__
+typedef UInt64  dtptr_t;
+#else
+typedef UInt32  dtptr_t;
+#endif
+
 #include <machine/machine_routines.h>
 
 extern "C" {
@@ -53,14 +59,16 @@ int IODTGetDefault(const char *key, void *infoAddr, unsigned int infoSize );
 
 const IORegistryPlane * gIODTPlane;
 
-static OSArray *	gIODTPHandles;
-static OSArray *	gIODTPHandleMap;
+static OSArray *    gIODTPHandles;
+static OSArray *    gIODTPHandleMap;
+static OSData  *    gIODTResolvers;
 
 const OSSymbol *	gIODTNameKey;
 const OSSymbol *	gIODTUnitKey;
 const OSSymbol *	gIODTCompatibleKey;
 const OSSymbol * 	gIODTTypeKey;
 const OSSymbol * 	gIODTModelKey;
+const OSSymbol * 	gIODTTargetTypeKey;
 
 const OSSymbol * 	gIODTSizeCellKey;
 const OSSymbol * 	gIODTAddressCellKey;
@@ -77,6 +85,8 @@ const OSSymbol *	gIODTNWInterruptMappingKey;
 
 OSDictionary   *	gIODTSharedInterrupts;
 
+static IOLock  *    gIODTResolversLock;
+
 static IORegistryEntry * MakeReferenceTable( DTEntry dtEntry, bool copy );
 static void AddPHandle( IORegistryEntry * regEntry );
 static void FreePhysicalMemory( vm_offset_t * range );
@@ -88,7 +98,7 @@ IODeviceTreeAlloc( void * dtTop )
     IORegistryEntry *		parent;
     IORegistryEntry *		child;
     IORegistryIterator *	regIter;
-    DTEntryIterator		iter;
+    OpaqueDTEntryIterator	iter;
     DTEntry			dtChild;
     DTEntry			mapEntry;
     OSArray *			stack;
@@ -106,6 +116,7 @@ IODeviceTreeAlloc( void * dtTop )
     gIODTCompatibleKey 	= OSSymbol::withCStringNoCopy( "compatible" );
     gIODTTypeKey 		= OSSymbol::withCStringNoCopy( "device_type" );
     gIODTModelKey 		= OSSymbol::withCStringNoCopy( "model" );
+    gIODTTargetTypeKey		= OSSymbol::withCStringNoCopy( "target-type" );
     gIODTSizeCellKey 	= OSSymbol::withCStringNoCopy( "#size-cells" );
     gIODTAddressCellKey = OSSymbol::withCStringNoCopy( "#address-cells" );
     gIODTRangeKey 		= OSSymbol::withCStringNoCopy( "ranges" );
@@ -131,6 +142,9 @@ IODeviceTreeAlloc( void * dtTop )
 
     gIODTPHandles	= OSArray::withCapacity( 1 );
     gIODTPHandleMap	= OSArray::withCapacity( 1 );
+    gIODTResolvers  = OSData::withCapacity(16);
+
+    gIODTResolversLock = IOLockAlloc();
 
     gIODTInterruptCellKey
 		= OSSymbol::withCStringNoCopy("#interrupt-cells");
@@ -138,7 +152,7 @@ IODeviceTreeAlloc( void * dtTop )
     assert(    gIODTDefaultInterruptController && gIODTNWInterruptMappingKey 
 	    && gIODTAAPLInterruptsKey
 	    && gIODTPHandleKey && gIODTInterruptParentKey
-	    && gIODTPHandles && gIODTPHandleMap
+	    && gIODTPHandles && gIODTPHandleMap && gIODTResolvers && gIODTResolversLock
             && gIODTInterruptCellKey
 	 );
 
@@ -150,21 +164,21 @@ IODeviceTreeAlloc( void * dtTop )
     parent = MakeReferenceTable( (DTEntry)dtTop, freeDT );
 
     stack = OSArray::withObjects( (const OSObject **) &parent, 1, 10 );
-    DTCreateEntryIterator( (DTEntry)dtTop, &iter );
+    DTInitEntryIterator( (DTEntry)dtTop, &iter );
 
     do {
         parent = (IORegistryEntry *)stack->getObject( stack->getCount() - 1);
         //parent->release();
         stack->removeObject( stack->getCount() - 1);
 
-        while( kSuccess == DTIterateEntries( iter, &dtChild) ) {
+        while( kSuccess == DTIterateEntries( &iter, &dtChild) ) {
 
             child = MakeReferenceTable( dtChild, freeDT );
             child->attachToParent( parent, gIODTPlane);
 
             AddPHandle( child );
 
-            if( kSuccess == DTEnterEntry( iter, dtChild)) {
+            if( kSuccess == DTEnterEntry( &iter, dtChild)) {
                 stack->setObject( parent);
                 parent = child;
             }
@@ -173,10 +187,10 @@ IODeviceTreeAlloc( void * dtTop )
         }
 
     } while( stack->getCount()
-		&& (kSuccess == DTExitEntry( iter, &dtChild)));
+		&& (kSuccess == DTExitEntry( &iter, &dtChild)));
 
     stack->release();
-    DTDisposeEntryIterator( iter);
+    assert(kSuccess != DTExitEntry(&iter, &dtChild));
 
     // parent is now root of the created tree
 
@@ -251,25 +265,31 @@ int IODTGetLoaderInfo( const char *key, void **infoAddr, int *infoSize )
 {
     IORegistryEntry		*chosen;
     OSData				*propObj;
-    unsigned int		*propPtr;
+    dtptr_t				*propPtr;
     unsigned int		propSize;
+    int ret = -1;
 
     chosen = IORegistryEntry::fromPath( "/chosen/memory-map", gIODTPlane );
     if ( chosen == 0 ) return -1;
 
     propObj = OSDynamicCast( OSData, chosen->getProperty(key) );
-    if ( propObj == 0 ) return -1;
+    if ( propObj == 0 ) goto cleanup;
 
     propSize = propObj->getLength();
-    if ( propSize != (2 * sizeof(UInt32)) ) return -1;
+    if ( propSize != (2 * sizeof(dtptr_t)) ) goto cleanup;
  
-    propPtr = (unsigned int *)propObj->getBytesNoCopy();
-    if ( propPtr == 0 ) return -1;
+    propPtr = (dtptr_t *)propObj->getBytesNoCopy();
+    if ( propPtr == 0 ) goto cleanup;
 
-    *infoAddr = (void *)propPtr[0] ;
-    *infoSize = (int)   propPtr[1]; 
+    *infoAddr = (void *)(uintptr_t) (propPtr[0]);
+    *infoSize = (int)               (propPtr[1]);
 
-    return 0;
+    ret = 0;
+
+cleanup:
+    chosen->release();
+
+    return ret;
 }
 
 void IODTFreeLoaderInfo( const char *key, void *infoAddr, int infoSize )
@@ -285,6 +305,7 @@ void IODTFreeLoaderInfo( const char *key, void *infoAddr, int infoSize )
         chosen = IORegistryEntry::fromPath( "/chosen/memory-map", gIODTPlane );
         if ( chosen != 0 ) {
             chosen->removeProperty(key);
+            chosen->release();
         }
     }
 }
@@ -327,12 +348,13 @@ MakeReferenceTable( DTEntry dtEntry, bool copy )
     const OSSymbol		*nameKey;
     OSData				*data;
     const OSSymbol		*sym;
-    DTPropertyIterator	dtIter;
+    OpaqueDTPropertyIterator	dtIter;
     void				*prop;
     unsigned int		propSize;
     char				*name;
     char				location[ 32 ];
     bool				noLocation = true;
+    bool				kernelOnly;
 
     regEntry = new IOService;
 
@@ -342,11 +364,12 @@ MakeReferenceTable( DTEntry dtEntry, bool copy )
     }
 
     if( regEntry &&
-      (kSuccess == DTCreatePropertyIterator( dtEntry, &dtIter))) {
+      (kSuccess == DTInitPropertyIterator( dtEntry, &dtIter))) {
 
+        kernelOnly = (kSuccess == DTGetProperty(dtEntry, "kernel-only", &prop, &propSize));
         propTable = regEntry->getPropertyTable();
 
-        while( kSuccess == DTIterateProperties( dtIter, &name)) {
+        while( kSuccess == DTIterateProperties( &dtIter, &name)) {
 
             if(  kSuccess != DTGetProperty( dtEntry, name, &prop, &propSize ))
                 continue;
@@ -359,6 +382,9 @@ MakeReferenceTable( DTEntry dtEntry, bool copy )
                 data = OSData::withBytesNoCopy(prop, propSize);
             }
             assert( nameKey && data );
+
+            if (kernelOnly)
+                data->setSerializable(false);
 
             propTable->setObject( nameKey, data);
             data->release();
@@ -388,7 +414,6 @@ MakeReferenceTable( DTEntry dtEntry, bool copy )
                 regEntry->setLocation( location );
             }
         }
-        DTDisposePropertyIterator( dtIter);
     }
 
     return( regEntry);
@@ -426,14 +451,17 @@ static IORegistryEntry * FindPHandle( UInt32 phandle )
 static bool GetUInt32( IORegistryEntry * regEntry, const OSSymbol * name,
 			UInt32 * value )
 {
-    OSData	*data;
+    OSObject * obj;
+    OSData   * data;
+    bool       result;
 
-    if( (data = OSDynamicCast( OSData, regEntry->getProperty( name )))
-      && (4 == data->getLength())) {
-        *value = *((UInt32 *) data->getBytesNoCopy());
-        return( true );
-    } else
-        return( false );
+    if (!(obj = regEntry->copyProperty(name))) return (false);
+
+    result = ((data = OSDynamicCast(OSData, obj)) && (sizeof(UInt32) == data->getLength()));
+    if (result) *value = *((UInt32 *) data->getBytesNoCopy());
+
+    obj->release();
+    return(result);
 }
 
 static IORegistryEntry * IODTFindInterruptParent( IORegistryEntry * regEntry, IOItemCount index )
@@ -767,23 +795,24 @@ bool IODTMapInterrupts( IORegistryEntry * regEntry )
 /*
  */
 
-static const char *
+static bool
 CompareKey( OSString * key,
-		const IORegistryEntry * table, const OSSymbol * propName )
+		const IORegistryEntry * table, const OSSymbol * propName,
+		OSString ** matchingName )
 {
     OSObject		*prop;
     OSData			*data;
     OSString		*string;
     const char		*ckey;
     UInt32			keyLen;
+    UInt32          nlen;
     const char		*names;
     const char		*lastName;
     bool			wild;
     bool			matched;
     const char		*result = 0;
 
-    if( 0 == (prop = table->getProperty( propName )))
-	return( 0 );
+    if( 0 == (prop = table->copyProperty( propName ))) return( 0 );
 
     if( (data = OSDynamicCast( OSData, prop ))) {
         names = (const char *) data->getBytesNoCopy();
@@ -791,47 +820,48 @@ CompareKey( OSString * key,
     } else if( (string = OSDynamicCast( OSString, prop ))) {
         names = string->getCStringNoCopy();
         lastName = names + string->getLength() + 1;
-    } else
-		return( 0 );
+    } else names = 0;
 
-    ckey = key->getCStringNoCopy();
-    keyLen = key->getLength();
-    wild = ('*' == key->getChar( keyLen - 1 ));
+	if (names) {
+		ckey = key->getCStringNoCopy();
+		keyLen = key->getLength();
+		wild = ('*' == key->getChar( keyLen - 1 ));
 
-    do {
-        // for each name in the property
-        if( wild)
-            matched = (0 == strncmp( ckey, names, keyLen - 1 ));
-        else
-            matched = (keyLen == strlen( names ))
-                    && (0 == strncmp( ckey, names, keyLen ));
+		do {
+			// for each name in the property
+			nlen = strnlen(names, lastName - names);
+			if( wild)
+				matched = ((nlen >= (keyLen - 1)) && (0 == strncmp(ckey, names, keyLen - 1)));
+			else
+				matched = (keyLen == nlen) && (0 == strncmp(ckey, names, keyLen));
 
-        if( matched)
-            result = names;
+			if( matched)
+				result = names;
 
-        names = names + strlen( names) + 1;
+			names = names + nlen + 1;
 
-    } while( (names < lastName) && (false == matched));
+		} while( (names < lastName) && (false == matched));
+	}
 
-    return( result);
+    if (result && matchingName)	*matchingName = OSString::withCString( result );
+
+	if (prop) prop->release();
+
+    return (result != 0);
 }
 
 
 bool IODTCompareNubName( const IORegistryEntry * regEntry,
 			 OSString * name, OSString ** matchingName )
 {
-    const char		*result;
-    bool			matched;
+    bool matched;
 
-    matched =  (0 != (result = CompareKey( name, regEntry, gIODTNameKey)))
-	    || (0 != (result = CompareKey( name, regEntry, gIODTCompatibleKey)))
-	    || (0 != (result = CompareKey( name, regEntry, gIODTTypeKey)))
-	    || (0 != (result = CompareKey( name, regEntry, gIODTModelKey)));
+    matched = CompareKey( name, regEntry, gIODTNameKey,       matchingName)
+		   || CompareKey( name, regEntry, gIODTCompatibleKey, matchingName)
+		   || CompareKey( name, regEntry, gIODTTypeKey,       matchingName)
+		   || CompareKey( name, regEntry, gIODTModelKey,      matchingName);
 
-    if( result && matchingName)
-	*matchingName = OSString::withCString( result );
-
-    return( result != 0 );
+    return (matched);
 }
 
 bool IODTMatchNubWithKeys( IORegistryEntry * regEntry,
@@ -846,7 +876,7 @@ bool IODTMatchNubWithKeys( IORegistryEntry * regEntry,
         result = regEntry->compareNames( obj );
 		obj->release();
     }
-#if 0
+#if DEBUG
     else IOLog("Couldn't unserialize %s\n", keys );
 #endif
 
@@ -862,6 +892,7 @@ OSCollectionIterator * IODTFindMatchingEntries( IORegistryEntry * from,
     OSCollectionIterator	*cIter;
     bool					cmp;
     bool					minus = options & kIODTExclusive;
+
 
     iter = IORegistryIterator::iterateOver( from, gIODTPlane,
 		(options & kIODTRecursive) ? kIORegistryIterateRecursively : 0 );
@@ -896,7 +927,7 @@ OSCollectionIterator * IODTFindMatchingEntries( IORegistryEntry * from,
     }
 
     cIter = OSCollectionIterator::withCollection( result);
-    result->release();
+    if (result) result->release();
 
     return( cIter);
 }
@@ -904,32 +935,100 @@ OSCollectionIterator * IODTFindMatchingEntries( IORegistryEntry * from,
 
 struct IODTPersistent {
     IODTCompareAddressCellFunc	compareFunc;
-    IODTNVLocationFunc		locationFunc;
 };
 
 void IODTSetResolving( IORegistryEntry * 	regEntry,
 		IODTCompareAddressCellFunc	compareFunc,
-		IODTNVLocationFunc		locationFunc )
+		IODTNVLocationFunc		locationFunc __unused )
 {
-    IODTPersistent	persist;
-    OSData			*prop;
+    IODTPersistent	 persist;
+    IODTPersistent * entry;
+    OSNumber       * num;
+    unsigned int     index, count;
 
-    persist.compareFunc = compareFunc;
-    persist.locationFunc = locationFunc;
-    prop = OSData::withBytes( &persist, sizeof(persist));
-    if( !prop)
-        return;
+    IOLockLock(gIODTResolversLock);
 
-    prop->setSerializable(false);
-    regEntry->setProperty( gIODTPersistKey, prop);
-    prop->release();
+    count = (gIODTResolvers->getLength() / sizeof(IODTPersistent));
+    entry = (typeof(entry)) gIODTResolvers->getBytesNoCopy();
+    for (index = 0; index < count; index++)
+    {
+	if (compareFunc == entry->compareFunc) break;
+	entry++;
+    }
+    if (index == count)
+    {
+	persist.compareFunc = compareFunc;
+	if (!gIODTResolvers->appendBytes(&persist, sizeof(IODTPersistent))) panic("IODTSetResolving");
+    }
+
+    IOLockUnlock(gIODTResolversLock);
+
+    num = OSNumber::withNumber(index, 32);
+    regEntry->setProperty(gIODTPersistKey, num);
+    OSSafeReleaseNULL(num);
+
     return;
 }
 
+#if  defined(__arm64__)
+static SInt64 DefaultCompare( UInt32 cellCount, UInt32 left[], UInt32 right[] )
+{
+    SInt64 diff = 0;
+
+    if (cellCount == 2) {
+        diff = IOPhysical32(left[1], left[0]) - IOPhysical32(right[1], right[0]);
+    } else if (cellCount == 1) {
+        diff = ( left[0] - right[0] );
+    } else {
+        panic("DefaultCompare only knows how to handle 1 or 2 cells.");
+    }
+
+    return diff;
+}
+#elif defined(__arm__) || defined(__i386__) || defined(__x86_64__)
 static SInt32 DefaultCompare( UInt32 cellCount, UInt32 left[], UInt32 right[] )
 {
 	cellCount--;
 	return( left[ cellCount ] - right[ cellCount ] ); 
+}
+#else
+#error Unknown architecture.
+#endif
+
+static void AddLengthToCells( UInt32 numCells, UInt32 *cells, UInt64 offset)
+{
+    if (numCells == 1)
+    {
+        cells[0] += (UInt32)offset;
+    }
+    else {
+#if defined(__arm64__) || defined(__arm__)
+        UInt64 sum = cells[numCells - 2] + offset;
+        cells[numCells - 2] = (UInt32)sum;
+        if (sum > UINT32_MAX) {
+            cells[numCells - 1] += (UInt32)(sum >> 32);
+        }
+#else
+        UInt64 sum = cells[numCells - 1] + offset;
+        cells[numCells - 1] = (UInt32)sum;
+        if (sum > UINT32_MAX) {
+            cells[numCells - 2] += (UInt32)(sum >> 32);
+        }
+#endif
+    }
+}
+
+static IOPhysicalAddress CellsValue( UInt32 numCells, UInt32 *cells)
+{
+    if (numCells == 1) {
+        return IOPhysical32( 0, cells[0] );
+    } else {
+#if defined(__arm64__) || defined(arm)
+        return IOPhysical32( cells[numCells - 1], cells[numCells - 2] );
+#else
+        return IOPhysical32( cells[numCells - 2], cells[numCells - 1] );
+#endif
+    }
 }
 
 void IODTGetCellCounts( IORegistryEntry * regEntry,
@@ -948,18 +1047,21 @@ void IODTGetCellCounts( IORegistryEntry * regEntry,
 // Range[]: child-addr  our-addr  child-len
 // #cells:    child       ours     child
 
-bool IODTResolveAddressCell( IORegistryEntry * regEntry,
+bool IODTResolveAddressCell( IORegistryEntry * startEntry,
                              UInt32 cellsIn[],
-                             IOPhysicalAddress * phys, IOPhysicalLength * len )
+                             IOPhysicalAddress * phys, IOPhysicalLength * lenOut )
 {
-    IORegistryEntry	*parent;
-    OSData		*prop;
+    IORegistryEntry	* parent;
+    IORegistryEntry * regEntry;
+    OSData	    * prop;
+	OSNumber    * num;
+	unsigned int  index, count;
     // cells in addresses at regEntry
     UInt32		sizeCells, addressCells;
     // cells in addresses below regEntry
     UInt32		childSizeCells, childAddressCells;
     UInt32		childCells;
-    UInt32		cell[ 8 ], length;
+    UInt32		cell[ 8 ], propLen;
     UInt64		offset = 0;
     UInt32		endCell[ 8 ];
     UInt32		*range;
@@ -968,10 +1070,12 @@ bool IODTResolveAddressCell( IORegistryEntry * regEntry,
     UInt32		*endRanges;
     bool		ok = true;
     SInt64		diff, diff2, endDiff;
+    UInt64		len, rangeLen;
 
     IODTPersistent	*persist;
     IODTCompareAddressCellFunc	compare;
 
+    regEntry = startEntry;
     IODTGetCellCounts( regEntry, &childSizeCells, &childAddressCells );
     childCells = childAddressCells + childSizeCells;
 
@@ -979,124 +1083,119 @@ bool IODTResolveAddressCell( IORegistryEntry * regEntry,
         panic("IODTResolveAddressCell: Invalid device tree (%u,%u)", (uint32_t)childAddressCells, (uint32_t)childSizeCells);
 
     bcopy( cellsIn, cell, sizeof(UInt32) * childCells );
-    if( childSizeCells > 1)
-        *len = IOPhysical32( cellsIn[ childAddressCells + 1],
-                             cellsIn[ childAddressCells] );
-    else
-        *len = IOPhysical32( 0, cellsIn[ childAddressCells ] );
+    *lenOut = CellsValue( childSizeCells, cellsIn + childAddressCells );
 
     do
     {
-	prop = OSDynamicCast( OSData, regEntry->getProperty( gIODTRangeKey ));
-	if( 0 == prop) {
+        prop = OSDynamicCast( OSData, regEntry->getProperty( gIODTRangeKey ));
+        if( 0 == prop) {
             /* end of the road */
-	    if (childAddressCells == 2)  {
-                *phys = IOPhysical32( cell[ childAddressCells - 1 ], cell [ childAddressCells - 2 ]);
-	    } else  {
-	        *phys = IOPhysical32( 0, cell[ childAddressCells - 1 ]);
-	    }
+            *phys = CellsValue( childAddressCells, cell );
             *phys += offset;
-	    break;
-	}
+            if (regEntry != startEntry) regEntry->release();
+            break;
+        }
 
-	parent = regEntry->getParentEntry( gIODTPlane );
-	IODTGetCellCounts( parent, &sizeCells, &addressCells );
+        parent = regEntry->copyParentEntry( gIODTPlane );
+        IODTGetCellCounts( parent, &sizeCells, &addressCells );
 
-	if( (length = prop->getLength())) {
-	    // search
-	    startRange = (UInt32 *) prop->getBytesNoCopy();
-	    range = startRange;
-	    endRanges = range + (length / sizeof(UInt32));
+        if( (propLen = prop->getLength())) {
+            // search
+            startRange = (UInt32 *) prop->getBytesNoCopy();
+            range = startRange;
+            endRanges = range + (propLen / sizeof(UInt32));
 
-	    prop = (OSData *) regEntry->getProperty( gIODTPersistKey );
-	    if( prop) {
-		persist = (IODTPersistent *) prop->getBytesNoCopy();
-		compare = persist->compareFunc;
-	    } else if (addressCells == childAddressCells) {
-		compare = DefaultCompare;
-	    } else {
-	 	panic("There is no mixed comparison function yet...");
-	    }
-
-	    for( ok = false;
-		 range < endRanges;
-		 range += (childCells + addressCells) ) {
-
-		// is cell start within range?
-		diff = (*compare)( childAddressCells, cell, range );
-
-        if (childAddressCells > sizeof(endCell)/sizeof(endCell[0]))
-            panic("IODTResolveAddressCell: Invalid device tree (%u)", (uint32_t)childAddressCells);
-
-		bcopy(range, endCell, childAddressCells * sizeof(UInt32));
-
-		if (childAddressCells == 2) {
-			uint64_t sum = endCell[childAddressCells - 2] + IOPhysical32(range[childCells + addressCells - 1], range[childCells + addressCells - 2]);
-			endCell[childAddressCells - 2] = (uint32_t)(sum & 0x00000000FFFFFFFFULL);
-			if (sum > UINT32_MAX) {
-				endCell[childAddressCells - 1] += (uint32_t)((sum & 0xFFFFFFFF00000000ULL) >> 32);
-			}
-		} else {
-			endCell[childAddressCells - 1] += range[childCells + addressCells - 1];
-		}
-
-		diff2 = (*compare)( childAddressCells, cell, endCell );
-
-		if ((diff < 0) || (diff2 >= 0))
-		    continue;
-
-		ok = (0 == cell[childCells - 1]);
-		if (!ok)
+            compare = NULL;
+            num = OSDynamicCast(OSNumber, regEntry->getProperty(gIODTPersistKey));
+            if (num)
+            {
+		IOLockLock(gIODTResolversLock);
+		index = num->unsigned32BitValue();
+		count = gIODTResolvers->getLength() / sizeof(IODTPersistent);
+		if (index < count)
 		{
-		    // search for cell end
-		    bcopy(cell, endCell, childAddressCells * sizeof(UInt32));
-
-		    if (childSizeCells == 2) {
-			uint64_t sum;
-                        sum = endCell[childAddressCells - 2] + IOPhysical32(cell[childCells - 1], cell[childCells - 2]) - 1;
-			endCell[childAddressCells - 2] = (uint32_t)(sum & 0x00000000FFFFFFFFULL);
-			if (sum > UINT32_MAX) {
-				endCell[childAddressCells - 1] += (uint32_t)((sum & 0xFFFFFFFF00000000ULL) >> 32);
-			}
-		    } else {
-                        endCell[childAddressCells - 1] += cell[childCells - 1] - 1;
-		    }
-		    lookRange = startRange;
-		    for( ;
-			 lookRange < endRanges;
-			 lookRange += (childCells + addressCells) )
-		     {
-			// is cell >= range start?
-			endDiff = (*compare)( childAddressCells, endCell, lookRange );
-			if( endDiff < 0)
-			    continue;
-			if ((endDiff - cell[childCells - 1] + 1 + lookRange[childAddressCells + addressCells - 1])
-			    == (diff + range[childAddressCells + addressCells - 1]))
-			{
-			    ok = true;
-			    break;
-			}
-		    }
-		    if (!ok)
-			continue;
+		    persist = ((IODTPersistent *) gIODTResolvers->getBytesNoCopy()) + index;
+		    compare = persist->compareFunc;
 		}
-		offset += diff;
-		break;
+		IOLockUnlock(gIODTResolversLock);
+            }
+
+            if (!compare && (addressCells == childAddressCells)) {
+                compare = DefaultCompare;
 	    }
+            if (!compare) {
+                panic("There is no mixed comparison function yet...");
+            }
 
-        if (addressCells + sizeCells > sizeof(cell)/sizeof(cell[0]))
-            panic("IODTResolveAddressCell: Invalid device tree (%u, %u)", (uint32_t)addressCells, (uint32_t)sizeCells);
+            for( ok = false;
+                    range < endRanges;
+                    range += (childCells + addressCells) ) {
 
-	    // Get the physical start of the range from our parent
-	    bcopy( range + childAddressCells, cell, sizeof(UInt32) * addressCells );
-	    bzero( cell + addressCells, sizeof(UInt32) * sizeCells );
+                // is cell start within range?
+                diff = (*compare)( childAddressCells, cell, range );
 
-	} /* else zero length range => pass thru to parent */
+                if (childAddressCells > sizeof(endCell)/sizeof(endCell[0]))
+                    panic("IODTResolveAddressCell: Invalid device tree (%u)", (uint32_t)childAddressCells);
 
-	regEntry		= parent;
-	childSizeCells		= sizeCells;
-	childAddressCells	= addressCells;
-	childCells		= childAddressCells + childSizeCells;
+                bcopy(range, endCell, childAddressCells * sizeof(UInt32));
+
+                rangeLen = CellsValue(childSizeCells, range + childAddressCells + addressCells);
+                AddLengthToCells(childAddressCells, endCell, rangeLen);
+
+                diff2 = (*compare)( childAddressCells, cell, endCell );
+
+                // if start of cell < start of range, or end of range >= start of cell, skip
+                if ((diff < 0) || (diff2 >= 0))
+                    continue;
+
+                len = CellsValue(childSizeCells, cell + childAddressCells);
+                ok = (0 == len);
+
+                if (!ok)
+                {
+                    // search for cell end
+                    bcopy(cell, endCell, childAddressCells * sizeof(UInt32));
+
+                    AddLengthToCells(childAddressCells, endCell, len - 1);
+
+                    for( lookRange = startRange;
+                            lookRange < endRanges;
+                            lookRange += (childCells + addressCells) )
+                    {
+                        // make sure end of cell >= range start
+                        endDiff = (*compare)( childAddressCells, endCell, lookRange );
+                        if( endDiff < 0)
+                            continue;
+
+                        UInt64 rangeStart = CellsValue(addressCells, range + childAddressCells);
+                        UInt64 lookRangeStart = CellsValue(addressCells, lookRange + childAddressCells);
+                        if ((endDiff - len + 1 + lookRangeStart) == (diff + rangeStart))
+                        {
+                            ok = true;
+                            break;
+                        }
+                    }
+                    if (!ok)
+                        continue;
+                }
+                offset += diff;
+                break;
+            }
+
+            if (addressCells + sizeCells > sizeof(cell)/sizeof(cell[0]))
+                panic("IODTResolveAddressCell: Invalid device tree (%u, %u)", (uint32_t)addressCells, (uint32_t)sizeCells);
+
+            // Get the physical start of the range from our parent
+            bcopy( range + childAddressCells, cell, sizeof(UInt32) * addressCells );
+            bzero( cell + addressCells, sizeof(UInt32) * sizeCells );
+
+        } /* else zero length range => pass thru to parent */
+
+        if (regEntry != startEntry) regEntry->release();
+        regEntry		= parent;
+        childSizeCells		= sizeCells;
+        childAddressCells	= addressCells;
+        childCells		= childAddressCells + childSizeCells;
     }
     while( ok && regEntry);
 
@@ -1118,107 +1217,45 @@ OSArray * IODTResolveAddressing( IORegistryEntry * regEntry,
     OSArray				*array;
     IODeviceMemory		*range;
 
-    parentEntry = regEntry->getParentEntry( gIODTPlane );
-    addressProperty = (OSData *) regEntry->getProperty( addressPropertyName );
-    if( (0 == addressProperty) || (0 == parentEntry))
-        return( 0);
+    array = 0;
+    do
+    {
+        parentEntry = regEntry->copyParentEntry( gIODTPlane );
+        addressProperty = (OSData *) regEntry->getProperty( addressPropertyName );
+        if( (0 == addressProperty) || (0 == parentEntry)) break;
 
-    IODTGetCellCounts( parentEntry, &sizeCells, &addressCells );
-    if( 0 == sizeCells)
-        return( 0);
+        IODTGetCellCounts( parentEntry, &sizeCells, &addressCells );
+        if( 0 == sizeCells) break;
 
-    cells = sizeCells + addressCells;
-    reg = (UInt32 *) addressProperty->getBytesNoCopy();
-    num = addressProperty->getLength() / (4 * cells);
+        cells = sizeCells + addressCells;
+        reg = (UInt32 *) addressProperty->getBytesNoCopy();
+        num = addressProperty->getLength() / (4 * cells);
 
-    array = OSArray::withCapacity( 1 );
-    if( 0 == array)
-        return( 0);
+        array = OSArray::withCapacity( 1 );
+        if( 0 == array) break;
 
-    for( i = 0; i < num; i++) {
-        if( IODTResolveAddressCell( parentEntry, reg, &phys, &len )) {
-            range = 0;
-            if( parent)
-                range = IODeviceMemory::withSubRange( parent,
-                        phys - parent->getPhysicalSegment(0, 0, kIOMemoryMapperNone), len );
-            if( 0 == range)
-                range = IODeviceMemory::withRange( phys, len );
-            if( range)
-                array->setObject( range );
+        for( i = 0; i < num; i++) {
+            if( IODTResolveAddressCell( parentEntry, reg, &phys, &len )) {
+                range = 0;
+                if( parent)
+                    range = IODeviceMemory::withSubRange( parent,
+                            phys - parent->getPhysicalSegment(0, 0, kIOMemoryMapperNone), len );
+                if( 0 == range)
+                    range = IODeviceMemory::withRange( phys, len );
+                if( range)
+                    array->setObject( range );
+            }
+            reg += cells;
         }
-        reg += cells;
+
+        regEntry->setProperty( gIODeviceMemoryKey, array);
+        array->release();	/* ??? */
     }
+    while (false);
 
-    regEntry->setProperty( gIODeviceMemoryKey, array);
-    array->release();	/* ??? */
+    OSSafeReleaseNULL(parentEntry);
 
-    return( array);
-}
-
-static void IODTGetNVLocation(
-	IORegistryEntry * parent,
-	IORegistryEntry * regEntry,
-	UInt8 * busNum, UInt8 * deviceNum, UInt8 * functionNum )
-{
-
-    OSData			*prop;
-    IODTPersistent	*persist;
-    UInt32			*cell;
-
-    prop = (OSData *) parent->getProperty( gIODTPersistKey );
-    if( prop) {
-        persist = (IODTPersistent *) prop->getBytesNoCopy();
-        (*persist->locationFunc)( regEntry, busNum, deviceNum, functionNum );
-    } else {
-        prop = (OSData *) regEntry->getProperty( "reg" );
-        *functionNum	= 0;
-        if( prop) {
-            cell = (UInt32 *) prop->getBytesNoCopy();
-            *busNum 	= 3;
-            *deviceNum 	= 0x1f & (cell[ 0 ] >> 24);
-        } else {
-            *busNum 	= 0;
-            *deviceNum 	= 0;
-        }
-    }
-    return;
-}
-
-/*
- * Try to make the same messed up descriptor as Mac OS
- */
-
-IOReturn IODTMakeNVDescriptor( IORegistryEntry * regEntry,
-				IONVRAMDescriptor * hdr )
-{
-    IORegistryEntry		*parent;
-    UInt32				level;
-    UInt32				bridgeDevices;
-    UInt8				busNum;
-    UInt8				deviceNum;
-    UInt8				functionNum;
-
-    hdr->format 	= 1;
-    hdr->marker 	= 0;
-
-    for(level = 0, bridgeDevices = 0; 
-    	(parent = regEntry->getParentEntry( gIODTPlane )) && (level < 7); level++ ) {
-
-        IODTGetNVLocation( parent, regEntry,
-			&busNum, &deviceNum, &functionNum );
-        if( level)
-            bridgeDevices |= ((deviceNum & 0x1f) << ((level - 1) * 5));
-        else {
-            hdr->busNum 	= busNum;
-            hdr->deviceNum 	= deviceNum;
-            hdr->functionNum 	= functionNum;
-        }
-        regEntry = parent;
-    }
-    hdr->bridgeCount 	= level - 2;
-    hdr->bridgeDevices 	= bridgeDevices;
-
-    return( kIOReturnSuccess );
+    return (array);
 }
 
 OSData * IODTFindSlotName( IORegistryEntry * regEntry, UInt32 deviceNumber )
@@ -1228,44 +1265,49 @@ OSData * IODTFindSlotName( IORegistryEntry * regEntry, UInt32 deviceNumber )
     OSData				*ret = 0;
     UInt32				*bits;
     UInt32				i;
+    size_t              nlen;
     char				*names;
     char				*lastName;
     UInt32				mask;
 
     data = (OSData *) regEntry->getProperty("AAPL,slot-name");
-    if( data)
-        return( data);
-    parent = regEntry->getParentEntry( gIODTPlane );
-    if( !parent)
-        return( 0 );
-    data = OSDynamicCast( OSData, parent->getProperty("slot-names"));
-    if( !data)
-        return( 0 );
-    if( data->getLength() <= 4)
-        return( 0 );
+    if (data) return (data);
 
-    bits = (UInt32 *) data->getBytesNoCopy();
-    mask = *bits;
-    if( (0 == (mask & (1 << deviceNumber))))
-        return( 0 );
+    do
+    {
+        parent = regEntry->copyParentEntry( gIODTPlane );
+        if (!parent) break;
 
-    names = (char *)(bits + 1);
-    lastName = names + (data->getLength() - 4);
+        data = OSDynamicCast( OSData, parent->getProperty("slot-names"));
+        if (!data) break;
+        if (data->getLength() <= 4) break;
 
-    for( i = 0; (i <= deviceNumber) && (names < lastName); i++ ) {
+        bits = (UInt32 *) data->getBytesNoCopy();
+        mask = *bits;
+        if ((0 == (mask & (1 << deviceNumber)))) break;
 
-        if( mask & (1 << i)) {
-            if( i == deviceNumber) {
-                data = OSData::withBytesNoCopy( names, 1 + strlen( names));
-                if( data) {
-                    regEntry->setProperty("AAPL,slot-name", data);
-                    ret = data;
-                    data->release();
-                }
-            } else
-                names += 1 + strlen( names);
+        names = (char *)(bits + 1);
+        lastName = names + (data->getLength() - 4);
+
+        for( i = 0; (i <= deviceNumber) && (names < lastName); i++ ) {
+
+            if( mask & (1 << i)) {
+                nlen = 1 + strnlen(names, lastName - names);
+                if( i == deviceNumber) {
+                    data = OSData::withBytesNoCopy(names, nlen);
+                    if( data) {
+                        regEntry->setProperty("AAPL,slot-name", data);
+                        ret = data;
+                        data->release();
+                    }
+                } else
+                    names += nlen;
+            }
         }
     }
+    while (false);
+
+    OSSafeReleaseNULL(parent);
 
     return( ret );
 }

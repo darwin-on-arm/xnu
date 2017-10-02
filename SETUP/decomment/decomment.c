@@ -30,15 +30,7 @@
  
 #include <stdio.h>
 #include <ctype.h>	/* for isspace */
-
-#ifndef __linux__
 #include <libc.h>
-#else
-#include <string.h>
-#include <stdlib.h>
-#include <stdarg.h>
-#include <unistd.h>
-#endif
 
 /*
  * State of input scanner.

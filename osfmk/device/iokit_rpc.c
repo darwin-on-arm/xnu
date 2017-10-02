@@ -50,8 +50,6 @@
 #include <kern/sched_prim.h>
 #include <kern/misc_protos.h>
 
-#include <kern/assert.h>
-
 #include <vm/pmap.h>
 #include <vm/vm_map.h>
 #include <vm/vm_kern.h>
@@ -65,6 +63,9 @@
 #if defined(__i386__) || defined(__x86_64__)
 #include <i386/pmap.h>
 #endif
+#if defined(__arm__) || defined(__arm64__)
+#include <arm/pmap.h>
+#endif
 #include <IOKit/IOTypes.h>
 
 #define EXTERN
@@ -75,6 +76,7 @@
  */
 
 extern void iokit_add_reference( io_object_t obj );
+extern void iokit_add_connect_reference( io_object_t obj );
 
 extern ipc_port_t iokit_port_for_object( io_object_t obj,
 			ipc_kobject_type_t type );
@@ -142,7 +144,7 @@ MIGEXTERN io_object_t
 iokit_lookup_object_port(
 	ipc_port_t	port)
 {
-	register io_object_t	obj;
+	io_object_t	obj;
 
 	if (!IP_VALID(port))
 	    return (NULL);
@@ -164,7 +166,7 @@ MIGEXTERN io_object_t
 iokit_lookup_connect_port(
 	ipc_port_t	port)
 {
-	register io_object_t	obj;
+	io_object_t	obj;
 
 	if (!IP_VALID(port))
 	    return (NULL);
@@ -172,7 +174,7 @@ iokit_lookup_connect_port(
 	iokit_lock_port(port);
 	if (ip_active(port) && (ip_kotype(port) == IKOT_IOKIT_CONNECT)) {
 	    obj = (io_object_t) port->ip_kobject;
-	    iokit_add_reference( obj );
+	    iokit_add_connect_reference( obj );
 	}
 	else
 	    obj = NULL;
@@ -202,7 +204,7 @@ iokit_lookup_connect_ref(io_object_t connectRef, ipc_space_t space)
 			iokit_lock_port(port);
 			if (ip_active(port) && (ip_kotype(port) == IKOT_IOKIT_CONNECT)) {
 				obj = (io_object_t) port->ip_kobject;
-				iokit_add_reference(obj);
+				iokit_add_connect_reference(obj);
 			}
 			iokit_unlock_port(port);
 
@@ -259,8 +261,8 @@ MIGEXTERN ipc_port_t
 iokit_make_object_port(
 	io_object_t	obj )
 {
-    register ipc_port_t	port;
-    register ipc_port_t	sendPort;
+    ipc_port_t	port;
+    ipc_port_t	sendPort;
 
     if( obj == NULL)
         return IP_NULL;
@@ -281,8 +283,8 @@ MIGEXTERN ipc_port_t
 iokit_make_connect_port(
 	io_object_t	obj )
 {
-    register ipc_port_t	port;
-    register ipc_port_t	sendPort;
+    ipc_port_t	port;
+    ipc_port_t	sendPort;
 
     if( obj == NULL)
         return IP_NULL;
@@ -335,10 +337,12 @@ iokit_alloc_object_port( io_object_t obj, ipc_kobject_type_t type )
 EXTERN kern_return_t
 iokit_destroy_object_port( ipc_port_t port )
 {
+
+    iokit_lock_port(port);
     ipc_kobject_set( port, IKO_NULL, IKOT_NONE);
 
 //    iokit_remove_reference( obj );
-
+    iokit_unlock_port(port);
     ipc_port_dealloc_kernel( port);
     gIOKitPortCount--;
 
@@ -360,7 +364,7 @@ iokit_make_send_right( task_t task, io_object_t obj, ipc_kobject_type_t type )
 {
     ipc_port_t		port;
     ipc_port_t		sendPort;
-    mach_port_name_t	name;
+    mach_port_name_t	name = 0;
 
     if( obj == NULL)
         return MACH_PORT_NULL;
@@ -376,8 +380,10 @@ iokit_make_send_right( task_t task, io_object_t obj, ipc_kobject_type_t type )
     	kern_return_t	kr;
     	kr = ipc_object_copyout( task->itk_space, (ipc_object_t) sendPort,
 				MACH_MSG_TYPE_PORT_SEND, TRUE, &name);
-	if ( kr != KERN_SUCCESS)
-		name = MACH_PORT_NULL;
+	if ( kr != KERN_SUCCESS) {
+	    ipc_port_release_send( sendPort );
+	    name = MACH_PORT_NULL;
+	}
     } else if ( sendPort == IP_NULL)
         name = MACH_PORT_NULL;
     else if ( sendPort == IP_DEAD)
@@ -508,8 +514,13 @@ kern_return_t IOMapPages(vm_map_t map, mach_vm_address_t va, mach_vm_address_t p
 	case kIOMapCopybackCache:
 	    flags = VM_WIMG_COPYBACK;
 	    break;
+
 	case kIOMapCopybackInnerCache:
 	    flags = VM_WIMG_INNERWBACK;
+	    break;
+
+	case kIOMapPostedWrite:
+	    flags = VM_WIMG_POSTED;
 	    break;
     }
 
@@ -519,9 +530,7 @@ kern_return_t IOMapPages(vm_map_t map, mach_vm_address_t va, mach_vm_address_t p
 
 
     // Set up a block mapped area
-    pmap_map_block(pmap, va, pagenum, (uint32_t) atop_64(round_page_64(length)), prot, 0, 0);
-
-    return( KERN_SUCCESS );
+    return pmap_map_block(pmap, va, pagenum, (uint32_t) atop_64(round_page_64(length)), prot, 0, 0);
 }
 
 kern_return_t IOUnmapPages(vm_map_t map, mach_vm_address_t va, mach_vm_size_t length)
@@ -540,6 +549,8 @@ kern_return_t IOProtectCacheMode(vm_map_t __unused map, mach_vm_address_t __unus
     vm_prot_t	   prot;
     unsigned int   flags;
     pmap_t 	   pmap = map->pmap;
+    pmap_flush_context	pmap_flush_context_storage;
+    boolean_t		delayed_pmap_flush = FALSE;
 
     prot = (options & kIOMapReadOnly)
 		? VM_PROT_READ : (VM_PROT_READ|VM_PROT_WRITE);
@@ -566,15 +577,31 @@ kern_return_t IOProtectCacheMode(vm_map_t __unused map, mach_vm_address_t __unus
 	case kIOMapCopybackCache:
 	    flags = VM_WIMG_COPYBACK;
 	    break;
+
+	case kIOMapCopybackInnerCache:
+	    flags = VM_WIMG_INNERWBACK;
+	    break;
+
+	case kIOMapPostedWrite:
+	    flags = VM_WIMG_POSTED;
+	    break;
     }
+
+    pmap_flush_context_init(&pmap_flush_context_storage);
+    delayed_pmap_flush = FALSE;
 
     //  enter each page's physical address in the target map
     for (off = 0; off < length; off += page_size)
     {
 	ppnum_t ppnum = pmap_find_phys(pmap, va + off);
-	if (ppnum)
-	    pmap_enter(pmap, va + off, ppnum, prot, VM_PROT_NONE, flags, TRUE);
+	if (ppnum) {
+		pmap_enter_options(pmap, va + off, ppnum, prot, VM_PROT_NONE, flags, TRUE, 
+				   PMAP_OPTIONS_NOFLUSH, (void *)&pmap_flush_context_storage);
+		delayed_pmap_flush = TRUE;
+	}
     }
+    if (delayed_pmap_flush == TRUE)
+	    pmap_flush(&pmap_flush_context_storage);
 
     return (KERN_SUCCESS);
 }
@@ -592,7 +619,7 @@ ppnum_t IOGetLastPageNumber(void)
 			highest = lastPage;
 	}
 	return (highest);
-#elif defined(__arm__)
+#elif __arm__ || __arm64__
 	return 0;
 #else
 #error unknown arch

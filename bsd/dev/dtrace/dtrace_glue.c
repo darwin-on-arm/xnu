@@ -51,6 +51,8 @@
 #include <sys/dtrace.h>
 #include <sys/dtrace_impl.h>
 #include <libkern/OSAtomic.h>
+#include <kern/kern_types.h>
+#include <kern/timer_call.h>
 #include <kern/thread_call.h>
 #include <kern/task.h>
 #include <kern/sched_prim.h>
@@ -80,7 +82,7 @@ sprlock(pid_t pid)
 		return PROC_NULL;
 	}
 
-	task_suspend(p->task);
+	task_suspend_internal(p->task);
 
 	proc_lock(p);
 
@@ -98,7 +100,7 @@ sprunlock(proc_t *p)
 
 		proc_unlock(p);
 
-		task_resume(p->task);
+		task_resume_internal(p->task);
 
 		proc_rele(p);
 	}
@@ -225,6 +227,7 @@ done:
  * cpuvar
  */
 lck_mtx_t cpu_lock;
+lck_mtx_t cyc_lock;
 lck_mtx_t mod_lock;
 
 dtrace_cpu_t *cpu_list;
@@ -278,58 +281,75 @@ crgetuid(const cred_t *cr) { cred_t copy_cr = *cr; return kauth_cred_getuid(&cop
  * "cyclic"
  */
 
-/* osfmk/kern/timer_call.h */
-typedef void                *timer_call_param_t;
-typedef void                (*timer_call_func_t)(
-	timer_call_param_t      param0,
-	timer_call_param_t      param1);
-
-typedef struct timer_call {
-	queue_chain_t       q_link;
-	queue_t             queue;
-	timer_call_func_t   func;
-	timer_call_param_t  param0;
-	timer_call_param_t  param1;
-	decl_simple_lock_data(,lock);
-	uint64_t            deadline;
-	uint64_t            soft_deadline;
-	uint32_t            flags;
-	boolean_t	    async_dequeue;
-} timer_call_data_t;
-
-typedef struct timer_call   *timer_call_t;
-
-extern void
-timer_call_setup(
-	timer_call_t            call,
-	timer_call_func_t       func,
-	timer_call_param_t      param0);
-
-extern boolean_t
-timer_call_enter1(
-	timer_call_t            call,
-	timer_call_param_t      param1,
-	uint64_t                deadline,
-	uint32_t		flags);
-
-#ifndef TIMER_CALL_CRITICAL
-#define TIMER_CALL_CRITICAL 0x1
-#define TIMER_CALL_LOCAL    0x2
-#endif /* TIMER_CALL_CRITICAL */
-
-extern boolean_t
-timer_call_cancel(
-	timer_call_t            call);
-
 typedef struct wrap_timer_call {
-	cyc_handler_t hdlr;
-	cyc_time_t when;
-	uint64_t deadline;
-	struct timer_call call;
+	/* node attributes */
+	cyc_handler_t		hdlr;
+	cyc_time_t		when;
+	uint64_t		deadline;
+	int			cpuid;
+	boolean_t		suspended;
+	struct timer_call	call;
+
+	/* next item in the linked list */
+	LIST_ENTRY(wrap_timer_call) entries;
 } wrap_timer_call_t;
 
-#define WAKEUP_REAPER 0x7FFFFFFFFFFFFFFFLL
-#define NEARLY_FOREVER 0x7FFFFFFFFFFFFFFELL
+#define WAKEUP_REAPER		0x7FFFFFFFFFFFFFFFLL
+#define NEARLY_FOREVER		0x7FFFFFFFFFFFFFFELL
+
+
+typedef struct cyc_list {
+	cyc_omni_handler_t cyl_omni;
+	wrap_timer_call_t cyl_wrap_by_cpus[];
+#if __arm__ && (__BIGGEST_ALIGNMENT__ > 4)
+} __attribute__ ((aligned (8))) cyc_list_t;
+#else
+} cyc_list_t;
+#endif
+
+/* CPU going online/offline notifications */
+void (*dtrace_cpu_state_changed_hook)(int, boolean_t) = NULL;
+void dtrace_cpu_state_changed(int, boolean_t);
+
+void
+dtrace_install_cpu_hooks(void) {
+	dtrace_cpu_state_changed_hook = dtrace_cpu_state_changed;
+}
+
+void
+dtrace_cpu_state_changed(int cpuid, boolean_t is_running) {
+#pragma unused(cpuid)
+	wrap_timer_call_t	*wrapTC = NULL;
+	boolean_t		suspend = (is_running ? FALSE : TRUE);
+	dtrace_icookie_t	s;
+
+	/* Ensure that we're not going to leave the CPU */
+	s = dtrace_interrupt_disable();
+	assert(cpuid == cpu_number());
+
+	LIST_FOREACH(wrapTC, &(cpu_list[cpu_number()].cpu_cyc_list), entries) {
+		assert(wrapTC->cpuid == cpu_number());
+		if (suspend) {
+			assert(!wrapTC->suspended);
+			/* If this fails, we'll panic anyway, so let's do this now. */
+			if (!timer_call_cancel(&wrapTC->call))
+				panic("timer_call_set_suspend() failed to cancel a timer call");
+			wrapTC->suspended = TRUE;
+		} else {
+			/* Rearm the timer, but ensure it was suspended first. */
+			assert(wrapTC->suspended);
+			clock_deadline_for_periodic_event(wrapTC->when.cyt_interval, mach_absolute_time(),
+			                                  &wrapTC->deadline);
+			timer_call_enter1(&wrapTC->call, (void*) wrapTC, wrapTC->deadline,
+		                          TIMER_CALL_SYS_CRITICAL | TIMER_CALL_LOCAL);
+			wrapTC->suspended = FALSE;
+		}
+
+	}
+
+	/* Restore the previous interrupt state. */
+	dtrace_interrupt_enable(s);
+}
 
 static void
 _timer_call_apply_cyclic( void *ignore, void *vTChdl )
@@ -340,17 +360,14 @@ _timer_call_apply_cyclic( void *ignore, void *vTChdl )
 	(*(wrapTC->hdlr.cyh_func))( wrapTC->hdlr.cyh_arg );
 
 	clock_deadline_for_periodic_event( wrapTC->when.cyt_interval, mach_absolute_time(), &(wrapTC->deadline) );
-	timer_call_enter1( &(wrapTC->call), (void *)wrapTC, wrapTC->deadline, TIMER_CALL_CRITICAL | TIMER_CALL_LOCAL );
-
-	/* Did timer_call_remove_cyclic request a wakeup call when this timer call was re-armed? */
-	if (wrapTC->when.cyt_interval == WAKEUP_REAPER)
-		thread_wakeup((event_t)wrapTC);
+	timer_call_enter1( &(wrapTC->call), (void *)wrapTC, wrapTC->deadline, TIMER_CALL_SYS_CRITICAL | TIMER_CALL_LOCAL );
 }
 
 static cyclic_id_t
 timer_call_add_cyclic(wrap_timer_call_t *wrapTC, cyc_handler_t *handler, cyc_time_t *when)
 {
 	uint64_t now;
+	dtrace_icookie_t s;
 
 	timer_call_setup( &(wrapTC->call),  _timer_call_apply_cyclic, NULL );
 	wrapTC->hdlr = *handler;
@@ -362,34 +379,39 @@ timer_call_add_cyclic(wrap_timer_call_t *wrapTC, cyc_handler_t *handler, cyc_tim
 	wrapTC->deadline = now;
 
 	clock_deadline_for_periodic_event( wrapTC->when.cyt_interval, now, &(wrapTC->deadline) );
-	timer_call_enter1( &(wrapTC->call), (void *)wrapTC, wrapTC->deadline, TIMER_CALL_CRITICAL | TIMER_CALL_LOCAL );
+
+	/* Insert the timer to the list of the running timers on this CPU, and start it. */
+	s = dtrace_interrupt_disable();
+		wrapTC->cpuid = cpu_number();
+		LIST_INSERT_HEAD(&cpu_list[wrapTC->cpuid].cpu_cyc_list, wrapTC, entries);
+		timer_call_enter1(&wrapTC->call, (void*) wrapTC, wrapTC->deadline,
+		                  TIMER_CALL_SYS_CRITICAL | TIMER_CALL_LOCAL);
+		wrapTC->suspended = FALSE;
+	dtrace_interrupt_enable(s);
 
 	return (cyclic_id_t)wrapTC;
 }
 
+/*
+ * Executed on the CPU the timer is running on.
+ */
 static void
-timer_call_remove_cyclic(cyclic_id_t cyclic)
+timer_call_remove_cyclic(wrap_timer_call_t *wrapTC)
 {
-	wrap_timer_call_t *wrapTC = (wrap_timer_call_t *)cyclic;
+	assert(wrapTC);
+	assert(cpu_number() == wrapTC->cpuid);
 
-	while (!timer_call_cancel(&(wrapTC->call))) {
-		int ret = assert_wait(wrapTC, THREAD_UNINT);
-		ASSERT(ret == THREAD_WAITING);
+	if (!timer_call_cancel(&wrapTC->call))
+		panic("timer_call_remove_cyclic() failed to cancel a timer call");
 
-		wrapTC->when.cyt_interval = WAKEUP_REAPER;
-
-		ret = thread_block(THREAD_CONTINUE_NULL);
-		ASSERT(ret == THREAD_AWAKENED);
-	}
+	LIST_REMOVE(wrapTC, entries);	
 }
 
 static void *
-timer_call_get_cyclic_arg(cyclic_id_t cyclic)
-{       
-	wrap_timer_call_t *wrapTC = (wrap_timer_call_t *)cyclic;
- 	
+timer_call_get_cyclic_arg(wrap_timer_call_t *wrapTC)
+{
 	return (wrapTC ? wrapTC->hdlr.cyh_arg : NULL);
-}   
+}
 
 cyclic_id_t
 cyclic_timer_add(cyc_handler_t *handler, cyc_time_t *when)
@@ -406,71 +428,64 @@ cyclic_timer_remove(cyclic_id_t cyclic)
 {
 	ASSERT( cyclic != CYCLIC_NONE );
 
-	timer_call_remove_cyclic( cyclic );
+	/* Removing a timer call must be done on the CPU the timer is running on. */
+	wrap_timer_call_t *wrapTC = (wrap_timer_call_t *) cyclic;
+	dtrace_xcall(wrapTC->cpuid, (dtrace_xcall_t) timer_call_remove_cyclic, (void*) cyclic);
+
 	_FREE((void *)cyclic, M_TEMP);
 }
 
 static void
-_cyclic_add_omni(cyclic_id_list_t cyc_list)
+_cyclic_add_omni(cyc_list_t *cyc_list)
 {
 	cyc_time_t cT;
 	cyc_handler_t cH;
-	wrap_timer_call_t *wrapTC;
-	cyc_omni_handler_t *omni = (cyc_omni_handler_t *)cyc_list;
-	char *t;
+	cyc_omni_handler_t *omni = &cyc_list->cyl_omni;
 
-	(omni->cyo_online)(omni->cyo_arg, CPU, &cH, &cT); 
+	(omni->cyo_online)(omni->cyo_arg, CPU, &cH, &cT);
 
-	t = (char *)cyc_list;
-	t += sizeof(cyc_omni_handler_t);
-	cyc_list = (cyclic_id_list_t)(uintptr_t)t;
-
-	t += sizeof(cyclic_id_t)*NCPU;
-	t += (sizeof(wrap_timer_call_t))*cpu_number();
-	wrapTC = (wrap_timer_call_t *)(uintptr_t)t;
-
-	cyc_list[cpu_number()] = timer_call_add_cyclic(wrapTC, &cH, &cT);
+	wrap_timer_call_t *wrapTC = &cyc_list->cyl_wrap_by_cpus[cpu_number()];
+	timer_call_add_cyclic(wrapTC, &cH, &cT);
 }
 
 cyclic_id_list_t
 cyclic_add_omni(cyc_omni_handler_t *omni)
 {
-	cyclic_id_list_t cyc_list = 
-		_MALLOC( (sizeof(wrap_timer_call_t))*NCPU + 
-				 sizeof(cyclic_id_t)*NCPU + 
-				 sizeof(cyc_omni_handler_t), M_TEMP, M_ZERO | M_WAITOK);
-	if (NULL == cyc_list)
-		return (cyclic_id_list_t)CYCLIC_NONE;
+	cyc_list_t *cyc_list =
+		_MALLOC(sizeof(cyc_list_t) + NCPU * sizeof(wrap_timer_call_t), M_TEMP, M_ZERO | M_WAITOK);
 
-	*(cyc_omni_handler_t *)cyc_list = *omni;
+	if (NULL == cyc_list)
+		return NULL;
+
+	cyc_list->cyl_omni = *omni;
+
 	dtrace_xcall(DTRACE_CPUALL, (dtrace_xcall_t)_cyclic_add_omni, (void *)cyc_list);
 
-	return cyc_list;
+	return (cyclic_id_list_t)cyc_list;
 }
 
 static void
-_cyclic_remove_omni(cyclic_id_list_t cyc_list)
+_cyclic_remove_omni(cyc_list_t *cyc_list)
 {
-	cyc_omni_handler_t *omni = (cyc_omni_handler_t *)cyc_list;
+	cyc_omni_handler_t *omni = &cyc_list->cyl_omni;
 	void *oarg;
-	cyclic_id_t cid;
-	char *t;
+	wrap_timer_call_t *wrapTC;
 
-	t = (char *)cyc_list;
-	t += sizeof(cyc_omni_handler_t);
-	cyc_list = (cyclic_id_list_t)(uintptr_t)t;
-
-	cid = cyc_list[cpu_number()];
-	oarg = timer_call_get_cyclic_arg(cid);
-
-	timer_call_remove_cyclic( cid );
-	(omni->cyo_offline)(omni->cyo_arg, CPU, oarg);
+	/*
+	 * If the processor was offline when dtrace started, we did not allocate
+	 * a cyclic timer for this CPU.
+	 */
+	if ((wrapTC = &cyc_list->cyl_wrap_by_cpus[cpu_number()]) != NULL) {
+		oarg = timer_call_get_cyclic_arg(wrapTC);
+		timer_call_remove_cyclic(wrapTC);
+		(omni->cyo_offline)(omni->cyo_arg, CPU, oarg);
+	}
 }
 
 void
 cyclic_remove_omni(cyclic_id_list_t cyc_list)
 {
-	ASSERT( cyc_list != (cyclic_id_list_t)CYCLIC_NONE );
+	ASSERT(cyc_list != NULL);
 
 	dtrace_xcall(DTRACE_CPUALL, (dtrace_xcall_t)_cyclic_remove_omni, (void *)cyc_list);
 	_FREE(cyc_list, M_TEMP);
@@ -563,29 +578,6 @@ cyclic_remove(cyclic_id_t cyclic)
 }
 
 /*
- * timeout / untimeout (converted to dtrace_timeout / dtrace_untimeout due to name collision)
- */ 
-
-thread_call_t
-dtrace_timeout(void (*func)(void *, void *), void* arg, uint64_t nanos)
-{
-#pragma unused(arg)
-	thread_call_t call = thread_call_allocate(func, NULL);
-
-	nanoseconds_to_absolutetime(nanos, &nanos);
-
-	/*
-	 * This method does not use clock_deadline_for_periodic_event() because it is a one-shot,
-	 * and clock drift on later invocations is not a worry.
-	 */
-	uint64_t deadline = mach_absolute_time() + nanos;
-
-	thread_call_enter_delayed(call, deadline);
-
-	return call;
-}
-
-/*
  * ddi
  */
 void
@@ -594,54 +586,6 @@ ddi_report_dev(dev_info_t *devi)
 #pragma unused(devi)
 }
 
-#define NSOFT_STATES 32 /* XXX No more than 32 clients at a time, please. */
-static void *soft[NSOFT_STATES];
-
-int
-ddi_soft_state_init(void **state_p, size_t size, size_t n_items)
-{
-#pragma unused(n_items)
-	int i;
-	
-	for (i = 0; i < NSOFT_STATES; ++i) soft[i] = _MALLOC(size, M_TEMP, M_ZERO | M_WAITOK);
-	*(size_t *)state_p = size;
-	return 0;
-}
-
-int
-ddi_soft_state_zalloc(void *state, int item)
-{
-#pragma unused(state)
-	if (item < NSOFT_STATES)
-		return DDI_SUCCESS;
-	else
-		return DDI_FAILURE;
-}
-
-void *
-ddi_get_soft_state(void *state, int item)
-{
-#pragma unused(state)
-	ASSERT(item < NSOFT_STATES);
-	return soft[item];
-}
-
-int
-ddi_soft_state_free(void *state, int item)
-{
-	ASSERT(item < NSOFT_STATES);
-	bzero( soft[item], (size_t)state );
-	return DDI_SUCCESS;
-}
-
-void
-ddi_soft_state_fini(void **state_p)
-{
-#pragma unused(state_p)
-	int i;
-	
-	for (i = 0; i < NSOFT_STATES; ++i) _FREE( soft[i], M_TEMP );
-}
 
 static unsigned int gRegisteredProps = 0;
 static struct {
@@ -835,23 +779,34 @@ dt_kmem_free(void *buf, size_t size)
 
 void* dt_kmem_alloc_aligned(size_t size, size_t align, int kmflag)
 {
-	void* buf;
-	intptr_t p;
-	void** buf_backup;
+	void *mem, **addr_to_free;
+	intptr_t mem_aligned;
+	size_t *size_to_free, hdr_size;
 
-	buf = dt_kmem_alloc(align + sizeof(void*) + size, kmflag);
+	/* Must be a power of two. */
+	assert(align != 0);
+	assert((align & (align - 1)) == 0);
 
-	if(!buf)
+	/*
+	 * We are going to add a header to the allocation. It contains
+	 * the address to free and the total size of the buffer.
+	 */
+	hdr_size = sizeof(size_t) + sizeof(void*);
+	mem = dt_kmem_alloc(size + align + hdr_size, kmflag);
+	if (mem == NULL)
 		return NULL;
 
-	p = (intptr_t)buf;
-	p += sizeof(void*);				/* now we have enough room to store the backup */
-	p = P2ROUNDUP(p, align);			/* and now we're aligned */
+	mem_aligned = (intptr_t) (((intptr_t) mem + align + hdr_size) & ~(align - 1));
 
-	buf_backup = (void**)(p - sizeof(void*));
-	*buf_backup = buf;				/* back up the address we need to free */
+	/* Write the address to free in the header. */
+	addr_to_free = (void**) (mem_aligned - sizeof(void*));
+	*addr_to_free = mem;
 
-	return (void*)p;
+	/* Write the size to free in the header. */
+	size_to_free = (size_t*) (mem_aligned - hdr_size);
+	*size_to_free = size + align + hdr_size;
+
+	return (void*) mem_aligned;
 }
 
 void* dt_kmem_zalloc_aligned(size_t size, size_t align, int kmflag)
@@ -871,14 +826,14 @@ void* dt_kmem_zalloc_aligned(size_t size, size_t align, int kmflag)
 void dt_kmem_free_aligned(void* buf, size_t size)
 {
 #pragma unused(size)
-	intptr_t p;
-	void** buf_backup;
+	intptr_t ptr = (intptr_t) buf;
+	void **addr_to_free = (void**) (ptr - sizeof(void*));
+	size_t *size_to_free = (size_t*) (ptr - (sizeof(size_t) + sizeof(void*)));
 
-	p = (intptr_t)buf;
-	p -= sizeof(void*);
-	buf_backup = (void**)(p);
+	if (buf == NULL)
+		return;
 
-	dt_kmem_free(*buf_backup, size + ((char*)buf - (char*)*buf_backup));
+	dt_kmem_free(*addr_to_free, *size_to_free);
 }
 
 /*
@@ -1189,9 +1144,7 @@ dtrace_copycheck(user_addr_t uaddr, uintptr_t kaddr, size_t size)
 
 	ASSERT(kaddr + size >= kaddr);
 
-	if (ml_at_interrupt_context() ||	/* Avoid possible copyio page fault on int stack, which panics! */ 
-		0 != recover ||					/* Avoid reentrancy into copyio facility. */
-		uaddr + size < uaddr ||			/* Avoid address wrap. */
+	if (	uaddr + size < uaddr ||		/* Avoid address wrap. */
 		KERN_FAILURE == dtrace_copyio_preflight(uaddr)) /* Machine specific setup/constraints. */
 	{
 		DTRACE_CPUFLAG_SET(CPU_DTRACE_BADADDR);
@@ -1275,6 +1228,30 @@ dtrace_copyoutstr(uintptr_t src, user_addr_t dst, size_t len, volatile uint16_t 
 		}
 		dtrace_copyio_postflight(dst);
 	}
+}
+
+extern const int copysize_limit_panic;
+
+int
+dtrace_buffer_copyout(const void *kaddr, user_addr_t uaddr, vm_size_t nbytes)
+{
+	/*
+	 * Partition the copyout in copysize_limit_panic-sized chunks
+	 */
+	while (nbytes >= (vm_size_t)copysize_limit_panic) {
+		if (copyout(kaddr, uaddr, copysize_limit_panic) != 0)
+			return (EFAULT);
+
+		nbytes -= copysize_limit_panic;
+		uaddr += copysize_limit_panic;
+		kaddr += copysize_limit_panic;
+	}
+	if (nbytes > 0) {
+		if (copyout(kaddr, uaddr, nbytes) != 0)
+			return (EFAULT);
+	}
+
+	return (0);
 }
 
 uint8_t
@@ -1511,6 +1488,8 @@ strstr(const char *in, const char *str)
 {
     char c;
     size_t len;
+    if (!in || !str)
+        return in;
 
     c = *str++;
     if (!c)
@@ -1528,6 +1507,26 @@ strstr(const char *in, const char *str)
     } while (strncmp(in, str, len) != 0);
 
     return (const char *) (in - 1);
+}
+
+const void*
+bsearch(const void *key, const void *base0, size_t nmemb, size_t size, int (*compar)(const void *, const void *))
+{
+	const char *base = base0;
+	size_t lim;
+	int cmp;
+	const void *p;
+	for (lim = nmemb; lim != 0; lim >>= 1) {
+		p = base + (lim >> 1) * size;
+		cmp = (*compar)(key, p);
+		if (cmp == 0)
+			return p;
+		if (cmp > 0) {	/* key > p: move right */
+			base = (const char *)p + size;
+			lim--;
+		}		/* else move left */
+	}
+	return (NULL);
 }
 
 /*

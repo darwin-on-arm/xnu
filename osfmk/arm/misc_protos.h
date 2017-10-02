@@ -1,81 +1,98 @@
 /*
- * Copyright 2013, winocm. <winocm@icloud.com>
- * All rights reserved.
- * 
- * Redistribution and use in source and binary forms, with or without modification,
- * are permitted provided that the following conditions are met:
- * 
- *   Redistributions of source code must retain the above copyright notice, this
- *   list of conditions and the following disclaimer.
- * 
- *   Redistributions in binary form must reproduce the above copyright notice, this
- *   list of conditions and the following disclaimer in the documentation and/or
- *   other materials provided with the distribution.
- * 
- *   If you are going to use this software in any form that does not involve
- *   releasing the source to this project or improving it, let me know beforehand.
+ * Copyright (c) 2007 Apple Inc. All rights reserved.
  *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
- * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
- * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
- * ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
- * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
- * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
- * ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
- * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
+ *
+ * This file contains Original Code and/or Modifications of Original Code
+ * as defined in and that are subject to the Apple Public Source License
+ * Version 2.0 (the 'License'). You may not use this file except in
+ * compliance with the License. The rights granted to you under the License
+ * may not be used to create, or enable the creation or redistribution of,
+ * unlawful or unlicensed copies of an Apple operating system, or to
+ * circumvent, violate, or enable the circumvention or violation of, any
+ * terms of an Apple operating system software license agreement.
+ *
+ * Please obtain a copy of the License at
+ * http://www.opensource.apple.com/apsl/ and read it before using this file.
+ *
+ * The Original Code and all software distributed under the License are
+ * distributed on an 'AS IS' basis, WITHOUT WARRANTY OF ANY KIND, EITHER
+ * EXPRESS OR IMPLIED, AND APPLE HEREBY DISCLAIMS ALL SUCH WARRANTIES,
+ * INCLUDING WITHOUT LIMITATION, ANY WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE, QUIET ENJOYMENT OR NON-INFRINGEMENT.
+ * Please see the License for the specific language governing rights and
+ * limitations under the License.
+ *
+ * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
 /*
- * Other prototypes for the ARM platform.
+ * @OSF_COPYRIGHT@
  */
 
-#ifndef _ARM_MISC_PROTOS_H_
-#define _ARM_MISC_PROTOS_H_
+#ifndef	_ARM_MISC_PROTOS_H_
+#define	_ARM_MISC_PROTOS_H_
 
-#include <mach/mach_types.h>
-#include <pexpert/pexpert.h>
-#include <machine/machine_routines.h>
-#include <mach/vm_param.h>
-#include <kern/processor.h>
-#include <arm/cpuid.h>
-
-typedef struct _abort_information_context {
-    uint32_t r[13];
-    uint32_t sp;
-    uint32_t lr;
-    uint32_t pc;
-    uint32_t cpsr;
-    uint32_t fsr;
-    uint32_t far;
-} abort_information_context_t;
+#include <kern/kern_types.h>
 
 extern processor_t cpu_processor_alloc(boolean_t is_boot_cpu);
-extern void cpu_init(void);
-extern void cpu_bootstrap(void);
+extern void cpu_processor_free(processor_t proc);
 
-extern void draw_panic_dialog(void);
+extern void machine_startup(__unused boot_args *args) __attribute__((noinline));
+extern void machine_lockdown_preflight(void);
+extern void machine_lockdown(void);
+extern void arm_vm_init(uint64_t memory_size, boot_args *args);
+extern void arm_vm_prot_init(boot_args *args);
+extern void arm_vm_prot_finalize(boot_args *args);
 
-#ifndef __LP64__
-extern void arm_set_threadpid_user_readonly(uint32_t * address);
-extern void arm_set_threadpid_priv_readwrite(uint32_t * address);
+
+extern kern_return_t DebuggerXCallEnter(boolean_t);
+extern void DebuggerXCallReturn(void);
+
+#if __arm64__ && DEBUG
+extern void dump_kva_space(void);
+#endif
+
+extern void Load_context(thread_t);
+extern void Idle_load_context(void) __attribute__((noreturn));
+extern thread_t Switch_context(thread_t, thread_continue_t, thread_t);
+extern thread_t Shutdown_context(void (*doshutdown)(processor_t), processor_t  processor);
+extern void Call_continuation(thread_continue_t, void *, wait_result_t, vm_offset_t);
+
+extern void DebuggerCall(unsigned int reason, void *ctx);
+extern void DebuggerXCall(void *ctx);
+
+extern int _copyinstr(const user_addr_t user_addr, char *kernel_addr, vm_size_t max, vm_size_t *actual);
+extern int copyout_kern(const char *kernel_addr, user_addr_t user_addr, vm_size_t nbytes);
+extern int copyin_kern(const user_addr_t user_addr, char *kernel_addr, vm_size_t nbytes);
+
+extern void bcopy_phys(addr64_t from, addr64_t to, vm_size_t nbytes);
+
+extern void dcache_incoherent_io_flush64(addr64_t pa, unsigned int count, unsigned int remaining, unsigned int *res);
+extern void dcache_incoherent_io_store64(addr64_t pa, unsigned int count, unsigned int remaining, unsigned int *res);
+
+#if defined(__arm__)
+extern void copy_debug_state(arm_debug_state_t *src, arm_debug_state_t *target, __unused boolean_t all);
+#elif defined(__arm64__)
+extern void copy_legacy_debug_state(arm_legacy_debug_state_t *src, arm_legacy_debug_state_t *target, __unused boolean_t all);
+extern void copy_debug_state32(arm_debug_state32_t *src, arm_debug_state32_t *target, __unused boolean_t all);
+extern void copy_debug_state64(arm_debug_state64_t *src, arm_debug_state64_t *target, __unused boolean_t all);
+
+extern boolean_t debug_legacy_state_is_valid(arm_legacy_debug_state_t *ds);
+extern boolean_t debug_state_is_valid32(arm_debug_state32_t *ds);
+extern boolean_t debug_state_is_valid64(arm_debug_state64_t *ds);
+
+extern int copyio_check_user_addr(user_addr_t user_addr, vm_size_t nbytes);
+extern int _emulate_swp(user_addr_t addr, uint32_t newval, uint32_t *oldval);
+extern int _emulate_swpb(user_addr_t addr, uint8_t newval, uint32_t *oldval);
+
+/* Top-Byte-Ignore */
+extern boolean_t user_tbi;
+#define TBI_MASK		0xff00000000000000
+#define user_tbi_enabled()	(user_tbi)
+#define tbi_clear(addr)		((addr) & ~(TBI_MASK))
+
 #else
-extern void arm_set_threadpid_user_readonly(uint64_t * address);
-extern void arm_set_threadpid_priv_readwrite(uint64_t * address);
+#error Unknown architecture.
 #endif
 
-extern int arm_usimple_lock(usimple_lock_t l);
-
-void panic_arm_backtrace(void *_frame, int nframes, const char *msg,
-                         boolean_t regdump, arm_saved_state_t * regs);
-
-void arm_vm_init(uint32_t mem_limit, boot_args * args);
-
-void sleh_abort(void *context, int reason);
-
-void cache_initialize(void);
-
-void get_cachetype_cp15();
-void identify_arm_cpu(void);
-
-#endif
+#endif /* _ARM_MISC_PROTOS_H_ */

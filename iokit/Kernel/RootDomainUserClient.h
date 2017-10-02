@@ -48,49 +48,48 @@ class RootDomainUserClient : public IOUserClient
 
     friend class IOPMrootDomain;
 private:
-    IOPMrootDomain *	fOwner;
+    IOPMrootDomain *    fOwner;
     task_t              fOwningTask;
 
     IOReturn            secureSleepSystem( uint32_t *return_code );
-    
-    IOReturn            secureSleepSystemOptions( const void  *inOptions, 
+
+    IOReturn            secureSleepSystemOptions( const void  *inOptions,
                                                   IOByteCount  inOptionsSize,
                                                   uint32_t  *returnCode);
 
-    IOReturn            secureSetAggressiveness( unsigned long type, 
-                                                 unsigned long newLevel, 
+    IOReturn            secureSetAggressiveness( unsigned long type,
+                                                 unsigned long newLevel,
                                                  int *return_code );
 
     IOReturn            secureSetMaintenanceWakeCalendar(
                                                 IOPMCalendarStruct  *inCalendar,
                                                 uint32_t            *returnCode);
-                                                
+
     IOReturn            secureSetUserAssertionLevels(uint32_t    assertionBitfield);
 
-    IOReturn            secureGetSystemSleepType( uint32_t *sleepType );
+    IOReturn            secureGetSystemSleepType( uint32_t *sleepType, uint32_t *sleepTimer);
 
 public:
 
-    virtual IOReturn clientClose( void );
-    
-    virtual IOReturn clientMemoryForType( UInt32 type, IOOptionBits *options, IOMemoryDescriptor **memory);
-    
-    virtual IOReturn externalMethod( uint32_t selector, 
+    virtual IOReturn clientClose( void ) APPLE_KEXT_OVERRIDE;
+
+    virtual IOReturn externalMethod( uint32_t selector,
                     IOExternalMethodArguments * arguments,
-					IOExternalMethodDispatch * dispatch, 
-					OSObject * target, 
-					void * reference );
+                    IOExternalMethodDispatch * dispatch,
+                    OSObject * target,
+                    void * reference ) APPLE_KEXT_OVERRIDE;
 
-    virtual bool start( IOService * provider );
+    virtual bool start( IOService * provider ) APPLE_KEXT_OVERRIDE;
 
-    virtual bool initWithTask(task_t owningTask, void *security_id, 
-					UInt32 type, OSDictionary * properties);
+    virtual bool initWithTask(task_t owningTask, void *security_id,
+                    UInt32 type, OSDictionary * properties) APPLE_KEXT_OVERRIDE;
 
     // Unused - retained for symbol compatibility
     void setPreventative(UInt32 on_off, UInt32 types_of_sleep);
 
     // Unused - retained for symbol compatibility
-    virtual IOExternalMethod * getTargetAndMethodForIndex( IOService ** targetP, UInt32 index );
+    virtual IOExternalMethod * getTargetAndMethodForIndex( IOService ** targetP, UInt32 index ) APPLE_KEXT_OVERRIDE;
+    virtual void stop( IOService *provider) APPLE_KEXT_OVERRIDE;
 
 };
 

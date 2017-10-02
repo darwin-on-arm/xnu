@@ -113,6 +113,72 @@ typedef mach_port_t		vm_map_t;
 typedef uint64_t		vm_object_offset_t;
 typedef uint64_t		vm_object_size_t;
 
+
+#ifdef XNU_KERNEL_PRIVATE
+
+#define VM_TAG_ACTIVE_UPDATE    1
+
+typedef uint16_t vm_tag_t;
+
+#define VM_TAG_NAME_LEN_MAX	0x7F
+#define VM_TAG_NAME_LEN_SHIFT	0
+#define VM_TAG_BT		0x0080
+#define VM_TAG_UNLOAD	   	0x0100
+#define VM_TAG_KMOD		0x0200
+
+#if DEBUG || DEVELOPMENT
+#define VM_MAX_TAG_ZONES   	28
+#else
+#define VM_MAX_TAG_ZONES   	0
+#endif
+
+#if VM_MAX_TAG_ZONES
+// must be multiple of 64
+#define VM_MAX_TAG_VALUE   	1536
+#else
+#define VM_MAX_TAG_VALUE   	256
+#endif
+
+
+#define ARRAY_COUNT(a)	(sizeof((a)) / sizeof((a)[0]))
+
+struct vm_allocation_total
+{
+    vm_tag_t tag;
+    uint64_t total;
+};
+
+struct vm_allocation_zone_total
+{
+    uint64_t  total;
+    uint64_t  peak;
+    uint32_t  waste;
+    uint32_t  wastediv;
+};
+typedef struct vm_allocation_zone_total vm_allocation_zone_total_t;
+
+struct vm_allocation_site
+{
+    uint64_t  total;
+#if DEBUG || DEVELOPMENT
+    uint64_t  peak;
+#endif /* DEBUG || DEVELOPMENT */
+    uint64_t  mapped;
+    int16_t   refcount;
+    vm_tag_t  tag;
+    uint16_t  flags;
+    uint16_t  subtotalscount;
+    struct vm_allocation_total subtotals[0];
+    char      name[0];
+};
+typedef struct vm_allocation_site vm_allocation_site_t;
+
+#define VM_ALLOC_SITE_STATIC(iflags, itag)                               	    \
+	static vm_allocation_site_t site __attribute__((section("__DATA, __data"))) \
+	 = { .refcount = 2, .tag = (itag), .flags = (iflags) };
+
+#endif /* XNU_KERNEL_PRIVATE */
+
 #ifdef  KERNEL_PRIVATE
 
 #ifndef	MACH_KERNEL_PRIVATE

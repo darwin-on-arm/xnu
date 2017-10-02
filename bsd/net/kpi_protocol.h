@@ -1,8 +1,8 @@
 /*
- * Copyright (c) 2008 Apple Computer, Inc. All rights reserved.
+ * Copyright (c) 2008-2016 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
- * 
+ *
  * This file contains Original Code and/or Modifications of Original Code
  * as defined in and that are subject to the Apple Public Source License
  * Version 2.0 (the 'License'). You may not use this file except in
@@ -11,10 +11,10 @@
  * unlawful or unlicensed copies of an Apple operating system, or to
  * circumvent, violate, or enable the circumvention or violation of, any
  * terms of an Apple operating system software license agreement.
- * 
+ *
  * Please obtain a copy of the License at
  * http://www.opensource.apple.com/apsl/ and read it before using this file.
- * 
+ *
  * The Original Code and all software distributed under the License are
  * distributed on an 'AS IS' basis, WITHOUT WARRANTY OF ANY KIND, EITHER
  * EXPRESS OR IMPLIED, AND APPLE HEREBY DISCLAIMS ALL SUCH WARRANTIES,
@@ -22,7 +22,7 @@
  * FITNESS FOR A PARTICULAR PURPOSE, QUIET ENJOYMENT OR NON-INFRINGEMENT.
  * Please see the License for the specific language governing rights and
  * limitations under the License.
- * 
+ *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
 /*!
@@ -39,14 +39,13 @@
 #include <sys/kernel_types.h>
 #include <net/kpi_interface.h>
 
-
 __BEGIN_DECLS
 
 /******************************************************************************/
 /* Protocol input/inject                                                      */
 /******************************************************************************/
 
-#ifdef KERNEL_PRIVATE
+#ifdef BSD_KERNEL_PRIVATE
 /*!
 	@typedef protocol_input_handler
 	@discussion protocol_input_handler is called to input a packet. If
@@ -91,13 +90,9 @@ extern errno_t proto_register_input(protocol_family_t protocol,
 		to unload until the proto_detached_handler is called.
 	@param protocol The protocol family these functions will receive
 		packets for.
-	@param input The function called when a packet is input.
-	@param inject The function to called when a packet is injected (not
-		on the normal input path).
-	@result A errno error on failure.
  */
 extern void proto_unregister_input(protocol_family_t protocol);
-#endif /* KERNEL_PRIVATE */
+#endif /* BSD_KERNEL_PRIVATE */
 
 /*!
 	@function proto_input
@@ -133,7 +128,7 @@ extern errno_t proto_inject(protocol_family_t protocol, mbuf_t packet);
 		interface. A typical protocol plumb function would fill out an
 		ifnet_attach_proto_param and call ifnet_attach_protocol.
 	@param ifp The interface the protocol should be attached to.
-	@param protocol_family The protocol that should be attached to the
+	@param protocol The protocol that should be attached to the
 		interface.
 	@result
 		A non-zero value of the attach failed.
@@ -146,7 +141,7 @@ typedef errno_t (*proto_plumb_handler)(ifnet_t ifp, protocol_family_t protocol);
 		from an interface. A typical unplumb function would call
 		ifnet_detach_protocol and perform any necessary cleanup.
 	@param ifp The interface the protocol should be detached from.
-	@param protocol_family The protocol that should be detached from the
+	@param protocol The protocol that should be detached from the
 		interface.
  */
 typedef void (*proto_unplumb_handler)(ifnet_t ifp, protocol_family_t protocol);
@@ -181,7 +176,7 @@ extern errno_t proto_register_plumber(protocol_family_t proto_fam,
 extern void proto_unregister_plumber(protocol_family_t proto_fam,
     ifnet_family_t if_fam);
 
-#ifdef KERNEL_PRIVATE
+#ifdef BSD_KERNEL_PRIVATE
 /*
 	@function proto_plumb
 	@discussion Plumbs a protocol to an actual interface.  This will find
@@ -212,9 +207,9 @@ extern errno_t proto_plumb(protocol_family_t protocol_family, ifnet_t ifp);
 extern errno_t proto_unplumb(protocol_family_t protocol_family, ifnet_t ifp);
 
 __private_extern__ void
-proto_kpi_init(void) __attribute__((section("__TEXT, initcode")));
+proto_kpi_init(void);
 
-#endif /* KERNEL_PRIVATE */
+#endif /* BSD_KERNEL_PRIVATE */
 __END_DECLS
 
 #endif /* __KPI_PROTOCOL__ */

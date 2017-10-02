@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2007-2011 Apple Inc. All rights reserved.
+ * Copyright (c) 2007-2016 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -32,6 +32,7 @@
 /*
  * Copyright (c) 2001 Daniel Hartmeier
  * Copyright (c) 2002,2003 Henning Brauer
+ * NAT64 - Copyright (c) 2010 Viagenie Inc. (http://www.viagenie.ca)
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -73,6 +74,7 @@
 #endif /* KERNEL */
 #include <sys/mbuf.h>
 
+#include <netinet/ip_dummynet.h>
 #include <netinet/in.h>
 #include <netinet/in_systm.h>
 #include <netinet/ip.h>
@@ -151,23 +153,20 @@ pf_get_ruleset_number(u_int8_t action)
 	case PF_SCRUB:
 	case PF_NOSCRUB:
 		return (PF_RULESET_SCRUB);
-		break;
 	case PF_PASS:
 	case PF_DROP:
 		return (PF_RULESET_FILTER);
-		break;
 	case PF_NAT:
 	case PF_NONAT:
 		return (PF_RULESET_NAT);
-		break;
 	case PF_BINAT:
 	case PF_NOBINAT:
 		return (PF_RULESET_BINAT);
-		break;
 	case PF_RDR:
 	case PF_NORDR:
+	case PF_NAT64:
+	case PF_NONAT64:
 		return (PF_RULESET_RDR);
-		break;
 #if DUMMYNET
 	case PF_DUMMYNET:
 	case PF_NODUMMYNET:
@@ -175,7 +174,6 @@ pf_get_ruleset_number(u_int8_t action)
 #endif /* DUMMYNET */
 	default:
 		return (PF_RULESET_MAX);
-		break;
 	}
 }
 
@@ -237,7 +235,7 @@ pf_find_ruleset_with_owner(const char *path, const char *owner, int is_anchor,
 		*error = EINVAL;
 		return (NULL);
 	} else {
-		if ((owner && anchor->owner && (!strcmp(owner, anchor->owner)))
+		if ((owner && (!strcmp(owner, anchor->owner)))
 		    || (is_anchor && !strcmp(anchor->owner, "")))
 			return (&anchor->ruleset);
 		*error = EPERM;
@@ -248,7 +246,7 @@ pf_find_ruleset_with_owner(const char *path, const char *owner, int is_anchor,
 struct pf_ruleset *
 pf_find_or_create_ruleset(const char *path)
 {
-	char			*p, *q, *r;
+	char			*p, *q = NULL, *r;
 	struct pf_ruleset	*ruleset;
 	struct pf_anchor	*anchor = 0, *dup, *parent = NULL;
 
@@ -332,6 +330,11 @@ pf_find_or_create_ruleset(const char *path)
 			q = r + 1;
 		else
 			*q = 0;
+#if DUMMYNET
+		if(strncmp("com.apple.nlc", anchor->name,
+		    sizeof("com.apple.nlc")) == 0)
+			is_nlc_enabled_glb = TRUE;
+#endif
 	}
 	rs_free(p);
 	return (anchor ? &anchor->ruleset : 0);
@@ -355,6 +358,16 @@ pf_remove_if_empty_ruleset(struct pf_ruleset *ruleset)
 			    ruleset->rules[i].inactive.open)
 				return;
 		RB_REMOVE(pf_anchor_global, &pf_anchors, ruleset->anchor);
+#if DUMMYNET
+		if(strncmp("com.apple.nlc", ruleset->anchor->name,
+		    sizeof("com.apple.nlc")) == 0) {
+			struct dummynet_event dn_event;
+			bzero(&dn_event, sizeof(dn_event));
+			dn_event.dn_event_code = DUMMYNET_NLC_DISABLED;
+			dummynet_event_enqueue_nwk_wq_entry(&dn_event);
+			is_nlc_enabled_glb = FALSE;
+		}
+#endif
 		if ((parent = ruleset->anchor->parent) != NULL)
 			RB_REMOVE(pf_anchor_node, &parent->children,
 			    ruleset->anchor);

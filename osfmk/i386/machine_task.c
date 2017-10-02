@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2008 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2016 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -57,6 +57,11 @@
 #include <kern/task.h>
 #include <kern/thread.h>
 #include <i386/misc_protos.h>
+#include <i386/fpu.h>
+
+#if HYPERVISOR
+#include <kern/hv_support.h>
+#endif
 
 extern zone_t ids_zone;
 
@@ -84,7 +89,6 @@ machine_task_set_state(
 			copy_debug_state32(tstate, (x86_debug_state32_t*) task->task_debug, FALSE);
 			
 			return KERN_SUCCESS;
-			break;
 		}
 		case x86_DEBUG_STATE64:
 		{
@@ -103,7 +107,6 @@ machine_task_set_state(
 			copy_debug_state64(tstate, (x86_debug_state64_t*) task->task_debug, FALSE);
 			
 			return KERN_SUCCESS;		
-			break;
 		}
 		case x86_DEBUG_STATE:
 		{
@@ -139,13 +142,10 @@ machine_task_set_state(
 			} else {
 				return KERN_INVALID_ARGUMENT;
 			}
-
-			break;
 		}
 		default:
 		{
 			return KERN_INVALID_ARGUMENT;
-			break;
 		}
 	}
 }
@@ -172,7 +172,6 @@ machine_task_get_state(task_t task,
 			} 
 
 			return KERN_SUCCESS;
-			break;
 		}
 		case x86_DEBUG_STATE64:
 		{
@@ -189,7 +188,6 @@ machine_task_get_state(task_t task,
 			} 
 
 			return KERN_SUCCESS;
-			break;
 		}
 		case x86_DEBUG_STATE:
 		{
@@ -219,12 +217,10 @@ machine_task_get_state(task_t task,
 			}
 			
 			return KERN_SUCCESS;
-			break;
 		}
 		default:
 		{
 			return KERN_INVALID_ARGUMENT;
-			break;
 		}
 	}
 }
@@ -239,6 +235,13 @@ machine_task_terminate(task_t task)
 	if (task) {
 		user_ldt_t user_ldt;
 		void *task_debug;
+
+#if HYPERVISOR
+		if (task->hv_task_target) {
+			hv_callbacks.task_destroy(task->hv_task_target);
+			task->hv_task_target = NULL;
+		}
+#endif
 
 		user_ldt = task->i386_ldt;
 		if (user_ldt != 0) {
@@ -279,4 +282,25 @@ machine_thread_inherit_taskwide(
 	}
 
 	return KERN_SUCCESS;
+}
+
+void
+machine_task_init(task_t new_task,
+		  task_t parent_task,
+		  boolean_t inherit_memory)
+{
+	new_task->uexc_range_start = 0;
+	new_task->uexc_range_size = 0;
+	new_task->uexc_handler = 0;
+
+	new_task->i386_ldt = 0;
+
+	if (parent_task != TASK_NULL) {
+		if (inherit_memory && parent_task->i386_ldt)
+			new_task->i386_ldt = user_ldt_copy(parent_task->i386_ldt);
+		new_task->xstate = parent_task->xstate;
+	} else {
+		assert(fpu_default != UNDEFINED);
+		new_task->xstate = fpu_default;
+	}
 }

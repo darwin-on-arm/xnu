@@ -6,59 +6,38 @@ export MakeInc_dir=${SRCROOT}/makedefs/MakeInc.dir
 include $(MakeInc_cmd)
 include $(MakeInc_def)
 
-SETUP_SUBDIRS =
-
-COMP_SUBDIRS = 
-
-INST_SUBDIRS = 
-
-ifndef OSFMK_KERNEL_CONFIG
-export OSFMK_KERNEL_CONFIG = $(KERNEL_CONFIG)
-endif
-
-ifneq ($(MACHINE_CONFIG), DEFAULT)
-export COMPOBJROOT=$(OBJROOT)/$(KERNEL_CONFIG)_$(ARCH_CONFIG)_$(MACHINE_CONFIG)/$(COMPONENT)
+# Special handling for x86_64h which shares a MASTER config file with x86_64:
+ifeq ($(CURRENT_ARCH_CONFIG_LC),x86_64h)
+DOCONF_ARCH_CONFIG_LC = x86_64
 else
-export COMPOBJROOT=$(OBJROOT)/$(KERNEL_CONFIG)_$(ARCH_CONFIG)/$(COMPONENT)
+DOCONF_ARCH_CONFIG_LC = $(CURRENT_ARCH_CONFIG_LC)
 endif
 
-MASTER_CPU_PER_SOC = $(SOURCE)/MASTER.$(ARCH_CONFIG_LC).$(MACHINE_CONFIG_LC)
+MASTERCONFDIR = $(SRCROOT)/config
+DOCONFDEPS = $(addprefix $(MASTERCONFDIR)/, MASTER MASTER.$(DOCONF_ARCH_CONFIG_LC)) \
+	$(addprefix $(SOURCE)/, Makefile.template Makefile.$(DOCONF_ARCH_CONFIG_LC) files files.$(DOCONF_ARCH_CONFIG_LC))
 
-$(COMPOBJROOT)/$(OSFMK_KERNEL_CONFIG)/Makefile:  $(SOURCE)/MASTER  \
-	$(SOURCE)/MASTER.$(ARCH_CONFIG_LC) \
-	$(SOURCE)/Makefile.template  \
-	$(SOURCE)/Makefile.$(ARCH_CONFIG_LC)  \
-	$(SOURCE)/files \
-	$(SOURCE)/files.$(ARCH_CONFIG_LC)
-	$(_v)(doconf_target=$(addsuffix /conf, $(TARGET)); \
-	$(MKDIR) $${doconf_target}; \
-	cd $${doconf_target}; \
-	rm -f $(notdir $?); \
-	cp  $? $${doconf_target}; \
-	if [ -f $(MASTER_CPU_PER_SOC) ]; then cp $(MASTER_CPU_PER_SOC) $${doconf_target}; fi; \
-	$(SRCROOT)/SETUP/config/doconf -c -cpu $(ARCH_CONFIG_LC) -soc $(MACHINE_CONFIG_LC) -d  $(TARGET)/$(OSFMK_KERNEL_CONFIG) $(OSFMK_KERNEL_CONFIG); \
-	);
+ifneq (,$(wildcard $(MASTERCONFDIR)/MASTER.$(DOCONF_ARCH_CONFIG_LC).$(CURRENT_MACHINE_CONFIG_LC)))
+DOCONFDEPS += $(MASTERCONFDIR)/MASTER.$(DOCONF_ARCH_CONFIG_LC).$(CURRENT_MACHINE_CONFIG_LC)
+endif
 
-$(COMPOBJROOT)/$(OSFMK_KERNEL_CONFIG)/platforms.h: $(COMPOBJROOT)/$(OSFMK_KERNEL_CONFIG)/Makefile
-	$(_v)(cd $(COMPOBJROOT)/$(OSFMK_KERNEL_CONFIG);			\
-	${RM} $@;						\
-	${LN} cputypes.h $@;					\
-	)
+$(TARGET)/$(CURRENT_KERNEL_CONFIG)/Makefile: $(SRCROOT)/SETUP/config/doconf $(OBJROOT)/SETUP/config $(DOCONFDEPS)
+	$(_v)$(MKDIR) $(TARGET)/$(CURRENT_KERNEL_CONFIG)
+	$(_v)$(SRCROOT)/SETUP/config/doconf -c -cpu $(DOCONF_ARCH_CONFIG_LC) -soc $(CURRENT_MACHINE_CONFIG_LC) -d $(TARGET)/$(CURRENT_KERNEL_CONFIG) -s $(SOURCE) -m $(MASTERCONFDIR) $(CURRENT_KERNEL_CONFIG);
 
-do_all: $(COMPOBJROOT)/$(OSFMK_KERNEL_CONFIG)/Makefile \
-		$(COMPOBJROOT)/$(OSFMK_KERNEL_CONFIG)/platforms.h 
-	$(_v)next_source=$(subst conf/,,$(SOURCE));			\
-	next_relsource=$(subst conf/,,$(RELATIVE_SOURCE_PATH));		\
-	${MAKE} -C $(COMPOBJROOT)/$(OSFMK_KERNEL_CONFIG)	\
-		MAKEFILES=$(TARGET)/$(OSFMK_KERNEL_CONFIG)/Makefile	\
-		SOURCE=$${next_source}			\
-		RELATIVE_SOURCE_PATH=$${next_relsource}			\
-		TARGET=$(TARGET)					\
-		INCL_MAKEDEP=FALSE	\
-		KERNEL_CONFIG=$(OSFMK_KERNEL_CONFIG)	\
+do_all: $(TARGET)/$(CURRENT_KERNEL_CONFIG)/Makefile
+	$(_v)${MAKE} \
+		-C $(TARGET)/$(CURRENT_KERNEL_CONFIG)			\
+		-f $(TARGET)/$(CURRENT_KERNEL_CONFIG)/Makefile		\
+		CURRENT_KERNEL_CONFIG=${CURRENT_KERNEL_CONFIG}		\
+		CURRENT_ARCH_CONFIG=${CURRENT_ARCH_CONFIG}		\
+		CURRENT_MACHINE_CONFIG=${CURRENT_MACHINE_CONFIG}	\
+		SOURCE=$(subst conf/,,$(SOURCE))			\
+		TARGET=${TARGET}					\
+		OBJPATH=${OBJPATH}					\
 		build_all;
 
-do_build_all: do_all 
+do_build_all:: do_all
 
 include $(MakeInc_rule)
 include $(MakeInc_dir)

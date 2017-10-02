@@ -35,7 +35,6 @@
  *			factors needed by other parts of the system.
  */
 
-#include <platforms.h>
 
 #include <mach/mach_types.h>
 
@@ -76,6 +75,7 @@ uint32_t	flex_ratio = 0;
 uint32_t	flex_ratio_min = 0;
 uint32_t	flex_ratio_max = 0;
 
+uint64_t	tsc_at_boot = 0;
 
 #define bit(n)		(1ULL << (n))
 #define bitmask(h,l)	((bit(h)|(bit(h)-1)) & ~(bit(l)-1))
@@ -90,12 +90,12 @@ uint32_t	flex_ratio_max = 0;
 
 #define CPU_FAMILY_PENTIUM_M	(0x6)
 
-static const char	FSB_Frequency_prop[] = "FSBFrequency";
 /*
- * This routine extracts the bus frequency in Hz from the device tree.
+ * This routine extracts a frequency property in Hz from the device tree.
+ * Also reads any initial TSC value at boot from the device tree.
  */
 static uint64_t
-EFI_FSB_frequency(void)
+EFI_get_frequency(const char *prop)
 {
 	uint64_t	frequency = 0;
 	DTEntry		entry;
@@ -103,25 +103,30 @@ EFI_FSB_frequency(void)
 	unsigned int	size;
 
 	if (DTLookupEntry(0, "/efi/platform", &entry) != kSuccess) {
-		kprintf("EFI_FSB_frequency: didn't find /efi/platform\n");
+		kprintf("EFI_get_frequency: didn't find /efi/platform\n");
 		return 0;
 	}
-	if (DTGetProperty(entry,FSB_Frequency_prop,&value,&size) != kSuccess) {
-		kprintf("EFI_FSB_frequency: property %s not found\n",
-			FSB_Frequency_prop);
+	if (DTGetProperty(entry,prop,&value,&size) != kSuccess) {
+		kprintf("EFI_get_frequency: property %s not found\n", prop);
 		return 0;
 	}
 	if (size == sizeof(uint64_t)) {
 		frequency = *(uint64_t *) value;
-		kprintf("EFI_FSB_frequency: read %s value: %llu\n",
-			FSB_Frequency_prop, frequency);
-		if (!(90*Mega < frequency && frequency < 10*Giga)) {
-			kprintf("EFI_FSB_frequency: value out of range\n");
-			frequency = 0;
-		}
-	} else {
-		kprintf("EFI_FSB_frequency: unexpected size %d\n", size);
+		kprintf("EFI_get_frequency: read %s value: %llu\n",
+			prop, frequency);
 	}
+
+	/*
+	 * While we're here, see if EFI published an initial TSC value.
+	 */
+	if (DTGetProperty(entry,"InitialTSC",&value,&size) == kSuccess) {
+		if (size == sizeof(uint64_t)) {
+			tsc_at_boot = *(uint64_t *) value;
+			kprintf("EFI_get_frequency: read InitialTSC: %llu\n",
+				tsc_at_boot);
+		}
+	}
+
 	return frequency;
 }
 
@@ -159,17 +164,39 @@ tsc_init(void)
 		}
 	}
 
-	/*
-	 * Get the FSB frequency and conversion factors from EFI.
-	 */
-	busFreq = EFI_FSB_frequency();
-
 	switch (cpuid_cpufamily()) {
-	case CPUFAMILY_INTEL_HASWELL:
-	case CPUFAMILY_INTEL_IVYBRIDGE:
-	case CPUFAMILY_INTEL_SANDYBRIDGE:
-	case CPUFAMILY_INTEL_WESTMERE:
-	case CPUFAMILY_INTEL_NEHALEM: {
+	case CPUFAMILY_INTEL_KABYLAKE:
+	case CPUFAMILY_INTEL_SKYLAKE: {
+		/*
+                * SkyLake and later has an Always Running Timer (ART) providing
+		 * the reference frequency. CPUID leaf 0x15 determines the
+		 * rationship between this and the TSC frequency expressed as
+		 *   -	multiplier (numerator, N), and 
+		 *   -	divisor (denominator, M).
+		 * So that TSC = ART * N / M.
+		 */
+		cpuid_tsc_leaf_t *tsc_leafp = &cpuid_info()->cpuid_tsc_leaf;
+		uint64_t	 N = (uint64_t) tsc_leafp->numerator;
+		uint64_t	 M = (uint64_t) tsc_leafp->denominator;
+		uint64_t	 refFreq;
+
+		refFreq = EFI_get_frequency("ARTFrequency");
+		if (refFreq == 0)
+			refFreq = BASE_ART_CLOCK_SOURCE;
+
+		assert(N != 0);
+		assert(M != 1);
+		tscFreq = refFreq * N / M;
+		busFreq = tscFreq;		/* bus is APIC frequency */
+
+		kprintf(" ART: Frequency = %6d.%06dMHz, N/M = %lld/%llu\n",
+			(uint32_t)(refFreq / Mega),
+			(uint32_t)(refFreq % Mega), 
+			N, M);
+
+		break;
+	    }
+	default: {
 		uint64_t msr_flex_ratio;
 		uint64_t msr_platform_info;
 
@@ -187,6 +214,7 @@ tsc_init(void)
 				tscGranularity = flex_ratio;
 		}
 
+		busFreq = EFI_get_frequency("FSBFrequency");
 		/* If EFI isn't configured correctly, use a constant 
 		 * value. See 6036811.
 		 */
@@ -195,12 +223,14 @@ tsc_init(void)
 
 		break;
             }
-	default: {
+	case CPUFAMILY_INTEL_PENRYN: {
 		uint64_t	prfsts;
 
 		prfsts = rdmsr64(IA32_PERF_STS);
 		tscGranularity = (uint32_t)bitfield(prfsts, 44, 40);
 		N_by_2_bus_ratio = (prfsts & bit(46)) != 0;
+
+		busFreq = EFI_get_frequency("FSBFrequency");
 	    }
 	}
 
@@ -218,25 +248,34 @@ tsc_init(void)
 		(uint32_t)(busFCvtt2n >> 32), (uint32_t)busFCvtt2n,
 		(uint32_t)(busFCvtn2t >> 32), (uint32_t)busFCvtn2t);
 
-	/*
-	 * Get the TSC increment.  The TSC is incremented by this
-	 * on every bus tick.  Calculate the TSC conversion factors
-	 * to and from nano-seconds.
-	 * The tsc granularity is also called the "bus ratio". If the N/2 bit
-	 * is set this indicates the bus ration is 0.5 more than this - i.e.
-	 * that the true bus ratio is (2*tscGranularity + 1)/2. If we cannot
-	 * determine the TSC conversion, assume it ticks at the bus frequency.
-	 */
-	if (tscGranularity == 0)
+	if (tscFreq == busFreq) {
+		bus2tsc = 1;
 		tscGranularity = 1;
+		tscFCvtn2t = busFCvtn2t;
+		tscFCvtt2n = busFCvtt2n;
+	} else {
+		/*
+		 * Get the TSC increment.  The TSC is incremented by this
+		 * on every bus tick.  Calculate the TSC conversion factors
+		 * to and from nano-seconds.
+		 * The tsc granularity is also called the "bus ratio".
+		 * If the N/2 bit is set this indicates the bus ration is
+		 * 0.5 more than this - i.e.  that the true bus ratio
+		 * is (2*tscGranularity + 1)/2.
+		 */
+		if (N_by_2_bus_ratio)
+			tscFCvtt2n = busFCvtt2n * 2 / (1 + 2*tscGranularity);
+		else
+			tscFCvtt2n = busFCvtt2n / tscGranularity;
 
-	if (N_by_2_bus_ratio)
-		tscFCvtt2n = busFCvtt2n * 2 / (1 + 2*tscGranularity);
-	else
-		tscFCvtt2n = busFCvtt2n / tscGranularity;
+		tscFreq = ((1 * Giga)  << 32) / tscFCvtt2n;
+		tscFCvtn2t = 0xFFFFFFFFFFFFFFFFULL / tscFCvtt2n;
 
-	tscFreq = ((1 * Giga)  << 32) / tscFCvtt2n;
-	tscFCvtn2t = 0xFFFFFFFFFFFFFFFFULL / tscFCvtt2n;
+		/*
+		 * Calculate conversion from BUS to TSC
+		 */
+		bus2tsc = tmrCvt(busFCvtt2n, tscFCvtn2t);
+	}
 
 	kprintf(" TSC: Frequency = %6d.%06dMHz, "
 		"cvtt2n = %08X.%08X, cvtn2t = %08X.%08X, gran = %lld%s\n",
@@ -245,11 +284,6 @@ tsc_init(void)
 		(uint32_t)(tscFCvtt2n >> 32), (uint32_t)tscFCvtt2n,
 		(uint32_t)(tscFCvtn2t >> 32), (uint32_t)tscFCvtn2t,
 		tscGranularity, N_by_2_bus_ratio ? " (N/2)" : "");
-
-	/*
-	 * Calculate conversion from BUS to TSC
-	 */
-	bus2tsc = tmrCvt(busFCvtt2n, tscFCvtn2t);
 }
 
 void

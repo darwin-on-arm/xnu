@@ -1,5 +1,5 @@
 /*-
- * Copyright (c) 1999-2009 Apple Inc.
+ * Copyright (c) 1999-2016 Apple Inc.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -274,6 +274,7 @@ struct audit_record {
 	int			ar_arg_exitstatus;
 	int			ar_arg_exitretval;
 	struct sockaddr_storage ar_arg_sockaddr;
+	int			ar_arg_fd2;
 
 #if CONFIG_MACF
 	/*
@@ -388,6 +389,10 @@ au_class_t	 au_event_class(au_event_t event);
 au_event_t	 audit_ctlname_to_sysctlevent(int name[], uint64_t valid_arg);
 au_event_t	 audit_flags_and_error_to_openevent(int oflags, int error);
 au_event_t	 audit_flags_and_error_to_openextendedevent(int oflags,
+		    int error);
+au_event_t	 audit_flags_and_error_to_openatevent(int oflags,
+		    int error);
+au_event_t	 audit_flags_and_error_to_openbyidevent(int oflags,
 		    int error);
 au_event_t	 audit_msgctl_to_event(int cmd);
 au_event_t	 audit_semctl_to_event(int cmr);

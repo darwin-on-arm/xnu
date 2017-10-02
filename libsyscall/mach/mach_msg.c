@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1999-2007 Apple Inc. All rights reserved.
+ * Copyright (c) 1999-2013 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -58,8 +58,10 @@
 #include <mach/message.h>
 #include <mach/mig_errors.h>
 #include <mach/vm_statistics.h>
+#include <TargetConditionals.h>
 
-#include <mach/mach_traps.h>
+extern int proc_importance_assertion_begin_with_msg(mach_msg_header_t * msg, mach_msg_trailer_t * trailer, uint64_t * assertion_handlep);
+extern int proc_importance_assertion_complete(uint64_t assertion_handle);
 
 #define MACH_MSG_TRAP(msg, opt, ssize, rsize, rname, to, not) \
 	 mach_msg_trap((msg), (opt), (ssize), (rsize), (rname), (to), (not))
@@ -144,9 +146,9 @@ mach_msg_overwrite(msg, option, send_size, rcv_limit, rcv_name, timeout,
 	mach_msg_option_t option;
 	mach_msg_size_t send_size;
 	mach_msg_size_t rcv_limit;
-	mach_port_name_t rcv_name;
+	mach_port_t rcv_name;
 	mach_msg_timeout_t timeout;
-	mach_port_name_t notify;
+	mach_port_t notify;
 	mach_msg_header_t *rcv_msg;
 	mach_msg_size_t rcv_scatter_size;
 {
@@ -273,6 +275,7 @@ mach_msg_destroy(mach_msg_header_t *msg)
      */
 
     mach_msg_destroy_port(msg->msgh_remote_port, MACH_MSGH_BITS_REMOTE(mbits));
+    mach_msg_destroy_port(msg->msgh_voucher_port, MACH_MSGH_BITS_VOUCHER(mbits));
 
     if (mbits & MACH_MSGH_BITS_COMPLEX) {
 	mach_msg_base_t		*base;
@@ -380,16 +383,17 @@ mach_msg_server_once(
 	mach_msg_return_t mr;
 	kern_return_t kr;
 	mach_port_t self = mach_task_self_;
+	voucher_mach_msg_state_t old_state = VOUCHER_MACH_MSG_STATE_UNCHANGED;
 
-	options &= ~(MACH_SEND_MSG|MACH_RCV_MSG);
+	options &= ~(MACH_SEND_MSG|MACH_RCV_MSG|MACH_RCV_VOUCHER);
 
 	trailer_alloc = REQUESTED_TRAILER_SIZE(options);
-	request_alloc = round_page(max_size + trailer_alloc);
+	request_alloc = (mach_msg_size_t)round_page(max_size + trailer_alloc);
 
 	request_size = (options & MACH_RCV_LARGE) ?
     		   request_alloc : max_size + trailer_alloc;
 
-	reply_alloc = round_page((options & MACH_SEND_TRAILER) ? 
+	reply_alloc = (mach_msg_size_t)round_page((options & MACH_SEND_TRAILER) ? 
 			     (max_size + MAX_TRAILER_SIZE) :
 			     max_size);
 
@@ -414,14 +418,14 @@ mach_msg_server_once(
 			return kr;
 		}    
 	
-		mr = mach_msg(&bufRequest->Head, MACH_RCV_MSG|options,
+		mr = mach_msg(&bufRequest->Head, MACH_RCV_MSG|MACH_RCV_VOUCHER|options,
 					  0, request_size, rcv_name,
 					  MACH_MSG_TIMEOUT_NONE, MACH_PORT_NULL);
 	
 		if (!((mr == MACH_RCV_TOO_LARGE) && (options & MACH_RCV_LARGE)))
 			break;
 
-		new_request_alloc = round_page(bufRequest->Head.msgh_size +
+		new_request_alloc = (mach_msg_size_t)round_page(bufRequest->Head.msgh_size +
 									   trailer_alloc);
 		vm_deallocate(self,
 				(vm_address_t) bufRequest,
@@ -431,6 +435,8 @@ mach_msg_server_once(
 
 	if (mr == MACH_MSG_SUCCESS) {
 	/* we have a request message */
+
+		old_state = voucher_mach_msg_adopt(&bufRequest->Head);
 
 		(void) (*demux)(&bufRequest->Head, &bufReply->Head);
 
@@ -474,6 +480,8 @@ mach_msg_server_once(
 	}
 
  done_once:
+	voucher_mach_msg_revert(old_state);
+
 	(void)vm_deallocate(self,
 			(vm_address_t) bufRequest,
 			request_alloc);
@@ -505,47 +513,52 @@ mach_msg_server(
 	mach_msg_return_t mr;
 	kern_return_t kr;
 	mach_port_t self = mach_task_self_;
+	voucher_mach_msg_state_t old_state = VOUCHER_MACH_MSG_STATE_UNCHANGED;
+	boolean_t buffers_swapped = FALSE;
 
-	options &= ~(MACH_SEND_MSG|MACH_RCV_MSG|MACH_RCV_OVERWRITE);
+	options &= ~(MACH_SEND_MSG|MACH_RCV_MSG|MACH_RCV_VOUCHER|MACH_RCV_OVERWRITE);
 
-	reply_alloc = round_page((options & MACH_SEND_TRAILER) ? 
-			     (max_size + MAX_TRAILER_SIZE) : max_size);
+	reply_alloc = (mach_msg_size_t)round_page((options & MACH_SEND_TRAILER) ?
+						  (max_size + MAX_TRAILER_SIZE) : max_size);
 
 	kr = vm_allocate(self,
-		     (vm_address_t *)&bufReply,
-		     reply_alloc,
-		     VM_MAKE_TAG(VM_MEMORY_MACH_MSG)|TRUE);
-	if (kr != KERN_SUCCESS) 
+			 (vm_address_t *)&bufReply,
+			 reply_alloc,
+			 VM_MAKE_TAG(VM_MEMORY_MACH_MSG)|TRUE);
+	if (kr != KERN_SUCCESS)
 		return kr;
 
 	request_alloc = 0;
 	trailer_alloc = REQUESTED_TRAILER_SIZE(options);
-	new_request_alloc = round_page(max_size + trailer_alloc);
+	new_request_alloc = (mach_msg_size_t)round_page(max_size + trailer_alloc);
 
 	request_size = (options & MACH_RCV_LARGE) ?
-    		   new_request_alloc : max_size + trailer_alloc;
+	new_request_alloc : max_size + trailer_alloc;
 
 	for (;;) {
 		if (request_alloc < new_request_alloc) {
 			request_alloc = new_request_alloc;
 			kr = vm_allocate(self,
-			     	(vm_address_t *)&bufRequest,
-			     	request_alloc,
-			     	VM_MAKE_TAG(VM_MEMORY_MACH_MSG)|TRUE);
+					 (vm_address_t *)&bufRequest,
+					 request_alloc,
+					 VM_MAKE_TAG(VM_MEMORY_MACH_MSG)|TRUE);
 			if (kr != KERN_SUCCESS) {
 				vm_deallocate(self,
-						(vm_address_t)bufReply,
-						reply_alloc);
+					      (vm_address_t)bufReply,
+					      reply_alloc);
 				return kr;
 			}
 		}
-		
-		mr = mach_msg(&bufRequest->Head, MACH_RCV_MSG|options,
-				0, request_size, rcv_name,
-				MACH_MSG_TIMEOUT_NONE, MACH_PORT_NULL);
-	
+
+		mr = mach_msg(&bufRequest->Head, MACH_RCV_MSG|MACH_RCV_VOUCHER|options,
+			      0, request_size, rcv_name,
+			      MACH_MSG_TIMEOUT_NONE, MACH_PORT_NULL);
+
 		while (mr == MACH_MSG_SUCCESS) {
 			/* we have another request message */
+
+			buffers_swapped = FALSE;
+			old_state = voucher_mach_msg_adopt(&bufRequest->Head);
 
 			(void) (*demux)(&bufRequest->Head, &bufReply->Head);
 
@@ -553,7 +566,7 @@ mach_msg_server(
 				if (bufReply->RetCode == MIG_NO_REPLY)
 					bufReply->Head.msgh_remote_port = MACH_PORT_NULL;
 				else if ((bufReply->RetCode != KERN_SUCCESS) &&
-					(bufRequest->Head.msgh_bits & MACH_MSGH_BITS_COMPLEX)) {
+					 (bufRequest->Head.msgh_bits & MACH_MSGH_BITS_COMPLEX)) {
 					/* destroy the request - but not the reply port */
 					bufRequest->Head.msgh_remote_port = MACH_PORT_NULL;
 					mach_msg_destroy(&bufRequest->Head);
@@ -574,63 +587,107 @@ mach_msg_server(
 					mig_reply_error_t *bufTemp;
 
 					mr = mach_msg(
-						&bufReply->Head,
-						(MACH_MSGH_BITS_REMOTE(bufReply->Head.msgh_bits) ==
-						 MACH_MSG_TYPE_MOVE_SEND_ONCE) ?
-						 MACH_SEND_MSG|MACH_RCV_MSG|options :
-						 MACH_SEND_MSG|MACH_RCV_MSG|MACH_SEND_TIMEOUT|options,
-						bufReply->Head.msgh_size, request_size, rcv_name,
-						MACH_MSG_TIMEOUT_NONE, MACH_PORT_NULL);
+					      &bufReply->Head,
+					      (MACH_MSGH_BITS_REMOTE(bufReply->Head.msgh_bits) ==
+					       MACH_MSG_TYPE_MOVE_SEND_ONCE) ?
+					      MACH_SEND_MSG|MACH_RCV_MSG|MACH_RCV_TIMEOUT|MACH_RCV_VOUCHER|options :
+					      MACH_SEND_MSG|MACH_RCV_MSG|MACH_SEND_TIMEOUT|MACH_RCV_TIMEOUT|MACH_RCV_VOUCHER|options,
+					      bufReply->Head.msgh_size, request_size, rcv_name,
+					      MACH_MSG_TIMEOUT_NONE, MACH_PORT_NULL);
 
 					/* swap request and reply */
 					bufTemp = bufRequest;
 					bufRequest = bufReply;
 					bufReply = bufTemp;
-
+					buffers_swapped = TRUE;
 				} else {
 					mr = mach_msg_overwrite(
 						&bufReply->Head,
 						(MACH_MSGH_BITS_REMOTE(bufReply->Head.msgh_bits) ==
 						 MACH_MSG_TYPE_MOVE_SEND_ONCE) ?
-						 MACH_SEND_MSG|MACH_RCV_MSG|options :
-						 MACH_SEND_MSG|MACH_RCV_MSG|MACH_SEND_TIMEOUT|options,
+						 MACH_SEND_MSG|MACH_RCV_MSG|MACH_RCV_TIMEOUT|MACH_RCV_VOUCHER|options :
+						 MACH_SEND_MSG|MACH_RCV_MSG|MACH_SEND_TIMEOUT|MACH_RCV_TIMEOUT|MACH_RCV_VOUCHER|options,
 						bufReply->Head.msgh_size, request_size, rcv_name,
 						MACH_MSG_TIMEOUT_NONE, MACH_PORT_NULL,
 						&bufRequest->Head, 0);
 				}
-				
-				if ((mr != MACH_SEND_INVALID_DEST) &&
-					(mr != MACH_SEND_TIMED_OUT))
-					continue;
-			}
-			if (bufReply->Head.msgh_bits & MACH_MSGH_BITS_COMPLEX)
-				mach_msg_destroy(&bufReply->Head);
 
-			mr = mach_msg(&bufRequest->Head, MACH_RCV_MSG|options,
-						  0, request_size, rcv_name,
-						  MACH_MSG_TIMEOUT_NONE, MACH_PORT_NULL);
+				if ((mr != MACH_SEND_INVALID_DEST) &&
+				    (mr != MACH_SEND_TIMED_OUT) &&
+				    (mr != MACH_RCV_TIMED_OUT)) {
+
+					voucher_mach_msg_revert(old_state);
+					old_state = VOUCHER_MACH_MSG_STATE_UNCHANGED;
+
+					continue;
+				}
+			}
+			/* 
+			 * Need to destroy the reply msg in case if there was a send timeout or
+			 * invalid destination. The reply msg would be swapped with request msg
+			 * if buffers_swapped is true, thus destroy request msg instead of
+			 * reply msg in such cases.
+			 */
+			if (mr != MACH_RCV_TIMED_OUT) {
+				if (buffers_swapped) {
+					if (bufRequest->Head.msgh_bits & MACH_MSGH_BITS_COMPLEX)
+						mach_msg_destroy(&bufRequest->Head);
+				} else {
+					if (bufReply->Head.msgh_bits & MACH_MSGH_BITS_COMPLEX)
+						mach_msg_destroy(&bufReply->Head);
+				}
+			}
+			voucher_mach_msg_revert(old_state);
+			old_state = VOUCHER_MACH_MSG_STATE_UNCHANGED;
+
+			mr = mach_msg(&bufRequest->Head, MACH_RCV_MSG|MACH_RCV_VOUCHER|options,
+					0, request_size, rcv_name,
+					MACH_MSG_TIMEOUT_NONE, MACH_PORT_NULL);
 
 		} /* while (mr == MACH_MSG_SUCCESS) */
-		
+
 		if ((mr == MACH_RCV_TOO_LARGE) && (options & MACH_RCV_LARGE)) {
-			new_request_alloc = round_page(bufRequest->Head.msgh_size +
-								trailer_alloc);
+			new_request_alloc = (mach_msg_size_t)round_page(bufRequest->Head.msgh_size +
+									trailer_alloc);
 			request_size = new_request_alloc;
 			vm_deallocate(self,
-						  (vm_address_t) bufRequest,
-						  request_alloc);
+				      (vm_address_t) bufRequest,
+				      request_alloc);
 			continue;
 		}
 
 		break;
 
-    } /* for(;;) */
+	} /* for(;;) */
 
-    (void)vm_deallocate(self,
-			(vm_address_t) bufRequest,
-			request_alloc);
-    (void)vm_deallocate(self,
-			(vm_address_t) bufReply,
-			reply_alloc);
-    return mr;
+	(void)vm_deallocate(self,
+			    (vm_address_t) bufRequest,
+			    request_alloc);
+	(void)vm_deallocate(self,
+			    (vm_address_t) bufReply,
+			    reply_alloc);
+	return mr;
+}
+
+/*
+ *	Routine:	mach_msg_server_importance
+ *	Purpose:
+ *		A simple generic server function which handles importance
+ * 		promotion assertions for adaptive daemons.
+ */
+mach_msg_return_t
+mach_msg_server_importance(
+	boolean_t (*demux)(mach_msg_header_t *, mach_msg_header_t *),
+	mach_msg_size_t max_size,
+	mach_port_t rcv_name,
+	mach_msg_options_t options)
+{
+	return mach_msg_server(demux, max_size, rcv_name, options);
+}
+
+kern_return_t
+mach_voucher_deallocate(
+	mach_voucher_t	voucher)
+{
+	return mach_port_deallocate(mach_task_self(), voucher);
 }

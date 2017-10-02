@@ -84,8 +84,10 @@
  * procedure call standard; we pad for 64-bit args.
  */
 kernel_trap(_kernelrpc_mach_vm_allocate_trap,-10,5) /* 4 args, +1 for mach_vm_size_t */
+kernel_trap(_kernelrpc_mach_vm_purgable_control_trap,-11,5) /* 4 args, +1 for mach_vm_offset_t */
 kernel_trap(_kernelrpc_mach_vm_deallocate_trap,-12,5) /* 3 args, +2 for mach_vm_size_t and mach_vm_address_t */
 kernel_trap(_kernelrpc_mach_vm_protect_trap,-14,7) /* 5 args, +2 for mach_vm_address_t and mach_vm_size_t */
+kernel_trap(_kernelrpc_mach_vm_map_trap,-15,9)
 kernel_trap(_kernelrpc_mach_port_allocate_trap,-16,3)
 kernel_trap(_kernelrpc_mach_port_destroy_trap,-17,2)
 kernel_trap(_kernelrpc_mach_port_deallocate_trap,-18,2)
@@ -94,6 +96,8 @@ kernel_trap(_kernelrpc_mach_port_move_member_trap,-20,3)
 kernel_trap(_kernelrpc_mach_port_insert_right_trap,-21,4)
 kernel_trap(_kernelrpc_mach_port_insert_member_trap,-22,3)
 kernel_trap(_kernelrpc_mach_port_extract_member_trap,-23,3)
+kernel_trap(_kernelrpc_mach_port_construct_trap,-24,5)
+kernel_trap(_kernelrpc_mach_port_destruct_trap,-25,5)
 
 kernel_trap(mach_reply_port,-26,0)
 kernel_trap(thread_self_trap,-27,0)
@@ -110,9 +114,9 @@ kernel_trap(semaphore_wait_signal_trap,-37,2)
 kernel_trap(semaphore_timedwait_trap,-38,3)
 kernel_trap(semaphore_timedwait_signal_trap,-39,4)
 
-#if		!defined(__LP64__) && !defined(__arm__)
-kernel_trap(map_fd,-43,5)
-#endif	/*!defined(__LP64__) && !defined(__arm__) */
+kernel_trap(_kernelrpc_mach_port_guard_trap,-41,5)
+kernel_trap(_kernelrpc_mach_port_unguard_trap,-42,4)
+kernel_trap(mach_generate_activity_id, -43, 3)
 
 kernel_trap(task_name_for_pid,-44,3)
 kernel_trap(task_for_pid,-45,3)
@@ -125,6 +129,7 @@ kernel_trap(macx_swapoff,-49, 2)
 kernel_trap(macx_swapon,-48, 5)
 kernel_trap(macx_swapoff,-49, 3)
 #endif	/* __LP64__ */
+kernel_trap(thread_get_special_reply_port,-50,0)
 kernel_trap(macx_triggers,-51, 4)
 kernel_trap(macx_backing_store_suspend,-52, 1)
 kernel_trap(macx_backing_store_recovery,-53, 1)
@@ -137,7 +142,15 @@ kernel_trap(swtch,-60,0)
 kernel_trap(syscall_thread_switch,-61,3)
 kernel_trap(clock_sleep_trap,-62,5)
 
-kernel_trap(mach_timebase_info,-89,1)
+/* voucher traps */
+kernel_trap(host_create_mach_voucher_trap,-70,4)
+/* mach_voucher_extract_attr_content */
+kernel_trap(mach_voucher_extract_attr_recipe_trap,-72,4)
+/* mach_voucher_extract_all_attr_recipes */
+/* mach_voucher_attr_command */
+/* mach_voucher_debug_info */
+
+kernel_trap(mach_timebase_info_trap,-89,1)
 
 #if		defined(__LP64__)
 /* unit64_t arguments passed in one register in LP64 */
@@ -157,7 +170,11 @@ kernel_trap(mk_timer_arm,-93,3)
 #endif	/* __LP64__ */
 
 kernel_trap(mk_timer_cancel,-94,2)
-
+#if		defined(__LP64__)
+kernel_trap(mk_timer_arm_leeway,-95,4)
+#else
+kernel_trap(mk_timer_arm_leeway,-95,7)
+#endif
 /*
  * N.B: Trap #-100 is in use by IOTrap.s in the IOKit Framework
  * (iokit_user_client_trap)

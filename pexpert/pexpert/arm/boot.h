@@ -1,80 +1,67 @@
 /*
- * Copyright 2013, winocm. <winocm@icloud.com>
- * All rights reserved.
- * 
- * Redistribution and use in source and binary forms, with or without modification,
- * are permitted provided that the following conditions are met:
- * 
- *   Redistributions of source code must retain the above copyright notice, this
- *   list of conditions and the following disclaimer.
- * 
- *   Redistributions in binary form must reproduce the above copyright notice, this
- *   list of conditions and the following disclaimer in the documentation and/or
- *   other materials provided with the distribution.
- * 
- *   If you are going to use this software in any form that does not involve
- *   releasing the source to this project or improving it, let me know beforehand.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
- * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
- * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
- * ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
- * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
- * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
- * ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
- * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * Copyright (c) 2007-2009 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2006 Apple Computer, Inc. All rights reserved.
+ */
+/*
+ * @OSF_COPYRIGHT@
  */
 
 #ifndef _PEXPERT_ARM_BOOT_H_
 #define _PEXPERT_ARM_BOOT_H_
 
+#include <pexpert/arm/consistent_debug.h>
+
 #define BOOT_LINE_LENGTH        256
 
 /*
- * Video information.
+ * Video information.. 
  */
 
 struct Boot_Video {
-	unsigned long	v_baseAddr;
-    unsigned long	v_display;
-	unsigned long	v_rowBytes;
-    unsigned long	v_width;	
-	unsigned long	v_height;	
-	unsigned long	v_depth;	
+	unsigned long	v_baseAddr;	/* Base address of video memory */
+	unsigned long	v_display;	/* Display Code (if Applicable */
+	unsigned long	v_rowBytes;	/* Number of bytes per pixel row */
+	unsigned long	v_width;	/* Width */
+	unsigned long	v_height;	/* Height */
+	unsigned long	v_depth;	/* Pixel Depth and other parameters */
 };
 
-#define GRAPHICS_MODE         1
-#define FB_TEXT_MODE          2
-
-#define kBootVideoDepthMask         (0xFF)
+#define kBootVideoDepthMask		(0xFF)
 #define kBootVideoDepthDepthShift	(0)
 #define kBootVideoDepthRotateShift	(8)
 #define kBootVideoDepthScaleShift	(16)
 
+#define kBootFlagsDarkBoot		(1 << 0)
+
 typedef struct Boot_Video	Boot_Video;
 
+/* Boot argument structure - passed into Mach kernel at boot time.
+ */
 #define kBootArgsRevision		1
+#define kBootArgsRevision2		2	/* added boot_args->bootFlags */
 #define kBootArgsVersion1		1
 #define kBootArgsVersion2		2
 
-/*
- * Boot arguments passed by the bootloader.
- */
-
 typedef struct boot_args {
-	uint16_t		Revision;
-	uint16_t		Version;
-	uint32_t		virtBase;
-	uint32_t		physBase;
-	uint32_t		memSize;
-	uint32_t		topOfKernelData;
-	Boot_Video		Video;
-	uint32_t		machineType;
-	void			*deviceTreeP;
-	uint32_t		deviceTreeLength;
-	char			CommandLine[BOOT_LINE_LENGTH];
+	uint16_t		Revision;			/* Revision of boot_args structure */
+	uint16_t		Version;			/* Version of boot_args structure */
+	uint32_t		virtBase;			/* Virtual base of memory */
+	uint32_t		physBase;			/* Physical base of memory */
+	uint32_t		memSize;			/* Size of memory */
+	uint32_t		topOfKernelData;	/* Highest physical address used in kernel data area */
+	Boot_Video		Video;				/* Video Information */
+	uint32_t		machineType;		/* Machine Type */
+	void			*deviceTreeP;		/* Base of flattened device tree */
+	uint32_t		deviceTreeLength;	/* Length of flattened tree */
+	char			CommandLine[BOOT_LINE_LENGTH];	/* Passed in command line */
+	uint32_t		bootFlags;		/* Additional flags specified by the bootloader */
+	uint32_t		memSizeActual;		/* Actual size of memory */
 } boot_args;
+
+#define SOC_DEVICE_TYPE_BUFFER_SIZE	32
+
+#define PC_TRACE_BUF_SIZE		1024
+
+#define CDBG_MEM ((sizeof(dbg_registry_t) + PAGE_SIZE - 1) & ~PAGE_MASK)
 
 #endif /* _PEXPERT_ARM_BOOT_H_ */

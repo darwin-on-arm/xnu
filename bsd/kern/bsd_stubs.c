@@ -2,7 +2,7 @@
  * Copyright (c) 2000 Apple Computer, Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
- * 
+ *
  * This file contains Original Code and/or Modifications of Original Code
  * as defined in and that are subject to the Apple Public Source License
  * Version 2.0 (the 'License'). You may not use this file except in
@@ -11,10 +11,10 @@
  * unlawful or unlicensed copies of an Apple operating system, or to
  * circumvent, violate, or enable the circumvention or violation of, any
  * terms of an Apple operating system software license agreement.
- * 
+ *
  * Please obtain a copy of the License at
  * http://www.opensource.apple.com/apsl/ and read it before using this file.
- * 
+ *
  * The Original Code and all software distributed under the License are
  * distributed on an 'AS IS' basis, WITHOUT WARRANTY OF ANY KIND, EITHER
  * EXPRESS OR IMPLIED, AND APPLE HEREBY DISCLAIMS ALL SUCH WARRANTIES,
@@ -22,7 +22,7 @@
  * FITNESS FOR A PARTICULAR PURPOSE, QUIET ENJOYMENT OR NON-INFRINGEMENT.
  * Please see the License for the specific language governing rights and
  * limitations under the License.
- * 
+ *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
 #include <sys/time.h>
@@ -37,7 +37,7 @@
 #include <kern/assert.h>
 #include <sys/conf.h>
 #include <sys/proc_internal.h>
-#include <sys/buf.h>	/* for SET */
+#include <sys/buf.h> /* for SET */
 #include <sys/kernel.h>
 #include <sys/user.h>
 #include <sys/sysent.h>
@@ -48,30 +48,27 @@ extern int chrtoblk_set(int, int);
 extern vm_offset_t kmem_mb_alloc(vm_map_t, int, int);
 
 /* XXX most of these just exist to export; there's no good header for them*/
-void	pcb_synch(void);
-void	tbeproc(void *);
+void pcb_synch(void);
 
-TAILQ_HEAD(,devsw_lock) devsw_locks;
+TAILQ_HEAD(, devsw_lock) devsw_locks;
 lck_mtx_t devsw_lock_list_mtx;
-lck_grp_t *devsw_lock_grp;
+lck_grp_t * devsw_lock_grp;
 
 /* Just to satisfy pstat command */
-int     dmmin, dmmax, dmtext;
+int dmmin, dmmax, dmtext;
 
 vm_offset_t
-kmem_mb_alloc(vm_map_t  mbmap, int size, int physContig) 
+kmem_mb_alloc(vm_map_t mbmap, int size, int physContig)
 {
-        vm_offset_t addr = 0;
+	vm_offset_t addr = 0;
 	kern_return_t kr = KERN_SUCCESS;
 
-	if(!physContig)
-		kr = kernel_memory_allocate(mbmap, &addr, size,
-			0, KMA_NOPAGEWAIT|KMA_KOBJECT|KMA_LOMEM);
+	if (!physContig)
+		kr = kernel_memory_allocate(mbmap, &addr, size, 0, KMA_NOPAGEWAIT | KMA_KOBJECT | KMA_LOMEM, VM_KERN_MEMORY_MBUF);
 	else
-		kr = kmem_alloc_contig(mbmap, &addr, size, PAGE_MASK, 
-			0xfffff, 0, KMA_NOPAGEWAIT | KMA_KOBJECT | KMA_LOMEM);
+		kr = kmem_alloc_contig(mbmap, &addr, size, PAGE_MASK, 0xfffff, 0, KMA_NOPAGEWAIT | KMA_KOBJECT | KMA_LOMEM, VM_KERN_MEMORY_MBUF);
 
-	if( kr != KERN_SUCCESS)
+	if (kr != KERN_SUCCESS)
 		addr = 0;
 
 	return addr;
@@ -90,17 +87,17 @@ current_proc(void)
 {
 	/* Never returns a NULL */
 	struct uthread * ut;
-	struct proc *p; 
+	struct proc * p;
 	thread_t thread = current_thread();
 
-	ut = (struct uthread *)get_bsdthread_info(thread); 
-	if (ut &&  (ut->uu_flag & UT_VFORK) && ut->uu_proc) {
+	ut = (struct uthread *)get_bsdthread_info(thread);
+	if (ut && (ut->uu_flag & UT_VFORK) && ut->uu_proc) {
 		p = ut->uu_proc;
-		if ((p->p_lflag & P_LINVFORK) == 0) 
+		if ((p->p_lflag & P_LINVFORK) == 0)
 			panic("returning child proc not under vfork");
-		if (p->p_vforkact != (void *)thread) 
+		if (p->p_vforkact != (void *)thread)
 			panic("returning child proc which is not cur_act");
-		return(p);
+		return (p);
 	}
 
 	p = (struct proc *)get_bsdtask_info(current_task());
@@ -115,7 +112,7 @@ current_proc(void)
 
 struct bdevsw nobdev = NO_BDEVICE;
 struct cdevsw nocdev = NO_CDEVICE;
-/* 
+/*
  *	if index is -1, return a free slot if avaliable
  *	  else see whether the index is free
  *	return the major number that is free else -1
@@ -127,32 +124,31 @@ struct cdevsw nocdev = NO_CDEVICE;
 int
 bdevsw_isfree(int index)
 {
-	struct bdevsw *devsw;
+	struct bdevsw * devsw;
 
 	if (index < 0) {
-	    if (index == -1)
-	    	index = 1;	/* start at 1 to avoid collision with volfs (Radar 2842228) */
-	    else
-	        index = -index;	/* start at least this far up in the table */
-	    devsw = &bdevsw[index];
-	    for(; index < nblkdev; index++, devsw++) {
-	        if(memcmp((char *)devsw, 
-	        	    (char *)&nobdev, 
-	        	    sizeof(struct bdevsw)) == 0)
-	            break;
-	    }
+		if (index == -1)
+			index = 1; /* start at 1 to avoid collision with volfs (Radar 2842228) */
+		else
+			index = -index; /* start at least this far up in the table */
+		devsw = &bdevsw[index];
+		for (; index < nblkdev; index++, devsw++) {
+			if (memcmp((char *)devsw, (char *)&nobdev, sizeof(struct bdevsw)) == 0)
+				break;
+		}
 	}
+
+	if (index < 0 || index >= nblkdev)
+		return (-1);
+
 	devsw = &bdevsw[index];
-	if ((index < 0) || (index >= nblkdev) ||
-	    (memcmp((char *)devsw, 
-		          (char *)&nobdev, 
-			  sizeof(struct bdevsw)) != 0)) {
-		return(-1);
+	if ((memcmp((char *)devsw, (char *)&nobdev, sizeof(struct bdevsw)) != 0)) {
+		return (-1);
 	}
-	return(index);
+	return (index);
 }
 
-/* 
+/*
  *	if index is -1, find a free slot to add
  *	  else see whether the slot is free
  *	return the major number that is used else -1
@@ -162,36 +158,42 @@ bdevsw_isfree(int index)
  *	instead of starting at 0
  */
 int
-bdevsw_add(int index, struct bdevsw * bsw) 
+bdevsw_add(int index, struct bdevsw * bsw)
 {
+	lck_mtx_lock_spin(&devsw_lock_list_mtx);
 	index = bdevsw_isfree(index);
 	if (index < 0) {
-		return(-1);
+		index = -1;
+	} else {
+		bdevsw[index] = *bsw;
 	}
-	bdevsw[index] = *bsw;
-	return(index);
+	lck_mtx_unlock(&devsw_lock_list_mtx);
+	return (index);
 }
 /*
  *	if the slot has the same bsw, then remove
  *	else -1
  */
 int
-bdevsw_remove(int index, struct bdevsw * bsw) 
+bdevsw_remove(int index, struct bdevsw * bsw)
 {
-	struct bdevsw *devsw;
+	struct bdevsw * devsw;
+
+	if (index < 0 || index >= nblkdev)
+		return (-1);
 
 	devsw = &bdevsw[index];
-	if ((index < 0) || (index >= nblkdev) ||
-	    (memcmp((char *)devsw, 
-		          (char *)bsw, 
-			  sizeof(struct bdevsw)) != 0)) {
-		return(-1);
+	lck_mtx_lock_spin(&devsw_lock_list_mtx);
+	if ((memcmp((char *)devsw, (char *)bsw, sizeof(struct bdevsw)) != 0)) {
+		index = -1;
+	} else {
+		bdevsw[index] = nobdev;
 	}
-	bdevsw[index] = nobdev;
-	return(index);
+	lck_mtx_unlock(&devsw_lock_list_mtx);
+	return (index);
 }
 
-/* 
+/*
  *	if index is -1, return a free slot if avaliable
  *	  else see whether the index is free
  *	return the major number that is free else -1
@@ -203,32 +205,31 @@ bdevsw_remove(int index, struct bdevsw * bsw)
 int
 cdevsw_isfree(int index)
 {
-	struct cdevsw *devsw;
+	struct cdevsw * devsw;
 
 	if (index < 0) {
-	    if (index == -1)
-	    	index = 0;
-	    else
-	        index = -index;	/* start at least this far up in the table */
-	    devsw = &cdevsw[index];
-	    for(; index < nchrdev; index++, devsw++) {
-	        if(memcmp((char *)devsw, 
-	        	    (char *)&nocdev, 
-	        	    sizeof(struct cdevsw)) == 0)
-	            break;
-	    }
+		if (index == -1)
+			index = 0;
+		else
+			index = -index; /* start at least this far up in the table */
+		devsw = &cdevsw[index];
+		for (; index < nchrdev; index++, devsw++) {
+			if (memcmp((char *)devsw, (char *)&nocdev, sizeof(struct cdevsw)) == 0)
+				break;
+		}
 	}
+
+	if (index < 0 || index >= nchrdev)
+		return (-1);
+
 	devsw = &cdevsw[index];
-	if ((index < 0) || (index >= nchrdev) ||
-	    (memcmp((char *)devsw, 
-		          (char *)&nocdev, 
-			  sizeof(struct cdevsw)) != 0)) {
-		return(-1);
+	if ((memcmp((char *)devsw, (char *)&nocdev, sizeof(struct cdevsw)) != 0)) {
+		return (-1);
 	}
-	return(index);
+	return (index);
 }
 
-/* 
+/*
  *	if index is -1, find a free slot to add
  *	  else see whether the slot is free
  *	return the major number that is used else -1
@@ -243,34 +244,40 @@ cdevsw_isfree(int index)
  *		before them.  -24 is currently a safe starting point.
  */
 int
-cdevsw_add(int index, struct cdevsw * csw) 
+cdevsw_add(int index, struct cdevsw * csw)
 {
+	lck_mtx_lock_spin(&devsw_lock_list_mtx);
 	index = cdevsw_isfree(index);
 	if (index < 0) {
-		return(-1);
+		index = -1;
+	} else {
+		cdevsw[index] = *csw;
 	}
-	cdevsw[index] = *csw;
-	return(index);
+	lck_mtx_unlock(&devsw_lock_list_mtx);
+	return (index);
 }
 /*
  *	if the slot has the same csw, then remove
  *	else -1
  */
 int
-cdevsw_remove(int index, struct cdevsw * csw) 
+cdevsw_remove(int index, struct cdevsw * csw)
 {
-	struct cdevsw *devsw;
+	struct cdevsw * devsw;
+
+	if (index < 0 || index >= nchrdev)
+		return (-1);
 
 	devsw = &cdevsw[index];
-	if ((index < 0) || (index >= nchrdev) ||
-	    (memcmp((char *)devsw, 
-		          (char *)csw, 
-			  sizeof(struct cdevsw)) != 0)) {
-		return(-1);
+	lck_mtx_lock_spin(&devsw_lock_list_mtx);
+	if ((memcmp((char *)devsw, (char *)csw, sizeof(struct cdevsw)) != 0)) {
+		index = -1;
+	} else {
+		cdevsw[index] = nocdev;
+		cdevsw_flags[index] = 0;
 	}
-	cdevsw[index] = nocdev;
-	cdevsw_flags[index] = 0;
-	return(index);
+	lck_mtx_unlock(&devsw_lock_list_mtx);
+	return (index);
 }
 
 static int
@@ -279,7 +286,7 @@ cdev_set_bdev(int cdev, int bdev)
 	return (chrtoblk_set(cdev, bdev));
 }
 
-int  
+int
 cdevsw_add_with_bdev(int index, struct cdevsw * csw, int bdev)
 {
 	index = cdevsw_add(index, csw);
@@ -294,50 +301,39 @@ cdevsw_add_with_bdev(int index, struct cdevsw * csw, int bdev)
 }
 
 int
-cdevsw_setkqueueok(int index, struct cdevsw *csw, int use_offset)
+cdevsw_setkqueueok(int maj, struct cdevsw * csw, int extra_flags)
 {
-	struct cdevsw *devsw;
+	struct cdevsw * devsw;
 	uint64_t flags = CDEVSW_SELECT_KQUEUE;
 
-	devsw = &cdevsw[index];
-	if ((index < 0) || (index >= nchrdev) ||
-	    (memcmp((char *)devsw, 
-		          (char *)csw, 
-			  sizeof(struct cdevsw)) != 0)) {
-		return(-1);
+	if (maj < 0 || maj >= nchrdev) {
+		return -1;
 	}
 
-	if (use_offset) {
-		flags |= CDEVSW_USE_OFFSET;
+	devsw = &cdevsw[maj];
+	if ((memcmp((char *)devsw, (char *)csw, sizeof(struct cdevsw)) != 0)) {
+		return -1;
 	}
 
-	cdevsw_flags[index] = flags;
+	flags |= extra_flags;
+
+	cdevsw_flags[maj] = flags;
 	return 0;
 }
 
-#include <pexpert/pexpert.h>	/* for PE_parse_boot_arg */
-
-void
-tbeproc(void *procp)
-{
-	struct proc *p = procp;
-
-	if (p)
-		OSBitOrAtomic(P_TBE, &p->p_flag);
-	return;
-}
+#include <pexpert/pexpert.h> /* for PE_parse_boot_arg */
 
 /*
  * Copy the "hostname" variable into a caller-provided buffer
  * Returns: 0 for success, ENAMETOOLONG for insufficient buffer space.
- * On success, "len" will be set to the number of characters preceding 
+ * On success, "len" will be set to the number of characters preceding
  * the NULL character in the hostname.
  */
 int
-bsd_hostname(char *buf, int bufsize, int *len)
+bsd_hostname(char * buf, int bufsize, int * len)
 {
 	/*
- 	 * "hostname" is null-terminated, and "hostnamelen" is equivalent to strlen(hostname).
+	 * "hostname" is null-terminated, and "hostnamelen" is equivalent to strlen(hostname).
 	 */
 	if (hostnamelen < bufsize) {
 		strlcpy(buf, hostname, bufsize);
@@ -345,7 +341,7 @@ bsd_hostname(char *buf, int bufsize, int *len)
 		return 0;
 	} else {
 		return ENAMETOOLONG;
-	}    
+	}
 }
 
 void
@@ -354,19 +350,20 @@ devsw_lock(dev_t dev, int mode)
 	devsw_lock_t newlock, tmplock;
 	int res;
 
-	assert(0 <= major(dev) && major(dev) < nchrdev);	
+	assert(0 <= major(dev) && major(dev) < nchrdev);
 	assert(mode == S_IFCHR || mode == S_IFBLK);
 
 	MALLOC(newlock, devsw_lock_t, sizeof(struct devsw_lock), M_TEMP, M_WAITOK | M_ZERO);
 	newlock->dl_dev = dev;
 	newlock->dl_thread = current_thread();
 	newlock->dl_mode = mode;
-	
+
 	lck_mtx_lock_spin(&devsw_lock_list_mtx);
 retry:
-	TAILQ_FOREACH(tmplock, &devsw_locks, dl_list) {
+	TAILQ_FOREACH(tmplock, &devsw_locks, dl_list)
+	{
 		if (tmplock->dl_dev == dev && tmplock->dl_mode == mode) {
-			res = msleep(tmplock, &devsw_lock_list_mtx, PVFS, "devsw_lock", NULL);	
+			res = msleep(tmplock, &devsw_lock_list_mtx, PVFS, "devsw_lock", NULL);
 			assert(res == 0);
 			goto retry;
 		}
@@ -374,19 +371,19 @@ retry:
 
 	TAILQ_INSERT_TAIL(&devsw_locks, newlock, dl_list);
 	lck_mtx_unlock(&devsw_lock_list_mtx);
-
 }
 void
 devsw_unlock(dev_t dev, int mode)
 {
 	devsw_lock_t tmplock;
 
-	assert(0 <= major(dev) && major(dev) < nchrdev);	
+	assert(0 <= major(dev) && major(dev) < nchrdev);
 
 	lck_mtx_lock_spin(&devsw_lock_list_mtx);
 
-	TAILQ_FOREACH(tmplock, &devsw_locks, dl_list) {
-		if (tmplock->dl_dev == dev && tmplock->dl_mode == mode) {	
+	TAILQ_FOREACH(tmplock, &devsw_locks, dl_list)
+	{
+		if (tmplock->dl_dev == dev && tmplock->dl_mode == mode) {
 			break;
 		}
 	}
@@ -401,9 +398,9 @@ devsw_unlock(dev_t dev, int mode)
 
 	wakeup(tmplock);
 	TAILQ_REMOVE(&devsw_locks, tmplock, dl_list);
-	
+
 	lck_mtx_unlock(&devsw_lock_list_mtx);
-	
+
 	FREE(tmplock, M_TEMP);
 }
 

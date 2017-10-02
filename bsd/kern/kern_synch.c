@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2006 Apple Computer, Inc. All rights reserved.
+ * Copyright (c) 2000-2016 Apple Computer, Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -40,8 +40,6 @@
 #include <sys/vnode.h>
 #include <sys/kernel.h>
 
-#include <machine/spl.h>
-
 #include <kern/queue.h>
 #include <sys/lock.h>
 #include <kern/thread.h>
@@ -53,15 +51,15 @@
 
 #include <kern/task.h>
 #include <mach/time_value.h>
-#include <kern/lock.h>
+#include <kern/locks.h>
+#include <kern/policy_internal.h>
 
 #include <sys/systm.h>			/* for unix_syscall_return() */
 #include <libkern/OSAtomic.h>
 
 extern void compute_averunnable(void *);	/* XXX */
 
-
-
+__attribute__((noreturn))
 static void
 _sleep_continue( __unused void *parameter, wait_result_t wresult)
 {
@@ -265,6 +263,7 @@ block:
 			error = EWOULDBLOCK;
 			break;
 		case THREAD_AWAKENED:
+		case THREAD_RESTART:
 			/*
 			 * Posix implies any signal should be delivered
 			 * first, regardless of whether awakened due

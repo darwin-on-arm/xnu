@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2012 Apple Inc. All rights reserved.
+ * Copyright (c) 2008-2017 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -57,6 +57,7 @@ struct ipf_pktopts {
 #define IPPOF_SELECT_SRCIF	0x8
 #define IPPOF_BOUND_SRCADDR	0x10
 #define IPPOF_SHIFT_IFSCOPE	16
+#define IPPOF_NO_IFF_EXPENSIVE	0x20
 #endif /* PRIVATE */
 
 typedef struct ipf_pktopts *ipf_pktopts_t;
@@ -155,8 +156,16 @@ typedef	struct opaque_ipfilter *ipfilter_t;
 	@param filter_ref A reference to the filter used to detach it.
 	@result 0 on success otherwise the errno error.
  */
+#ifdef KERNEL_PRIVATE
+extern errno_t ipf_addv4_internal(const struct ipf_filter *filter,
+    ipfilter_t *filter_ref);
+
+#define ipf_addv4(filter, filter_ref) \
+    ipf_addv4_internal((filter), (filter_ref))
+#else
 extern errno_t ipf_addv4(const struct ipf_filter *filter,
     ipfilter_t *filter_ref);
+#endif /* KERNEL_PRIVATE */
 
 /*!
 	@function ipf_addv6
@@ -165,8 +174,16 @@ extern errno_t ipf_addv4(const struct ipf_filter *filter,
 	@param filter_ref A reference to the filter used to detach it.
 	@result 0 on success otherwise the errno error.
  */
+#ifdef KERNEL_PRIVATE
+extern errno_t ipf_addv6_internal(const struct ipf_filter *filter,
+    ipfilter_t *filter_ref);
+
+#define ipf_addv6(filter, filter_ref) \
+    ipf_addv6_internal((filter), (filter_ref))
+#else
 extern errno_t ipf_addv6(const struct ipf_filter *filter,
     ipfilter_t *filter_ref);
+#endif /* KERNEL_PRIVATE */
 
 /*!
 	@function ipf_remove

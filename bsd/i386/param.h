@@ -112,11 +112,7 @@
 
 #define	MCLOFSET	(MCLBYTES - 1)
 #ifndef NMBCLUSTERS
-#ifdef GATEWAY
 #define	NMBCLUSTERS	((1024 * 1024) / MCLBYTES)	/* cl map size: 1MB */
-#else
-#define	NMBCLUSTERS	((1024 * 512) / MCLBYTES)	/* cl map size: 0.5MB */
-#endif
 #endif
 
 /*
@@ -169,7 +165,7 @@
 #define	DELAY(n) delay(n)
 
 #else	/* defined(KERNEL) || defined(STANDALONE) */
-#define	DELAY(n)	{ register int N = (n); while (--N > 0); }
+#define	DELAY(n)	{ int N = (n); while (--N > 0); }
 #endif	/* defined(KERNEL) || defined(STANDALONE) */
 
 #endif /* _I386_PARAM_H_ */

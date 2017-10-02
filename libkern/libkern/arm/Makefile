@@ -6,14 +6,6 @@ export MakeInc_dir=${SRCROOT}/makedefs/MakeInc.dir
 include $(MakeInc_cmd)
 include $(MakeInc_def)
 
-INSTINC_SUBDIRS =
-
-INSTINC_SUBDIRS_ARM =
-
-EXPINC_SUBDIRS = ${INSTINC_SUBDIRS}
-
-EXPINC_SUBDIRS_ARM = ${INSTINC_SUBDIRS_ARM}
-
 DATAFILES = \
           OSByteOrder.h
 
@@ -27,5 +19,3 @@ EXPORT_MD_DIR = libkern/arm
 
 include $(MakeInc_rule)
 include $(MakeInc_dir)
-
-

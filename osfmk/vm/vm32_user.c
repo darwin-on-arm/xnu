@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008 Apple Inc. All rights reserved.
+ * Copyright (c) 2008-2016 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -90,7 +90,7 @@
 #include <vm/vm_pageout.h>
 #include <vm/vm_protos.h>
 
-#if VM32_SUPPORT
+#ifdef VM32_SUPPORT
 
 /*
  * See vm_user.c for the real implementation of all of these functions.
@@ -114,7 +114,7 @@ vm32_allocate(
 	kern_return_t		result;
 
 	maddr = *addr;
-	result = mach_vm_allocate(map, &maddr, size, flags);
+	result = mach_vm_allocate_external(map, &maddr, size, flags);
 	*addr = CAST_DOWN_EXPLICIT(vm32_offset_t, maddr);
 	
 	return result;
@@ -265,7 +265,7 @@ vm32_map_64(
 	kern_return_t		result;
 
 	maddress = *address;
-	result = mach_vm_map(target_map, &maddress, size, mask,
+	result = mach_vm_map_external(target_map, &maddress, size, mask,
 						 flags, port, offset, copy,
 						 cur_protection, max_protection, inheritance);
 	*address = CAST_DOWN_EXPLICIT(vm32_offset_t, maddress);
@@ -310,7 +310,7 @@ vm32_remap(
 	kern_return_t		result;
 	
 	maddress = *address;
-	result = mach_vm_remap(target_map, &maddress, size, mask,
+	result = mach_vm_remap_external(target_map, &maddress, size, mask,
 						 anywhere, src_map, memory_address, copy,
 						 cur_protection, max_protection, inheritance);
 	*address = CAST_DOWN_EXPLICIT(vm32_offset_t, maddress);
@@ -484,7 +484,7 @@ vm32_purgable_control(
 		return KERN_INVALID_ARGUMENT;
 
 	return vm_map_purgable_control(map,
-				       vm_map_trunc_page(address),
+				       vm_map_trunc_page(address, PAGE_MASK),
 				       control,
 				       state);
 }
@@ -499,9 +499,11 @@ vm32_map_page_query(
 	if (VM_MAP_NULL == map)
 		return KERN_INVALID_ARGUMENT;
 
-	return vm_map_page_query_internal(map,
-					  vm_map_trunc_page(offset),
-					  disposition, ref_count);
+	return vm_map_page_query_internal(
+		map,
+		vm_map_trunc_page(offset, PAGE_MASK),
+		disposition,
+		ref_count);
 }
 
 kern_return_t

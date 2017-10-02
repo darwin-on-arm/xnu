@@ -60,24 +60,106 @@
 #define _KERN_KALLOC_H_
 
 #include <mach/machine/vm_types.h>
+#include <mach/boolean.h>
 #include <sys/cdefs.h>
+#include <mach/vm_types.h>
 
 __BEGIN_DECLS
 
-extern void *kalloc(vm_size_t	size);
+#if XNU_KERNEL_PRIVATE
 
-extern void *kalloc_noblock(vm_size_t	size);
+extern void *
+kalloc_canblock(
+		vm_size_t	         * size,
+		boolean_t              canblock,
+		vm_allocation_site_t * site);
+
+extern vm_size_t
+kalloc_size(
+		void 				 * addr);
+
+extern vm_size_t
+kfree_addr(
+		void 				 * addr);
+
+extern vm_size_t
+kalloc_bucket_size(
+		vm_size_t 			   size);
+
+#define kalloc(size)                                \
+	({ VM_ALLOC_SITE_STATIC(0, 0);                  \
+	vm_size_t tsize = (size);                       \
+	kalloc_canblock(&tsize, TRUE, &site); })
+
+#define kalloc_tag(size, itag)                      \
+	({ VM_ALLOC_SITE_STATIC(0, (itag));             \
+	vm_size_t tsize = (size);                       \
+	kalloc_canblock(&tsize, TRUE, &site); })
+
+#define kalloc_tag_bt(size, itag)                   \
+	({ VM_ALLOC_SITE_STATIC(VM_TAG_BT, (itag));     \
+	vm_size_t tsize = (size);                       \
+	kalloc_canblock(&tsize, TRUE, &site); })
+
+#define kalloc_noblock(size)                        \
+	({ VM_ALLOC_SITE_STATIC(0, 0);                  \
+	vm_size_t tsize = (size);                       \
+	kalloc_canblock(&tsize, FALSE, &site); })
+
+#define kalloc_noblock_tag(size, itag)              \
+	({ VM_ALLOC_SITE_STATIC(0, (itag));             \
+	vm_size_t tsize = (size);                       \
+	kalloc_canblock(&tsize, FALSE, &site); })
+
+#define kalloc_noblock_tag_bt(size, itag)           \
+	({ VM_ALLOC_SITE_STATIC(VM_TAG_BT, (itag));     \
+	vm_size_t tsize = (size);                       \
+	kalloc_canblock(&tsize, FALSE, &site); })
+
+
+/* these versions update the size reference with the actual size allocated */
+
+#define kallocp(size)                               \
+	({ VM_ALLOC_SITE_STATIC(0, 0);                  \
+	kalloc_canblock((size), TRUE, &site); })
+
+#define kallocp_tag(size, itag)                     \
+	({ VM_ALLOC_SITE_STATIC(0, (itag));             \
+	kalloc_canblock((size), TRUE, &site); })
+
+#define kallocp_tag_bt(size, itag)                  \
+	({ VM_ALLOC_SITE_STATIC(VM_TAG_BT, (itag));     \
+	kalloc_canblock((size), TRUE, &site); })
+
+#define kallocp_noblock(size)                       \
+	({ VM_ALLOC_SITE_STATIC(0, 0);                  \
+	kalloc_canblock((size), FALSE, &site); })
+
+#define kallocp_noblock_tag_bt(size, itag)          \
+	({ VM_ALLOC_SITE_STATIC(VM_TAG_BT, (itag));     \
+	kalloc_canblock((size), FALSE, &site); })
+
+
 
 extern void kfree(void		*data,
 		  vm_size_t	size);
+
+#else /* XNU_KERNEL_PRIVATE */
+
+extern void *kalloc(vm_size_t	size) __attribute__((alloc_size(1)));
+
+extern void *kalloc_noblock(vm_size_t	size) __attribute__((alloc_size(1)));
+
+extern void kfree(void		*data,
+		  vm_size_t	size);
+
+#endif /* !XNU_KERNEL_PRIVATE */
 
 __END_DECLS
 
 #ifdef	MACH_KERNEL_PRIVATE
 
-#include <kern/lock.h>
-
-extern void		kalloc_init(void) __attribute__((section("__TEXT, initcode")));
+extern void		kalloc_init(void);
 
 extern void		kalloc_fake_zone_init( int );
 

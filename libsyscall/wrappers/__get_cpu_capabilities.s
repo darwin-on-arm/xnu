@@ -23,11 +23,9 @@
 
 /* Get the cpu_capabilities bit vector out of the comm page */
 
-#ifndef __arm__
 #define	__APPLE_API_PRIVATE
 #include <machine/cpu_capabilities.h>
 #undef	__APPLE_API_PRIVATE
-#endif
 
 #if defined(__x86_64__)
 
@@ -35,8 +33,8 @@
 	.align 2, 0x90
 	.globl __get_cpu_capabilities
 __get_cpu_capabilities:
-	movq	$(_COMM_PAGE_CPU_CAPABILITIES), %rax
-	movl	(%rax), %eax
+	movq	$(_COMM_PAGE_CPU_CAPABILITIES64), %rax
+	movq	(%rax), %rax
 	ret
 
 #elif defined(__i386__)
@@ -45,7 +43,8 @@ __get_cpu_capabilities:
 	.align 2, 0x90
 	.globl __get_cpu_capabilities
 __get_cpu_capabilities:
-	movl	_COMM_PAGE_CPU_CAPABILITIES, %eax
+	movl	_COMM_PAGE_CPU_CAPABILITIES64, %eax
+	movl	_COMM_PAGE_CPU_CAPABILITIES64+4, %edx
 	ret
 
 #elif defined(__arm__)
@@ -54,11 +53,24 @@ __get_cpu_capabilities:
 	.align 2
 	.globl __get_cpu_capabilities
 __get_cpu_capabilities:
-	/* The SDK is stupid. */
-#define _COMMPAGE_CPU_CAPABILITIES			0x40000020
-	mov	r0, #_COMMPAGE_CPU_CAPABILITIES
+	mov	r0, #(_COMM_PAGE_CPU_CAPABILITIES & 0x000000ff)
+	orr	r0, r0, #(_COMM_PAGE_CPU_CAPABILITIES & 0x0000ff00)
+	orr	r0, r0, #(_COMM_PAGE_CPU_CAPABILITIES & 0x00ff0000)
+	orr	r0, r0, #(_COMM_PAGE_CPU_CAPABILITIES & 0xff000000)
 	ldr	r0, [r0]
 	bx	lr
+
+#elif defined(__arm64__)
+
+	.text
+	.align 2
+	.globl __get_cpu_capabilities
+__get_cpu_capabilities:
+	ldr x0, Lcommpage_cc_addr
+	ldr	w0, [x0]
+	ret
+Lcommpage_cc_addr:
+.quad _COMM_PAGE_CPU_CAPABILITIES
 
 #else
 #error Unsupported architecture

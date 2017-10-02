@@ -1,8 +1,8 @@
 /*
- * Copyright (c) 2000-2012 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2017 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
- * 
+ *
  * This file contains Original Code and/or Modifications of Original Code
  * as defined in and that are subject to the Apple Public Source License
  * Version 2.0 (the 'License'). You may not use this file except in
@@ -11,10 +11,10 @@
  * unlawful or unlicensed copies of an Apple operating system, or to
  * circumvent, violate, or enable the circumvention or violation of, any
  * terms of an Apple operating system software license agreement.
- * 
+ *
  * Please obtain a copy of the License at
  * http://www.opensource.apple.com/apsl/ and read it before using this file.
- * 
+ *
  * The Original Code and all software distributed under the License are
  * distributed on an 'AS IS' basis, WITHOUT WARRANTY OF ANY KIND, EITHER
  * EXPRESS OR IMPLIED, AND APPLE HEREBY DISCLAIMS ALL SUCH WARRANTIES,
@@ -22,7 +22,7 @@
  * FITNESS FOR A PARTICULAR PURPOSE, QUIET ENJOYMENT OR NON-INFRINGEMENT.
  * Please see the License for the specific language governing rights and
  * limitations under the License.
- * 
+ *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
 /* Copyright (c) 1995 NeXT Computer, Inc. All Rights Reserved */
@@ -105,12 +105,6 @@
 #define	SIOCSIFMETRIC	_IOW('i', 24, struct ifreq)	/* set IF metric */
 #define	SIOCDIFADDR	_IOW('i', 25, struct ifreq)	/* delete IF addr */
 #define	SIOCAIFADDR	_IOW('i', 26, struct ifaliasreq)/* add/chg IF alias */
-#define	SIOCGETVIFCNT	_IOWR('r', 27, struct sioc_vif_req)/* get vif pkt cnt */
-#define	SIOCGETSGCNT	_IOWR('r', 28, struct sioc_sg_req) /* get s,g pkt cnt */
-#define SIOCALIFADDR    _IOW('i', 29, struct if_laddrreq) /* add IF addr */
-#define SIOCGLIFADDR    _IOWR('i', 30, struct if_laddrreq) /* get IF addr */   
-#define SIOCDLIFADDR    _IOW('i', 31, struct if_laddrreq) /* delete IF addr */ 
-
 
 #define	SIOCGIFADDR	_IOWR('i', 33, struct ifreq)	/* get ifnet address */
 #define	SIOCGIFDSTADDR	_IOWR('i', 34, struct ifreq)	/* get p-p address */
@@ -126,7 +120,6 @@
 #define SIOCAUTOADDR	_IOWR('i', 38, struct ifreq)	/* autoconf address */
 #define SIOCAUTONETMASK	_IOW('i', 39, struct ifreq)	/* autoconf netmask */
 #define SIOCARPIPLL		_IOWR('i', 40, struct ifreq)	/* arp for IPv4LL address */
-
 
 #define	SIOCADDMULTI	 _IOW('i', 49, struct ifreq)	/* add m'cast addr */
 #define	SIOCDELMULTI	 _IOW('i', 50, struct ifreq)	/* del m'cast addr */
@@ -150,8 +143,6 @@
 #define	SIOCGIFPSRCADDR	_IOWR('i', 63, struct ifreq)	/* get gif psrc addr */
 #define	SIOCGIFPDSTADDR	_IOWR('i', 64, struct ifreq)	/* get gif pdst addr */
 #define	SIOCDIFPHYADDR	 _IOW('i', 65, struct ifreq)	/* delete gif addrs */
-#define	SIOCSLIFPHYADDR	 _IOW('i', 66, struct if_laddrreq) /* set gif addrs */
-#define	SIOCGLIFPHYADDR	_IOWR('i', 67, struct if_laddrreq) /* get gif addrs */
 
 #define	SIOCGIFDEVMTU	_IOWR('i', 68, struct ifreq) 	/* get if ifdevmtu */
 #define	SIOCSIFALTMTU	 _IOW('i', 69, struct ifreq)	/* set if alternate mtu */
@@ -160,14 +151,14 @@
 #define SIOCGIFBOND	_IOWR('i', 71, struct ifreq)	/* get bond if config */
 
 #ifdef PRIVATE
-/* 
+/*
  * temporary control calls to attach/detach IP to/from an ethernet interface
  */
 #define	SIOCPROTOATTACH	_IOWR('i', 80, struct ifreq)	/* attach proto to interface */
 #define	SIOCPROTODETACH	_IOWR('i', 81, struct ifreq)	/* detach proto from interface */
 #endif /* PRIVATE */
 
-#define SIOCSIFCAP       _IOW('i', 90, struct ifreq)    /* set IF features */ 
+#define SIOCSIFCAP       _IOW('i', 90, struct ifreq)    /* set IF features */
 #define SIOCGIFCAP      _IOWR('i', 91, struct ifreq)    /* get IF features */
 
 #define	SIOCIFCREATE	_IOWR('i', 120, struct ifreq)	/* create clone if */
@@ -197,21 +188,20 @@
 #define	SIOCSIFDEVMTU	 SIOCSIFALTMTU			/* deprecated */
 #endif /* KERNEL_PRIVATE */
 
-#ifdef PRIVATE
-#ifdef KERNEL
+#if !defined(KERNEL) || defined(KERNEL_PRIVATE)
 #define	SIOCIFGCLONERS	_IOWR('i', 129, struct if_clonereq) /* get cloners */
+#endif /* !KERNEL || KERNEL_PRIVATE */
+#ifdef KERNEL_PRIVATE
 #define	SIOCIFGCLONERS32 _IOWR('i', 129, struct if_clonereq32) /* get cloners */
 #define	SIOCIFGCLONERS64 _IOWR('i', 129, struct if_clonereq64) /* get cloners */
-#endif /* KERNEL */
-
-#endif /* PRIVATE */
+#endif /* KERNEL_PRIVATE */
 
 #define	SIOCGIFASYNCMAP _IOWR('i', 124, struct ifreq)	/* get ppp asyncmap */
 #define	SIOCSIFASYNCMAP _IOW('i', 125, struct ifreq)	/* set ppp asyncmap */
 
 
 #ifdef PRIVATE
-#define SIOCSETOT     _IOW('s', 128, int)             /* set socket for LibOT */
+#define SIOCSETOT     _IOW('s', 128, int)             /* deprecated */
 #endif /* PRIVATE */
 
 #define SIOCGIFMAC	_IOWR('i', 130, struct ifreq)	/* get IF MAC label */
@@ -235,6 +225,91 @@
 #define	SIOCGIFQUEUESTATS _IOWR('i', 147, struct if_qstatsreq)
 #define	SIOCSIFTHROTTLE	_IOWR('i', 148, struct if_throttlereq)
 #define	SIOCGIFTHROTTLE	_IOWR('i', 149, struct if_throttlereq)
+
+#define	SIOCGASSOCIDS	_IOWR('s', 150, struct so_aidreq) /* get associds */
+#define	SIOCGCONNIDS	_IOWR('s', 151, struct so_cidreq) /* get connids */
+#define	SIOCGCONNINFO	_IOWR('s', 152, struct so_cinforeq) /* get conninfo */
+#ifdef BSD_KERNEL_PRIVATE
+#define	SIOCGASSOCIDS32	_IOWR('s', 150, struct so_aidreq32)
+#define	SIOCGASSOCIDS64	_IOWR('s', 150, struct so_aidreq64)
+#define	SIOCGCONNIDS32	_IOWR('s', 151, struct so_cidreq32)
+#define	SIOCGCONNIDS64	_IOWR('s', 151, struct so_cidreq64)
+#define	SIOCGCONNINFO32	_IOWR('s', 152, struct so_cinforeq32)
+#define	SIOCGCONNINFO64	_IOWR('s', 152, struct so_cinforeq64)
+#endif /* BSD_KERNEL_PRIVATE */
+#define	SIOCSCONNORDER	_IOWR('s', 153, struct so_cordreq) /* set conn order */
+#define	SIOCGCONNORDER	_IOWR('s', 154, struct so_cordreq) /* get conn order */
+
+#define	SIOCSIFLOG	_IOWR('i', 155, struct ifreq)
+#define	SIOCGIFLOG	_IOWR('i', 156, struct ifreq)
+#define	SIOCGIFDELEGATE	_IOWR('i', 157, struct ifreq)
+#define	SIOCGIFLLADDR	_IOWR('i', 158, struct ifreq) /* get link level addr */
+#define	SIOCGIFTYPE	_IOWR('i', 159, struct ifreq) /* get interface type */
+#define	SIOCGIFEXPENSIVE _IOWR('i', 160, struct ifreq) /* get interface expensive flag */
+#define	SIOCSIFEXPENSIVE _IOWR('i', 161, struct ifreq) /* mark interface expensive */
+#define	SIOCGIF2KCL	_IOWR('i', 162, struct ifreq)	/* interface prefers 2 KB clusters */
+#define	SIOCSIF2KCL	_IOWR('i', 163, struct ifreq)
+#define	SIOCGSTARTDELAY	_IOWR('i', 164, struct ifreq)
+
+#define	SIOCAIFAGENTID	_IOWR('i', 165, struct if_agentidreq) /* Add netagent id */
+#define	SIOCDIFAGENTID	_IOWR('i', 166, struct if_agentidreq) /* Delete netagent id */
+#define	SIOCGIFAGENTIDS	_IOWR('i', 167, struct if_agentidsreq) /* Get netagent ids */
+#define	SIOCGIFAGENTDATA	_IOWR('i', 168, struct netagent_req) /* Get netagent data */
+
+#ifdef BSD_KERNEL_PRIVATE
+#define	SIOCGIFAGENTIDS32	_IOWR('i', 167, struct if_agentidsreq32)
+#define	SIOCGIFAGENTIDS64	_IOWR('i', 167, struct if_agentidsreq64)
+#define	SIOCGIFAGENTDATA32		_IOWR('i', 168, struct netagent_req32)
+#define	SIOCGIFAGENTDATA64		_IOWR('i', 168, struct netagent_req64)
+#endif /* BSD_KERNEL_PRIVATE */
+
+#define	SIOCSIFINTERFACESTATE	_IOWR('i', 169, struct ifreq) /* set interface state */
+#define	SIOCGIFINTERFACESTATE	_IOWR('i', 170, struct ifreq) /* get interface state */
+#define	SIOCSIFPROBECONNECTIVITY _IOWR('i', 171, struct ifreq) /* Start/Stop probes to check connectivity */
+#define	SIOCGIFPROBECONNECTIVITY	_IOWR('i', 172, struct ifreq)	/* check if connectivity probes are enabled */
+
+#endif /* PRIVATE */
+#define	SIOCGIFFUNCTIONALTYPE	_IOWR('i', 173, struct ifreq) /* get interface functional type */
+#ifdef PRIVATE
+#define	SIOCSIFNETSIGNATURE	_IOWR('i', 174, struct if_nsreq)
+#define	SIOCGIFNETSIGNATURE	_IOWR('i', 175, struct if_nsreq)
+
+#define	SIOCGECNMODE		_IOWR('i', 176, struct ifreq)
+#define	SIOCSECNMODE		_IOW('i', 177, struct ifreq)
+
+#define	SIOCSIFORDER	_IOWR('i', 178, struct if_order)
+#define	SIOCGIFORDER	_IOWR('i', 179, struct if_order)
+
+#define	SIOCSQOSMARKINGMODE	_IOWR('i', 180, struct ifreq)
+#define	SIOCSFASTLANECAPABLE	SIOCSQOSMARKINGMODE
+#define	SIOCSQOSMARKINGENABLED	_IOWR('i', 181, struct ifreq)
+#define	SIOCSFASTLEENABLED	SIOCSQOSMARKINGENABLED
+#define	SIOCGQOSMARKINGMODE	_IOWR('i', 182, struct ifreq)
+#define	SIOCGQOSMARKINGENABLED	_IOWR('i', 183, struct ifreq)
+
+
+#define	SIOCSIFTIMESTAMPENABLE	_IOWR('i', 184, struct ifreq)
+#define	SIOCSIFTIMESTAMPDISABLE	_IOWR('i', 185, struct ifreq)
+#define	SIOCGIFTIMESTAMPENABLED	_IOWR('i', 186, struct ifreq)
+
+#define	SIOCSIFDISABLEOUTPUT	_IOWR('i', 187, struct ifreq)
+
+#define	SIOCGIFAGENTLIST	_IOWR('i', 190, struct netagentlist_req) /* Get netagent dump */
+
+#ifdef BSD_KERNEL_PRIVATE
+#define	SIOCGIFAGENTLIST32		_IOWR('i', 190, struct netagentlist_req32)
+#define	SIOCGIFAGENTLIST64		_IOWR('i', 190, struct netagentlist_req64)
+#endif /* BSD_KERNEL_PRIVATE */
+
+#define	SIOCSIFLOWINTERNET	_IOWR('i', 191, struct ifreq)
+#define	SIOCGIFLOWINTERNET	_IOWR('i', 192, struct ifreq)
+
+#if INET6
+#define	SIOCGIFNAT64PREFIX	_IOWR('i', 193, struct if_nat64req)
+#define	SIOCSIFNAT64PREFIX	_IOWR('i', 194, struct if_nat64req)
+#endif
+#define	SIOCGIFNEXUS		_IOWR('i', 195, struct if_nexusreq)
+
 #endif /* PRIVATE */
 
 #endif /* !_SYS_SOCKIO_H_ */

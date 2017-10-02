@@ -71,6 +71,7 @@
 
 #include <sys/cdefs.h>
 #include <sys/appleapiopts.h>
+#include <Availability.h>
 
 #define __DARWIN_NSIG	32	/* counting 0; could be 33 (mask is 1-32) */
 
@@ -142,35 +143,19 @@
 #ifndef _ANSI_SOURCE
 #include <sys/_types.h>
 
-#define __need_mcontext_t
-#define __need_stack_t
-#define __need_ucontext_t
-#include <sys/_structs.h>
+#include <machine/_mcontext.h>
 
-#ifndef _PID_T
-#define _PID_T
-typedef __darwin_pid_t			pid_t;
-#endif
+#ifndef KERNEL
+#include <sys/_pthread/_pthread_attr_t.h>
+#endif /* KERNEL */
 
-#ifndef _PTHREAD_ATTR_T
-#define _PTHREAD_ATTR_T
-typedef __darwin_pthread_attr_t		pthread_attr_t;
-#endif
+#include <sys/_types/_sigaltstack.h>
+#include <sys/_types/_ucontext.h>
 
-#ifndef _SIGSET_T
-#define _SIGSET_T
-typedef __darwin_sigset_t		sigset_t;
-#endif
-
-#ifndef	_SIZE_T
-#define	_SIZE_T
-typedef	__darwin_size_t			size_t;
-#endif
-
-#ifndef _UID_T
-#define _UID_T
-typedef __darwin_uid_t			uid_t;
-#endif
+#include <sys/_types/_pid_t.h>
+#include <sys/_types/_sigset_t.h>
+#include <sys/_types/_size_t.h>
+#include <sys/_types/_uid_t.h>
 
 union sigval {
 	/* Members as suggested by Annex C of POSIX 1003.1b. */
@@ -182,6 +167,7 @@ union sigval {
 #define	SIGEV_SIGNAL	1	/* aio - completion notification */
 #define	SIGEV_THREAD	3	/* [NOTIMP] [RTS] call notification function */
 
+#ifndef KERNEL
 struct sigevent {
 	int				sigev_notify;				/* Notification type */
 	int				sigev_signo;				/* Signal number */
@@ -189,6 +175,7 @@ struct sigevent {
 	void			(*sigev_notify_function)(union sigval);	  /* Notification function */
 	pthread_attr_t	*sigev_notify_attributes;	/* Notification attributes */
 };
+#endif /* KERNEL */
 
 #ifdef BSD_KERNEL_PRIVATE
 
@@ -576,17 +563,17 @@ struct	sigstack {
  */
 #define sigmask(m)	(1 << ((m)-1))
 
-#ifdef	BSD_KERNEL_PRIVATE
+#ifdef	KERNEL_PRIVATE
 /*
  *	signals delivered on a per-thread basis.
  */
 #define threadmask (sigmask(SIGILL)|sigmask(SIGTRAP)|\
-		    sigmask(SIGIOT)|sigmask(SIGEMT)|\
+		    sigmask(SIGABRT)|sigmask(SIGEMT)|\
 		    sigmask(SIGFPE)|sigmask(SIGBUS)|\
 		    sigmask(SIGSEGV)|sigmask(SIGSYS)|\
-		    sigmask(SIGPIPE))
+		    sigmask(SIGPIPE)|sigmask(SIGKILL))
 
-#define workq_threadmask (threadmask | sigcantmask)
+#define workq_threadmask ((threadmask | sigcantmask | sigmask(SIGPROF)) & ~sigmask(SIGABRT))
 
 /*
  * Signals carried across exec.
@@ -598,7 +585,7 @@ struct	sigstack {
 		    sigmask(SIGTTIN)|sigmask(SIGTTOU)|\
 		    sigmask(SIGUSR1)|sigmask(SIGUSR2))
 
-#endif	/* BSD_KERNEL_PRIVATE */
+#endif	/* KERNEL_PRIVATE */
 
 #define	BADSIG		SIG_ERR
 

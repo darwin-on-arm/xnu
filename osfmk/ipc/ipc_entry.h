@@ -139,6 +139,17 @@ extern ipc_entry_t ipc_entry_lookup(
 	ipc_space_t		space,
 	mach_port_name_t	name);
 
+/* Hold a number of entries in a locked space */
+extern kern_return_t ipc_entries_hold(
+	ipc_space_t		space,
+	natural_t		count);
+
+/* claim and initialize a held entry in a locked space */
+extern kern_return_t ipc_entry_claim(
+	ipc_space_t		space,
+	mach_port_name_t	*namep,
+	ipc_entry_t		*entryp);
+
 /* Allocate an entry in a space */
 extern kern_return_t ipc_entry_get(
 	ipc_space_t		space,
@@ -174,4 +185,7 @@ extern kern_return_t ipc_entry_grow_table(
 	ipc_space_t		space,
 	ipc_table_elems_t	target_size);
 
+/* mask on/off default entry generation bits */
+extern mach_port_name_t ipc_entry_name_mask(
+	mach_port_name_t name);
 #endif	/* _IPC_IPC_ENTRY_H_ */

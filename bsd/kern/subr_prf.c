@@ -98,8 +98,8 @@
 #include <sys/subr_prf.h>
 
 #include <kern/cpu_number.h>	/* for cpu_number() */
-#include <machine/spl.h>
 #include <libkern/libkern.h>
+#include <os/log_private.h>
 
 /* for vaddlog(): the following are implemented in osfmk/kern/printf.c  */
 extern void bsd_log_lock(void);
@@ -116,10 +116,10 @@ struct snprintf_arg {
 
 /*
  * In case console is off,
- * panicstr contains argument to last
+ * debugger_panic_str contains argument to last
  * call to panic.
  */
-extern const char	*panicstr;
+extern const char	*debugger_panic_str;
 
 extern	void cnputc(char);		/* standard console putc */
 void	(*v_putc)(char) = cnputc;	/* routine to putc on virtual console */
@@ -130,7 +130,8 @@ extern int  __doprnt(const char *fmt,
 					 va_list    argp,
 					 void       (*)(int, void *),
 					 void       *arg,
-					 int        radix);
+					 int        radix,
+					 int        is_log);
 
 /*
  *	Record cpu that panic'd and lock around panic data
@@ -171,7 +172,7 @@ uprintf(const char *fmt, ...)
 		if (pca.tty != NULL)
 			tty_lock(pca.tty);
 		va_start(ap, fmt);
-		__doprnt(fmt, ap, putchar, &pca, 10);
+		__doprnt(fmt, ap, putchar, &pca, 10, FALSE);
 		va_end(ap);
 		if (pca.tty != NULL)
 		tty_unlock(pca.tty);
@@ -213,8 +214,7 @@ void
 tprintf(tpr_t tpr, const char *fmt, ...)
 {
 	struct session *sess = (struct session *)tpr;
-	struct tty *tp = TTY_NULL;
-	int flags = TOLOG;
+	struct tty *tp;
 	va_list ap;
 	struct putchar_args pca;
 
@@ -224,25 +224,27 @@ tprintf(tpr_t tpr, const char *fmt, ...)
 		/* ttycheckoutq(), tputchar() require a locked tp */
 		tty_lock(tp);
 		if(ttycheckoutq(tp, 0)) {
-			flags |= TOTTY;
+			pca.flags = TOTTY;
 			/* going to the tty; leave locked */
-		} else {
-			/* not going to the tty... */
-			tty_unlock(tp);
-			tp = TTY_NULL;
+			pca.tty = tp;
+			va_start(ap, fmt);
+			__doprnt(fmt, ap, putchar, &pca, 10, FALSE);
+			va_end(ap);
 		}
+		tty_unlock(tp);
 	}
-	
-	pca.flags = flags;
-	pca.tty   = tp;
+
+	pca.flags = TOLOG;
+	pca.tty   = TTY_NULL;
 	va_start(ap, fmt);
-	__doprnt(fmt, ap, putchar, &pca, 10);
+	__doprnt(fmt, ap, putchar, &pca, 10, TRUE);
 	va_end(ap);
 
-	if (tp != NULL)
-		tty_unlock(tp);	/* lock/unlock is guarded by tp, above */
-
 	logwakeup();
+
+	va_start(ap, fmt);
+	os_log_with_args(OS_LOG_DEFAULT, OS_LOG_TYPE_DEFAULT, fmt, ap, __builtin_return_address(0));
+	va_end(ap);
 }
 
 /*
@@ -265,7 +267,7 @@ ttyprintf(struct tty *tp, const char *fmt, ...)
 		pca.tty   = tp;
 		
 		va_start(ap, fmt);
-		__doprnt(fmt, ap, putchar, &pca, 10);
+		__doprnt(fmt, ap, putchar, &pca, 10, TRUE);
 		va_end(ap);
 	}
 }
@@ -314,7 +316,7 @@ vaddlog(const char *fmt, va_list ap)
 	}
 
 	bsd_log_lock();
-	__doprnt(fmt, ap, putchar, &pca, 10);
+	__doprnt(fmt, ap, putchar, &pca, 10, TRUE);
 	bsd_log_unlock();
 	
 	logwakeup();
@@ -334,7 +336,7 @@ _printf(int flags, struct tty *ttyp, const char *format, ...)
 		tty_lock(ttyp);
 	
 		va_start(ap, format);
-		__doprnt(format, ap, putchar, &pca, 10);
+		__doprnt(format, ap, putchar, &pca, 10, TRUE);
 		va_end(ap);
 
 		tty_unlock(ttyp);
@@ -349,7 +351,7 @@ prf(const char *fmt, va_list ap, int flags, struct tty *ttyp)
 	pca.flags = flags;
 	pca.tty   = ttyp;
 
-	__doprnt(fmt, ap, putchar, &pca, 10);
+	__doprnt(fmt, ap, putchar, &pca, 10, TRUE);
 
 	return 0;
 }
@@ -414,7 +416,7 @@ putchar(int c, void *arg)
 	struct putchar_args *pca = arg;
 	char **sp = (char**) pca->tty;
 
-	if (panicstr)
+	if (debugger_panic_str)
 		constty = 0;
 	if ((pca->flags & TOCONS) && pca->tty == NULL && constty) {
 		pca->tty = constty;
@@ -436,20 +438,15 @@ putchar(int c, void *arg)
 }
 
 int
-vprintf(const char *fmt, va_list ap)
+vprintf_log_locked(const char *fmt, va_list ap)
 {
 	struct putchar_args pca;
 
-	pca.flags = TOLOG | TOCONS;
+	pca.flags = TOLOGLOCKED;
 	pca.tty   = NULL;
-	__doprnt(fmt, ap, putchar, &pca, 10);
+	__doprnt(fmt, ap, putchar, &pca, 10, TRUE);
 	return 0;
 }
-
-#ifdef __arm__  /* I don't want to rebuild my symbolsets. */
-#undef CONFIG_EMBEDDED
-#define CONFIG_EMBEDDED 0
-#endif
 
 #if !CONFIG_EMBEDDED
 
@@ -468,7 +465,7 @@ vsprintf(char *buf, const char *cfmt, va_list ap)
 	info.str = buf;
 	info.remain = 999999;
 
-	retval = __doprnt(cfmt, ap, snprintf_func, &info, 10);
+	retval = __doprnt(cfmt, ap, snprintf_func, &info, 10, FALSE);
 	if (info.remain >= 1) {
 		*info.str++ = '\0';
 	}
@@ -502,7 +499,7 @@ vsnprintf(char *str, size_t size, const char *format, va_list ap)
 
 	info.str = str;
 	info.remain = size;
-	retval = __doprnt(format, ap, snprintf_func, &info, 10);
+	retval = __doprnt(format, ap, snprintf_func, &info, 10, FALSE);
 	if (info.remain >= 1)
 		*info.str++ = '\0';
 	return retval;
@@ -522,7 +519,7 @@ snprintf_func(int ch, void *arg)
 int
 kvprintf(char const *fmt, void (*func)(int, void*), void *arg, int radix, va_list ap)
 {
-	__doprnt(fmt, ap, func, arg, radix);
+	__doprnt(fmt, ap, func, arg, radix, TRUE);
 	return 0;
 }
 

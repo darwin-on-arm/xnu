@@ -30,49 +30,8 @@
 
 #if defined (__i386__) || defined(__x86_64__)
 #include "i386/pal_routines.h"
-#elif defined (__arm__)
-
-struct pal_cpu_data; /* Defined per-platform */
-struct pal_pcb; /* Defined per-platform */
-struct pal_apic_table; /* Defined per-platform */
-
-/* serial / debug output routines */
-extern int  pal_serial_init(void);
-extern void pal_serial_putc(char);
-extern int  pal_serial_getc(void);
-
-/* Debug hook invoked in the page-fault path */
-extern void pal_dbg_page_fault( thread_t thread, user_addr_t vadddr, 
-				kern_return_t kr );
-
-/* Set a task's name in the platform kernel debugger */
-extern void pal_dbg_set_task_name( task_t task );
-
-/* wind-back to the start of a system call */
-void pal_syscall_restart(thread_t thread, arm_saved_state_t *state);
-
-/* Hook for non-vfork exec */
-void pal_execve_return(thread_t thread);
-
-/* Called by thread_terminate_self() */
-void pal_thread_terminate_self(thread_t thread);
-
-/* Called by ast_check() */
-void pal_ast_check(thread_t thread);
-
-/* Called by sync_iss_to_iks */
-extern void pal_get_kern_regs( arm_saved_state_t *state );
-
-/* Called by load_machfile */
-void pal_switch_pmap(thread_t, pmap_t, boolean_t);
-
-/*
- * Platform-specific hlt/sti.
- */ 
-extern void pal_hlt(void);
-extern void pal_sti(void);
-extern void pal_cli(void);
-
+#elif defined (__arm__) || defined (__arm64__)
+#include "arm/pal_routines.h"
 #else
 #error architecture not supported
 #endif

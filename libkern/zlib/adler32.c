@@ -1,8 +1,8 @@
 /*
- * Copyright (c) 2008 Apple Inc. All rights reserved.
+ * Copyright (c) 2008-2016 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
- * 
+ *
  * This file contains Original Code and/or Modifications of Original Code
  * as defined in and that are subject to the Apple Public Source License
  * Version 2.0 (the 'License'). You may not use this file except in
@@ -11,10 +11,10 @@
  * unlawful or unlicensed copies of an Apple operating system, or to
  * circumvent, violate, or enable the circumvention or violation of, any
  * terms of an Apple operating system software license agreement.
- * 
+ *
  * Please obtain a copy of the License at
  * http://www.opensource.apple.com/apsl/ and read it before using this file.
- * 
+ *
  * The Original Code and all software distributed under the License are
  * distributed on an 'AS IS' basis, WITHOUT WARRANTY OF ANY KIND, EITHER
  * EXPRESS OR IMPLIED, AND APPLE HEREBY DISCLAIMS ALL SUCH WARRANTIES,
@@ -22,7 +22,7 @@
  * FITNESS FOR A PARTICULAR PURPOSE, QUIET ENJOYMENT OR NON-INFRINGEMENT.
  * Please see the License for the specific language governing rights and
  * limitations under the License.
- * 
+ *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
 /* adler32.c -- compute the Adler-32 checksum of a data stream
@@ -40,10 +40,6 @@
     #include "zlib.h"
 #endif /* KERNEL */
 
-#if defined __x86_64__ || defined __i386__ || defined _ARM_ARCH_6
-#include <stdint.h> // For uintptr_t.
-    extern uLong adler32_vec(uLong adler, uLong sum2, const Bytef *buf, uInt len);
-#endif
 
 #define BASE 65521UL    /* largest prime smaller than 65536 */
 #define NMAX 5552
@@ -91,10 +87,8 @@
 #endif
 
 /* ========================================================================= */
-uLong ZEXPORT adler32(adler, buf, len)
-    uLong adler;
-    const Bytef *buf;
-    uInt len;
+uLong ZEXPORT
+adler32(uLong adler, const Bytef *buf, uInt len)
 {
     unsigned long sum2;
     unsigned n;
@@ -130,22 +124,6 @@ uLong ZEXPORT adler32(adler, buf, len)
         return adler | (sum2 << 16);
     }
 
-#if defined __x86_64__ || defined __i386__ || defined _ARM_ARCH_6
-
-	if (len>=32000) {	/* use vector code only if len is sufficiently large to compensate registers save/restore */
-	/* align buf to 16-byte boundary */
-    while (((uintptr_t)buf)&15) { /* not on a 16-byte boundary */
-        len--;
-        adler += *buf++;
-        sum2 += adler;
-        if (adler >= BASE) adler -= BASE;
-        MOD4(sum2);             /* only added so many BASE's */
-    }
-
-    return adler32_vec(adler, sum2, buf, len);      // x86_64 or i386 (up to SSE3) or armv6 or up
-	}
-
-#endif	// defined __x86_64__ || defined __i386__ || defined _ARM_ARCH_6
 
     /* do length NMAX blocks -- requires just one modulo operation */
     while (len >= NMAX) {
@@ -179,10 +157,8 @@ uLong ZEXPORT adler32(adler, buf, len)
 }
 
 /* ========================================================================= */
-uLong ZEXPORT adler32_combine(adler1, adler2, len2)
-    uLong adler1;
-    uLong adler2;
-    z_off_t len2;
+uLong ZEXPORT
+adler32_combine(uLong adler1, uLong adler2, z_off_t len2)
 {
     unsigned long sum1;
     unsigned long sum2;

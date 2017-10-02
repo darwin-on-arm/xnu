@@ -46,7 +46,6 @@
 #include <i386/vmx/vmx_cpu.h>
 #endif
 #include <vm/vm_kern.h>
-#include <kern/etimer.h>
 #include <kern/timer_call.h>
 
 struct processor	processor_master;
@@ -101,7 +100,7 @@ cpu_init(void)
 {
 	cpu_data_t	*cdp = current_cpu_datap();
 
-	timer_call_initialize_queue(&cdp->rtclock_timer.queue);
+	timer_call_queue_init(&cdp->rtclock_timer.queue);
 	cdp->rtclock_timer.deadline = EndOfAllTime;
 
 	cdp->cpu_type = cpuid_cputype();
@@ -146,19 +145,32 @@ cpu_exit_wait(
 	int cpu)
 {
     	cpu_data_t	*cdp = cpu_datap(cpu);
+	boolean_t	intrs_enabled;
+	uint64_t	tsc_timeout;
 
 	/*
 	 * Wait until the CPU indicates that it has stopped.
+	 * Disable interrupts while the topo lock is held -- arguably
+	 * this should always be done but in this instance it can lead to
+	 * a timeout if long-running interrupt were to occur here.
 	 */
-	simple_lock(&x86_topo_lock);
+	intrs_enabled = ml_set_interrupts_enabled(FALSE);
+	mp_safe_spin_lock(&x86_topo_lock);
+	/* Set a generous timeout of several seconds (in TSC ticks) */
+	tsc_timeout = rdtsc64() + (10ULL * 1000 * 1000 * 1000);
 	while ((cdp->lcpu.state != LCPU_HALT)
 	       && (cdp->lcpu.state != LCPU_OFF)
 	       && !cdp->lcpu.stopped) {
 	    simple_unlock(&x86_topo_lock);
+	    ml_set_interrupts_enabled(intrs_enabled);
 	    cpu_pause();
-	    simple_lock(&x86_topo_lock);
+	    if (rdtsc64() > tsc_timeout)
+		panic("cpu_exit_wait(%d) timeout", cpu);
+	    ml_set_interrupts_enabled(FALSE);
+	    mp_safe_spin_lock(&x86_topo_lock);
 	}
 	simple_unlock(&x86_topo_lock);
+	ml_set_interrupts_enabled(intrs_enabled);
 }
 
 void
@@ -173,8 +185,8 @@ cpu_machine_init(
 	ml_init_interrupt();
 
 #if CONFIG_VMX
-	/* for every CPU, get the VT specs */
-	vmx_get_specs();
+	/* initialize VMX for every CPU */
+	vmx_cpu_init();
 #endif
 }
 
@@ -187,7 +199,7 @@ cpu_processor_alloc(boolean_t is_boot_cpu)
 	if (is_boot_cpu)
 		return &processor_master;
 
-	ret = kmem_alloc(kernel_map, (vm_offset_t *) &proc, sizeof(*proc));
+	ret = kmem_alloc(kernel_map, (vm_offset_t *) &proc, sizeof(*proc), VM_KERN_MEMORY_OSFMK);
 	if (ret != KERN_SUCCESS)
 		return NULL;
 

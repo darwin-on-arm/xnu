@@ -41,7 +41,7 @@
 #include <net/pfkeyv2.h>
 #include <netkey/keydb.h>
 
-#ifdef KERNEL_PRIVATE
+#ifdef BSD_KERNEL_PRIVATE
 extern struct ipsecstat ipsec6stat;
 extern struct secpolicy ip6_def_policy;
 extern int ip6_esp_trans_deflev;
@@ -51,10 +51,14 @@ extern int ip6_ah_net_deflev;
 extern int ip6_ipsec_ecn;
 extern int ip6_esp_randpad;
 
+struct ip6_out_args;
+
 extern struct secpolicy *ipsec6_getpolicybysock(struct mbuf *, u_int,
 	struct socket *, int *);
 extern struct secpolicy *ipsec6_getpolicybyaddr(struct mbuf *, u_int, int,
 	int *);
+extern int ipsec6_getpolicybyinterface(struct mbuf *,
+    u_int, int, struct ip6_out_args *, int *, struct secpolicy **);
 
 struct inpcb;
 
@@ -62,8 +66,6 @@ extern int ipsec6_in_reject_so(struct mbuf *, struct socket *);
 extern int ipsec6_delete_pcbpolicy(struct inpcb *);
 extern int ipsec6_set_policy(struct inpcb *inp, int optname,
 	caddr_t request, size_t len, int priv);
-extern int ipsec6_get_policy(struct inpcb *inp, caddr_t request, size_t len,
-	struct mbuf **mp);
 extern int ipsec6_in_reject(struct mbuf *, struct inpcb *);
 
 struct tcp6cb;
@@ -73,12 +75,12 @@ extern size_t ipsec6_hdrsiz(struct mbuf *, u_int, struct inpcb *);
 struct ip6_hdr;
 extern const char *ipsec6_logpacketstr(struct ip6_hdr *, u_int32_t);
 
+extern int ipsec6_interface_output(struct ipsec_output_state *, ifnet_t, u_char *, struct mbuf *);
 extern int ipsec6_output_trans(struct ipsec_output_state *, u_char *,
 	struct mbuf *, struct secpolicy *, int, int *);
 extern int ipsec6_output_tunnel(struct ipsec_output_state *,
 				struct secpolicy *, int);
 extern int ipsec6_tunnel_validate(struct mbuf *, int, u_int,
-	struct secasvar *);
-#endif /* KERNEL_PRIVATE */
-
+	struct secasvar *, sa_family_t *);
+#endif /* BSD_KERNEL_PRIVATE */
 #endif /* _NETINET6_IPSEC6_H_ */

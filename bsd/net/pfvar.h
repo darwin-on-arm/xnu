@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2007-2012 Apple Inc. All rights reserved.
+ * Copyright (c) 2007-2017 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -31,6 +31,7 @@
 
 /*
  * Copyright (c) 2001 Daniel Hartmeier
+ * NAT64 - Copyright (c) 2010 Viagenie Inc. (http://www.viagenie.ca)
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -82,14 +83,16 @@ extern "C" {
 
 #include <net/radix.h>
 #include <netinet/in.h>
-
+#include <net/if_var.h>
 #ifdef KERNEL
 #include <kern/kern_types.h>
 #include <kern/zalloc.h>
-#include <kern/lock.h>
+#include <kern/locks.h>
 
 #include <machine/endian.h>
 #include <sys/systm.h>
+#include <net/pf_pbuf.h>
+
 
 #if BYTE_ORDER == BIG_ENDIAN
 #define	htobe64(x)	(x)
@@ -99,8 +102,8 @@ extern "C" {
 
 #define	be64toh(x)	htobe64(x)
 
-__private_extern__ lck_rw_t *pf_perim_lock;
-__private_extern__ lck_mtx_t *pf_lock;
+extern lck_rw_t *pf_perim_lock;
+extern lck_mtx_t *pf_lock;
 
 struct pool {
 	struct zone	*pool_zone;	/* pointer to backend zone */
@@ -155,7 +158,7 @@ struct pf_esp_hdr;
 enum	{ PF_INOUT, PF_IN, PF_OUT };
 enum	{ PF_PASS, PF_DROP, PF_SCRUB, PF_NOSCRUB, PF_NAT, PF_NONAT,
 	  PF_BINAT, PF_NOBINAT, PF_RDR, PF_NORDR, PF_SYNPROXY_DROP,
-	  PF_DUMMYNET, PF_NODUMMYNET };
+	  PF_DUMMYNET, PF_NODUMMYNET, PF_NAT64, PF_NONAT64 };
 enum	{ PF_RULESET_SCRUB, PF_RULESET_FILTER, PF_RULESET_NAT,
 	  PF_RULESET_BINAT, PF_RULESET_RDR, PF_RULESET_DUMMYNET, 
 	  PF_RULESET_MAX };
@@ -180,8 +183,7 @@ enum	{ PFTM_TCP_FIRST_PACKET, PFTM_TCP_OPENING, PFTM_TCP_ESTABLISHED,
 	  PFTM_ESP_ESTABLISHED, PFTM_OTHER_FIRST_PACKET, PFTM_OTHER_SINGLE,
 	  PFTM_OTHER_MULTIPLE, PFTM_FRAG, PFTM_INTERVAL,
 	  PFTM_ADAPTIVE_START, PFTM_ADAPTIVE_END, PFTM_SRC_NODE,
-	  PFTM_TS_DIFF, PFTM_MAX, PFTM_PURGE, PFTM_UNLINKED,
-	  PFTM_UNTIL_PACKET };
+	  PFTM_TS_DIFF, PFTM_MAX, PFTM_PURGE, PFTM_UNLINKED };
 
 /* PFTM default values */
 #define PFTM_TCP_FIRST_PACKET_VAL	120	/* First TCP packet */
@@ -231,17 +233,17 @@ enum	{ PF_ADDR_ADDRMASK, PF_ADDR_NOROUTE, PF_ADDR_DYNIFTL,
 
 struct pf_addr {
 	union {
-		struct in_addr		v4;
-		struct in6_addr		v6;
-		u_int8_t		addr8[16];
-		u_int16_t		addr16[8];
-		u_int32_t		addr32[4];
+		struct in_addr		_v4addr;
+		struct in6_addr		_v6addr;
+		u_int8_t		_addr8[16];
+		u_int16_t		_addr16[8];
+		u_int32_t		_addr32[4];
 	} pfa;		    /* 128-bit address */
-#define v4	pfa.v4
-#define v6	pfa.v6
-#define addr8	pfa.addr8
-#define addr16	pfa.addr16
-#define addr32	pfa.addr32
+#define v4addr	pfa._v4addr
+#define v6addr	pfa._v6addr
+#define addr8	pfa._addr8
+#define addr16	pfa._addr16
+#define addr32	pfa._addr32
 };
 
 #define	PF_TABLE_NAME_SIZE	 32
@@ -544,6 +546,7 @@ struct pf_pool {
 	u_int16_t		 proxy_port[2];
 	u_int8_t		 port_op;
 	u_int8_t		 opts;
+	sa_family_t		 af;
 };
 
 
@@ -694,7 +697,7 @@ struct pf_rule {
 	u_int64_t		 packets[2];
 	u_int64_t		 bytes[2];
 
-	u_int32_t		 ticket;
+	u_int64_t		 ticket;
 #define PF_OWNER_NAME_SIZE	 64
 	char			 owner[PF_OWNER_NAME_SIZE];
 	u_int32_t		 priority;
@@ -975,8 +978,10 @@ struct pf_app_state {
 struct pf_state_key_cmp {
 	struct pf_state_host lan;
 	struct pf_state_host gwy;
-	struct pf_state_host ext;
-	sa_family_t	 af;
+	struct pf_state_host ext_lan;
+	struct pf_state_host ext_gwy;
+	sa_family_t	 af_lan;
+	sa_family_t	 af_gwy;
 	u_int8_t	 proto;
 	u_int8_t	 direction;
 	u_int8_t	 proto_variant;
@@ -988,12 +993,15 @@ TAILQ_HEAD(pf_statelist, pf_state);
 struct pf_state_key {
 	struct pf_state_host lan;
 	struct pf_state_host gwy;
-	struct pf_state_host ext;
-	sa_family_t	 af;
+	struct pf_state_host ext_lan;
+	struct pf_state_host ext_gwy;
+	sa_family_t	 af_lan;
+	sa_family_t	 af_gwy;
 	u_int8_t	 proto;
 	u_int8_t	 direction;
 	u_int8_t	 proto_variant;
 	struct pf_app_state	*app_state;
+	u_int32_t	 flowsrc;
 	u_int32_t	 flowhash;
 
 	RB_ENTRY(pf_state_key)	 entry_lan_ext;
@@ -1097,7 +1105,8 @@ struct pfsync_state {
 	char		 ifname[IFNAMSIZ];
 	struct pfsync_state_host lan;
 	struct pfsync_state_host gwy;
-	struct pfsync_state_host ext;
+	struct pfsync_state_host ext_lan;
+	struct pfsync_state_host ext_gwy;
 	struct pfsync_state_peer src;
 	struct pfsync_state_peer dst;
 	struct pf_addr	 rt_addr;
@@ -1114,7 +1123,8 @@ struct pfsync_state {
 	u_int32_t	 bytes[2][2];
 	u_int32_t	 creatorid;
 	u_int16_t	 tag;
-	sa_family_t	 af;
+	sa_family_t	 af_lan;
+	sa_family_t	 af_gwy;
 	u_int8_t	 proto;
 	u_int8_t	 direction;
 	u_int8_t	 log;
@@ -1346,8 +1356,8 @@ RB_PROTOTYPE_SC(__private_extern__, pf_state_tree_ext_gwy, pf_state_key,
 RB_HEAD(pfi_ifhead, pfi_kif);
 
 /* state tables */
-__private_extern__ struct pf_state_tree_lan_ext	 pf_statetbl_lan_ext;
-__private_extern__ struct pf_state_tree_ext_gwy	 pf_statetbl_ext_gwy;
+extern struct pf_state_tree_lan_ext	 pf_statetbl_lan_ext;
+extern struct pf_state_tree_ext_gwy	 pf_statetbl_ext_gwy;
 
 /* keep synced with pfi_kif, used in RB_FIND */
 struct pfi_kif_cmp {
@@ -1412,29 +1422,38 @@ struct pf_pdesc {
 		struct pf_esp_hdr	*esp;
 		void			*any;
 	} hdr;
-	struct pf_addr	 baddr;		/* address before translation */
-	struct pf_addr	 naddr;		/* address after translation */
+
+	/* XXX TODO: Change baddr and naddr to *saddr */
+	struct pf_addr	 baddr;		/* src address before translation */
+	struct pf_addr	 bdaddr;	/* dst address before translation */
+	struct pf_addr	 naddr;		/* src address after translation */
+	struct pf_addr	 ndaddr;	/* dst address after translation */
 	struct pf_rule	*nat_rule;	/* nat/rdr rule applied to packet */
 	struct pf_addr	*src;
 	struct pf_addr	*dst;
 	struct ether_header
 			*eh;
-	struct mbuf	*mp;
+	pbuf_t		*mp;
 	int		lmw;		/* lazy writable offset */
 	struct pf_mtag	*pf_mtag;
 	u_int16_t	*ip_sum;
+	u_int32_t	 off;		/* protocol header offset */
+	u_int32_t	 hdrlen;	/* protocol header length */
 	u_int32_t	 p_len;		/* total length of payload */
 	u_int16_t	 flags;		/* Let SCRUB trigger behavior in */
 					/* state code. Easier than tags */
 #define PFDESC_TCP_NORM	0x0001		/* TCP shall be statefully scrubbed */
 #define PFDESC_IP_REAS	0x0002		/* IP frags would've been reassembled */
-#define	PFDESC_FLOW_ADV	0x0004		/* sender can use flow advisory */
-#define PFDESC_IP_FRAG	0x0008		/* This is a fragment */
+#define PFDESC_IP_FRAG	0x0004		/* This is a fragment */
 	sa_family_t	 af;
+	sa_family_t	 naf;		/*  address family after translation */
 	u_int8_t	 proto;
 	u_int8_t	 tos;
+	u_int8_t	 ttl;
 	u_int8_t	 proto_variant;
-	mbuf_svc_class_t sc;
+	mbuf_svc_class_t sc;		/* mbuf service class (MBUF_SVC) */
+	u_int32_t	 pktflags;	/* mbuf packet flags (PKTF) */
+	u_int32_t	 flowsrc;	/* flow source (FLOWSRC) */
 	u_int32_t	 flowhash;	/* flow hash to identify the sender */
 };
 #endif /* KERNEL */
@@ -1792,6 +1811,7 @@ struct pfioc_state_kill {
 	struct pfioc_state_addr_kill	psk_src;
 	struct pfioc_state_addr_kill	psk_dst;
 	char			psk_ifname[IFNAMSIZ];
+	char			psk_ownername[PF_OWNER_NAME_SIZE];
 };
 
 struct pfioc_states {
@@ -2135,29 +2155,20 @@ struct pf_ifspeed {
 RB_HEAD(pf_src_tree, pf_src_node);
 RB_PROTOTYPE_SC(__private_extern__, pf_src_tree, pf_src_node, entry,
     pf_src_compare);
-__private_extern__ struct pf_src_tree tree_src_tracking;
+extern struct pf_src_tree tree_src_tracking;
 
 RB_HEAD(pf_state_tree_id, pf_state);
 RB_PROTOTYPE_SC(__private_extern__, pf_state_tree_id, pf_state,
     entry_id, pf_state_compare_id);
-__private_extern__ struct pf_state_tree_id tree_id;
-__private_extern__ struct pf_state_queue state_list;
+extern struct pf_state_tree_id tree_id;
+extern struct pf_state_queue state_list;
 
 TAILQ_HEAD(pf_poolqueue, pf_pool);
-__private_extern__ struct pf_poolqueue	pf_pools[2];
-__private_extern__ struct pf_palist	pf_pabuf;
-__private_extern__ u_int32_t		ticket_pabuf;
-#if PF_ALTQ
-TAILQ_HEAD(pf_altqqueue, pf_altq);
-__private_extern__ struct pf_altqqueue	pf_altqs[2];
-__private_extern__ u_int32_t		ticket_altqs_active;
-__private_extern__ u_int32_t		ticket_altqs_inactive;
-__private_extern__ int			altqs_inactive_open;
-__private_extern__ struct pf_altqqueue	*pf_altqs_active;
-__private_extern__ struct pf_altqqueue	*pf_altqs_inactive;
-#endif /* PF_ALTQ */
-__private_extern__ struct pf_poolqueue	*pf_pools_active;
-__private_extern__ struct pf_poolqueue	*pf_pools_inactive;
+extern struct pf_poolqueue	pf_pools[2];
+extern struct pf_palist	pf_pabuf;
+extern u_int32_t		ticket_pabuf;
+extern struct pf_poolqueue	*pf_pools_active;
+extern struct pf_poolqueue	*pf_pools_inactive;
 
 __private_extern__ int pf_tbladdr_setup(struct pf_ruleset *,
     struct pf_addr_wrap *);
@@ -2166,15 +2177,12 @@ __private_extern__ void pf_tbladdr_copyout(struct pf_addr_wrap *);
 __private_extern__ void pf_calc_skip_steps(struct pf_rulequeue *);
 __private_extern__ u_int32_t pf_calc_state_key_flowhash(struct pf_state_key *);
 
-__private_extern__ struct pool pf_src_tree_pl, pf_rule_pl;
-__private_extern__ struct pool pf_state_pl, pf_state_key_pl, pf_pooladdr_pl;
-__private_extern__ struct pool pf_state_scrub_pl;
-#if PF_ALTQ
-__private_extern__ struct pool pf_altq_pl;
-#endif /* PF_ALTQ */
-__private_extern__ struct pool pf_app_state_pl;
+extern struct pool pf_src_tree_pl, pf_rule_pl;
+extern struct pool pf_state_pl, pf_state_key_pl, pf_pooladdr_pl;
+extern struct pool pf_state_scrub_pl;
+extern struct pool pf_app_state_pl;
 
-__private_extern__ struct thread *pf_purge_thread;
+extern struct thread *pf_purge_thread;
 
 __private_extern__ void pfinit(void);
 __private_extern__ void pf_purge_thread_fn(void *, wait_result_t);
@@ -2194,32 +2202,40 @@ __private_extern__ void pf_print_flags(u_int8_t);
 __private_extern__ u_int16_t pf_cksum_fixup(u_int16_t, u_int16_t, u_int16_t,
     u_int8_t);
 
-__private_extern__ struct ifnet *sync_ifp;
-__private_extern__ struct pf_rule pf_default_rule;
+extern struct ifnet *sync_ifp;
+extern struct pf_rule pf_default_rule;
 __private_extern__ void pf_addrcpy(struct pf_addr *, struct pf_addr *,
     u_int8_t);
 __private_extern__ void pf_rm_rule(struct pf_rulequeue *, struct pf_rule *);
 
 struct ip_fw_args;
+
+extern boolean_t is_nlc_enabled_glb;
+extern boolean_t pf_is_nlc_enabled(void);
+
 #if INET
-__private_extern__ int pf_test(int, struct ifnet *, struct mbuf **,
+__private_extern__ int pf_test(int, struct ifnet *, pbuf_t **,
+    struct ether_header *, struct ip_fw_args *);
+__private_extern__ int pf_test_mbuf(int, struct ifnet *, struct mbuf **,
     struct ether_header *, struct ip_fw_args *);
 #endif /* INET */
 
 #if INET6
-__private_extern__ int pf_test6(int, struct ifnet *, struct mbuf **,
+__private_extern__ int pf_test6(int, struct ifnet *, pbuf_t **,
+    struct ether_header *, struct ip_fw_args *);
+__private_extern__ int pf_test6_mbuf(int, struct ifnet *, struct mbuf **,
     struct ether_header *, struct ip_fw_args *);
 __private_extern__ void pf_poolmask(struct pf_addr *, struct pf_addr *,
     struct pf_addr *, struct pf_addr *, u_int8_t);
 __private_extern__ void pf_addr_inc(struct pf_addr *, sa_family_t);
 #endif /* INET6 */
 
-__private_extern__ struct mbuf *pf_lazy_makewritable(struct pf_pdesc *,
-    struct mbuf *, int);
-__private_extern__ void *pf_pull_hdr(struct mbuf *, int, void *, int,
+__private_extern__ void *pf_lazy_makewritable(struct pf_pdesc *,
+    pbuf_t *, int);
+__private_extern__ void *pf_pull_hdr(pbuf_t *, int, void *, int,
     u_short *, u_short *, sa_family_t);
 __private_extern__ void pf_change_a(void *, u_int16_t *, u_int32_t, u_int8_t);
-__private_extern__ int pflog_packet(struct pfi_kif *, struct mbuf *,
+__private_extern__ int pflog_packet(struct pfi_kif *, pbuf_t *,
     sa_family_t, u_int8_t, u_int8_t, struct pf_rule *, struct pf_rule *,
     struct pf_ruleset *, struct pf_pdesc *);
 __private_extern__ int pf_match_addr(u_int8_t, struct pf_addr *,
@@ -2235,17 +2251,17 @@ __private_extern__ int pf_match_gid(u_int8_t, gid_t, gid_t, gid_t);
 
 __private_extern__ void pf_normalize_init(void);
 __private_extern__ int pf_normalize_isempty(void);
-__private_extern__ int pf_normalize_ip(struct mbuf **, int, struct pfi_kif *,
+__private_extern__ int pf_normalize_ip(pbuf_t *, int, struct pfi_kif *,
     u_short *, struct pf_pdesc *);
-__private_extern__ int pf_normalize_ip6(struct mbuf **, int, struct pfi_kif *,
+__private_extern__ int pf_normalize_ip6(pbuf_t *, int, struct pfi_kif *,
     u_short *, struct pf_pdesc *);
-__private_extern__ int pf_normalize_tcp(int, struct pfi_kif *, struct mbuf *,
+__private_extern__ int pf_normalize_tcp(int, struct pfi_kif *, pbuf_t *,
     int, int, void *, struct pf_pdesc *);
 __private_extern__ void pf_normalize_tcp_cleanup(struct pf_state *);
-__private_extern__ int pf_normalize_tcp_init(struct mbuf *, int,
+__private_extern__ int pf_normalize_tcp_init(pbuf_t *, int,
     struct pf_pdesc *, struct tcphdr *, struct pf_state_peer *,
     struct pf_state_peer *);
-__private_extern__ int pf_normalize_tcp_stateful(struct mbuf *, int,
+__private_extern__ int pf_normalize_tcp_stateful(pbuf_t *, int,
     struct pf_pdesc *, u_short *, struct tcphdr *, struct pf_state *,
     struct pf_state_peer *, struct pf_state_peer *, int *);
 __private_extern__ u_int64_t pf_state_expires(const struct pf_state *);
@@ -2306,7 +2322,7 @@ __private_extern__ int pfr_ina_commit(struct pfr_table *, u_int32_t, int *,
 __private_extern__ int pfr_ina_define(struct pfr_table *, user_addr_t,
     int, int *, int *, u_int32_t, int);
 
-__private_extern__ struct pfi_kif *pfi_all;
+extern struct pfi_kif *pfi_all;
 
 __private_extern__ void pfi_initialize(void);
 __private_extern__ struct pfi_kif *pfi_kif_get(const char *);
@@ -2329,7 +2345,7 @@ __private_extern__ u_int16_t pf_tagname2tag(char *);
 __private_extern__ void pf_tag2tagname(u_int16_t, char *);
 __private_extern__ void pf_tag_ref(u_int16_t);
 __private_extern__ void pf_tag_unref(u_int16_t);
-__private_extern__ int pf_tag_packet(struct mbuf *, struct pf_mtag *,
+__private_extern__ int pf_tag_packet(pbuf_t *, struct pf_mtag *,
     int, unsigned int, struct pf_pdesc *);
 __private_extern__ void pf_step_into_anchor(int *, struct pf_ruleset **, int,
     struct pf_rule **, struct pf_rule **,  int *);
@@ -2339,35 +2355,32 @@ __private_extern__ u_int32_t pf_qname2qid(char *);
 __private_extern__ void pf_qid2qname(u_int32_t, char *);
 __private_extern__ void pf_qid_unref(u_int32_t);
 
-__private_extern__ struct pf_status pf_status;
-__private_extern__ struct pool pf_frent_pl, pf_frag_pl;
+extern struct pf_status pf_status;
+extern struct pool pf_frent_pl, pf_frag_pl;
 
 struct pf_pool_limit {
 	void		*pp;
 	unsigned	 limit;
 };
-__private_extern__ struct pf_pool_limit	pf_pool_limits[PF_LIMIT_MAX];
+extern struct pf_pool_limit	pf_pool_limits[PF_LIMIT_MAX];
 
 __private_extern__ int pf_af_hook(struct ifnet *, struct mbuf **,
     struct mbuf **, unsigned int, int, struct ip_fw_args *);
-__private_extern__ int pf_ifaddr_hook(struct ifnet *, unsigned long);
+__private_extern__ int pf_ifaddr_hook(struct ifnet *);
 __private_extern__ void pf_ifnet_hook(struct ifnet *, int);
 
 /*
  * The following are defined with "private extern" storage class for
  * kernel, and "extern" for user-space.
  */
-__private_extern__ struct pf_anchor_global pf_anchors;
-__private_extern__ struct pf_anchor pf_main_anchor;
+extern struct pf_anchor_global pf_anchors;
+extern struct pf_anchor pf_main_anchor;
 #define pf_main_ruleset	pf_main_anchor.ruleset
 
-__private_extern__ int pf_is_enabled;
+extern int pf_is_enabled;
+extern int16_t pf_nat64_configured;
 #define PF_IS_ENABLED (pf_is_enabled != 0)
-__private_extern__ u_int32_t pf_hash_seed;
-
-#if PF_ALTQ
-__private_extern__ u_int32_t altq_allowed;
-#endif /* PF_ALTQ */
+extern u_int32_t pf_hash_seed;
 
 /* these ruleset functions can be linked into userland programs (pfctl) */
 __private_extern__ int pf_get_ruleset_number(u_int8_t);
@@ -2387,7 +2400,7 @@ __private_extern__ void pf_rs_initialize(void);
 
 __private_extern__ int pf_osfp_add(struct pf_osfp_ioctl *);
 __private_extern__ struct pf_osfp_enlist *pf_osfp_fingerprint(struct pf_pdesc *,
-    struct mbuf *, int, const struct tcphdr *);
+    pbuf_t *, int, const struct tcphdr *);
 __private_extern__ struct pf_osfp_enlist *pf_osfp_fingerprint_hdr(
     const struct ip *, const struct ip6_hdr *, const struct tcphdr *);
 __private_extern__ void pf_osfp_flush(void);
@@ -2396,7 +2409,9 @@ __private_extern__ void pf_osfp_initialize(void);
 __private_extern__ int pf_osfp_match(struct pf_osfp_enlist *, pf_osfp_t);
 __private_extern__ struct pf_os_fingerprint *pf_osfp_validate(void);
 __private_extern__ struct pf_mtag *pf_find_mtag(struct mbuf *);
+__private_extern__ struct pf_mtag *pf_find_mtag_pbuf(pbuf_t *);
 __private_extern__ struct pf_mtag *pf_get_mtag(struct mbuf *);
+__private_extern__ struct pf_mtag *pf_get_mtag_pbuf(pbuf_t *);
 #else /* !KERNEL */
 extern struct pf_anchor_global pf_anchors;
 extern struct pf_anchor pf_main_anchor;

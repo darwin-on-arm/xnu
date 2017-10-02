@@ -79,9 +79,18 @@ static affinity_set_t affinity_set_remove(affinity_set_t aset, thread_t thread);
  *   kern.affinity_sets_enabled	- disables hinting if cleared
  *   kern.affinity_sets_mapping	- controls cache distribution policy
  * See bsd/kern_sysctl.c
+ *
+ * Affinity sets are not used on embedded, which typically only
+ * has a single pset, and last-processor affinity is
+ * more important than pset affinity.
  */
+#if CONFIG_EMBEDDED
+boolean_t	affinity_sets_enabled = FALSE;
+int		affinity_sets_mapping = 0;
+#else /* !CONFIG_EMBEDDED */
 boolean_t	affinity_sets_enabled = TRUE;
 int		affinity_sets_mapping = 1;
+#endif /* !CONFIG_EMBEDDED */
 
 boolean_t
 thread_affinity_is_supported(void)
@@ -386,6 +395,7 @@ affinity_space_free(affinity_space_t aspc)
 {
 	assert(queue_empty(&aspc->aspc_affinities));
 
+	lck_mtx_destroy(&aspc->aspc_lock, &task_lck_grp);
 	DBG("affinity_space_free(%p)\n", aspc);
 	kfree(aspc, sizeof(struct affinity_space));
 }

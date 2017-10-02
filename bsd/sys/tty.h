@@ -103,7 +103,6 @@ struct clist {
 #define TTYCLSIZE 1024
 #endif
 
-
 /*
  * Per-tty structure.
  *
@@ -222,6 +221,7 @@ struct clist;
 #endif
 
 #define	TS_IOCTL_NOT_OK	0x1000000	/* Workaround <rdar://....> */
+#define	TS_PGRPHUP	0x2000000       /* Don't change Foregroud process group */
 
 
 /* Character type information. */
@@ -327,10 +327,21 @@ int	 ttysleep(struct tty *tp,
 int	 ttywait(struct tty *tp);
 struct tty *ttymalloc(void);
 void     ttyfree(struct tty *);
+void     ttysetpgrphup(struct tty *tp);
+void     ttyclrpgrphup(struct tty *tp);
+
+#ifdef XNU_KERNEL_PRIVATE
+extern void ttyhold(struct tty *tp);
+
+#define TTY_LOCK_OWNED(tp) LCK_MTX_ASSERT(&tp->t_lock, LCK_MTX_ASSERT_OWNED)
+#define TTY_LOCK_NOTOWNED(tp) LCK_MTX_ASSERT(&tp->t_lock, LCK_MTX_ASSERT_NOTOWNED)
+
+#define PTS_MAJOR 4
+#define PTC_MAJOR 5
+#endif /* defined(XNU_KERNEL_PRIVATE) */
 
 __END_DECLS
 
 #endif /* KERNEL */
-
 
 #endif /* !_SYS_TTY_H_ */

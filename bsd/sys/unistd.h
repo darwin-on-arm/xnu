@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2010 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2013 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -81,9 +81,7 @@
 
 /* execution-time symbolic constants */
 				/* may disable terminal special characters */
-#ifndef _POSIX_VDISABLE
-#define	_POSIX_VDISABLE		((unsigned char)'\377')
-#endif
+#include <sys/_types/_posix_vdisable.h>
 
 #define _POSIX_THREAD_KEYS_MAX 128
 
@@ -121,11 +119,7 @@
 #endif
 
 /* whence values for lseek(2) */
-#ifndef SEEK_SET
-#define	SEEK_SET	0	/* set file offset to offset */
-#define	SEEK_CUR	1	/* set file offset to current plus offset */
-#define	SEEK_END	2	/* set file offset to EOF plus offset */
-#endif	/* !SEEK_SET */
+#include <sys/_types/_seek_set.h>
 
 #if !defined(_POSIX_C_SOURCE) || defined(_DARWIN_C_SOURCE)
 /* whence values for lseek(2); renamed by POSIX 1003.1 */
@@ -175,8 +169,52 @@ struct accessx_descriptor {
 #define	_PC_SYMLINK_MAX		24	/* Max # of bytes in symlink name */
 #define	_PC_SYNC_IO		25	/* Sync I/O [SIO] supported? */
 #define _PC_XATTR_SIZE_BITS 	26	/* # of bits to represent maximum xattr size */
+#define _PC_MIN_HOLE_SIZE	27	/* Recommended minimum hole size for sparse files */
 
 /* configurable system strings */
 #define	_CS_PATH		 1
+
+#ifndef KERNEL
+#if __DARWIN_C_LEVEL >= __DARWIN_C_FULL
+
+#include <machine/_types.h>
+#include <sys/_types/_size_t.h>
+#include <_types/_uint64_t.h>
+#include <_types/_uint32_t.h>
+#include <Availability.h>
+
+__BEGIN_DECLS
+
+int	getattrlistbulk(int, void *, void *, size_t, uint64_t) __OSX_AVAILABLE_STARTING(__MAC_10_10, __IPHONE_8_0);
+int	getattrlistat(int, const char *, void *, void *, size_t, unsigned long) __OSX_AVAILABLE_STARTING(__MAC_10_10, __IPHONE_8_0);
+int	setattrlistat(int, const char *, void *, void *, size_t, uint32_t) __OSX_AVAILABLE(10.13) __IOS_AVAILABLE(11.0) __TVOS_AVAILABLE(11.0) __WATCHOS_AVAILABLE(4.0);
+
+__END_DECLS
+
+#endif /* __DARWIN_C_LEVEL >= __DARWIN_C_FULL */
+
+#if __DARWIN_C_LEVEL >= 200809L
+
+#include <machine/_types.h>
+#include <sys/_types/_size_t.h>
+#include <sys/_types/_ssize_t.h>
+#include <sys/_types.h>
+#include <sys/_types/_uid_t.h>
+#include <sys/_types/_gid_t.h>
+#include <Availability.h>
+
+__BEGIN_DECLS
+
+int	faccessat(int, const char *, int, int) __OSX_AVAILABLE_STARTING(__MAC_10_10, __IPHONE_8_0);
+int	fchownat(int, const char *, uid_t, gid_t, int)	__OSX_AVAILABLE_STARTING(__MAC_10_10, __IPHONE_8_0);
+int	linkat(int, const char *, int, const char *, int)	__OSX_AVAILABLE_STARTING(__MAC_10_10, __IPHONE_8_0);
+ssize_t readlinkat(int, const char *, char *, size_t)	__OSX_AVAILABLE_STARTING(__MAC_10_10, __IPHONE_8_0);
+int	symlinkat(const char *, int, const char *) __OSX_AVAILABLE_STARTING(__MAC_10_10, __IPHONE_8_0);
+int	unlinkat(int, const char *, int) __OSX_AVAILABLE_STARTING(__MAC_10_10, __IPHONE_8_0);
+
+__END_DECLS
+
+#endif /* __DARWIN_C_LEVEL >= 200809L */
+#endif /* !KERNEL */
 
 #endif /* !_SYS_UNISTD_H_ */

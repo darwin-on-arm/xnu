@@ -80,7 +80,7 @@ typedef struct EfiMemoryRange {
  * Video information.. 
  */
 
-struct Boot_Video {
+struct Boot_VideoV1 {
 	uint32_t	v_baseAddr;	/* Base address of video memory */
 	uint32_t	v_display;	/* Display Code (if Applicable */
 	uint32_t	v_rowBytes;	/* Number of bytes per pixel row */
@@ -88,7 +88,17 @@ struct Boot_Video {
 	uint32_t	v_height;	/* Height */
 	uint32_t	v_depth;	/* Pixel Depth */
 };
+typedef struct Boot_VideoV1	Boot_VideoV1;
 
+struct Boot_Video {
+	uint32_t	v_display;	/* Display Code (if Applicable */
+	uint32_t	v_rowBytes;	/* Number of bytes per pixel row */
+	uint32_t	v_width;	/* Width */
+	uint32_t	v_height;	/* Height */
+	uint32_t	v_depth;	/* Pixel Depth */
+	uint32_t	v_resv[7];	/* Reserved */
+	uint64_t	v_baseAddr;	/* Base address of video memory */
+};
 typedef struct Boot_Video	Boot_Video;
 
 /* Values for v_display */
@@ -124,6 +134,13 @@ typedef struct boot_icon_element boot_icon_element;
 /* Bitfields for boot_args->flags */
 #define kBootArgsFlagRebootOnPanic	(1 << 0)
 #define kBootArgsFlagHiDPI		(1 << 1)
+#define kBootArgsFlagBlack		(1 << 2)
+#define kBootArgsFlagCSRActiveConfig	(1 << 3)
+#define kBootArgsFlagCSRConfigMode	(1 << 4)
+#define kBootArgsFlagCSRBoot		(1 << 5)
+#define kBootArgsFlagBlackBg		(1 << 6)
+#define kBootArgsFlagLoginUI		(1 << 7)
+#define kBootArgsFlagInstallUI		(1 << 8)
 
 typedef struct boot_args {
     uint16_t    Revision;	/* Revision of boot_args structure */
@@ -140,7 +157,7 @@ typedef struct boot_args {
     uint32_t    MemoryMapDescriptorSize;
     uint32_t    MemoryMapDescriptorVersion;
 
-    Boot_Video	Video;		/* Video Information */
+    Boot_VideoV1 VideoV1;	/* Video Information */
 
     uint32_t    deviceTreeP;	  /* Physical address of flattened device tree */
     uint32_t    deviceTreeLength; /* Length of flattened tree */
@@ -167,7 +184,17 @@ typedef struct boot_args {
     uint64_t    pciConfigSpaceBaseAddress;
     uint32_t    pciConfigSpaceStartBusNumber;
     uint32_t    pciConfigSpaceEndBusNumber;
-    uint32_t    __reserved4[730];
+    uint32_t	csrActiveConfig;
+    uint32_t	csrCapabilities;
+    uint32_t    boot_SMC_plimit;
+    uint16_t    bootProgressMeterStart;
+    uint16_t    bootProgressMeterEnd;
+    Boot_Video	Video;		/* Video Information */
+
+    uint32_t    apfsDataStart; /* Physical address of apfs volume key structure */
+    uint32_t    apfsDataSize;
+
+    uint32_t    __reserved4[710];
 
 } boot_args;
 

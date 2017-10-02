@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000 Apple Computer, Inc. All rights reserved.
+ * Copyright (c) 2000-2016 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -62,7 +62,7 @@ class OSOffset;
  * <li>Add and remove objects in the set</li>
  * <li>Test whether the set contains a particular object</li>
  * <li>Get the object stored at a particular index.</li>
- * </ol>
+ * </ul>
  *
  * Note that automated ordering is performed only upon addition of objects
  * and depends on the existing objects being properly sorted.
@@ -135,9 +135,9 @@ protected:
 
 protected:
    /* OSCollectionIterator interfaces. */
-    virtual unsigned int iteratorSize() const;
-    virtual bool initIterator(void *iterator) const;
-    virtual bool getNextObjectForIterator(void *iterator, OSObject **ret) const;
+    virtual unsigned int iteratorSize() const APPLE_KEXT_OVERRIDE;
+    virtual bool initIterator(void *iterator) const APPLE_KEXT_OVERRIDE;
+    virtual bool getNextObjectForIterator(void *iterator, OSObject **ret) const APPLE_KEXT_OVERRIDE;
 
 public:
 
@@ -250,7 +250,7 @@ public:
     * release@/link</code>
     * instead.
     */
-    virtual void free();
+    virtual void free() APPLE_KEXT_OVERRIDE;
 
 
    /*!
@@ -262,7 +262,7 @@ public:
     * @result
     * The current number of objects within the ordered set.
     */
-    virtual unsigned int getCount() const;
+    virtual unsigned int getCount() const APPLE_KEXT_OVERRIDE;
 
 
    /*!
@@ -287,7 +287,7 @@ public:
     * //apple_ref/cpp/instm/OSOrderedSet/ensureCapacity/virtualunsignedint/(unsignedint)
     * ensureCapacity@/link</code>.
     */
-    virtual unsigned int getCapacity() const;
+    virtual unsigned int getCapacity() const APPLE_KEXT_OVERRIDE;
 
 
    /*!
@@ -303,7 +303,7 @@ public:
     * An OSOrderedSet allocates storage for objects in multiples
     * of the capacity increment.
     */
-    virtual unsigned int getCapacityIncrement() const;
+    virtual unsigned int getCapacityIncrement() const APPLE_KEXT_OVERRIDE;
 
 
    /*!
@@ -321,7 +321,7 @@ public:
     * of the capacity increment.
     * Calling this function does not immediately reallocate storage.
     */
-    virtual unsigned int setCapacityIncrement(unsigned increment);
+    virtual unsigned int setCapacityIncrement(unsigned increment) APPLE_KEXT_OVERRIDE;
 
 
    /*!
@@ -347,7 +347,7 @@ public:
     *
     * There is no way to reduce the capacity of an OSOrderedSet.
     */
-    virtual unsigned int ensureCapacity(unsigned int newCapacity);
+    virtual unsigned int ensureCapacity(unsigned int newCapacity) APPLE_KEXT_OVERRIDE;
 
 
    /*!
@@ -360,7 +360,7 @@ public:
     * The ordered set's capacity (and therefore direct memory consumption)
     * is not reduced by this function.
     */
-    virtual void flushCollection();
+    virtual void flushCollection() APPLE_KEXT_OVERRIDE;
 
 
    /*!
@@ -539,9 +539,6 @@ public:
     * @function getFirstObject
     *
     * @abstract
-    * Returns the object at index 0 in the ordered set if there is one.
-    *
-    * @abstract
     * The object at index 0 in the ordered set if there is one,
     * otherwise <code>NULL</code>.
     *
@@ -558,9 +555,6 @@ public:
 
    /*!
     * @function getLastObject
-    *
-    * @abstract
-    * Returns the last object in the ordered set if there is one.
     *
     * @abstract
     * The last object in the ordered set if there is one,
@@ -706,7 +700,7 @@ public:
     * if the other object is derived from OSOrderedSet
     * and compares equal as an OSOrderedSet.
     */
-    virtual bool isEqualTo(const OSMetaClassBase * anObject) const;
+    virtual bool isEqualTo(const OSMetaClassBase * anObject) const APPLE_KEXT_OVERRIDE;
 
 
    /*!
@@ -734,7 +728,7 @@ public:
     virtual unsigned setOptions(
         unsigned   options,
         unsigned   mask,
-        void     * context = 0);
+        void     * context = 0) APPLE_KEXT_OVERRIDE;
 
 
    /*!
@@ -759,7 +753,7 @@ public:
     * Objects that are not derived from OSCollection are retained
     * rather than copied.
     */
-    OSCollection *copyCollection(OSDictionary * cycleDict = 0);
+    OSCollection *copyCollection(OSDictionary * cycleDict = 0) APPLE_KEXT_OVERRIDE;
 
     OSMetaClassDeclareReservedUnused(OSOrderedSet, 0);
     OSMetaClassDeclareReservedUnused(OSOrderedSet, 1);

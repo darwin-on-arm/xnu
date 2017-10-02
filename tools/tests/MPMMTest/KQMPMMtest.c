@@ -1,11 +1,10 @@
 #include <AvailabilityMacros.h>
-#ifdef AVAILABLE_MAC_OS_X_VERSION_10_5_AND_LATER
-#include </System/Library/Frameworks/System.framework/PrivateHeaders/mach/thread_policy.h>
-#endif
+#include <mach/thread_policy.h>
 
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <libgen.h>
 #include <string.h>
 #include <err.h>
 #include <unistd.h>
@@ -20,6 +19,8 @@
 #include <sys/types.h>
 #include <sys/time.h>
 #include <sys/signal.h>
+#include <errno.h>
+#include "../unit_tests/tests_common.h"
 
 #define MAX(A, B) ((A) < (B) ? (B) : (A))
 
@@ -70,6 +71,8 @@ static boolean_t	timeshare = FALSE;
 static boolean_t	threaded = FALSE;
 static boolean_t	oneway = FALSE;
 static boolean_t	do_select = FALSE;
+static boolean_t    save_perfdata = FALSE;
+
 int			msg_type;
 int			num_ints;
 int			num_msgs;
@@ -100,6 +103,7 @@ void usage(const char *progname) {
 	fprintf(stderr, "    -work num\t\tmicroseconds of client work\n");
 	fprintf(stderr, "    -pages num\t\tpages of memory touched by client work\n");
 	fprintf(stderr, "    -select   \t\tselect prior to calling kevent().\n");
+	fprintf(stderr, "    -perf   \t\tCreate perfdata files for metrics.\n");
 	fprintf(stderr, "default values are:\n");
 	fprintf(stderr, "    . no affinity\n");
 	fprintf(stderr, "    . not timeshare\n");
@@ -201,6 +205,9 @@ void parse_args(int argc, char *argv[]) {
 			argc -= 2; argv += 2;
 		} else if (0 == strcmp("-select", argv[0])) {
 			do_select = TRUE;
+			argc--; argv++;
+		} else if (0 == strcmp("-perf", argv[0])) {
+			save_perfdata = TRUE;
 			argc--; argv++;
 		} else 
 			usage(progname);
@@ -313,7 +320,6 @@ void setup_client_ports(struct port_args *ports)
 
 static void
 thread_setup(int tag) {
-#ifdef AVAILABLE_MAC_OS_X_VERSION_10_5_AND_LATER
 	kern_return_t			ret;
         thread_extended_policy_data_t   epolicy;
         thread_affinity_policy_data_t   policy;
@@ -337,7 +343,6 @@ thread_setup(int tag) {
                 if (ret != KERN_SUCCESS)
                         printf("thread_policy_set(THREAD_AFFINITY_POLICY) returned %d\n", ret);
         }
-#endif
 }
 
 void *
@@ -737,6 +742,7 @@ wait_for_servers(void)
 	exit(1);
 }
 
+
 int main(int argc, char *argv[]) 
 {
 	int		i;
@@ -824,6 +830,10 @@ int main(int argc, char *argv[])
 	double dsecs = (double) deltatv.tv_sec + 
 		1.0E-6 * (double) deltatv.tv_usec;
 
+	double time_in_sec = (double)deltatv.tv_sec + (double)deltatv.tv_usec/1000.0;
+	double throughput_msg_p_sec = (double) totalmsg/dsecs;
+	double avg_msg_latency = dsecs*1.0E6 / (double)totalmsg;
+
 	printf(" in %ld.%03u seconds\n",  
 	       (long)deltatv.tv_sec, deltatv.tv_usec/1000);
 	printf("  throughput in messages/sec:     %g\n",
@@ -831,6 +841,11 @@ int main(int argc, char *argv[])
 	printf("  average message latency (usec): %2.3g\n", 
 			dsecs * 1.0E6 / (double) totalmsg);
 
+	if (save_perfdata == TRUE) {
+		char name[256];
+		snprintf(name, sizeof(name), "%s_avg_msg_latency", basename(argv[0]));
+		record_perf_data(name, "usec", avg_msg_latency, "Message latency measured in microseconds. Lower is better", stderr);
+	}
 	return (0);
 
 }

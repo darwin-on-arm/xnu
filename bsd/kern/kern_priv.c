@@ -68,13 +68,18 @@
 #include <security/mac_framework.h>
 #endif
 
+int proc_check_footprint_priv(void);
+
 /*
  * Check a credential for privilege.  Lots of good reasons to deny privilege;
  * only a few to grant it.
  */
 int
-priv_check_cred(kauth_cred_t cred, int priv, __unused int flags)
+priv_check_cred(kauth_cred_t cred, int priv, int flags)
 {
+#if !CONFIG_MACF
+#pragma unused(priv)
+#endif
 	int error;
 
 	/*
@@ -87,15 +92,18 @@ priv_check_cred(kauth_cred_t cred, int priv, __unused int flags)
 		goto out;
 #endif
 
-	/*
-	 * Having determined if privilege is restricted by various policies,
-	 * now determine if privilege is granted.  At this point, any policy
-	 * may grant privilege.  For now, we allow short-circuit boolean
-	 * evaluation, so may not call all policies.  Perhaps we should.
-	 */
-	if (kauth_cred_getuid(cred) == 0) {
-		error = 0;
-		goto out;
+	/* Only grant all privileges to root if DEFAULT_UNPRIVELEGED flag is NOT set. */
+	if (!(flags & PRIVCHECK_DEFAULT_UNPRIVILEGED_FLAG)) {
+		/*
+		* Having determined if privilege is restricted by various policies,
+		* now determine if privilege is granted.	At this point, any policy
+		* may grant privilege.	For now, we allow short-circuit boolean
+		* evaluation, so may not call all policies.	 Perhaps we should.
+		*/
+		if (kauth_cred_getuid(cred) == 0) {
+			error = 0;
+			goto out;
+		}
 	}
 
 	/*
@@ -116,4 +124,10 @@ priv_check_cred(kauth_cred_t cred, int priv, __unused int flags)
 	error = EPERM;
 out:
 	return (error);
+}
+
+int
+proc_check_footprint_priv(void) 
+{
+	return (priv_check_cred(kauth_cred_get(), PRIV_VM_FOOTPRINT_LIMIT, 0));
 }

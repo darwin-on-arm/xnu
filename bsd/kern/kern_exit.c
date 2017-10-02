@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2011 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2016 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -74,6 +74,7 @@
  
 #include <machine/reg.h>
 #include <machine/psl.h>
+#include <stdatomic.h>
 
 #include "compat_43.h"
 
@@ -94,80 +95,99 @@
 #include <sys/malloc.h>
 #include <sys/resourcevar.h>
 #include <sys/ptrace.h>
+#include <sys/proc_info.h>
+#include <sys/reason.h>
+#include <sys/_types/_timeval64.h>
 #include <sys/user.h>
 #include <sys/aio_kern.h>
 #include <sys/sysproto.h>
 #include <sys/signalvar.h>
 #include <sys/kdebug.h>
-#include <sys/filedesc.h>	/* fdfree */
-#if SYSV_SHM
-#include <sys/shm_internal.h>	/* shmexit */
-#endif
-#include <sys/acct.h>		/* acct_process */
+#include <sys/filedesc.h> /* fdfree */
+#include <sys/acct.h> /* acct_process */
+#include <sys/codesign.h>
+#include <sys/event.h> /* kevent_proc_copy_uptrs */
+#include <sys/sdt.h>
 
 #include <security/audit/audit.h>
 #include <bsm/audit_kevents.h>
 
 #include <mach/mach_types.h>
+#include <mach/task.h>
+#include <mach/thread_act.h>
 
+#include <kern/exc_resource.h>
 #include <kern/kern_types.h>
 #include <kern/kalloc.h>
 #include <kern/task.h>
+#include <corpses/task_corpse.h>
 #include <kern/thread.h>
 #include <kern/thread_call.h>
 #include <kern/sched_prim.h>
 #include <kern/assert.h>
-#include <sys/codesign.h>
+#include <kern/policy_internal.h>
+#include <kern/exc_guard.h>
 
-#if VM_PRESSURE_EVENTS
-#include <kern/vm_pressure.h>
-#endif
+#include <vm/vm_protos.h>
 
+#include <pexpert/pexpert.h>
+
+#if SYSV_SHM
+#include <sys/shm_internal.h>	/* shmexit */
+#endif /* SYSV_SHM */
+#if CONFIG_PERSONAS
+#include <sys/persona.h>
+#endif /* CONFIG_PERSONAS */
 #if CONFIG_MEMORYSTATUS
 #include <sys/kern_memorystatus.h>
-#endif
-
+#endif /* CONFIG_MEMORYSTATUS */
 #if CONFIG_DTRACE
 /* Do not include dtrace.h, it redefines kmem_[alloc/free] */
-extern void (*dtrace_fasttrap_exit_ptr)(proc_t);
-extern void (*dtrace_helpers_cleanup)(proc_t);
-extern void dtrace_lazy_dofs_destroy(proc_t);
-
+void dtrace_proc_exit(proc_t p);
 #include <sys/dtrace_ptss.h>
-#endif
-
+#endif /* CONFIG_DTRACE */
 #if CONFIG_MACF
-#include <security/mac.h>
+#include <security/mac_framework.h>
+#include <security/mac_mach_internal.h>
 #include <sys/syscall.h>
-#endif
+#endif /* CONFIG_MACF */
 
-#include <mach/mach_types.h>
-#include <mach/task.h>
-#include <mach/thread_act.h>
-
-#include <sys/sdt.h>
-
-extern char init_task_failure_data[];
 void proc_prepareexit(proc_t p, int rv, boolean_t perf_notify);
+void gather_populate_corpse_crashinfo(proc_t p, task_t corpse_task,
+		mach_exception_data_type_t code, mach_exception_data_type_t subcode,
+		uint64_t *udata_buffer, int num_udata, void *reason);
+mach_exception_data_type_t proc_encode_exit_exception_code(proc_t p);
 void vfork_exit(proc_t p, int rv);
-void vproc_exit(proc_t p);
 __private_extern__ void munge_user64_rusage(struct rusage *a_rusage_p, struct user64_rusage *a_user_rusage_p);
 __private_extern__ void munge_user32_rusage(struct rusage *a_rusage_p, struct user32_rusage *a_user_rusage_p);
 static int reap_child_locked(proc_t parent, proc_t child, int deadparent, int reparentedtoinit, int locked, int droplock);
+static void populate_corpse_crashinfo(proc_t p, task_t corpse_task,
+		struct rusage_superset *rup, mach_exception_data_type_t code,
+		mach_exception_data_type_t subcode, uint64_t *udata_buffer,
+		int num_udata, os_reason_t reason);
+static void proc_update_corpse_exception_codes(proc_t p, mach_exception_data_type_t *code, mach_exception_data_type_t *subcode);
+extern int proc_pidpathinfo_internal(proc_t p, uint64_t arg, char *buffer, uint32_t buffersize, int32_t *retval);
+static __attribute__((noinline)) void launchd_crashed_panic(proc_t p, int rv);
+extern void proc_piduniqidentifierinfo(proc_t p, struct proc_uniqidentifierinfo *p_uniqidinfo);
+extern void task_coalition_ids(task_t task, uint64_t ids[COALITION_NUM_TYPES]);
+extern uint64_t	get_task_phys_footprint_limit(task_t);
+int proc_list_uptrs(void *p, uint64_t *udata_buffer, int size);
+extern uint64_t task_corpse_get_crashed_thread_id(task_t corpse_task);
+
 
 /*
  * Things which should have prototypes in headers, but don't
  */
-void	*get_bsduthreadarg(thread_t);
 void	proc_exit(proc_t p);
 int	wait1continue(int result);
 int	waitidcontinue(int result);
-int	*get_bsduthreadrval(thread_t);
 kern_return_t sys_perf_notify(thread_t thread, int pid);
 kern_return_t task_exception_notify(exception_type_t exception,
 	mach_exception_data_type_t code, mach_exception_data_type_t subcode);
+kern_return_t task_violated_guard(mach_exception_code_t, mach_exception_subcode_t, void *);
 void	delay(int);
-			
+void gather_rusage_info(proc_t p, rusage_info_current *ru, int flavor);
+
 /*
  * NOTE: Source and target may *NOT* overlap!
  * XXX Should share code with bsd/dev/ppc/unix_signal.c
@@ -207,7 +227,7 @@ copyoutsiginfo(user_siginfo_t *native, boolean_t is64, user_addr_t uaddr)
 {
 	if (is64) {
 		user64_siginfo_t sinfo64;
-				
+
 		bzero(&sinfo64, sizeof (sinfo64));
 		siginfo_user_to_user64(native, &sinfo64);
 		return (copyout(&sinfo64, uaddr, sizeof (sinfo64)));
@@ -220,16 +240,447 @@ copyoutsiginfo(user_siginfo_t *native, boolean_t is64, user_addr_t uaddr)
 	}
 }
 
+void gather_populate_corpse_crashinfo(proc_t p, task_t corpse_task,
+		mach_exception_data_type_t code, mach_exception_data_type_t subcode,
+		uint64_t *udata_buffer, int num_udata, void *reason)
+{
+	struct rusage_superset rup;
+
+	gather_rusage_info(p, &rup.ri, RUSAGE_INFO_CURRENT);
+	rup.ri.ri_phys_footprint = 0;
+	populate_corpse_crashinfo(p, corpse_task, &rup, code, subcode,
+			udata_buffer, num_udata, reason);
+}
+
+static void proc_update_corpse_exception_codes(proc_t p, mach_exception_data_type_t *code, mach_exception_data_type_t *subcode)
+{
+	mach_exception_data_type_t code_update = *code;
+	mach_exception_data_type_t subcode_update = *subcode;
+	if (p->p_exit_reason == OS_REASON_NULL) {
+		return;
+	}
+
+	switch (p->p_exit_reason->osr_namespace) {
+		case OS_REASON_JETSAM:
+			if (p->p_exit_reason->osr_code == JETSAM_REASON_MEMORY_PERPROCESSLIMIT) {
+				/* Update the code with EXC_RESOURCE code for high memory watermark */
+				EXC_RESOURCE_ENCODE_TYPE(code_update, RESOURCE_TYPE_MEMORY);
+				EXC_RESOURCE_ENCODE_FLAVOR(code_update, FLAVOR_HIGH_WATERMARK);
+				EXC_RESOURCE_HWM_ENCODE_LIMIT(code_update, ((get_task_phys_footprint_limit(p->task)) >> 20));
+				subcode_update = 0;
+				break;
+			}
+
+			break;
+		default:
+			break;
+	}
+
+	*code = code_update;
+	*subcode = subcode_update;
+	return;
+}
+
+mach_exception_data_type_t proc_encode_exit_exception_code(proc_t p)
+{
+	uint64_t subcode = 0;
+
+	if (p->p_exit_reason == OS_REASON_NULL) {
+		return 0;
+	}
+
+	/* Embed first 32 bits of osr_namespace and osr_code in exception code */
+	ENCODE_OSR_NAMESPACE_TO_MACH_EXCEPTION_CODE(subcode, p->p_exit_reason->osr_namespace);
+	ENCODE_OSR_CODE_TO_MACH_EXCEPTION_CODE(subcode, p->p_exit_reason->osr_code);
+	return (mach_exception_data_type_t)subcode;
+}
+
+static void
+populate_corpse_crashinfo(proc_t p, task_t corpse_task, struct rusage_superset *rup,
+		mach_exception_data_type_t code, mach_exception_data_type_t subcode,
+		uint64_t *udata_buffer, int num_udata, os_reason_t reason)
+{
+	mach_vm_address_t uaddr = 0;
+	mach_exception_data_type_t exc_codes[EXCEPTION_CODE_MAX];
+	exc_codes[0] = code;
+	exc_codes[1] = subcode;
+	cpu_type_t cputype;
+	struct proc_uniqidentifierinfo p_uniqidinfo;
+	struct proc_workqueueinfo pwqinfo;
+	int retval = 0;
+	uint64_t crashed_threadid = task_corpse_get_crashed_thread_id(corpse_task);
+	unsigned int pflags = 0;
+	uint64_t max_footprint_mb;
+	uint64_t max_footprint;
+	void *crash_info_ptr = task_get_corpseinfo(corpse_task);
+
+#if CONFIG_MEMORYSTATUS
+	int memstat_dirty_flags = 0;
+#endif
+
+	if (KERN_SUCCESS == kcdata_get_memory_addr(crash_info_ptr, TASK_CRASHINFO_EXCEPTION_CODES, sizeof(exc_codes), &uaddr)) {
+		kcdata_memcpy(crash_info_ptr, uaddr, exc_codes, sizeof(exc_codes));
+	}
+
+	if (KERN_SUCCESS == kcdata_get_memory_addr(crash_info_ptr, TASK_CRASHINFO_PID, sizeof(p->p_pid), &uaddr)) {
+		kcdata_memcpy(crash_info_ptr, uaddr, &p->p_pid, sizeof(p->p_pid));
+	}
+
+	if (KERN_SUCCESS == kcdata_get_memory_addr(crash_info_ptr, TASK_CRASHINFO_PPID, sizeof(p->p_ppid), &uaddr)) {
+		kcdata_memcpy(crash_info_ptr, uaddr, &p->p_ppid, sizeof(p->p_ppid));
+	}
+
+	/* Don't include the crashed thread ID if there's an exit reason that indicates it's irrelevant */
+	if ((p->p_exit_reason == OS_REASON_NULL) || !(p->p_exit_reason->osr_flags & OS_REASON_FLAG_NO_CRASHED_TID)) {
+		if (KERN_SUCCESS == kcdata_get_memory_addr(crash_info_ptr, TASK_CRASHINFO_CRASHED_THREADID, sizeof(uint64_t), &uaddr)) {
+			kcdata_memcpy(crash_info_ptr, uaddr, &crashed_threadid, sizeof(uint64_t));
+		}
+	}
+
+	if (KERN_SUCCESS ==
+	    kcdata_get_memory_addr(crash_info_ptr, TASK_CRASHINFO_BSDINFOWITHUNIQID, sizeof(struct proc_uniqidentifierinfo), &uaddr)) {
+		proc_piduniqidentifierinfo(p, &p_uniqidinfo);
+		kcdata_memcpy(crash_info_ptr, uaddr, &p_uniqidinfo, sizeof(struct proc_uniqidentifierinfo));
+	}
+
+	if (KERN_SUCCESS == kcdata_get_memory_addr(crash_info_ptr, TASK_CRASHINFO_RUSAGE_INFO, sizeof(rusage_info_current), &uaddr)) {
+		kcdata_memcpy(crash_info_ptr, uaddr, &rup->ri, sizeof(rusage_info_current));
+	}
+
+	if (KERN_SUCCESS == kcdata_get_memory_addr(crash_info_ptr, TASK_CRASHINFO_PROC_CSFLAGS, sizeof(p->p_csflags), &uaddr)) {
+		kcdata_memcpy(crash_info_ptr, uaddr, &p->p_csflags, sizeof(p->p_csflags));
+	}
+
+	if (KERN_SUCCESS == kcdata_get_memory_addr(crash_info_ptr, TASK_CRASHINFO_PROC_NAME, sizeof(p->p_comm), &uaddr)) {
+		kcdata_memcpy(crash_info_ptr, uaddr, &p->p_comm, sizeof(p->p_comm));
+	}
+
+	if (KERN_SUCCESS == kcdata_get_memory_addr(crash_info_ptr, TASK_CRASHINFO_PROC_STARTTIME, sizeof(p->p_start), &uaddr)) {
+		struct timeval64 t64;
+		t64.tv_sec = (int64_t)p->p_start.tv_sec;
+		t64.tv_usec = (int64_t)p->p_start.tv_usec;
+		kcdata_memcpy(crash_info_ptr, uaddr, &t64, sizeof(t64));
+	}
+
+	if (KERN_SUCCESS == kcdata_get_memory_addr(crash_info_ptr, TASK_CRASHINFO_USERSTACK, sizeof(p->user_stack), &uaddr)) {
+		kcdata_memcpy(crash_info_ptr, uaddr, &p->user_stack, sizeof(p->user_stack));
+	}
+
+	if (KERN_SUCCESS == kcdata_get_memory_addr(crash_info_ptr, TASK_CRASHINFO_ARGSLEN, sizeof(p->p_argslen), &uaddr)) {
+		kcdata_memcpy(crash_info_ptr, uaddr, &p->p_argslen, sizeof(p->p_argslen));
+	}
+
+	if (KERN_SUCCESS == kcdata_get_memory_addr(crash_info_ptr, TASK_CRASHINFO_PROC_ARGC, sizeof(p->p_argc), &uaddr)) {
+		kcdata_memcpy(crash_info_ptr, uaddr, &p->p_argc, sizeof(p->p_argc));
+	}
+
+	if (KERN_SUCCESS == kcdata_get_memory_addr(crash_info_ptr, TASK_CRASHINFO_PROC_PATH, MAXPATHLEN, &uaddr)) {
+		char *buf = (char *) kalloc(MAXPATHLEN);
+		if (buf != NULL) {
+			bzero(buf, MAXPATHLEN);
+			proc_pidpathinfo_internal(p, 0, buf, MAXPATHLEN, &retval);
+			kcdata_memcpy(crash_info_ptr, uaddr, buf, MAXPATHLEN);
+			kfree(buf, MAXPATHLEN);
+		}
+	}
+
+	pflags = p->p_flag & (P_LP64 | P_SUGID);
+	if (KERN_SUCCESS == kcdata_get_memory_addr(crash_info_ptr, TASK_CRASHINFO_PROC_FLAGS, sizeof(pflags), &uaddr)) {
+		kcdata_memcpy(crash_info_ptr, uaddr, &pflags, sizeof(pflags));
+	}
+
+	if (KERN_SUCCESS == kcdata_get_memory_addr(crash_info_ptr, TASK_CRASHINFO_UID, sizeof(p->p_uid), &uaddr)) {
+		kcdata_memcpy(crash_info_ptr, uaddr, &p->p_uid, sizeof(p->p_uid));
+	}
+
+	if (KERN_SUCCESS == kcdata_get_memory_addr(crash_info_ptr, TASK_CRASHINFO_GID, sizeof(p->p_gid), &uaddr)) {
+		kcdata_memcpy(crash_info_ptr, uaddr, &p->p_gid, sizeof(p->p_gid));
+	}
+
+	cputype = cpu_type() & ~CPU_ARCH_MASK;
+	if (IS_64BIT_PROCESS(p))
+		cputype |= CPU_ARCH_ABI64;
+
+	if (KERN_SUCCESS == kcdata_get_memory_addr(crash_info_ptr, TASK_CRASHINFO_CPUTYPE, sizeof(cpu_type_t), &uaddr)) {
+		kcdata_memcpy(crash_info_ptr, uaddr, &cputype, sizeof(cpu_type_t));
+	}
+
+	if (KERN_SUCCESS == kcdata_get_memory_addr(crash_info_ptr, TASK_CRASHINFO_MEMORY_LIMIT, sizeof(max_footprint_mb), &uaddr)) {
+		max_footprint = get_task_phys_footprint_limit(p->task);
+		max_footprint_mb = max_footprint >> 20;
+		kcdata_memcpy(crash_info_ptr, uaddr, &max_footprint_mb, sizeof(max_footprint_mb));
+	}
+
+	bzero(&pwqinfo, sizeof(struct proc_workqueueinfo));
+	retval = fill_procworkqueue(p, &pwqinfo);
+	if (retval == 0) {
+		if (KERN_SUCCESS == kcdata_get_memory_addr(crash_info_ptr, TASK_CRASHINFO_WORKQUEUEINFO, sizeof(struct proc_workqueueinfo), &uaddr)) {
+			kcdata_memcpy(crash_info_ptr, uaddr, &pwqinfo, sizeof(struct proc_workqueueinfo));
+		}
+	}
+
+	if (KERN_SUCCESS == kcdata_get_memory_addr(crash_info_ptr, TASK_CRASHINFO_RESPONSIBLE_PID, sizeof(p->p_responsible_pid), &uaddr)) {
+		kcdata_memcpy(crash_info_ptr, uaddr, &p->p_responsible_pid, sizeof(p->p_responsible_pid));
+	}
+
+#if CONFIG_COALITIONS
+	if (KERN_SUCCESS == kcdata_get_memory_addr_for_array(crash_info_ptr, TASK_CRASHINFO_COALITION_ID, sizeof(uint64_t), COALITION_NUM_TYPES, &uaddr)) {
+		uint64_t coalition_ids[COALITION_NUM_TYPES];
+		task_coalition_ids(p->task, coalition_ids);
+		kcdata_memcpy(crash_info_ptr, uaddr, coalition_ids, sizeof(coalition_ids));
+	}
+#endif /* CONFIG_COALITIONS */
+
+#if CONFIG_MEMORYSTATUS
+	memstat_dirty_flags = memorystatus_dirty_get(p);
+	if (KERN_SUCCESS == kcdata_get_memory_addr(crash_info_ptr, TASK_CRASHINFO_DIRTY_FLAGS, sizeof(memstat_dirty_flags), &uaddr)) {
+		kcdata_memcpy(crash_info_ptr, uaddr, &memstat_dirty_flags, sizeof(memstat_dirty_flags));
+	}
+#endif
+
+	if (p->p_exit_reason != OS_REASON_NULL && reason == OS_REASON_NULL) {
+		reason = p->p_exit_reason;
+	}
+	if (reason != OS_REASON_NULL) {
+		if (KERN_SUCCESS == kcdata_get_memory_addr(crash_info_ptr, EXIT_REASON_SNAPSHOT, sizeof(struct exit_reason_snapshot), &uaddr)) {
+			struct exit_reason_snapshot ers = {
+				.ers_namespace = reason->osr_namespace,
+				.ers_code = reason->osr_code,
+				.ers_flags = reason->osr_flags
+			};
+
+			kcdata_memcpy(crash_info_ptr, uaddr, &ers, sizeof(ers));
+		}
+
+		if (reason->osr_kcd_buf != 0) {
+			uint32_t reason_buf_size = kcdata_memory_get_used_bytes(&reason->osr_kcd_descriptor);
+			assert(reason_buf_size != 0);
+
+			if (KERN_SUCCESS == kcdata_get_memory_addr(crash_info_ptr, KCDATA_TYPE_NESTED_KCDATA, reason_buf_size, &uaddr)) {
+				kcdata_memcpy(crash_info_ptr, uaddr, reason->osr_kcd_buf, reason_buf_size);
+			}
+		}
+	}
+
+	if (num_udata > 0) {
+		if (KERN_SUCCESS == kcdata_get_memory_addr_for_array(crash_info_ptr, TASK_CRASHINFO_UDATA_PTRS,
+					sizeof(uint64_t), num_udata, &uaddr)) {
+			kcdata_memcpy(crash_info_ptr, uaddr, udata_buffer, sizeof(uint64_t) * num_udata);
+		}
+	}
+}
+
+/*
+ * We only parse exit reason kcdata blobs for launchd when it dies
+ * and we're going to panic.
+ *
+ * Meant to be called immediately before panicking.
+ */
+char *
+launchd_exit_reason_get_string_desc(os_reason_t exit_reason)
+{
+	kcdata_iter_t iter;
+
+	if (exit_reason == OS_REASON_NULL || exit_reason->osr_kcd_buf == NULL ||
+			exit_reason->osr_bufsize == 0) {
+		return NULL;
+	}
+
+	iter = kcdata_iter(exit_reason->osr_kcd_buf, exit_reason->osr_bufsize);
+	if (!kcdata_iter_valid(iter)) {
+#if DEBUG || DEVELOPMENT
+		printf("launchd exit reason has invalid exit reason buffer\n");
+#endif
+		return NULL;
+	}
+
+	if (kcdata_iter_type(iter) != KCDATA_BUFFER_BEGIN_OS_REASON) {
+#if DEBUG || DEVELOPMENT
+		printf("launchd exit reason buffer type mismatch, expected %d got %d\n",
+			KCDATA_BUFFER_BEGIN_OS_REASON, kcdata_iter_type(iter));
+#endif
+		return NULL;
+	}
+
+	iter = kcdata_iter_find_type(iter, EXIT_REASON_USER_DESC);
+	if (!kcdata_iter_valid(iter)) {
+		return NULL;
+	}
+
+	return (char *)kcdata_iter_payload(iter);
+}
+
+static __attribute__((noinline)) void
+launchd_crashed_panic(proc_t p, int rv)
+{
+	char *launchd_exit_reason_desc = launchd_exit_reason_get_string_desc(p->p_exit_reason);
+
+	if (p->p_exit_reason == OS_REASON_NULL) {
+		printf("pid 1 exited -- no exit reason available -- (signal %d, exit %d)\n",
+			WTERMSIG(rv), WEXITSTATUS(rv));
+	} else {
+		printf("pid 1 exited -- exit reason namespace %d subcode 0x%llx, description %s\n",
+			p->p_exit_reason->osr_namespace, p->p_exit_reason->osr_code, launchd_exit_reason_desc ?
+			launchd_exit_reason_desc : "none");
+	}
+
+	const char *launchd_crashed_prefix_str;
+
+	if (strnstr(p->p_name, "preinit", sizeof(p->p_name))) {
+		launchd_crashed_prefix_str = "LTE preinit process exited";
+	} else {
+		launchd_crashed_prefix_str = "initproc exited";
+	}
+
+#if (DEVELOPMENT || DEBUG) && CONFIG_COREDUMP
+	/*
+	 * For debugging purposes, generate a core file of initproc before
+	 * panicking. Leave at least 300 MB free on the root volume, and ignore
+	 * the process's corefile ulimit. fsync() the file to ensure it lands on disk
+	 * before the panic hits.
+	 */
+
+	int             err;
+	uint64_t        coredump_start = mach_absolute_time();
+	uint64_t        coredump_end;
+	clock_sec_t     tv_sec;
+	clock_usec_t    tv_usec;
+	uint32_t        tv_msec;
+
+
+	err = coredump(p, 300, COREDUMP_IGNORE_ULIMIT | COREDUMP_FULLFSYNC);
+
+	coredump_end = mach_absolute_time();
+
+	absolutetime_to_microtime(coredump_end - coredump_start, &tv_sec, &tv_usec);
+
+	tv_msec = tv_usec / 1000;
+
+	if (err != 0) {
+		printf("Failed to generate initproc core file: error %d, took %d.%03d seconds\n",
+		       err, (uint32_t)tv_sec, tv_msec);
+	} else {
+		printf("Generated initproc core file in %d.%03d seconds\n",
+		       (uint32_t)tv_sec, tv_msec);
+	}
+#endif /* (DEVELOPMENT || DEBUG) && CONFIG_COREDUMP */
+
+	sync(p, (void *)NULL, (int *)NULL);
+
+	if (p->p_exit_reason == OS_REASON_NULL) {
+		panic_with_options(0, NULL, DEBUGGER_OPTION_INITPROC_PANIC, "%s -- no exit reason available -- (signal %d, exit status %d %s)",
+				launchd_crashed_prefix_str, WTERMSIG(rv), WEXITSTATUS(rv), ((p->p_csflags & CS_KILLED) ? "CS_KILLED" : ""));
+	} else {
+		panic_with_options(0, NULL, DEBUGGER_OPTION_INITPROC_PANIC, "%s %s -- exit reason namespace %d subcode 0x%llx description: %." LAUNCHD_PANIC_REASON_STRING_MAXLEN "s",
+				((p->p_csflags & CS_KILLED) ? "CS_KILLED" : ""),
+				launchd_crashed_prefix_str, p->p_exit_reason->osr_namespace, p->p_exit_reason->osr_code,
+				launchd_exit_reason_desc ? launchd_exit_reason_desc : "none");
+	}
+}
+
+#define OS_REASON_IFLAG_USER_FAULT 0x1
+
+#define OS_REASON_TOTAL_USER_FAULTS_PER_PROC  5
+
+static int
+abort_with_payload_internal(proc_t p,
+		uint32_t reason_namespace, uint64_t reason_code,
+		user_addr_t payload, uint32_t payload_size,
+		user_addr_t reason_string, uint64_t reason_flags,
+		uint32_t internal_flags)
+{
+	os_reason_t exit_reason = OS_REASON_NULL;
+	kern_return_t kr = KERN_SUCCESS;
+
+	if (internal_flags & OS_REASON_IFLAG_USER_FAULT) {
+		uint32_t old_value = atomic_load_explicit(&p->p_user_faults,
+				memory_order_relaxed);
+		for (;;) {
+			if (old_value >= OS_REASON_TOTAL_USER_FAULTS_PER_PROC) {
+				return EQFULL;
+			}
+			// this reloads the value in old_value
+			if (atomic_compare_exchange_strong_explicit(&p->p_user_faults,
+					&old_value, old_value + 1, memory_order_relaxed,
+					memory_order_relaxed)) {
+				break;
+			}
+		}
+	}
+
+	KERNEL_DEBUG_CONSTANT(BSDDBG_CODE(DBG_BSD_PROC, BSD_PROC_EXITREASON_CREATE) | DBG_FUNC_NONE,
+					p->p_pid, reason_namespace,
+					reason_code, 0, 0);
+
+	exit_reason = build_userspace_exit_reason(reason_namespace, reason_code,
+			payload, payload_size, reason_string, reason_flags);
+
+	if (internal_flags & OS_REASON_IFLAG_USER_FAULT) {
+		mach_exception_code_t code = 0;
+
+		EXC_GUARD_ENCODE_TYPE(code, GUARD_TYPE_USER); /* simulated EXC_GUARD */
+		EXC_GUARD_ENCODE_FLAVOR(code, 0);
+		EXC_GUARD_ENCODE_TARGET(code, reason_namespace);
+
+		if (exit_reason == OS_REASON_NULL) {
+			kr = KERN_RESOURCE_SHORTAGE;
+		} else {
+			kr = task_violated_guard(code, reason_code, exit_reason);
+		}
+		os_reason_free(exit_reason);
+	} else {
+		/*
+		 * We use SIGABRT (rather than calling exit directly from here) so that
+		 * the debugger can catch abort_with_{reason,payload} calls.
+		 */
+		psignal_try_thread_with_reason(p, current_thread(), SIGABRT, exit_reason);
+	}
+
+	switch (kr) {
+	case KERN_SUCCESS:
+		return 0;
+	case KERN_NOT_SUPPORTED:
+		return ENOTSUP;
+	case KERN_INVALID_ARGUMENT:
+		return EINVAL;
+	case KERN_RESOURCE_SHORTAGE:
+	default:
+		return EBUSY;
+	}
+}
+
+int
+abort_with_payload(struct proc *cur_proc, struct abort_with_payload_args *args,
+				__unused void *retval)
+{
+	abort_with_payload_internal(cur_proc, args->reason_namespace,
+			args->reason_code, args->payload, args->payload_size,
+			args->reason_string, args->reason_flags, 0);
+
+	return 0;
+}
+
+int
+os_fault_with_payload(struct proc *cur_proc,
+		struct os_fault_with_payload_args *args, __unused int *retval)
+{
+	return abort_with_payload_internal(cur_proc, args->reason_namespace,
+			args->reason_code, args->payload, args->payload_size,
+			args->reason_string, args->reason_flags, OS_REASON_IFLAG_USER_FAULT);
+}
+
+
 /*
  * exit --
  *	Death of process.
  */
+__attribute__((noreturn))
 void
 exit(proc_t p, struct exit_args *uap, int *retval)
 {
+	p->p_xhighbits = ((uint32_t)(uap->rval) & 0xFF000000) >> 24;
 	exit1(p, W_EXITCODE(uap->rval, 0), retval);
 
-	/* drop funnel before we return */
 	thread_exception_return();
 	/* NOTREACHED */
 	while (TRUE)
@@ -245,11 +696,22 @@ exit(proc_t p, struct exit_args *uap, int *retval)
 int
 exit1(proc_t p, int rv, int *retval)
 {
-	return exit1_internal(p, rv, retval, TRUE, TRUE);
+	return exit1_internal(p, rv, retval, TRUE, TRUE, 0);
 }
 
 int
-exit1_internal(proc_t p, int rv, int *retval, boolean_t thread_can_terminate, boolean_t perf_notify)
+exit1_internal(proc_t p, int rv, int *retval, boolean_t thread_can_terminate, boolean_t perf_notify,
+	       int jetsam_flags)
+{
+	return exit_with_reason(p, rv, retval, thread_can_terminate, perf_notify, jetsam_flags, OS_REASON_NULL);
+}
+
+/*
+ * NOTE: exit_with_reason drops a reference on the passed exit_reason
+ */
+int
+exit_with_reason(proc_t p, int rv, int *retval, boolean_t thread_can_terminate, boolean_t perf_notify,
+		int jetsam_flags, struct os_reason *exit_reason)
 {
 	thread_t self = current_thread();
 	struct task *task = p->task;
@@ -263,7 +725,9 @@ exit1_internal(proc_t p, int rv, int *retval, boolean_t thread_can_terminate, bo
 	 */
 
 	 ut = get_bsdthread_info(self);
-	 if (ut->uu_flag & UT_VFORK) {
+	 if ((p == current_proc()) &&
+	     (ut->uu_flag & UT_VFORK)) {
+		os_reason_free(exit_reason);
 		if (!thread_can_terminate) {
 			return EINVAL;
 		}
@@ -287,37 +751,48 @@ exit1_internal(proc_t p, int rv, int *retval, boolean_t thread_can_terminate, bo
  	 * what the return value is.
 	 */
 	AUDIT_ARG(exit, WEXITSTATUS(rv), 0);
+	/*
+	 * TODO: what to audit here when jetsam calls exit and the uthread,
+	 * 'ut' does not belong to the proc, 'p'.
+	 */
 	AUDIT_SYSCALL_EXIT(SYS_exit, p, ut, 0); /* Exit is always successfull */
 
 	DTRACE_PROC1(exit, int, CLD_EXITED);
 
 	/* mark process is going to exit and pull out of DBG/disk throttle */
-	proc_removethrottle(p);
-
-#if CONFIG_MEMORYSTATUS
-	memorystatus_list_remove(p->p_pid);
-#endif
+	/* TODO: This should be done after becoming exit thread */
+	proc_set_task_policy(p->task, TASK_POLICY_ATTRIBUTE,
+	                     TASK_POLICY_TERMINATED, TASK_POLICY_ENABLE);
 
         proc_lock(p);
-	error = proc_transstart(p, 1);
+	error = proc_transstart(p, 1, (jetsam_flags ? 1 : 0));
 	if (error == EDEADLK) {
-		/* Temp: If deadlock error, then it implies multithreaded exec is
-		 * in progress. Instread of letting exit continue and 
-		 * corrupting the freed memory, let the exit thread
-		 * return. This will save corruption in remote case.
+		/*
+		 * If proc_transstart() returns EDEADLK, then another thread
+		 * is either exec'ing or exiting. Return an error and allow
+		 * the other thread to continue.
 		 */
 		proc_unlock(p);
+		os_reason_free(exit_reason);
 		if (current_proc() == p){
-			thread_exception_return();
-		} else {
-			/* external termination like jetsam */
-			return(error);
+			if (p->exit_thread == self) {
+				printf("exit_thread failed to exit, leaving process %s[%d] in unkillable limbo\n",
+				       p->p_comm, p->p_pid);
+			}
+
+			if (thread_can_terminate) {
+				thread_exception_return();
+			}
 		}
+
+		return error;
 	}
 
 	while (p->exit_thread != self) {
 		if (sig_try_locked(p) <= 0) {
 			proc_transend(p, 1);
+			os_reason_free(exit_reason);
+
 			if (get_threadtask(self) != task) {
 				proc_unlock(p);
 				return(0);
@@ -334,19 +809,19 @@ exit1_internal(proc_t p, int rv, int *retval, boolean_t thread_can_terminate, bo
 		}
 		sig_lock_to_exit(p);
 	}
-	if (p == initproc) {
-		proc_unlock(p);
-		printf("pid 1 exited (signal %d, exit %d)",
-		    WTERMSIG(rv), WEXITSTATUS(rv));
-		panic("%s died\nState at Last Exception:\n\n%s", 
-							(p->p_comm[0] != '\0' ?
-								p->p_comm :
-								"launchd"),
-							init_task_failure_data);
+
+	if (exit_reason != OS_REASON_NULL) {
+		KERNEL_DEBUG_CONSTANT(BSDDBG_CODE(DBG_BSD_PROC, BSD_PROC_EXITREASON_COMMIT) | DBG_FUNC_NONE,
+							p->p_pid, exit_reason->osr_namespace,
+							exit_reason->osr_code, 0, 0);
 	}
+
+	assert(p->p_exit_reason == OS_REASON_NULL);
+	p->p_exit_reason = exit_reason;
 
 	p->p_lflag |= P_LEXIT;
 	p->p_xstat = rv;
+	p->p_lflag |= jetsam_flags;
 
 	proc_transend(p, 1);
 	proc_unlock(p);
@@ -362,13 +837,35 @@ exit1_internal(proc_t p, int rv, int *retval, boolean_t thread_can_terminate, bo
 void
 proc_prepareexit(proc_t p, int rv, boolean_t perf_notify) 
 {
-	mach_exception_data_type_t code, subcode;
+	mach_exception_data_type_t code = 0, subcode = 0;
+
 	struct uthread *ut;
 	thread_t self = current_thread();
 	ut = get_bsdthread_info(self);
+	struct rusage_superset *rup;
+	int kr = 0;
+	int create_corpse = FALSE;
 
- 	/* If a core should be generated, notify crash reporter */
-	if (hassigprop(WTERMSIG(rv), SA_CORE) || ((p->p_csflags & CS_KILLED) != 0)) {
+	if (p == initproc) {
+		launchd_crashed_panic(p, rv);
+		/* NOTREACHED */
+	}
+
+	/*
+	 * Generate a corefile/crashlog if:
+	 * 	The process doesn't have an exit reason that indicates no crash report should be created
+	 * 	AND any of the following are true:
+	 *	- The process was terminated due to a fatal signal that generates a core
+	 *	- The process was killed due to a code signing violation
+	 *	- The process has an exit reason that indicates we should generate a crash report
+	 *
+	 * The first condition is necessary because abort_with_reason()/payload() use SIGABRT
+	 * (which normally triggers a core) but may indicate that no crash report should be created.
+	 */
+	if (!(PROC_HAS_EXITREASON(p) && (PROC_EXITREASON_FLAGS(p) & OS_REASON_FLAG_NO_CRASH_REPORT)) &&
+		(hassigprop(WTERMSIG(rv), SA_CORE) || ((p->p_csflags & CS_KILLED) != 0) ||
+		(PROC_HAS_EXITREASON(p) && (PROC_EXITREASON_FLAGS(p) &
+							OS_REASON_FLAG_GENERATE_CRASH_REPORT)))) {
 		/* 
 		 * Workaround for processes checking up on PT_DENY_ATTACH:
 		 * should be backed out post-Leopard (details in 5431025).
@@ -387,7 +884,13 @@ proc_prepareexit(proc_t p, int rv, boolean_t perf_notify)
 			((ut->uu_exception & 0x0f) << 20) | 
 			((int)ut->uu_code & 0xfffff);
 		subcode = ut->uu_subcode;
-		(void) task_exception_notify(EXC_CRASH, code, subcode);
+
+		kr = task_exception_notify(EXC_CRASH, code, subcode);
+
+		/* Nobody handled EXC_CRASH?? remember to make corpse */
+		if (kr != 0) {
+			create_corpse = TRUE;
+		}
 	}
 
 skipcheck:
@@ -396,6 +899,66 @@ skipcheck:
 		(void)sys_perf_notify(self, p->p_pid);
 	}
 
+
+	/* stash the usage into corpse data if making_corpse == true */
+	if (create_corpse == TRUE) {
+		kr = task_mark_corpse(p->task);
+		if (kr != KERN_SUCCESS) {
+			if (kr == KERN_NO_SPACE) {
+				printf("Process[%d] has no vm space for corpse info.\n", p->p_pid);
+			} else if (kr == KERN_NOT_SUPPORTED) {
+				printf("Process[%d] was destined to be corpse. But corpse is disabled by config.\n", p->p_pid);
+			} else {
+				printf("Process[%d] crashed: %s. Too many corpses being created.\n", p->p_pid, p->p_comm);
+			}
+			create_corpse = FALSE;
+		}
+	}
+
+	/*
+	 * Before this process becomes a zombie, stash resource usage
+	 * stats in the proc for external observers to query
+	 * via proc_pid_rusage().
+	 *
+	 * If the zombie allocation fails, just punt the stats.
+	 */
+	MALLOC_ZONE(rup, struct rusage_superset *,
+			sizeof (*rup), M_ZOMBIE, M_WAITOK);
+	if (rup != NULL) {
+		gather_rusage_info(p, &rup->ri, RUSAGE_INFO_CURRENT);
+		rup->ri.ri_phys_footprint = 0;
+		rup->ri.ri_proc_exit_abstime = mach_absolute_time();
+
+		/*
+		 * Make the rusage_info visible to external observers
+		 * only after it has been completely filled in.
+		 */
+		p->p_ru = rup;
+	}
+	if (create_corpse) {
+		int est_knotes = 0, num_knotes = 0;
+		uint64_t *buffer = NULL;
+		int buf_size = 0;
+
+		/* Get all the udata pointers from kqueue */
+		est_knotes = kevent_proc_copy_uptrs(p, NULL, 0);
+		if (est_knotes > 0) {
+			buf_size = (est_knotes + 32) * sizeof(uint64_t);
+			buffer = (uint64_t *) kalloc(buf_size);
+			num_knotes = kevent_proc_copy_uptrs(p, buffer, buf_size);
+			if (num_knotes > est_knotes + 32) {
+				num_knotes = est_knotes + 32;
+			}
+		}
+
+		/* Update the code, subcode based on exit reason */
+		proc_update_corpse_exception_codes(p, &code, &subcode);
+		populate_corpse_crashinfo(p, p->task, rup,
+				code, subcode, buffer, num_knotes, NULL);
+		if (buffer != NULL) {
+			kfree(buffer, buf_size);
+		}
+	}
 	/*
 	 * Remove proc from allproc queue and from pidhash chain.
 	 * Need to do this before we do anything that can block.
@@ -404,6 +967,10 @@ skipcheck:
 	 */
 
 	proc_list_lock();
+
+#if CONFIG_MEMORYSTATUS
+	memorystatus_remove(p, TRUE);
+#endif
 
 	LIST_REMOVE(p, p_list);
 	LIST_INSERT_HEAD(&zombproc, p, p_list);	/* Place onto zombproc. */
@@ -441,10 +1008,10 @@ proc_exit(proc_t p)
 	int exitval;
 	int knote_hint;
 
-	uth = (struct uthread *)get_bsdthread_info(current_thread());
+	uth = current_uthread();
 
 	proc_lock(p);
-	proc_transstart(p, 1);
+	proc_transstart(p, 1, 0);
 	if( !(p->p_lflag & P_LEXIT)) {
 		/*
 		 * This can happen if a thread_terminate() occurs
@@ -482,46 +1049,10 @@ proc_exit(proc_t p)
 		pid, exitval, 0, 0, 0);
 
 #if CONFIG_DTRACE
-	/*
-	 * Free any outstanding lazy dof entries. It is imperative we
-	 * always call dtrace_lazy_dofs_destroy, rather than null check
-	 * and call if !NULL. If we NULL test, during lazy dof faulting
-	 * we can race with the faulting code and proceed from here to
-	 * beyond the helpers cleanup. The lazy dof faulting will then
-	 * install new helpers which will never be cleaned up, and leak.
-	 */
-	dtrace_lazy_dofs_destroy(p);
-
-	/*
-	 * Clean up any DTrace helper actions or probes for the process.
-	 */
-	if (p->p_dtrace_helpers != NULL) {
-		(*dtrace_helpers_cleanup)(p);
-	}
-
-	/*
-	 * Clean up any DTrace probes associated with this process.
-	 */
-	/*
-	 * APPLE NOTE: We release ptss pages/entries in dtrace_fasttrap_exit_ptr(),
-	 * call this after dtrace_helpers_cleanup()
-	 */
-	proc_lock(p);
-	if (p->p_dtrace_probes && dtrace_fasttrap_exit_ptr) {
-		(*dtrace_fasttrap_exit_ptr)(p);
-	}
-	proc_unlock(p);
+	dtrace_proc_exit(p);
 #endif
-
-	/* XXX Zombie allocation may fail, in which case stats get lost */
-	MALLOC_ZONE(p->p_ru, struct rusage *,
-			sizeof (*p->p_ru), M_ZOMBIE, M_WAITOK);
 
 	nspace_proc_exit(p);
-
-#if VM_PRESSURE_EVENTS
-	vm_pressure_proc_cleanup(p);
-#endif
 
 	/*
 	 * need to cancel async IO requests that can be cancelled and wait for those
@@ -531,10 +1062,9 @@ proc_exit(proc_t p)
 	proc_refdrain(p);
 
 	/* if any pending cpu limits action, clear it */
-	task_clear_cpuusage(p->task);
+	task_clear_cpuusage(p->task, TRUE);
 
 	workqueue_mark_exiting(p);
-	workqueue_exit(p);
 
 	_aio_exit( p );
 
@@ -544,6 +1074,12 @@ proc_exit(proc_t p)
 	 */
 	fdfree(p);
 
+	/*
+	 * Once all the knotes, kqueues & workloops are destroyed, get rid of the
+	 * workqueue.
+	 */
+	workqueue_exit(p);
+
 	if (uth->uu_lowpri_window) {
 	        /*
 		 * task is marked as a low priority I/O type
@@ -552,14 +1088,8 @@ proc_exit(proc_t p)
 		 * no need to throttle this thread since its going away
 		 * but we do need to update our bookeeping w/r to throttled threads
 		 */
-		throttle_lowpri_io(FALSE);
+		throttle_lowpri_io(0);
 	}
-
-#if !CONFIG_EMBEDDED
-	if (p->p_legacy_behavior & PROC_LEGACY_BEHAVIOR_IOTHROTTLE) {
-		throttle_legacy_process_decr();
-	}
-#endif
 
 #if SYSV_SHM
 	/* Close ref SYSV Shared memory*/
@@ -581,6 +1111,7 @@ proc_exit(proc_t p)
 		if (sessp->s_ttyvp != NULLVP) {
 			struct vnode *ttyvp;
 			int ttyvid;
+			int cttyflag = 0;
 			struct vfs_context context;
 			struct tty *tp;
 
@@ -595,11 +1126,24 @@ proc_exit(proc_t p)
 			if ((tp != TTY_NULL) && (tp->t_session == sessp)) {
 				session_unlock(sessp);
 
+				/*
+				 * We're going to SIGHUP the foreground process
+				 * group. It can't change from this point on
+				 * until the revoke is complete.
+				 * The process group changes under both the tty
+				 * lock and proc_list_lock but we need only one
+				 */
+				tty_lock(tp);
+				ttysetpgrphup(tp);
+				tty_unlock(tp);
+
 				tty_pgsignal(tp, SIGHUP, 1);
 
 				session_lock(sessp);
 				tp = SESSION_TP(sessp);
 			}
+			cttyflag = sessp->s_flags & S_CTTYREF;
+			sessp->s_flags &= ~S_CTTYREF;
 			ttyvp = sessp->s_ttyvp;
 			ttyvid = sessp->s_ttyvid;
 			sessp->s_ttyvp = NULLVP;
@@ -616,16 +1160,32 @@ proc_exit(proc_t p)
 				}
 				context.vc_thread = proc_thread(p); /* XXX */
 				context.vc_ucred = kauth_cred_proc_ref(p);
-				vnode_rele(ttyvp);
 				VNOP_REVOKE(ttyvp, REVOKEALL, &context);
+				if (cttyflag) {
+					/*
+					 * Release the extra usecount taken in cttyopen.
+					 * usecount should be released after VNOP_REVOKE is called.
+					 * This usecount was taken to ensure that
+					 * the VNOP_REVOKE results in a close to
+					 * the tty since cttyclose is a no-op.
+					 */
+					vnode_rele(ttyvp);
+				}
 				vnode_put(ttyvp);
 				kauth_cred_unref(&context.vc_ucred);
 				ttyvp = NULLVP;
 			}
-			if (ttyvp)
-				vnode_rele(ttyvp);
-			if (tp)
+			if (tp) {
+				/*
+				 * This is cleared even if not set. This is also done in
+				 * spec_close to ensure that the flag is cleared.
+				 */
+				tty_lock(tp);
+				ttyclrpgrphup(tp);
+				tty_unlock(tp);
+
 				ttyfree(tp);
+			}
 		}
 		session_lock(sessp);
 		sessp->s_leader = NULL;
@@ -653,7 +1213,6 @@ proc_exit(proc_t p)
 	proc_childdrainstart(p);
 	while ((q = p->p_children.lh_first) != NULL) {
 		int reparentedtoinit = (q->p_listflag & P_LIST_DEADPARENT) ? 1 : 0;
-		q->p_listflag |= P_LIST_DEADPARENT;
 		if (q->p_stat == SZOMB) {
 			if (p != q->p_pptr)
 				panic("parent child linkage broken");
@@ -673,12 +1232,13 @@ proc_exit(proc_t p)
 			 */
 			(void)reap_child_locked(p, q, 1, reparentedtoinit, 1, 0);
 		} else {
-			proc_reparentlocked(q, initproc, 0, 1);
 			/*
 		 	* Traced processes are killed
 		 	* since their existence means someone is messing up.
 		 	*/
 			if (q->p_lflag & P_LTRACED) {
+				struct proc *opp;
+
 				/*
 				 * Take a reference on the child process to
 				 * ensure it doesn't exit and disappear between
@@ -689,8 +1249,26 @@ proc_exit(proc_t p)
 					continue;
 
 				proc_list_unlock();
+
+				opp = proc_find(q->p_oppid);
+				if (opp != PROC_NULL) {
+					proc_list_lock();
+					q->p_oppid = 0;
+					proc_list_unlock();
+					proc_reparentlocked(q, opp, 0, 0);
+					proc_rele(opp);
+				} else {
+					/* original parent exited while traced */
+					proc_list_lock();
+					q->p_listflag |= P_LIST_DEADPARENT;
+					q->p_oppid = 0;
+					proc_list_unlock();
+					proc_reparentlocked(q, initproc, 0, 0);
+				}
+
 				proc_lock(q);
 				q->p_lflag &= ~P_LTRACED;
+
 				if (q->sigwait_thread) {
 					thread_t thread = q->sigwait_thread;
 
@@ -704,7 +1282,7 @@ proc_exit(proc_t p)
 				 	*/
 					thread_resume(thread);
 					clear_wait(thread, THREAD_INTERRUPTED);
-					threadsignal(thread, SIGKILL, 0);
+					threadsignal(thread, SIGKILL, 0, TRUE);
 				} else {
 					proc_unlock(q);
 				}
@@ -712,12 +1290,24 @@ proc_exit(proc_t p)
 				psignal(q, SIGKILL);
 				proc_list_lock();
 				proc_rele_locked(q);
+			} else {
+				q->p_listflag |= P_LIST_DEADPARENT;
+				proc_reparentlocked(q, initproc, 0, 1);
 			}
 		}
 	}
 
 	proc_childdrainend(p);
 	proc_list_unlock();
+
+#if CONFIG_MACF
+	/*
+	 * Notify MAC policies that proc is dead.
+	 * This should be replaced with proper label management
+	 * (rdar://problem/32126399).
+	 */
+	mac_proc_notify_exit(p);
+#endif
 
 	/*
 	 * Release reference to text vnode
@@ -733,12 +1323,11 @@ proc_exit(proc_t p)
 	 * info and self times.  If we were unable to allocate a zombie
 	 * structure, this information is lost.
 	 */
-	/* No need for locking here as no one than this thread can access this */
 	if (p->p_ru != NULL) {
 	    calcru(p, &p->p_stats->p_ru.ru_utime, &p->p_stats->p_ru.ru_stime, NULL);
-	    *p->p_ru = p->p_stats->p_ru;
+	    p->p_ru->ru = p->p_stats->p_ru;
 
-	    ruadd(p->p_ru, &p->p_stats->p_cru);
+	    ruadd(&(p->p_ru->ru), &p->p_stats->p_cru);
 	}
 
 	/*
@@ -757,21 +1346,7 @@ proc_exit(proc_t p)
 		}
 	}
 
-	proc_spinlock(p);
-	if (thread_call_cancel(p->p_rcall))
-		p->p_ractive--;
-
-	while (p->p_ractive > 0) {
-		proc_spinunlock(p);
-		
-		delay(1);
-
-		proc_spinlock(p);
-	}
-	proc_spinunlock(p);
-
-	thread_call_free(p->p_rcall);
-	p->p_rcall = NULL;
+	proc_free_realitimer(p);
 
 	/*
 	 * Other substructures are freed from wait().
@@ -785,6 +1360,7 @@ proc_exit(proc_t p)
 	proc_limitdrop(p, 1);
 	p->p_limit = NULL;
 
+	vm_purgeable_disown(p->task);
 
 	/*
 	 * Finish up by terminating the task
@@ -807,6 +1383,8 @@ proc_exit(proc_t p)
 	pp = proc_parent(p);
 	if (pp->p_flag & P_NOCLDWAIT) {
 
+		if (p->p_ru != NULL) {
+			proc_lock(pp);
 #if 3839178
 		/*
 		 * If the parent is ignoring SIGCHLD, then POSIX requires
@@ -821,13 +1399,12 @@ proc_exit(proc_t p)
 		 * zombie to init.  If we were unable to allocate a
 		 * zombie structure, this information is lost.
 		 */
-		if (p->p_ru != NULL) {
-			proc_lock(pp);
-			ruadd(&pp->p_stats->p_cru, p->p_ru);
+			ruadd(&pp->p_stats->p_cru, &p->p_ru->ru);
+#endif	/* !3839178 */
+			update_rusage_info_child(&pp->p_stats->ri_child, &p->p_ru->ri);
 			proc_unlock(pp);
 		}
-#endif	/* !3839178 */
-
+		
 		/* kernel can reap this one, no need to move it to launchd */
 		proc_list_lock();
 		p->p_listflag |= P_LIST_DEADPARENT;
@@ -837,6 +1414,8 @@ proc_exit(proc_t p)
 		if (pp != initproc) {
 			proc_lock(pp);
 			pp->si_pid = p->p_pid;
+			pp->p_xhighbits = p->p_xhighbits;
+			p->p_xhighbits = 0;
 			pp->si_status = p->p_xstat;
 			pp->si_code = CLD_EXITED;
 			/*
@@ -906,7 +1485,7 @@ proc_exit(proc_t p)
 		 * no need to throttle this thread since its going away
 		 * but we do need to update our bookeeping w/r to throttled threads
 		 */
-		throttle_lowpri_io(FALSE);
+		throttle_lowpri_io(0);
 	}
 
 	proc_rele(pp);
@@ -1004,7 +1583,11 @@ reap_child_locked(proc_t parent, proc_t child, int deadparent, int reparentedtoi
 		}
 	}
 	
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
 	proc_knote(child, NOTE_REAP);
+#pragma clang diagnostic pop
+
 	proc_knote_drain(child);
 
 	child->p_xstat = 0;
@@ -1020,7 +1603,8 @@ reap_child_locked(proc_t parent, proc_t child, int deadparent, int reparentedtoi
 		 */
 		if (!(parent->p_flag & P_NOCLDWAIT))
 #endif	/* 3839178 */
-			ruadd(&parent->p_stats->p_cru, child->p_ru);
+			ruadd(&parent->p_stats->p_cru, &child->p_ru->ru);
+		update_rusage_info_child(&parent->p_stats->ri_child, &child->p_ru->ri);
 		proc_unlock(parent);
 		FREE_ZONE(child->p_ru, sizeof *child->p_ru, M_ZOMBIE);
 		child->p_ru = NULL;
@@ -1036,13 +1620,16 @@ reap_child_locked(proc_t parent, proc_t child, int deadparent, int reparentedtoi
 	 * and refernce is dropped after these calls down below
 	 * (locking protection is provided by list lock held in chgproccnt)
 	 */
+#if CONFIG_PERSONAS
+	/*
+	 * persona_proc_drop calls chgproccnt(-1) on the persona uid,
+	 * and (+1) on the child->p_ucred uid
+	 */
+	persona_proc_drop(child);
+#endif
 	(void)chgproccnt(kauth_cred_getruid(child->p_ucred), -1);
 
-#if CONFIG_LCTX
-	ALLLCTX_LOCK;
-	leavelctx(child);
-	ALLLCTX_UNLOCK;
-#endif
+	os_reason_free(child->p_exit_reason);
 
 	/*
 	 * Free up credentials.
@@ -1075,10 +1662,19 @@ reap_child_locked(proc_t parent, proc_t child, int deadparent, int reparentedtoi
 	proc_checkdeadrefs(child);
 	nprocs--;
 
+	if (deadparent) {
+		/*
+		 * If a child zombie is being reaped because its parent
+		 * is exiting, make sure we update the list flag
+		 */
+		child->p_listflag |= P_LIST_DEADPARENT;
+	}
+
 	proc_list_unlock();
 
 #if CONFIG_FINE_LOCK_GROUPS
 	lck_mtx_destroy(&child->p_mlock, proc_mlock_grp);
+	lck_mtx_destroy(&child->p_ucred_mlock, proc_ucred_mlock_grp);
 	lck_mtx_destroy(&child->p_fdmlock, proc_fdmlock_grp);
 #if CONFIG_DTRACE
 	lck_mtx_destroy(&child->p_dtrace_sprlock, proc_lck_grp);
@@ -1086,13 +1682,13 @@ reap_child_locked(proc_t parent, proc_t child, int deadparent, int reparentedtoi
 	lck_spin_destroy(&child->p_slock, proc_slock_grp);
 #else /* CONFIG_FINE_LOCK_GROUPS */
 	lck_mtx_destroy(&child->p_mlock, proc_lck_grp);
+	lck_mtx_destroy(&child->p_ucred_mlock, proc_lck_grp);
 	lck_mtx_destroy(&child->p_fdmlock, proc_lck_grp);
 #if CONFIG_DTRACE
 	lck_mtx_destroy(&child->p_dtrace_sprlock, proc_lck_grp);
 #endif
 	lck_spin_destroy(&child->p_slock, proc_lck_grp);
 #endif /* CONFIG_FINE_LOCK_GROUPS */
-	workqueue_destroy_lock(child);
 
 	FREE_ZONE(child, sizeof *child, M_PROC);
 	if ((locked == 1) && (droplock == 0))
@@ -1105,19 +1701,24 @@ reap_child_locked(proc_t parent, proc_t child, int deadparent, int reparentedtoi
 int
 wait1continue(int result)
 {
-	void *vt;
-	thread_t thread;
-	int *retval;
 	proc_t p;
+	thread_t thread;
+	uthread_t uth;
+	struct _wait4_data *wait4_data;
+	struct wait4_nocancel_args *uap;
+	int *retval;
 
 	if (result)
 		return(result);
 
 	p = current_proc();
 	thread = current_thread();
-	vt = get_bsduthreadarg(thread);
-	retval = get_bsduthreadrval(thread);
-	return(wait4(p, (struct wait4_args *)vt, retval));
+	uth = (struct uthread *)get_bsdthread_info(thread);
+
+	wait4_data = &uth->uu_kevent.uu_wait4_data;
+	uap = wait4_data->args;
+	retval = wait4_data->retval;
+	return(wait4_nocancel(p, uap, retval));
 }
 
 int
@@ -1134,6 +1735,8 @@ wait4_nocancel(proc_t q, struct wait4_nocancel_args *uap, int32_t *retval)
 	int sibling_count;
 	proc_t p;
 	int status, error;
+	uthread_t uth;
+	struct _wait4_data *wait4_data;
 
 	AUDIT_ARG(pid, uap->pid);
 
@@ -1146,7 +1749,7 @@ loop1:
 	nfound = 0;
 	sibling_count = 0;
 
-	for (p = q->p_children.lh_first; p != 0; p = p->p_sibling.le_next) {
+	PCHILDREN_FOREACH(q, p) {
 		if ( p->p_sibling.le_next != 0 )
 			sibling_count++;
 		if (uap->pid != WAIT_ANY &&
@@ -1189,14 +1792,14 @@ loop1:
 				} else {
 					if (IS_64BIT_PROCESS(q)) {
 						struct user64_rusage	my_rusage;
-						munge_user64_rusage(p->p_ru, &my_rusage);
+						munge_user64_rusage(&p->p_ru->ru, &my_rusage);
 						error = copyout((caddr_t)&my_rusage,
 							uap->rusage,
 							sizeof (my_rusage));
 					}
 					else {
 						struct user32_rusage	my_rusage;
-						munge_user32_rusage(p->p_ru, &my_rusage);
+						munge_user32_rusage(&p->p_ru->ru, &my_rusage);
 						error = copyout((caddr_t)&my_rusage,
 							uap->rusage,
 							sizeof (my_rusage));
@@ -1214,7 +1817,7 @@ loop1:
 			 */
 			if ( sibling_count == 0 ) {
 				int mask = sigmask(SIGCHLD);
-				uthread_t uth = (struct uthread *)get_bsdthread_info(current_thread());
+				uth = current_uthread();
 
 				if ( (uth->uu_sigmask & mask) != 0 ) {
 					/* we are blocking SIGCHLD signals.  clear any pending SIGCHLD.
@@ -1291,6 +1894,12 @@ loop1:
 		return (0);
 	}
 
+	/* Save arguments for continuation. Backing storage is in uthread->uu_arg, and will not be deallocated */
+	uth = current_uthread();
+	wait4_data = &uth->uu_kevent.uu_wait4_data;
+	wait4_data->args = uap;
+	wait4_data->retval = retval;
+
 	if ((error = msleep0((caddr_t)q, proc_list_mlock, PWAIT | PCATCH | PDROP, "wait", 0, wait1continue)))
 		return (error);
 
@@ -1313,17 +1922,24 @@ out:
 int
 waitidcontinue(int result)
 {
-	void *vt;
+	proc_t p;
 	thread_t thread;
+	uthread_t uth;
+	struct _waitid_data *waitid_data;
+	struct waitid_nocancel_args *uap;
 	int *retval;
 
 	if (result)
 		return (result);
 
+	p = current_proc();
 	thread = current_thread();
-	vt = get_bsduthreadarg(thread);
-	retval = get_bsduthreadrval(thread);
-	return (waitid(current_proc(), (struct waitid_args *)vt, retval));
+	uth = (struct uthread *)get_bsdthread_info(thread);
+
+	waitid_data = &uth->uu_kevent.uu_waitid_data;
+	uap = waitid_data->args;
+	retval = waitid_data->retval;
+	return(waitid_nocancel(p, uap, retval));
 }
 
 /*
@@ -1355,6 +1971,8 @@ waitid_nocancel(proc_t q, struct waitid_nocancel_args *uap,
 	int nfound;
 	proc_t p;
 	int error;
+	uthread_t uth;
+	struct _waitid_data *waitid_data;
 
 	if (uap->options == 0 ||
 	    (uap->options & ~(WNOHANG|WNOWAIT|WCONTINUED|WSTOPPED|WEXITED)))
@@ -1374,8 +1992,8 @@ loop:
 	proc_list_lock();
 loop1:
 	nfound = 0;
-	for (p = q->p_children.lh_first; p != 0; p = p->p_sibling.le_next) {
 
+	PCHILDREN_FOREACH(q, p) {
 		switch (uap->idtype) {
 		case P_PID:	/* child with process ID equal to... */
 			if (p->p_pid != (pid_t)uap->id)
@@ -1417,7 +2035,8 @@ loop1:
 #endif
 			siginfo.si_signo = SIGCHLD;
 			siginfo.si_pid = p->p_pid;
-			siginfo.si_status = WEXITSTATUS(p->p_xstat);
+			siginfo.si_status = (WEXITSTATUS(p->p_xstat) & 0x00FFFFFF) | (((uint32_t)(p->p_xhighbits) << 24) & 0xFF000000);
+			p->p_xhighbits = 0;
 			if (WIFSIGNALED(p->p_xstat)) {
 				siginfo.si_code = WCOREDUMP(p->p_xstat) ?
 					CLD_DUMPED : CLD_KILLED;
@@ -1539,6 +2158,12 @@ loop1:
 		return (0);
 	}
 
+	/* Save arguments for continuation. Backing storage is in uthread->uu_arg, and will not be deallocated */
+	uth = current_uthread();
+	waitid_data = &uth->uu_kevent.uu_waitid_data;
+	waitid_data->args = uap;
+	waitid_data->retval = retval;
+
 	if ((error = msleep0(q, proc_list_mlock,
 	    PWAIT | PCATCH | PDROP, "waitid", 0, waitidcontinue)) != 0)
 		return (error);
@@ -1658,6 +2283,10 @@ vfork_exit_internal(proc_t p, int rv, int forceexit)
 
 	proc_list_lock();
 
+#if CONFIG_MEMORYSTATUS
+	memorystatus_remove(p, TRUE);
+#endif
+
 	LIST_REMOVE(p, p_list);
 	LIST_INSERT_HEAD(&zombproc, p, p_list);	/* Place onto zombproc. */
 	/* will not be visible via proc_find */
@@ -1671,44 +2300,22 @@ vfork_exit_internal(proc_t p, int rv, int forceexit)
 	p->p_sigignore = ~0;
 	proc_unlock(p);
 
-	proc_spinlock(p);
-	if (thread_call_cancel(p->p_rcall))
-		p->p_ractive--;
-
-	while (p->p_ractive > 0) {
-		proc_spinunlock(p);
-		
-		delay(1);
-
-		proc_spinlock(p);
-	}
-	proc_spinunlock(p);
-
-	thread_call_free(p->p_rcall);
-	p->p_rcall = NULL;
-
 	ut->uu_siglist = 0;
 
-	vproc_exit(p);
-}
+	/* begin vproc_exit */
 
-void 
-vproc_exit(proc_t p)
-{
 	proc_t q;
 	proc_t pp;
-	
+
 	vnode_t tvp;
-#ifdef FIXME
-	struct task *task = p->task;
-#endif
+
 	struct pgrp * pg;
 	struct session *sessp;
+	struct rusage_superset *rup;
 
 	/* XXX Zombie allocation may fail, in which case stats get lost */
-	MALLOC_ZONE(p->p_ru, struct rusage *,
-			sizeof (*p->p_ru), M_ZOMBIE, M_WAITOK);
-
+	MALLOC_ZONE(rup, struct rusage_superset *,
+			sizeof (*rup), M_ZOMBIE, M_WAITOK);
 
 	proc_refdrain(p);
 
@@ -1718,18 +2325,13 @@ vproc_exit(proc_t p)
 	 */
 	fdfree(p);
 
-#if !CONFIG_EMBEDDED
-	if (p->p_legacy_behavior & PROC_LEGACY_BEHAVIOR_IOTHROTTLE) {
-		throttle_legacy_process_decr();
-	}
-#endif
-
 	sessp = proc_session(p);
 	if (SESS_LEADER(p, sessp)) {
 		
 		if (sessp->s_ttyvp != NULLVP) {
 			struct vnode *ttyvp;
 			int ttyvid;
+			int cttyflag = 0;
 			struct vfs_context context;
 			struct tty *tp;
 
@@ -1744,11 +2346,24 @@ vproc_exit(proc_t p)
 			if ((tp != TTY_NULL) && (tp->t_session == sessp)) {
 				session_unlock(sessp);
 
+				/*
+				 * We're going to SIGHUP the foreground process
+				 * group. It can't change from this point on
+				 * until the revoke is complete.
+				 * The process group changes under both the tty
+				 * lock and proc_list_lock but we need only one
+				 */
+				tty_lock(tp);
+				ttysetpgrphup(tp);
+				tty_unlock(tp);
+
 				tty_pgsignal(tp, SIGHUP, 1);
 
 				session_lock(sessp);
 				tp = SESSION_TP(sessp);
 			}
+			cttyflag = sessp->s_flags & S_CTTYREF;
+			sessp->s_flags &= ~S_CTTYREF;
 			ttyvp = sessp->s_ttyvp;
 			ttyvid = sessp->s_ttyvid;
 			sessp->s_ttyvp = NULL;
@@ -1765,16 +2380,32 @@ vproc_exit(proc_t p)
 				}
 				context.vc_thread = proc_thread(p); /* XXX */
 				context.vc_ucred = kauth_cred_proc_ref(p);
-				vnode_rele(ttyvp);
 				VNOP_REVOKE(ttyvp, REVOKEALL, &context);
+				if (cttyflag) {
+					/*
+					 * Release the extra usecount taken in cttyopen.
+					 * usecount should be released after VNOP_REVOKE is called.
+					 * This usecount was taken to ensure that
+					 * the VNOP_REVOKE results in a close to
+					 * the tty since cttyclose is a no-op.
+					 */
+					vnode_rele(ttyvp);
+				}
 				vnode_put(ttyvp);
 				kauth_cred_unref(&context.vc_ucred);
 				ttyvp = NULLVP;
 			}
-			if (ttyvp) 
-				vnode_rele(ttyvp);
-			if (tp)
+			if (tp) {
+				/*
+				 * This is cleared even if not set. This is also done in
+				 * spec_close to ensure that the flag is cleared.
+				 */
+				tty_lock(tp);
+				ttyclrpgrphup(tp);
+				tty_unlock(tp);
+
 				ttyfree(tp);
+			}
 		}
 		session_lock(sessp);
 		sessp->s_leader = NULL;
@@ -1791,7 +2422,6 @@ vproc_exit(proc_t p)
 	proc_list_lock();
 	proc_childdrainstart(p);
 	while ((q = p->p_children.lh_first) != NULL) {
-		q->p_listflag |= P_LIST_DEADPARENT;
 		if (q->p_stat == SZOMB) {
 			if (p != q->p_pptr)
 				panic("parent child linkage broken");
@@ -1811,15 +2441,34 @@ vproc_exit(proc_t p)
 			 */
 			(void)reap_child_locked(p, q, 1, 0, 1, 0);
 		} else {
-			proc_reparentlocked(q, initproc, 0, 1);
 			/*
 		 	* Traced processes are killed
 		 	* since their existence means someone is messing up.
 		 	*/
 			if (q->p_lflag & P_LTRACED) {
+				struct proc *opp;
+
 				proc_list_unlock();
+
+				opp = proc_find(q->p_oppid);
+				if (opp != PROC_NULL) {
+					proc_list_lock();
+					q->p_oppid = 0;
+					proc_list_unlock();
+					proc_reparentlocked(q, opp, 0, 0);
+					proc_rele(opp);
+				} else {
+					/* original parent exited while traced */
+					proc_list_lock();
+					q->p_listflag |= P_LIST_DEADPARENT;
+					q->p_oppid = 0;
+					proc_list_unlock();
+					proc_reparentlocked(q, initproc, 0, 0);
+				}
+
 				proc_lock(q);
 				q->p_lflag &= ~P_LTRACED;
+
 				if (q->sigwait_thread) {
 					thread_t thread = q->sigwait_thread;
 
@@ -1833,13 +2482,16 @@ vproc_exit(proc_t p)
 				 	*/
 					thread_resume(thread);
 					clear_wait(thread, THREAD_INTERRUPTED);
-					threadsignal(thread, SIGKILL, 0);
+					threadsignal(thread, SIGKILL, 0, TRUE);
 				} else {
 					proc_unlock(q);
 				}
 
 				psignal(q, SIGKILL);
 				proc_list_lock();
+			} else {
+				q->p_listflag |= P_LIST_DEADPARENT;
+				proc_reparentlocked(q, initproc, 0, 1);
 			}
 		}
 	}
@@ -1861,11 +2513,10 @@ vproc_exit(proc_t p)
 	 * info and self times.  If we were unable to allocate a zombie
 	 * structure, this information is lost.
 	 */
-	/* No need for locking here as no one than this thread can access this */
-	if (p->p_ru != NULL) {
-	    *p->p_ru = p->p_stats->p_ru;
-	    timerclear(&p->p_ru->ru_utime);
-	    timerclear(&p->p_ru->ru_stime);
+	if (rup != NULL) {
+	    rup->ru = p->p_stats->p_ru;
+	    timerclear(&rup->ru.ru_utime);
+	    timerclear(&rup->ru.ru_stime);
 
 #ifdef  FIXME
 	    if (task) {
@@ -1877,10 +2528,10 @@ vproc_exit(proc_t p)
 		task_info_stuff	= MACH_TASK_BASIC_INFO_COUNT;
 		task_info(task, MACH_TASK_BASIC_INFO,
 			  &tinfo, &task_info_stuff);
-		p->p_ru->ru_utime.tv_sec = tinfo.user_time.seconds;
-		p->p_ru->ru_utime.tv_usec = tinfo.user_time.microseconds;
-		p->p_ru->ru_stime.tv_sec = tinfo.system_time.seconds;
-		p->p_ru->ru_stime.tv_usec = tinfo.system_time.microseconds;
+		p->p_ru->ru.ru_utime.tv_sec = tinfo.user_time.seconds;
+		p->p_ru->ru.ru_utime.tv_usec = tinfo.user_time.microseconds;
+		p->p_ru->ru.ru_stime.tv_sec = tinfo.system_time.seconds;
+		p->p_ru->ru.ru_stime.tv_usec = tinfo.system_time.microseconds;
 
 		task_ttimes_stuff = TASK_THREAD_TIMES_INFO_COUNT;
 		task_info(task, TASK_THREAD_TIMES_INFO,
@@ -1890,12 +2541,22 @@ vproc_exit(proc_t p)
 		ut.tv_usec = ttimesinfo.user_time.microseconds;
 		st.tv_sec = ttimesinfo.system_time.seconds;
 		st.tv_usec = ttimesinfo.system_time.microseconds;
-		timeradd(&ut,&p->p_ru->ru_utime,&p->p_ru->ru_utime);
-			timeradd(&st,&p->p_ru->ru_stime,&p->p_ru->ru_stime);
+		timeradd(&ut,&p->p_ru->ru.ru_utime,&p->p_ru->ru.ru_utime);
+			timeradd(&st,&p->p_ru->ru.ru_stime,&p->p_ru->ru.ru_stime);
 	    }
 #endif /* FIXME */
 
-	    ruadd(p->p_ru, &p->p_stats->p_cru);
+	    ruadd(&rup->ru, &p->p_stats->p_cru);
+
+		gather_rusage_info(p, &rup->ri, RUSAGE_INFO_CURRENT);
+		rup->ri.ri_phys_footprint = 0;
+		rup->ri.ri_proc_exit_abstime = mach_absolute_time();
+
+		/*
+		 * Now that we have filled in the rusage info, make it
+		 * visible to an external observer via proc_pid_rusage().
+		 */
+		p->p_ru = rup;
 	}
 
 	/*
@@ -1917,6 +2578,8 @@ vproc_exit(proc_t p)
 #if PSYNCH
 	pth_proc_hashdelete(p);
 #endif /* PSYNCH */
+
+	proc_free_realitimer(p);
 
 	/*
 	 * Other substructures are freed from wait().
@@ -1945,6 +2608,8 @@ vproc_exit(proc_t p)
 		if (pp != initproc) {
 			proc_lock(pp);
 			pp->si_pid = p->p_pid;
+			pp->p_xhighbits = p->p_xhighbits;
+			p->p_xhighbits = 0;
 			pp->si_status = p->p_xstat;
 			pp->si_code = CLD_EXITED;
 			/*

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2011 Apple Computer, Inc. All rights reserved.
+ * Copyright (c) 2000-2013 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -78,6 +78,15 @@
 #include <libkern/OSAtomic.h>
 #include <sys/kdebug.h>
 
+#if !MACH_KDP
+#include <kdp/kdp_callout.h>
+#endif /* !MACH_KDP */
+
+#include <libkern/OSDebug.h>
+#if CONFIG_DTRACE
+#include <mach/sdt.h>
+#endif
+
 #if 0
 
 #undef KERNEL_DEBUG
@@ -85,6 +94,9 @@
 #define KDEBUG 1
 
 #endif
+
+/* prevent infinite recursion when memmove calls bcopy; in string.h, bcopy is defined to call memmove */
+#undef bcopy
 
 /* XXX - should be gone from here */
 extern void		invalidate_icache64(addr64_t addr, unsigned cnt, int phys);
@@ -98,7 +110,7 @@ extern void		mapping_set_ref(ppnum_t pn);
 extern void		ovbcopy(const char	*from,
 				char		*to,
 				vm_size_t	nbytes);
-void machine_callstack(natural_t *buf, vm_size_t callstack_max);
+void machine_callstack(uintptr_t *buf, vm_size_t callstack_max);
 
 
 #define value_64bit(value)  ((value) & 0xFFFFFFFF00000000ULL)
@@ -156,6 +168,40 @@ ffs(unsigned int mask)
 	 * 'ffs'
 	 */
 	return 1 + __builtin_ctz(mask);
+}
+
+int
+ffsll(unsigned long long mask)
+{
+	if (mask == 0)
+		return 0;
+
+	/*
+	 * NOTE: cannot use __builtin_ffsll because it generates a call to
+	 * 'ffsll'
+	 */
+	return 1 + __builtin_ctzll(mask);
+}
+
+/*
+ * Find last bit set in bit string.
+ */
+int
+fls(unsigned int mask)
+{
+	if (mask == 0)
+		return 0;
+
+	return (sizeof (mask) << 3) - __builtin_clz(mask);
+}
+
+int
+flsll(unsigned long long mask)
+{
+	if (mask == 0)
+		return 0;
+
+	return (sizeof (mask) << 3) - __builtin_clzll(mask);
 }
 
 void
@@ -242,18 +288,33 @@ ovbcopy(
  *  Read data from a physical address. Memory should not be cache inhibited.
  */
 
+uint64_t reportphyreaddelayabs;
+uint32_t reportphyreadosbt;
 
-static inline unsigned int
-ml_phys_read_data(pmap_paddr_t paddr, int size)
-{
-	unsigned int result;
+#if DEVELOPMENT || DEBUG
+uint32_t phyreadpanic = 1;
+#else
+uint32_t phyreadpanic = 0;
+#endif
 
-	if (!physmap_enclosed(paddr))
+__private_extern__ uint64_t
+ml_phys_read_data(pmap_paddr_t paddr, int size) {
+	uint64_t result = 0;
+	unsigned char s1;
+	unsigned short s2;
+	boolean_t istate = TRUE, timeread = FALSE;
+	uint64_t sabs = 0, eabs;
+
+	if (__improbable(!physmap_enclosed(paddr)))
 		panic("%s: 0x%llx out of bounds\n", __FUNCTION__, paddr);
 
+	if (__improbable(reportphyreaddelayabs != 0)) {
+		istate = ml_set_interrupts_enabled(FALSE);
+		sabs = mach_absolute_time();
+		timeread = TRUE;
+	}
+
         switch (size) {
-		unsigned char s1;
-		unsigned short s2;
         case 1:
 		s1 = *(volatile unsigned char *)PHYSMAP_PTOV(paddr);
 		result = s1;
@@ -265,59 +326,80 @@ ml_phys_read_data(pmap_paddr_t paddr, int size)
         case 4:
 		result = *(volatile unsigned int *)PHYSMAP_PTOV(paddr);
 		break;
+	case 8:
+		result = *(volatile unsigned long long *)PHYSMAP_PTOV(paddr);
+		break;
 	default:
 		panic("Invalid size %d for ml_phys_read_data\n", size);
 		break;
         }
+
+	if (__improbable(timeread == TRUE)) {
+		eabs = mach_absolute_time();
+		(void)ml_set_interrupts_enabled(istate);
+
+		if (__improbable((eabs - sabs) > reportphyreaddelayabs)) {
+			if (phyreadpanic && (machine_timeout_suspended() == FALSE)) {
+				panic_io_port_read();
+				panic("Read from physical addr 0x%llx took %llu ns, result: 0x%llx (start: %llu, end: %llu), ceiling: %llu", paddr, (eabs - sabs), result, sabs, eabs, reportphyreaddelayabs);
+			}
+
+			if (reportphyreadosbt) {
+				OSReportWithBacktrace("ml_phys_read_data took %lluus\n", (eabs - sabs) / 1000);
+			}
+#if CONFIG_DTRACE
+			DTRACE_PHYSLAT3(physread, uint64_t, (eabs - sabs),
+			    pmap_paddr_t, paddr, uint32_t, size);
+#endif
+		}
+	}
+
         return result;
 }
 
 static unsigned long long
-ml_phys_read_long_long(pmap_paddr_t paddr )
-{
-	if (!physmap_enclosed(paddr))
-		panic("%s: 0x%llx out of bounds\n", __FUNCTION__, paddr);
-	return *(volatile unsigned long long *)PHYSMAP_PTOV(paddr);
+ml_phys_read_long_long(pmap_paddr_t paddr) {
+	return ml_phys_read_data(paddr, 8);
 }
 
 unsigned int ml_phys_read( vm_offset_t paddr)
 {
-        return ml_phys_read_data((pmap_paddr_t)paddr, 4);
+        return (unsigned int) ml_phys_read_data((pmap_paddr_t)paddr, 4);
 }
 
 unsigned int ml_phys_read_word(vm_offset_t paddr) {
 
-        return ml_phys_read_data((pmap_paddr_t)paddr, 4);
+        return (unsigned int) ml_phys_read_data((pmap_paddr_t)paddr, 4);
 }
 
 unsigned int ml_phys_read_64(addr64_t paddr64)
 {
-        return ml_phys_read_data((pmap_paddr_t)paddr64, 4);
+        return (unsigned int) ml_phys_read_data((pmap_paddr_t)paddr64, 4);
 }
 
 unsigned int ml_phys_read_word_64(addr64_t paddr64)
 {
-        return ml_phys_read_data((pmap_paddr_t)paddr64, 4);
+        return (unsigned int) ml_phys_read_data((pmap_paddr_t)paddr64, 4);
 }
 
 unsigned int ml_phys_read_half(vm_offset_t paddr)
 {
-        return ml_phys_read_data((pmap_paddr_t)paddr, 2);
+        return (unsigned int) ml_phys_read_data((pmap_paddr_t)paddr, 2);
 }
 
 unsigned int ml_phys_read_half_64(addr64_t paddr64)
 {
-        return ml_phys_read_data((pmap_paddr_t)paddr64, 2);
+        return (unsigned int) ml_phys_read_data((pmap_paddr_t)paddr64, 2);
 }
 
 unsigned int ml_phys_read_byte(vm_offset_t paddr)
 {
-        return ml_phys_read_data((pmap_paddr_t)paddr, 1);
+        return (unsigned int) ml_phys_read_data((pmap_paddr_t)paddr, 1);
 }
 
 unsigned int ml_phys_read_byte_64(addr64_t paddr64)
 {
-        return ml_phys_read_data((pmap_paddr_t)paddr64, 1);
+        return (unsigned int) ml_phys_read_data((pmap_paddr_t)paddr64, 1);
 }
 
 unsigned long long ml_phys_read_double(vm_offset_t paddr)
@@ -454,6 +536,7 @@ ml_probe_read_64(addr64_t paddr64, unsigned int *val)
 }
 
 
+#undef bcmp
 int bcmp(
 	const void	*pa,
 	const void	*pb,
@@ -473,6 +556,7 @@ int bcmp(
 	return (int)len;
 }
 
+#undef memcmp
 int
 memcmp(const void *s1, const void *s2, size_t n)
 {
@@ -487,29 +571,30 @@ memcmp(const void *s1, const void *s2, size_t n)
 	return (0);
 }
 
+#undef memmove
+void *
+memmove(void *dst, const void *src, size_t ulen)
+{
+	bcopy(src, dst, ulen);
+	return dst;
+}
+
 /*
  * Abstract:
  * strlen returns the number of characters in "string" preceeding
  * the terminating null character.
  */
 
+#undef strlen
 size_t
 strlen(
-	register const char *string)
+	const char *string)
 {
-	register const char *ret = string;
+	const char *ret = string;
 
 	while (*string++ != '\0')
 		continue;
 	return string - 1 - ret;
-}
-
-uint32_t
-hw_compare_and_store(uint32_t oldval, uint32_t newval, volatile uint32_t *dest)
-{
-	return OSCompareAndSwap((UInt32)oldval,
-				(UInt32)newval,
-				(volatile UInt32 *)dest);
 }
 
 #if	MACH_ASSERT
@@ -519,7 +604,7 @@ hw_compare_and_store(uint32_t oldval, uint32_t newval, volatile uint32_t *dest)
  * levels of return pc information.
  */
 void machine_callstack(
-	__unused natural_t	*buf,
+	__unused uintptr_t	*buf,
 	__unused vm_size_t	callstack_max)
 {
 }
@@ -538,18 +623,6 @@ void fillPage(ppnum_t pa, unsigned int fill)
 		*addr++ = fill;
 }
 
-static inline void __sfence(void)
-{
-    __asm__ volatile("sfence");
-}
-static inline void __mfence(void)
-{
-    __asm__ volatile("mfence");
-}
-static inline void __wbinvd(void)
-{
-    __asm__ volatile("wbinvd");
-}
 static inline void __clflush(void *ptr)
 {
 	__asm__ volatile("clflush (%0)" : : "r" (ptr));
@@ -560,14 +633,14 @@ void dcache_incoherent_io_store64(addr64_t pa, unsigned int count)
 	addr64_t  linesize = cpuid_info()->cache_linesize;
 	addr64_t  bound = (pa + count + linesize - 1) & ~(linesize - 1);
 
-	__mfence();
+	mfence();
 
 	while (pa < bound) {
 		__clflush(PHYSMAP_PTOV(pa));
 		pa += linesize;
 	}
 
-	__mfence();
+	mfence();
 }
 
 void dcache_incoherent_io_flush64(addr64_t pa, unsigned int count)
@@ -584,12 +657,12 @@ flush_dcache64(addr64_t addr, unsigned count, int phys)
 	else {
 		uint64_t  linesize = cpuid_info()->cache_linesize;
 		addr64_t  bound = (addr + count + linesize -1) & ~(linesize - 1);
-		__mfence();
+		mfence();
 		while (addr < bound) {
 			__clflush((void *) (uintptr_t) addr);
 			addr += linesize;
 		}
-		__mfence();
+		mfence();
 	}
 }
 
@@ -615,15 +688,22 @@ mapping_set_ref(ppnum_t pn)
   pmap_set_reference(pn);
 }
 
+extern i386_cpu_info_t	cpuid_cpu_info;
 void
 cache_flush_page_phys(ppnum_t pa)
 {
 	boolean_t	istate;
 	unsigned char	*cacheline_addr;
-	int		cacheline_size = cpuid_info()->cache_linesize;
-	int		cachelines_to_flush = PAGE_SIZE/cacheline_size;
+	i386_cpu_info_t	*cpuid_infop = cpuid_info();
+	int		cacheline_size;
+	int		cachelines_to_flush;
 
-	__mfence();
+	cacheline_size = cpuid_infop->cache_linesize;
+	if (cacheline_size == 0)
+		panic("cacheline_size=0 cpuid_infop=%p\n", cpuid_infop);
+	cachelines_to_flush = PAGE_SIZE/cacheline_size;
+
+	mfence();
 
 	istate = ml_set_interrupts_enabled(FALSE);
 
@@ -635,30 +715,17 @@ cache_flush_page_phys(ppnum_t pa)
 
 	(void) ml_set_interrupts_enabled(istate);
 
-	__mfence();
+	mfence();
 }
 
 
 #if !MACH_KDP
 void
-kdp_register_callout(void)
+kdp_register_callout(kdp_callout_fn_t fn, void *arg)
 {
+#pragma unused(fn,arg)
 }
 #endif
-
-/*
- * Return a uniformly distributed 64-bit random number.
- *
- * This interface should have minimal dependencies on kernel
- * services, and thus be available very early in the life
- * of the kernel.  But as a result, it may not be very random
- * on all platforms.
- */
-uint64_t
-early_random(void)
-{
-	return (ml_early_random());
-}
 
 #if !CONFIG_VMX
 int host_vmxon(boolean_t exclusive __unused)

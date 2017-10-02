@@ -1,620 +1,1084 @@
-/*	$NetBSD: armreg.h,v 1.37 2007/01/06 00:50:54 christos Exp $	*/
-
-/*-
- * Copyright (c) 1998, 2001 Ben Harris
- * Copyright (c) 1994-1996 Mark Brinicombe.
- * Copyright (c) 1994 Brini.
- * All rights reserved.
+/*
+ * Copyright (c) 2007-2016 Apple Inc. All rights reserved.
  *
- * This code is derived from software written for Brini by Mark Brinicombe
+ * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- * 1. Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- * 2. Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in the
- *    documentation and/or other materials provided with the distribution.
- * 3. All advertising materials mentioning features or use of this software
- *    must display the following acknowledgement:
- *	This product includes software developed by Brini.
- * 4. The name of the company nor the name of the author may be used to
- *    endorse or promote products derived from this software without specific
- *    prior written permission.
+ * This file contains Original Code and/or Modifications of Original Code
+ * as defined in and that are subject to the Apple Public Source License
+ * Version 2.0 (the 'License'). You may not use this file except in
+ * compliance with the License. The rights granted to you under the License
+ * may not be used to create, or enable the creation or redistribution of,
+ * unlawful or unlicensed copies of an Apple operating system, or to
+ * circumvent, violate, or enable the circumvention or violation of, any
+ * terms of an Apple operating system software license agreement.
  *
- * THIS SOFTWARE IS PROVIDED BY BRINI ``AS IS'' AND ANY EXPRESS OR IMPLIED
- * WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
- * MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
- * IN NO EVENT SHALL BRINI OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
- * INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
- * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
- * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
- * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
- * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
- * SUCH DAMAGE.
+ * Please obtain a copy of the License at
+ * http://www.opensource.apple.com/apsl/ and read it before using this file.
  *
- * $FreeBSD$
+ * The Original Code and all software distributed under the License are
+ * distributed on an 'AS IS' basis, WITHOUT WARRANTY OF ANY KIND, EITHER
+ * EXPRESS OR IMPLIED, AND APPLE HEREBY DISCLAIMS ALL SUCH WARRANTIES,
+ * INCLUDING WITHOUT LIMITATION, ANY WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE, QUIET ENJOYMENT OR NON-INFRINGEMENT.
+ * Please see the License for the specific language governing rights and
+ * limitations under the License.
+ *
+ * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
-
-#ifndef MACHINE_ARMREG_H
-#define MACHINE_ARMREG_H
-
-#define INSN_SIZE	4
-#define INSN_COND_MASK	0xf0000000	/* Condition mask */
-#define PSR_MODE        0x0000001f      /* mode mask */
-#define PSR_USR26_MODE  0x00000000
-#define PSR_FIQ26_MODE  0x00000001
-#define PSR_IRQ26_MODE  0x00000002
-#define PSR_SVC26_MODE  0x00000003
-#define PSR_USR32_MODE  0x00000010
-#define PSR_FIQ32_MODE  0x00000011
-#define PSR_IRQ32_MODE  0x00000012
-#define PSR_SVC32_MODE  0x00000013
-#define PSR_ABT32_MODE  0x00000017
-#define PSR_UND32_MODE  0x0000001b
-#define PSR_SYS32_MODE  0x0000001f
-#define PSR_32_MODE     0x00000010
-#define PSR_FLAGS	0xf0000000    /* flags */
-
-#define PSR_C_bit (1 << 29)       /* carry */
-
-/* The high-order byte is always the implementor */
-#define CPU_ID_IMPLEMENTOR_MASK	0xff000000
-#define CPU_ID_ARM_LTD		0x41000000 /* 'A' */
-#define CPU_ID_DEC		0x44000000 /* 'D' */
-#define CPU_ID_INTEL		0x69000000 /* 'i' */
-#define	CPU_ID_TI		0x54000000 /* 'T' */
-#define	CPU_ID_FARADAY		0x66000000 /* 'f' */
-
-/* How to decide what format the CPUID is in. */
-#define CPU_ID_ISOLD(x)		(((x) & 0x0000f000) == 0x00000000)
-#define CPU_ID_IS7(x)		(((x) & 0x0000f000) == 0x00007000)
-#define CPU_ID_ISNEW(x)		(!CPU_ID_ISOLD(x) && !CPU_ID_IS7(x))
-
-/* On ARM3 and ARM6, this byte holds the foundry ID. */
-#define CPU_ID_FOUNDRY_MASK	0x00ff0000
-#define CPU_ID_FOUNDRY_VLSI	0x00560000
-
-/* On ARM7 it holds the architecture and variant (sub-model) */
-#define CPU_ID_7ARCH_MASK	0x00800000
-#define CPU_ID_7ARCH_V3		0x00000000
-#define CPU_ID_7ARCH_V4T	0x00800000
-#define CPU_ID_7VARIANT_MASK	0x007f0000
-
-/* On more recent ARMs, it does the same, but in a different format */
-#define CPU_ID_ARCH_MASK	0x000f0000
-#define CPU_ID_ARCH_V3		0x00000000
-#define CPU_ID_ARCH_V4		0x00010000
-#define CPU_ID_ARCH_V4T		0x00020000
-#define CPU_ID_ARCH_V5		0x00030000
-#define CPU_ID_ARCH_V5T		0x00040000
-#define CPU_ID_ARCH_V5TE	0x00050000
-#define CPU_ID_ARCH_V5TEJ	0x00060000
-#define CPU_ID_ARCH_V6		0x00070000
-#define CPU_ID_CPUID_SCHEME	0x000f0000
-#define CPU_ID_VARIANT_MASK	0x00f00000
-
-/* Next three nybbles are part number */
-#define CPU_ID_PARTNO_MASK	0x0000fff0
-
-/* Intel XScale has sub fields in part number */
-#define CPU_ID_XSCALE_COREGEN_MASK	0x0000e000 /* core generation */
-#define CPU_ID_XSCALE_COREREV_MASK	0x00001c00 /* core revision */
-#define CPU_ID_XSCALE_PRODUCT_MASK	0x000003f0 /* product number */
-
-/* And finally, the revision number. */
-#define CPU_ID_REVISION_MASK	0x0000000f
-
-/* Individual CPUs are probably best IDed by everything but the revision. */
-#define CPU_ID_CPU_MASK		0xfffffff0
-
-/* Fake CPU IDs for ARMs without CP15 */
-#define CPU_ID_ARM2		0x41560200
-#define CPU_ID_ARM250		0x41560250
-
-/* Pre-ARM7 CPUs -- [15:12] == 0 */
-#define CPU_ID_ARM3		0x41560300
-#define CPU_ID_ARM600		0x41560600
-#define CPU_ID_ARM610		0x41560610
-#define CPU_ID_ARM620		0x41560620
-
-/* ARM7 CPUs -- [15:12] == 7 */
-#define CPU_ID_ARM700		0x41007000 /* XXX This is a guess. */
-#define CPU_ID_ARM710		0x41007100
-#define CPU_ID_ARM7500		0x41027100
-#define CPU_ID_ARM710A		0x41047100 /* inc ARM7100 */
-#define CPU_ID_ARM7500FE	0x41077100
-#define CPU_ID_ARM710T		0x41807100
-#define CPU_ID_ARM720T		0x41807200
-#define CPU_ID_ARM740T8K	0x41807400 /* XXX no MMU, 8KB cache */
-#define CPU_ID_ARM740T4K	0x41817400 /* XXX no MMU, 4KB cache */
-
-/* Post-ARM7 CPUs */
-#define CPU_ID_ARM810		0x41018100
-#define CPU_ID_ARM920T		0x41129200
-#define CPU_ID_ARM920T_ALT	0x41009200
-#define CPU_ID_ARM922T		0x41029220
-#define CPU_ID_ARM926EJS	0x41069260
-#define CPU_ID_ARM940T		0x41029400 /* XXX no MMU */
-#define CPU_ID_ARM946ES		0x41049460 /* XXX no MMU */
-#define	CPU_ID_ARM966ES		0x41049660 /* XXX no MMU */
-#define	CPU_ID_ARM966ESR1	0x41059660 /* XXX no MMU */
-#define CPU_ID_ARM1020E		0x4115a200 /* (AKA arm10 rev 1) */
-#define CPU_ID_ARM1022ES	0x4105a220
-#define CPU_ID_ARM1026EJS	0x4106a260
-#define CPU_ID_ARM1136JS	0x4107b360
-#define CPU_ID_ARM1136JSR1	0x4117b360
-#define CPU_ID_ARM1176JZS	0x410fb760
-#define CPU_ID_CORTEXA5 	0x410fc050
-#define CPU_ID_CORTEXA7 	0x410fc070
-#define CPU_ID_CORTEXA8R0	0x410fc080
-#define CPU_ID_CORTEXA8R1	0x411fc080
-#define CPU_ID_CORTEXA8R2	0x412fc080
-#define CPU_ID_CORTEXA8R3	0x413fc080
-#define CPU_ID_CORTEXA9R1	0x411fc090
-#define CPU_ID_CORTEXA9R2	0x412fc090
-#define CPU_ID_CORTEXA9R3	0x413fc090
-#define CPU_ID_CORTEXA15	0x410fc0f0
-#define CPU_ID_SA110		0x4401a100
-#define CPU_ID_SA1100		0x4401a110
-#define	CPU_ID_TI925T		0x54029250
-#define CPU_ID_MV88FR131	0x56251310 /* Marvell Feroceon 88FR131 Core */
-#define CPU_ID_MV88FR331	0x56153310 /* Marvell Feroceon 88FR331 Core */
-#define CPU_ID_MV88FR571_VD	0x56155710 /* Marvell Feroceon 88FR571-VD Core (ID from datasheet) */
+/*
+ * @OSF_COPYRIGHT@
+ */
+/* CMU_ENDHIST */
+/* 
+ * Mach Operating System
+ * Copyright (c) 1991,1990 Carnegie Mellon University
+ * All Rights Reserved.
+ * 
+ * Permission to use, copy, modify and distribute this software and its
+ * documentation is hereby granted, provided that both the copyright
+ * notice and this permission notice appear in all copies of the
+ * software, derivative works or modified versions, and any portions
+ * thereof, and that both notices appear in supporting documentation.
+ * 
+ * CARNEGIE MELLON ALLOWS FREE USE OF THIS SOFTWARE IN ITS "AS IS"
+ * CONDITION.  CARNEGIE MELLON DISCLAIMS ANY LIABILITY OF ANY KIND FOR
+ * ANY DAMAGES WHATSOEVER RESULTING FROM THE USE OF THIS SOFTWARE.
+ * 
+ * Carnegie Mellon requests users of this software to return to
+ * 
+ *  Software Distribution Coordinator  or  Software.Distribution@CS.CMU.EDU
+ *  School of Computer Science
+ *  Carnegie Mellon University
+ *  Pittsburgh PA 15213-3890
+ * 
+ * any improvements or extensions that they make and grant Carnegie Mellon
+ * the rights to redistribute these changes.
+ */
 
 /*
- * LokiPlus core has also ID set to 0x41159260 and this define cause execution of unsupported
- * L2-cache instructions so need to disable it. 0x41159260 is a generic ARM926E-S ID.
  */
-#ifdef SOC_MV_LOKIPLUS
-#define CPU_ID_MV88FR571_41	0x00000000
-#else
-#define CPU_ID_MV88FR571_41	0x41159260 /* Marvell Feroceon 88FR571-VD Core (actual ID from CPU reg) */
+
+/*
+ * Processor registers for ARM
+ */
+#ifndef	_ARM_PROC_REG_H_
+#define	_ARM_PROC_REG_H_
+
+#if defined (__arm64__)
+#include <pexpert/arm64/board_config.h>
+#elif defined (__arm__)
+#include <pexpert/arm/board_config.h>
 #endif
 
-#define CPU_ID_MV88SV581X_V7		0x561F5810 /* Marvell Sheeva 88SV581x v7 Core */
-#define CPU_ID_MV88SV584X_V7		0x562F5840 /* Marvell Sheeva 88SV584x v7 Core */
-/* Marvell's CPUIDs with ARM ID in implementor field */
-#define CPU_ID_ARM_88SV581X_V7		0x413FC080 /* Marvell Sheeva 88SV581x v7 Core */
-
-#define	CPU_ID_FA526		0x66015260
-#define	CPU_ID_FA626TE		0x66056260
-#define CPU_ID_SA1110		0x6901b110
-#define CPU_ID_IXP1200		0x6901c120
-#define CPU_ID_80200		0x69052000
-#define CPU_ID_PXA250    	0x69052100 /* sans core revision */
-#define CPU_ID_PXA210    	0x69052120
-#define CPU_ID_PXA250A		0x69052100 /* 1st version Core */
-#define CPU_ID_PXA210A		0x69052120 /* 1st version Core */
-#define CPU_ID_PXA250B		0x69052900 /* 3rd version Core */
-#define CPU_ID_PXA210B		0x69052920 /* 3rd version Core */
-#define CPU_ID_PXA250C		0x69052d00 /* 4th version Core */
-#define CPU_ID_PXA210C		0x69052d20 /* 4th version Core */
-#define	CPU_ID_PXA27X		0x69054110
-#define	CPU_ID_80321_400	0x69052420
-#define	CPU_ID_80321_600	0x69052430
-#define	CPU_ID_80321_400_B0	0x69052c20
-#define	CPU_ID_80321_600_B0	0x69052c30
-#define	CPU_ID_80219_400	0x69052e20 /* A0 stepping/revision. */
-#define	CPU_ID_80219_600	0x69052e30 /* A0 stepping/revision. */
-#define	CPU_ID_81342		0x69056810
-#define	CPU_ID_IXP425		0x690541c0
-#define	CPU_ID_IXP425_533	0x690541c0
-#define	CPU_ID_IXP425_400	0x690541d0
-#define	CPU_ID_IXP425_266	0x690541f0
-#define	CPU_ID_IXP435		0x69054040
-#define	CPU_ID_IXP465		0x69054200
-
-/* ARM3-specific coprocessor 15 registers */
-#define ARM3_CP15_FLUSH		1
-#define ARM3_CP15_CONTROL	2
-#define ARM3_CP15_CACHEABLE	3
-#define ARM3_CP15_UPDATEABLE	4
-#define ARM3_CP15_DISRUPTIVE	5	
-
-/* ARM3 Control register bits */
-#define ARM3_CTL_CACHE_ON	0x00000001
-#define ARM3_CTL_SHARED		0x00000002
-#define ARM3_CTL_MONITOR	0x00000004
-
-/* CPUID registers */
-#define ARM_PFR0_ARM_ISA_MASK	0x0000000f
-
-#define ARM_PFR0_THUMB_MASK	0x000000f0
-#define ARM_PFR0_THUMB		0x10
-#define ARM_PFR0_THUMB2		0x30
-
-#define ARM_PFR0_JAZELLE_MASK	0x00000f00
-#define ARM_PFR0_THUMBEE_MASK	0x0000f000
-
-#define ARM_PFR1_ARMV4_MASK	0x0000000f
-#define ARM_PFR1_SEC_EXT_MASK	0x000000f0
-#define ARM_PFR1_MICROCTRL_MASK	0x00000f00
-
-/*
- * Post-ARM3 CP15 registers:
- *
- *	1	Control register
- *
- *	2	Translation Table Base
- *
- *	3	Domain Access Control
- *
- *	4	Reserved
- *
- *	5	Fault Status
- *
- *	6	Fault Address
- *
- *	7	Cache/write-buffer Control
- *
- *	8	TLB Control
- *
- *	9	Cache Lockdown
- *
- *	10	TLB Lockdown
- *
- *	11	Reserved
- *
- *	12	Reserved
- *
- *	13	Process ID (for FCSE)
- *
- *	14	Reserved
- *
- *	15	Implementation Dependent
- */
-
-/* Some of the definitions below need cleaning up for V3/V4 architectures */
-
-/* CPU control register (CP15 register 1) */
-#define CPU_CONTROL_MMU_ENABLE	0x00000001 /* M: MMU/Protection unit enable */
-#define CPU_CONTROL_AFLT_ENABLE	0x00000002 /* A: Alignment fault enable */
-#define CPU_CONTROL_DC_ENABLE	0x00000004 /* C: IDC/DC enable */
-#define CPU_CONTROL_WBUF_ENABLE 0x00000008 /* W: Write buffer enable */
-#define CPU_CONTROL_32BP_ENABLE 0x00000010 /* P: 32-bit exception handlers */
-#define CPU_CONTROL_32BD_ENABLE 0x00000020 /* D: 32-bit addressing */
-#define CPU_CONTROL_LABT_ENABLE 0x00000040 /* L: Late abort enable */
-#define CPU_CONTROL_BEND_ENABLE 0x00000080 /* B: Big-endian mode */
-#define CPU_CONTROL_SYST_ENABLE 0x00000100 /* S: System protection bit */
-#define CPU_CONTROL_ROM_ENABLE	0x00000200 /* R: ROM protection bit */
-#define CPU_CONTROL_CPCLK	0x00000400 /* F: Implementation defined */
-#define CPU_CONTROL_BPRD_ENABLE 0x00000800 /* Z: Branch prediction enable */
-#define CPU_CONTROL_IC_ENABLE   0x00001000 /* I: IC enable */
-#define CPU_CONTROL_VECRELOC	0x00002000 /* V: Vector relocation */
-#define CPU_CONTROL_ROUNDROBIN	0x00004000 /* RR: Predictable replacement */
-#define CPU_CONTROL_V4COMPAT	0x00008000 /* L4: ARMv4 compat LDR R15 etc */
-#define CPU_CONTROL_FI_ENABLE	0x00200000 /* FI: Low interrupt latency */
-#define CPU_CONTROL_UNAL_ENABLE 0x00400000 /* U: unaligned data access */
-#define CPU_CONTROL_V6_EXTPAGE	0x00800000 /* XP: ARMv6 extended page tables */
-#define CPU_CONTROL_L2_ENABLE	0x04000000 /* L2 Cache enabled */
-#define CPU_CONTROL_AF_ENABLE	0x20000000 /* Access Flag enable */
-
-#define CPU_CONTROL_IDC_ENABLE	CPU_CONTROL_DC_ENABLE
-
-/* ARM11x6 Auxiliary Control Register (CP15 register 1, opcode2 1) */
-#define	ARM11X6_AUXCTL_RS	0x00000001 /* return stack */
-#define	ARM11X6_AUXCTL_DB	0x00000002 /* dynamic branch prediction */
-#define	ARM11X6_AUXCTL_SB	0x00000004 /* static branch prediction */
-#define	ARM11X6_AUXCTL_TR	0x00000008 /* MicroTLB replacement strat. */
-#define	ARM11X6_AUXCTL_EX	0x00000010 /* exclusive L1/L2 cache */
-#define	ARM11X6_AUXCTL_RA	0x00000020 /* clean entire cache disable */
-#define	ARM11X6_AUXCTL_RV	0x00000040 /* block transfer cache disable */
-#define	ARM11X6_AUXCTL_CZ	0x00000080 /* restrict cache size */
-
-/* ARM1136 Auxiliary Control Register (CP15 register 1, opcode2 1) */
-#define ARM1136_AUXCTL_PFI	0x80000000 /* PFI: partial FI mode. */
-					   /* This is an undocumented flag
-					    * used to work around a cache bug
-					    * in r0 steppings. See errata
-					    * 364296.
-					    */
-/* ARM1176 Auxiliary Control Register (CP15 register 1, opcode2 1) */   
-#define	ARM1176_AUXCTL_PHD	0x10000000 /* inst. prefetch halting disable */
-#define	ARM1176_AUXCTL_BFD	0x20000000 /* branch folding disable */
-#define	ARM1176_AUXCTL_FSD	0x40000000 /* force speculative ops disable */
-#define	ARM1176_AUXCTL_FIO	0x80000000 /* low intr latency override */
-
-/* XScale Auxillary Control Register (CP15 register 1, opcode2 1) */
-#define	XSCALE_AUXCTL_K		0x00000001 /* dis. write buffer coalescing */
-#define	XSCALE_AUXCTL_P		0x00000002 /* ECC protect page table access */
-/* Note: XSCale core 3 uses those for LLR DCcahce attributes */
-#define	XSCALE_AUXCTL_MD_WB_RA	0x00000000 /* mini-D$ wb, read-allocate */
-#define	XSCALE_AUXCTL_MD_WB_RWA	0x00000010 /* mini-D$ wb, read/write-allocate */
-#define	XSCALE_AUXCTL_MD_WT	0x00000020 /* mini-D$ wt, read-allocate */
-#define	XSCALE_AUXCTL_MD_MASK	0x00000030
-
-/* Xscale Core 3 only */
-#define XSCALE_AUXCTL_LLR	0x00000400 /* Enable L2 for LLR Cache */
-
-/* Marvell Extra Features Register (CP15 register 1, opcode2 0) */
-#define MV_DC_REPLACE_LOCK	0x80000000 /* Replace DCache Lock */
-#define MV_DC_STREAM_ENABLE	0x20000000 /* DCache Streaming Switch */
-#define MV_WA_ENABLE		0x10000000 /* Enable Write Allocate */
-#define MV_L2_PREFETCH_DISABLE	0x01000000 /* L2 Cache Prefetch Disable */
-#define MV_L2_INV_EVICT_ERR	0x00800000 /* L2 Invalidates Uncorrectable Error Line Eviction */
-#define MV_L2_ENABLE		0x00400000 /* L2 Cache enable */
-#define MV_IC_REPLACE_LOCK	0x00080000 /* Replace ICache Lock */
-#define MV_BGH_ENABLE		0x00040000 /* Branch Global History Register Enable */
-#define MV_BTB_DISABLE		0x00020000 /* Branch Target Buffer Disable */
-#define MV_L1_PARERR_ENABLE	0x00010000 /* L1 Parity Error Enable */
-
-/* Cache type register definitions */
-#define	CPU_CT_ISIZE(x)		((x) & 0xfff)		/* I$ info */
-#define	CPU_CT_DSIZE(x)		(((x) >> 12) & 0xfff)	/* D$ info */
-#define	CPU_CT_S		(1U << 24)		/* split cache */
-#define	CPU_CT_CTYPE(x)		(((x) >> 25) & 0xf)	/* cache type */
-#define	CPU_CT_FORMAT(x)	((x) >> 29)
-
-#define	CPU_CT_CTYPE_WT		0	/* write-through */
-#define	CPU_CT_CTYPE_WB1	1	/* write-back, clean w/ read */
-#define	CPU_CT_CTYPE_WB2	2	/* w/b, clean w/ cp15,7 */
-#define	CPU_CT_CTYPE_WB6	6	/* w/b, cp15,7, lockdown fmt A */
-#define	CPU_CT_CTYPE_WB7	7	/* w/b, cp15,7, lockdown fmt B */
-
-#define	CPU_CT_xSIZE_LEN(x)	((x) & 0x3)		/* line size */
-#define	CPU_CT_xSIZE_M		(1U << 2)		/* multiplier */
-#define	CPU_CT_xSIZE_ASSOC(x)	(((x) >> 3) & 0x7)	/* associativity */
-#define	CPU_CT_xSIZE_SIZE(x)	(((x) >> 6) & 0x7)	/* size */
-
-#define	CPU_CT_ARMV7		0x4
-/* ARM v7 Cache type definitions */
-#define	CPUV7_CT_CTYPE_WT	(1 << 31)
-#define	CPUV7_CT_CTYPE_WB	(1 << 30)
-#define	CPUV7_CT_CTYPE_RA	(1 << 29)
-#define	CPUV7_CT_CTYPE_WA	(1 << 28)
-
-#define	CPUV7_CT_xSIZE_LEN(x)	((x) & 0x7)		/* line size */
-#define	CPUV7_CT_xSIZE_ASSOC(x)	(((x) >> 3) & 0x3ff)	/* associativity */
-#define	CPUV7_CT_xSIZE_SET(x)	(((x) >> 13) & 0x7fff)	/* num sets */
-
-#define	CPU_CLIDR_CTYPE(reg,x)	(((reg) >> ((x) * 3)) & 0x7)
-#define	CPU_CLIDR_LOUIS(reg)	(((reg) >> 21) & 0x7)
-#define	CPU_CLIDR_LOC(reg)	(((reg) >> 24) & 0x7)
-#define	CPU_CLIDR_LOUU(reg)	(((reg) >> 27) & 0x7)
-
-#define	CACHE_ICACHE		1
-#define	CACHE_DCACHE		2
-#define	CACHE_SEP_CACHE		3
-#define	CACHE_UNI_CACHE		4
-
-/* Fault status register definitions */
-
-#define FAULT_TYPE_MASK 0x0f
-#define FAULT_USER      0x10
-
-#define FAULT_WRTBUF_0  0x00 /* Vector Exception */
-#define FAULT_WRTBUF_1  0x02 /* Terminal Exception */
-#define FAULT_BUSERR_0  0x04 /* External Abort on Linefetch -- Section */
-#define FAULT_BUSERR_1  0x06 /* External Abort on Linefetch -- Page */
-#define FAULT_BUSERR_2  0x08 /* External Abort on Non-linefetch -- Section */
-#define FAULT_BUSERR_3  0x0a /* External Abort on Non-linefetch -- Page */
-#define FAULT_BUSTRNL1  0x0c /* External abort on Translation -- Level 1 */
-#define FAULT_BUSTRNL2  0x0e /* External abort on Translation -- Level 2 */
-#define FAULT_ALIGN_0   0x01 /* Alignment */
-#define FAULT_ALIGN_1   0x03 /* Alignment */
-#define FAULT_TRANS_S   0x05 /* Translation -- Section */
-#define FAULT_TRANS_F   0x06 /* Translation -- Flag */
-#define FAULT_TRANS_P   0x07 /* Translation -- Page */
-#define FAULT_DOMAIN_S  0x09 /* Domain -- Section */
-#define FAULT_DOMAIN_P  0x0b /* Domain -- Page */
-#define FAULT_PERM_S    0x0d /* Permission -- Section */
-#define FAULT_PERM_P    0x0f /* Permission -- Page */
-
-#define	FAULT_IMPRECISE	0x400	/* Imprecise exception (XSCALE) */
-
-/*
- * Address of the vector page, low and high versions.
- */
-#ifndef __ASSEMBLER__
-#define	ARM_VECTORS_LOW		0x00000000U
-#define	ARM_VECTORS_HIGH	0xffff0000U
+#if defined (ARMA7)
+#define __ARM_ARCH__    7
+#define __ARM_SUB_ARCH__ CPU_ARCH_ARMv7k
+#define __ARM_VMSA__    7
+#define __ARM_VFP__     3
+#if defined(__XNU_UP__)
+#define __ARM_SMP__     0
 #else
-#define	ARM_VECTORS_LOW		0
-#define	ARM_VECTORS_HIGH	0xffff0000
+#define __ARM_SMP__	1
+/* For SMP kernels, force physical aperture to be mapped at PTE level so that its mappings
+ * can be updated to reflect cache attribute changes on alias mappings.  This prevents
+ * prefetched physical aperture cachelines from becoming dirty in L1 due to a write to
+ * an uncached alias mapping on the same core.  Subsequent uncached writes from another
+ * core may not snoop this line, and the dirty line may end up being evicted later to
+ * effectively overwrite the uncached writes from other cores. */
+#define __ARM_PTE_PHYSMAP__	1
+#endif
+/* __ARMA7_SMP__ controls whether we are consistent with the A7 MP_CORE spec; needed because entities other than
+ * the xnu-managed processors may need to snoop our cache operations.
+ */
+#define	__ARMA7_SMP__	1
+#define __ARM_COHERENT_CACHE__ 1
+#define __ARM_L1_PTW__	1
+#define __ARM_DEBUG__   7
+#define __ARM_USER_PROTECT__    1
+#define __ARM_TIME_TIMEBASE_ONLY__	1
+
+#elif defined (APPLECYCLONE)
+#define	__ARM_ARCH__	8
+#define __ARM_VMSA__	8
+#define	__ARM_SMP__	1
+#define	__ARM_VFP__	4
+#define __ARM_COHERENT_CACHE__ 1
+#define __ARM_COHERENT_IO__ 1
+#define	__ARM_IC_NOALIAS_ICACHE__ 1
+#define __ARM_L1_PTW__ 1
+#define __ARM_DEBUG__	7
+#define __ARM_ENABLE_SWAP__ 1
+#define __ARM_V8_CRYPTO_EXTENSIONS__ 1
+#define __ARM64_PMAP_SUBPAGE_L1__ 1
+
+#elif defined (APPLETYPHOON)
+#define	__ARM_ARCH__	8
+#define __ARM_VMSA__	8
+#define	__ARM_SMP__	1
+#define	__ARM_VFP__	4
+#define __ARM_COHERENT_CACHE__ 1
+#define __ARM_COHERENT_IO__ 1
+#define	__ARM_IC_NOALIAS_ICACHE__ 1
+#define __ARM_L1_PTW__ 1
+#define __ARM_DEBUG__	7
+#define __ARM_ENABLE_SWAP__ 1
+#define __ARM_V8_CRYPTO_EXTENSIONS__ 1
+#define __ARM64_PMAP_SUBPAGE_L1__ 1
+
+#elif defined (APPLETWISTER)
+#define	__ARM_ARCH__	8
+#define __ARM_VMSA__	8
+#define	__ARM_SMP__	1
+#define	__ARM_VFP__	4
+#define __ARM_COHERENT_CACHE__ 1
+#define __ARM_COHERENT_IO__ 1
+#define	__ARM_IC_NOALIAS_ICACHE__ 1
+#define __ARM_L1_PTW__ 1
+#define __ARM_DEBUG__	7
+#define __ARM_ENABLE_SWAP__ 1
+#define __ARM_V8_CRYPTO_EXTENSIONS__ 1
+#define	__ARM_16K_PG__	1
+#define __ARM64_TWO_LEVEL_PMAP__ 1
+
+#elif defined (APPLEHURRICANE)
+#define	__ARM_ARCH__	8
+#define __ARM_VMSA__	8
+#define	__ARM_SMP__	1
+#define	__ARM_VFP__	4
+#define __ARM_COHERENT_CACHE__ 1
+#define __ARM_COHERENT_IO__ 1
+#define	__ARM_IC_NOALIAS_ICACHE__ 1
+#define __ARM_L1_PTW__ 1
+#define __ARM_DEBUG__	7
+#define __ARM_ENABLE_SWAP__ 1
+#define __ARM_V8_CRYPTO_EXTENSIONS__ 1
+#define	__ARM_16K_PG__	1
+#define __ARM64_PMAP_SUBPAGE_L1__ 1
+#define __ARM_GLOBAL_SLEEP_BIT__ 1
+#define __ARM_PAN_AVAILABLE__ 1
+
+#else
+#error processor not supported
 #endif
 
+#if defined(ARM_BOARD_WFE_TIMEOUT_NS)
+#define __ARM_ENABLE_WFE_ 1
+#else
+#define __ARM_ENABLE_WFE_ 0
+#endif
+
+#define CONFIG_THREAD_GROUPS 0
+
+
+#ifdef	XNU_KERNEL_PRIVATE
+
+#if	__ARM_VFP__
+#define	ARM_VFP_DEBUG	0
+#endif
+
+#endif
+
+
+
 /*
- * ARM Instructions
+ * FSR registers
  *
- *       3 3 2 2 2
- *       1 0 9 8 7                                                     0
- *      +-------+-------------------------------------------------------+
- *      | cond  |              instruction dependant                    |
- *      |c c c c|                                                       |
- *      +-------+-------------------------------------------------------+
+ * CPSR: Current Program Status Register
+ * SPSR: Saved Program Status Registers
+ *
+ *  31 30 29 28 27     24     19   16      9  8  7  6  5  4   0
+ * +-----------------------------------------------------------+
+ * | N| Z| C| V| Q|...| J|...|GE[3:0]|...| E| A| I| F| T| MODE |
+ * +-----------------------------------------------------------+
  */
-
-#define INSN_SIZE		4		/* Always 4 bytes */
-#define INSN_COND_MASK		0xf0000000	/* Condition mask */
-#define INSN_COND_AL		0xe0000000	/* Always condition */
-
-#define THUMB_INSN_SIZE		2		/* Some are 4 bytes.  */
-
-#if !defined(__ASSEMBLER__) && !defined(_RUMPKERNEL)
-#define	ARMREG_READ_INLINE(name, __insnstring)			\
-static inline uint32_t armreg_##name##_read(void)		\
-{								\
-	uint32_t __rv;						\
-	__asm __volatile("mrc " __insnstring : "=r"(__rv));	\
-	return __rv;						\
-}
-
-#define	ARMREG_WRITE_INLINE(name, __insnstring)			\
-static inline void armreg_##name##_write(uint32_t __val)	\
-{								\
-	__asm __volatile("mcr " __insnstring :: "r"(__val));	\
-}
-
-#define	ARMREG_READ64_INLINE(name, __insnstring)		\
-static inline uint64_t armreg_##name##_read(void)		\
-{								\
-	uint64_t __rv;						\
-	__asm __volatile("mrrc " __insnstring : "=r"(__rv));	\
-	return __rv;						\
-}
-
-#define	ARMREG_WRITE64_INLINE(name, __insnstring)		\
-static inline void armreg_##name##_write(uint64_t __val)	\
-{								\
-	__asm __volatile("mcrr " __insnstring :: "r"(__val));	\
-}
-
-/* cp10 registers */
-ARMREG_READ_INLINE(fpsid, "p10,7,%0,c0,c0,0") /* VFP System ID */
-ARMREG_READ_INLINE(fpscr, "p10,7,%0,c1,c0,0") /* VFP Status/Control Register */
-ARMREG_WRITE_INLINE(fpscr, "p10,7,%0,c1,c0,0") /* VFP Status/Control Register */
-ARMREG_READ_INLINE(mvfr1, "p10,7,%0,c6,c0,0") /* Media and VFP Feature Register 1 */
-ARMREG_READ_INLINE(mvfr0, "p10,7,%0,c7,c0,0") /* Media and VFP Feature Register 0 */
-ARMREG_READ_INLINE(fpexc, "p10,7,%0,c8,c0,0") /* VFP Exception Register */
-ARMREG_WRITE_INLINE(fpexc, "p10,7,%0,c8,c0,0") /* VFP Exception Register */
-ARMREG_READ_INLINE(fpinst, "p10,7,%0,c9,c0,0") /* VFP Exception Instruction */
-ARMREG_WRITE_INLINE(fpinst, "p10,7,%0,c9,c0,0") /* VFP Exception Instruction */
-ARMREG_READ_INLINE(fpinst2, "p10,7,%0,c10,c0,0") /* VFP Exception Instruction 2 */
-ARMREG_WRITE_INLINE(fpinst2, "p10,7,%0,c10,c0,0") /* VFP Exception Instruction 2 */
-
-/* cp15 c0 registers */
-ARMREG_READ_INLINE(midr, "p15,0,%0,c0,c0,0") /* Main ID Register */
-ARMREG_READ_INLINE(ctr, "p15,0,%0,c0,c0,1") /* Cache Type Register */
-ARMREG_READ_INLINE(mpidr, "p15,0,%0,c0,c0,5") /* Multiprocess Affinity Register */
-ARMREG_READ_INLINE(pfr0, "p15,0,%0,c0,c1,0") /* Processor Feature Register 0 */
-ARMREG_READ_INLINE(pfr1, "p15,0,%0,c0,c1,1") /* Processor Feature Register 1 */
-ARMREG_READ_INLINE(mmfr0, "p15,0,%0,c0,c1,4") /* Memory Model Feature Register 0 */
-ARMREG_READ_INLINE(mmfr1, "p15,0,%0,c0,c1,5") /* Memory Model Feature Register 1 */
-ARMREG_READ_INLINE(mmfr2, "p15,0,%0,c0,c1,6") /* Memory Model Feature Register 2 */
-ARMREG_READ_INLINE(mmfr3, "p15,0,%0,c0,c1,7") /* Memory Model Feature Register 3 */
-ARMREG_READ_INLINE(isar0, "p15,0,%0,c0,c2,0") /* Instruction Set Attribute Register 0 */
-ARMREG_READ_INLINE(isar1, "p15,0,%0,c0,c2,1") /* Instruction Set Attribute Register 1 */
-ARMREG_READ_INLINE(isar2, "p15,0,%0,c0,c2,2") /* Instruction Set Attribute Register 2 */
-ARMREG_READ_INLINE(isar3, "p15,0,%0,c0,c2,3") /* Instruction Set Attribute Register 3 */
-ARMREG_READ_INLINE(isar4, "p15,0,%0,c0,c2,4") /* Instruction Set Attribute Register 4 */
-ARMREG_READ_INLINE(isar5, "p15,0,%0,c0,c2,5") /* Instruction Set Attribute Register 5 */
-ARMREG_READ_INLINE(ccsidr, "p15,1,%0,c0,c0,0") /* Cache Size ID Register */
-ARMREG_READ_INLINE(clidr, "p15,1,%0,c0,c0,1") /* Cache Level ID Register */
-ARMREG_READ_INLINE(csselr, "p15,2,%0,c0,c0,0") /* Cache Size Selection Register */
-ARMREG_WRITE_INLINE(csselr, "p15,2,%0,c0,c0,0") /* Cache Size Selection Register */
-/* cp15 c1 registers */
-ARMREG_READ_INLINE(sctrl, "p15,0,%0,c1,c0,0") /* System Control Register */
-ARMREG_WRITE_INLINE(sctrl, "p15,0,%0,c1,c0,0") /* System Control Register */
-ARMREG_READ_INLINE(auxctl, "p15,0,%0,c1,c0,1") /* Auxiliary Control Register */
-ARMREG_WRITE_INLINE(auxctl, "p15,0,%0,c1,c0,1") /* Auxiliary Control Register */
-ARMREG_READ_INLINE(cpacr, "p15,0,%0,c1,c0,2") /* Co-Processor Access Control Register */
-ARMREG_WRITE_INLINE(cpacr, "p15,0,%0,c1,c0,2") /* Co-Processor Access Control Register */
-/* cp15 c2 registers */
-ARMREG_READ_INLINE(ttbr, "p15,0,%0,c2,c0,0") /* Translation Table Base Register 0 */
-ARMREG_WRITE_INLINE(ttbr, "p15,0,%0,c2,c0,0") /* Translation Table Base Register 0 */
-ARMREG_READ_INLINE(ttbr1, "p15,0,%0,c2,c0,1") /* Translation Table Base Register 1 */
-ARMREG_WRITE_INLINE(ttbr1, "p15,0,%0,c2,c0,1") /* Translation Table Base Register 1 */
-ARMREG_READ_INLINE(ttbcr, "p15,0,%0,c2,c0,2") /* Translation Table Base Register */
-ARMREG_WRITE_INLINE(ttbcr, "p15,0,%0,c2,c0,2") /* Translation Table Base Register */
-/* cp15 c5 registers */
-ARMREG_READ_INLINE(dfsr, "p15,0,%0,c5,c0,0") /* Data Fault Status Register */
-ARMREG_READ_INLINE(ifsr, "p15,0,%0,c5,c0,1") /* Instruction Fault Status Register */
-/* cp15 c6 registers */
-ARMREG_READ_INLINE(dfar, "p15,0,%0,c6,c0,0") /* Data Fault Address Register */
-ARMREG_READ_INLINE(ifar, "p15,0,%0,c6,c0,2") /* Instruction Fault Address Register */
-/* cp15 c7 registers */
-ARMREG_WRITE_INLINE(icialluis, "p15,0,%0,c7,c1,0") /* Instruction Inv All (IS) */
-ARMREG_WRITE_INLINE(bpiallis, "p15,0,%0,c7,c1,6") /* Branch Invalidate All (IS) */
-ARMREG_READ_INLINE(par, "p15,0,%0,c7,c4,0") /* Physical Address Register */
-ARMREG_WRITE_INLINE(iciallu, "p15,0,%0,c7,c5,0") /* Instruction Invalidate All */
-ARMREG_WRITE_INLINE(icimvau, "p15,0,%0,c7,c5,1") /* Instruction Invalidate MVA */
-ARMREG_WRITE_INLINE(isb, "p15,0,%0,c7,c5,4") /* Instruction Synchronization Barrier */
-ARMREG_WRITE_INLINE(bpiall, "p15,0,%0,c5,c1,6") /* Breakpoint Invalidate All */
-ARMREG_WRITE_INLINE(dcimvac, "p15,0,%0,c7,c6,1") /* Data Invalidate MVA to PoC */
-ARMREG_WRITE_INLINE(dcisw, "p15,0,%0,c7,c6,2") /* Data Invalidate Set/Way */
-ARMREG_WRITE_INLINE(ats1cpr, "p15,0,%0,c7,c8,0") /* AddrTrans CurState PL1 Read */
-ARMREG_WRITE_INLINE(dccmvac, "p15,0,%0,c7,c10,1") /* Data Clean MVA to PoC */
-ARMREG_WRITE_INLINE(dccsw, "p15,0,%0,c7,c10,2") /* Data Clean Set/Way */
-ARMREG_WRITE_INLINE(dsb, "p15,0,%0,c7,c10,4") /* Data Synchronization Barrier */
-ARMREG_WRITE_INLINE(dmb, "p15,0,%0,c7,c10,5") /* Data Memory Barrier */
-ARMREG_WRITE_INLINE(dccmvau, "p15,0,%0,c7,c14,1") /* Data Clean MVA to PoU */
-ARMREG_WRITE_INLINE(dccimvac, "p15,0,%0,c7,c14,1") /* Data Clean&Inv MVA to PoC */
-ARMREG_WRITE_INLINE(dccisw, "p15,0,%0,c7,c14,2") /* Data Clean&Inv Set/Way */
-/* cp15 c7 PA to VA translation */
 
 /* 
- * N.B: Cortex-A8 TRM says these are used for both non-secure and secure
- *      states. Cortex-A5 TRM says these are used only for secure state. (4-7)
- *      ARM11 MPCore says to use 0-3. Which one is right for everything?
+ * Flags 
  */
-ARMREG_WRITE_INLINE(va2pa_pr_ns,"p15,0,%0,c7,c8,0")	/* VA to PA, Privileged Read */
-ARMREG_WRITE_INLINE(va2pa_pw_ns,"p15,0,%0,c7,c8,1")	/* VA to PA, Privileged Write */
-ARMREG_WRITE_INLINE(va2pa_ur_ns,"p15,0,%0,c7,c8,2")	/* VA to PA, User Read */
-ARMREG_WRITE_INLINE(va2pa_uw_ns,"p15,0,%0,c7,c8,3")	/* VA to PA, User Write */
+#define PSR_NF			0x80000000	/* Negative/Less than */
+#define PSR_ZF			0x40000000	/* Zero */
+#define PSR_CF			0x20000000	/* Carry/Borrow/Extend */
+#define PSR_VF			0x10000000	/* Overflow */
+#define PSR_QF			0x08000000	/* saturation flag (QADD ARMv5) */
 
-ARMREG_WRITE_INLINE(va2pa_pr_s,"p15,0,%0,c7,c8,4")	/* VA to PA, Privileged Read */
-ARMREG_WRITE_INLINE(va2pa_pw_s,"p15,0,%0,c7,c8,5")	/* VA to PA, Privileged Write */
-ARMREG_WRITE_INLINE(va2pa_ur_s,"p15,0,%0,c7,c8,6")	/* VA to PA, User Read */
-ARMREG_WRITE_INLINE(va2pa_uw_s,"p15,0,%0,c7,c8,7")	/* VA to PA, User Write */
+/*
+ * Modified execution mode flags
+ */
+#define PSR_JF			0x01000000	/* Jazelle flag (BXJ ARMv5) */
+#define PSR_EF			0x00000200	/* mixed-endian flag (SETEND ARMv6) */
+#define PSR_AF			0x00000100	/* precise abort flag (ARMv6) */
+#define PSR_TF			0x00000020	/* thumb flag (BX ARMv4T) */
+#define PSR_TFb			         5	/* thumb flag (BX ARMv4T) */
 
-/* cp15 c8 registers */
-ARMREG_WRITE_INLINE(tlbiallis, "p15,0,%0,c8,c3,0") /* Invalidate entire unified TLB, inner shareable */
-ARMREG_WRITE_INLINE(tlbimvais, "p15,0,%0,c8,c3,1") /* Invalidate unified TLB by MVA, inner shareable */
-ARMREG_WRITE_INLINE(tlbiasidis, "p15,0,%0,c8,c3,2") /* Invalidate unified TLB by ASID, inner shareable */
-ARMREG_WRITE_INLINE(tlbimvaais, "p15,0,%0,c8,c3,3") /* Invalidate unified TLB by MVA, all ASID, inner shareable */
-ARMREG_WRITE_INLINE(itlbiall, "p15,0,%0,c8,c5,0") /* Invalidate entire instruction TLB */
-ARMREG_WRITE_INLINE(itlbimva, "p15,0,%0,c8,c5,1") /* Invalidate instruction TLB by MVA */
-ARMREG_WRITE_INLINE(itlbiasid, "p15,0,%0,c8,c5,2") /* Invalidate instruction TLB by ASID */
-ARMREG_WRITE_INLINE(dtlbiall, "p15,0,%0,c8,c6,0") /* Invalidate entire data TLB */
-ARMREG_WRITE_INLINE(dtlbimva, "p15,0,%0,c8,c6,1") /* Invalidate data TLB by MVA */
-ARMREG_WRITE_INLINE(dtlbiasid, "p15,0,%0,c8,c6,2") /* Invalidate data TLB by ASID */
-ARMREG_WRITE_INLINE(tlbiall, "p15,0,%0,c8,c7,0") /* Invalidate entire unified TLB */
-ARMREG_WRITE_INLINE(tlbimva, "p15,0,%0,c8,c7,1") /* Invalidate unified TLB by MVA */
-ARMREG_WRITE_INLINE(tlbiasid, "p15,0,%0,c8,c7,2") /* Invalidate unified TLB by ASID */
-ARMREG_WRITE_INLINE(tlbimvaa, "p15,0,%0,c8,c7,3") /* Invalidate unified TLB by MVA, all ASID */
-/* cp15 c9 registers */
-ARMREG_READ_INLINE(pmcr, "p15,0,%0,c9,c12,0") /* PMC Control Register */
-ARMREG_WRITE_INLINE(pmcr, "p15,0,%0,c9,c12,0") /* PMC Control Register */
-ARMREG_READ_INLINE(pmcntenset, "p15,0,%0,c9,c12,1") /* PMC Count Enable Set */
-ARMREG_WRITE_INLINE(pmcntenset, "p15,0,%0,c9,c12,1") /* PMC Count Enable Set */
-ARMREG_READ_INLINE(pmcntenclr, "p15,0,%0,c9,c12,2") /* PMC Count Enable Clear */
-ARMREG_WRITE_INLINE(pmcntenclr, "p15,0,%0,c9,c12,2") /* PMC Count Enable Clear */
-ARMREG_READ_INLINE(pmovsr, "p15,0,%0,c9,c12,3") /* PMC Overflow Flag Status */
-ARMREG_WRITE_INLINE(pmovsr, "p15,0,%0,c9,c12,3") /* PMC Overflow Flag Status */
-ARMREG_READ_INLINE(pmccntr, "p15,0,%0,c9,c13,0") /* PMC Cycle Counter */
-ARMREG_WRITE_INLINE(pmccntr, "p15,0,%0,c9,c13,0") /* PMC Cycle Counter */
-ARMREG_READ_INLINE(pmuserenr, "p15,0,%0,c9,c14,0") /* PMC User Enable */
-ARMREG_WRITE_INLINE(pmuserenr, "p15,0,%0,c9,c14,0") /* PMC User Enable */
-/* cp15 c13 registers */
-ARMREG_READ_INLINE(contextidr, "p15,0,%0,c13,c0,1") /* Context ID Register */
-ARMREG_WRITE_INLINE(contextidr, "p15,0,%0,c13,c0,1") /* Context ID Register */
-ARMREG_READ_INLINE(tpidrprw, "p15,0,%0,c13,c0,4") /* PL1 only Thread ID Register */
-ARMREG_WRITE_INLINE(tpidrprw, "p15,0,%0,c13,c0,4") /* PL1 only Thread ID Register */
-/* cp14 c12 registers */
-ARMREG_READ_INLINE(vbar, "p15,0,%0,c12,c0,0")	/* Vector Base Address Register */
-ARMREG_WRITE_INLINE(vbar, "p15,0,%0,c12,c0,0")	/* Vector Base Address Register */
-/* cp15 c14 registers */
-/* cp15 Global Timer Registers */
-ARMREG_READ_INLINE(cnt_frq, "p15,0,%0,c14,c0,0") /* Counter Frequency Register */
-ARMREG_WRITE_INLINE(cnt_frq, "p15,0,%0,c14,c0,0") /* Counter Frequency Register */
-ARMREG_READ_INLINE(cntk_ctl, "p15,0,%0,c14,c1,0") /* Timer PL1 Control Register */
-ARMREG_WRITE_INLINE(cntk_ctl, "p15,0,%0,c14,c1,0") /* Timer PL1 Control Register */
-ARMREG_READ_INLINE(cntp_tval, "p15,0,%0,c14,c2,0") /* PL1 Physical TimerValue Register */
-ARMREG_WRITE_INLINE(cntp_tval, "p15,0,%0,c14,c2,0") /* PL1 Physical TimerValue Register */
-ARMREG_READ_INLINE(cntp_ctl, "p15,0,%0,c14,c2,1") /* PL1 Physical Timer Control Register */
-ARMREG_WRITE_INLINE(cntp_ctl, "p15,0,%0,c14,c2,1") /* PL1 Physical Timer Control Register */
-ARMREG_READ_INLINE(cntv_tval, "p15,0,%0,c14,c3,0") /* Virtual TimerValue Register */
-ARMREG_WRITE_INLINE(cntv_tval, "p15,0,%0,c14,c3,0") /* Virtual TimerValue Register */
-ARMREG_READ_INLINE(cntv_ctl, "p15,0,%0,c14,c3,1") /* Virtual Timer Control Register */
-ARMREG_WRITE_INLINE(cntv_ctl, "p15,0,%0,c14,c3,1") /* Virtual Timer Control Register */
-ARMREG_READ64_INLINE(cntp_ct, "p15,0,%Q0,%R0,c14") /* Physical Count Register */
-ARMREG_WRITE64_INLINE(cntp_ct, "p15,0,%Q0,%R0,c14") /* Physical Count Register */
-ARMREG_READ64_INLINE(cntv_ct, "p15,1,%Q0,%R0,c14") /* Virtual Count Register */
-ARMREG_WRITE64_INLINE(cntv_ct, "p15,1,%Q0,%R0,c14") /* Virtual Count Register */
-ARMREG_READ64_INLINE(cntp_cval, "p15,2,%Q0,%R0,c14") /* PL1 Physical Timer CompareValue Register */
-ARMREG_WRITE64_INLINE(cntp_cval, "p15,2,%Q0,%R0,c14") /* PL1 Physical Timer CompareValue Register */
-ARMREG_READ64_INLINE(cntv_cval, "p15,3,%Q0,%R0,c14") /* PL1 Virtual Timer CompareValue Register */
-ARMREG_WRITE64_INLINE(cntv_cval, "p15,3,%Q0,%R0,c14") /* PL1 Virtual Timer CompareValue Register */
-/* cp15 c15 registers */
-ARMREG_READ_INLINE(cbar, "p15,4,%0,c15,c0,0")	/* Configuration Base Address Register */
-ARMREG_READ_INLINE(pmcrv6, "p15,0,%0,c15,c12,0") /* PMC Control Register (armv6) */
-ARMREG_WRITE_INLINE(pmcrv6, "p15,0,%0,c15,c12,0") /* PMC Control Register (armv6) */
-ARMREG_READ_INLINE(pmccntrv6, "p15,0,%0,c15,c12,1") /* PMC Cycle Counter (armv6) */
-ARMREG_WRITE_INLINE(pmccntrv6, "p15,0,%0,c15,c12,1") /* PMC Cycle Counter (armv6) */
+/*
+ * Interrupts
+ */
+#define PSR_IRQFb			 7	/* IRQ : 0 = IRQ enable */
+#define PSR_IRQF		0x00000080	/* IRQ : 0 = IRQ enable */
+#define PSR_FIQF		0x00000040	/* FIQ : 0 = FIQ enable */
 
-#endif /* !__ASSEMBLER__ */
+/*
+ * CPU mode
+ */
+#define PSR_USER_MODE 		0x00000010	/* User mode */
+#define PSR_FIQ_MODE 		0x00000011 	/* FIQ mode */
+#define PSR_IRQ_MODE		0x00000012	/* IRQ mode */
+#define PSR_SVC_MODE		0x00000013 	/* Supervisor mode */
+#define PSR_ABT_MODE		0x00000017	/* Abort mode */
+#define PSR_UND_MODE		0x0000001B	/* Undefined mode */
 
-#endif /* !MACHINE_ARMREG_H */
+#define PSR_MODE_MASK		0x0000001F
+#define PSR_IS_KERNEL(psr)	 (((psr) & PSR_MODE_MASK) != PSR_USER_MODE)
+#define PSR_IS_USER(psr)	 (((psr) & PSR_MODE_MASK) == PSR_USER_MODE)
+
+#define PSR_USERDFLT 		PSR_USER_MODE
+#define PSR_USER_MASK 		(PSR_AF | PSR_IRQF | PSR_FIQF | PSR_MODE_MASK)
+#define PSR_USER_SET		PSR_USER_MODE
+
+#define PSR_INTMASK 		PSR_IRQF	/* Interrupt disable */
+
+/*
+ * FPEXC: Floating-Point Exception Register
+ */
+
+#define	FPEXC_EX		0x80000000	/* Exception status */
+#define	FPEXC_EX_BIT		31
+#define	FPEXC_EN		0x40000000	/* VFP : 1 = EN enable */
+#define	FPEXC_EN_BIT		30
+
+
+/*
+ * FPSCR: Floating-point Status and Control Register
+ */
+
+#define	FPSCR_DN		0x02000000	/* Default NaN */
+#define	FPSCR_FZ		0x01000000	/* Flush to zero */
+
+#define FPSCR_DEFAULT		FPSCR_DN | FPSCR_FZ
+
+
+/*
+ * FSR registers 
+ *
+ * IFSR: Instruction Fault Status Register
+ * DFSR: Data Fault Status Register
+ */
+#define	FSR_ALIGN		0x00000001	/* Alignment */
+#define	FSR_DEBUG		0x00000002	/* Debug (watch/break) */
+#define	FSR_ICFAULT		0x00000004	/* Fault on instruction cache maintenance */
+#define	FSR_SFAULT		0x00000005	/* Translation Section */
+#define	FSR_PFAULT		0x00000007	/* Translation Page */
+#define	FSR_SACCESS		0x00000003	/* Section access */
+#define	FSR_PACCESS		0x00000006	/* Page Access */
+#define	FSR_SDOM		0x00000009	/* Domain Section */
+#define	FSR_PDOM		0x0000000B	/* Domain Page */
+#define	FSR_SPERM		0x0000000D	/* Permission Section */
+#define	FSR_PPERM		0x0000000F	/* Permission Page */
+#define FSR_EXT			0x00001000 	/* External (Implementation Defined Classification) */
+
+#define	FSR_MASK		0x0000040F	/* Valid bits */
+#define	FSR_ALIGN_MASK		0x0000040D	/* Valid bits to check align */
+
+#define	DFSR_WRITE		0x00000800	/* write data abort fault */
+
+#if defined (ARMA7) || defined (APPLE_ARM64_ARCH_FAMILY)
+
+#define TEST_FSR_VMFAULT(status)	\
+				(((status) == FSR_PFAULT)	\
+				|| ((status) == FSR_PPERM)	\
+				|| ((status) == FSR_SFAULT)	\
+				|| ((status) == FSR_SPERM)	\
+				|| ((status) == FSR_ICFAULT)	\
+				|| ((status) == FSR_SACCESS)	\
+				|| ((status) == FSR_PACCESS))
+
+#else
+
+#error Incompatible CPU type configured
+
+#endif
+
+/*
+ * Cache configuration
+ */
+
+#if defined (ARMA7)
+
+/* I-Cache */
+#define MMU_I_CLINE     5               /* cache line size as 1<<MMU_I_CLINE (32) */
+
+/* D-Cache */
+#define MMU_CSIZE       15              /* cache size as 1<<MMU_CSIZE (32K) */
+#define MMU_CLINE       6               /* cache line size as 1<<MMU_CLINE (64) */
+#define MMU_NWAY        2               /* set associativity 1<<MMU_NWAY (4) */
+#define MMU_I7SET       6               /* cp15 c7 set incrementer 1<<MMU_I7SET */
+#define MMU_I7WAY       30              /* cp15 c7 way incrementer 1<<MMU_I7WAY */
+
+#define MMU_SWAY        (MMU_CSIZE - MMU_NWAY)  /* set size 1<<MMU_SWAY */
+#define MMU_NSET        (MMU_SWAY - MMU_CLINE)  /* lines per way 1<<MMU_NSET */
+
+#define __ARM_L2CACHE__	1
+
+#define L2_CSIZE	__ARM_L2CACHE_SIZE_LOG__	/* cache size as 1<<MMU_CSIZE */
+#define L2_CLINE	6		/* cache line size as 1<<MMU_CLINE (64) */
+#define L2_NWAY		3		/* set associativity 1<<MMU_NWAY (8) */
+#define L2_I7SET	6		/* cp15 c7 set incrementer 1<<MMU_I7SET */
+#define L2_I7WAY	29		/* cp15 c7 way incrementer 1<<MMU_I7WAY */
+#define L2_I9WAY	29		/* cp15 c9 way incrementer 1<<MMU_I9WAY */
+
+#define L2_SWAY	(L2_CSIZE - L2_NWAY)	/* set size 1<<MMU_SWAY */
+#define L2_NSET	(L2_SWAY - L2_CLINE)	/* lines per way 1<<MMU_NSET */
+
+#elif defined (APPLECYCLONE)
+
+/* I-Cache */
+#define MMU_I_CLINE	6		/* cache line size as 1<<MMU_I_CLINE (64) */
+
+/* D-Cache */
+#define MMU_CSIZE	16		/* cache size as 1<<MMU_CSIZE (64K) */
+#define MMU_CLINE	6		/* cache line size as 1<<MMU_CLINE (64) */
+#define MMU_NWAY	1		/* set associativity 1<<MMU_NWAY (2) */
+#define MMU_I7SET	6		/* cp15 c7 set incrementer 1<<MMU_I7SET */
+#define MMU_I7WAY	31		/* cp15 c7 way incrementer 1<<MMU_I7WAY */
+#define MMU_I9WAY	31		/* cp15 c9 way incrementer 1<<MMU_I9WAY */
+
+#define MMU_SWAY	(MMU_CSIZE - MMU_NWAY)	/* set size 1<<MMU_SWAY */
+#define MMU_NSET	(MMU_SWAY - MMU_CLINE)	/* lines per way 1<<MMU_NSET */
+
+#define __ARM_L2CACHE__	1
+
+#define L2_CSIZE	__ARM_L2CACHE_SIZE_LOG__	/* cache size as 1<<L2_CSIZE */
+#define L2_CLINE	6		/* cache line size as 1<<L2_CLINE (64) */
+#define L2_NWAY		3		/* set associativity 1<<L2_NWAY (8) */
+#define L2_I7SET	6		/* cp15 c7 set incrementer 1<<L2_I7SET */
+#define L2_I7WAY	29		/* cp15 c7 way incrementer 1<<L2_I7WAY */
+#define L2_I9WAY	29		/* cp15 c9 way incrementer 1<<L2_I9WAY */
+
+#define L2_SWAY	(L2_CSIZE - L2_NWAY)	/* set size 1<<L2_SWAY */
+#define L2_NSET	(L2_SWAY - L2_CLINE)	/* lines per way 1<<L2_NSET */
+
+#elif defined (APPLETYPHOON)
+
+/* I-Cache */
+#define MMU_I_CLINE	6		/* cache line size as 1<<MMU_I_CLINE (64) */
+
+/* D-Cache */
+#define MMU_CSIZE	16		/* cache size as 1<<MMU_CSIZE (64K) */
+#define MMU_CLINE	6		/* cache line size as 1<<MMU_CLINE (64) */
+#define MMU_NWAY	1		/* set associativity 1<<MMU_NWAY (2) */
+#define MMU_I7SET	6		/* cp15 c7 set incrementer 1<<MMU_I7SET */
+#define MMU_I7WAY	31		/* cp15 c7 way incrementer 1<<MMU_I7WAY */
+#define MMU_I9WAY	31		/* cp15 c9 way incrementer 1<<MMU_I9WAY */
+
+#define MMU_SWAY	(MMU_CSIZE - MMU_NWAY)	/* set size 1<<MMU_SWAY */
+#define MMU_NSET	(MMU_SWAY - MMU_CLINE)	/* lines per way 1<<MMU_NSET */
+
+#define __ARM_L2CACHE__	1
+
+#define L2_CSIZE	__ARM_L2CACHE_SIZE_LOG__	/* cache size as 1<<L2_CSIZE */
+#define L2_CLINE	6		/* cache line size as 1<<L2_CLINE (64) */
+#define L2_NWAY		3		/* set associativity 1<<L2_NWAY (8) */
+#define L2_I7SET	6		/* cp15 c7 set incrementer 1<<L2_I7SET */
+#define L2_I7WAY	29		/* cp15 c7 way incrementer 1<<L2_I7WAY */
+#define L2_I9WAY	29		/* cp15 c9 way incrementer 1<<L2_I9WAY */
+
+#define L2_SWAY	(L2_CSIZE - L2_NWAY)	/* set size 1<<L2_SWAY */
+#define L2_NSET	(L2_SWAY - L2_CLINE)	/* lines per way 1<<L2_NSET */
+
+#elif defined (APPLETWISTER)
+
+/* I-Cache */
+#define MMU_I_CLINE	6		/* cache line size as 1<<MMU_I_CLINE (64) */
+
+/* D-Cache */
+#define MMU_CSIZE	16		/* cache size as 1<<MMU_CSIZE (64K) */
+#define MMU_CLINE	6		/* cache line size is 1<<MMU_CLINE (64) */
+#define MMU_NWAY	2		/* set associativity 1<<MMU_NWAY (4) */
+#define MMU_I7SET	6		/* cp15 c7 set incrementer 1<<MMU_I7SET */
+#define MMU_I7WAY	30		/* cp15 c7 way incrementer 1<<MMU_I7WAY */
+#define MMU_I9WAY	30		/* cp15 c9 way incrementer 1<<MMU_I9WAY */
+
+#define MMU_SWAY	(MMU_CSIZE - MMU_NWAY)	/* set size 1<<MMU_SWAY */
+#define MMU_NSET	(MMU_SWAY - MMU_CLINE)	/* lines per way 1<<MMU_NSET */
+
+/* L2-Cache */
+#define __ARM_L2CACHE__ 1
+
+/*
+ * For reasons discussed in the platform expert code, we round the reported
+ * L2 size to 4MB, and adjust the other parameters accordingly.
+ */
+#define L2_CSIZE	__ARM_L2CACHE_SIZE_LOG__	/* cache size as 1<<L2_CSIZE */
+#define L2_CLINE	6		/* cache line size as 1<<L2_CSIZE (64) */
+#define L2_NWAY		4		/* set associativity as 1<<L2_CLINE (16, is actually 12) */
+#define L2_I7SET	6		/* cp15 c7 set incrementer 1<<L2_I7SET */
+#define L2_I7WAY	28		/* cp15 c7 way incrementer 1<<L2_I7WAY */
+#define L2_I9WAY	28		/* cp15 c9 way incremenber 1<<L2_I9WAY */
+
+#define L2_SWAY	(L2_CSIZE - L2_NWAY)		/* set size 1<<L2_SWAY */
+#define L2_NSET	(L2_SWAY - L2_CLINE)		/* lines per way 1<<L2_NSET */
+
+#elif defined (APPLEHURRICANE)
+
+/* I-Cache */
+#define MMU_I_CLINE	6		/* cache line size as 1<<MMU_I_CLINE (64) */
+
+/* D-Cache */
+#define MMU_CSIZE	16		/* cache size as 1<<MMU_CSIZE (64K) */
+#define MMU_CLINE	6		/* cache line size is 1<<MMU_CLINE (64) */
+#define MMU_NWAY	2		/* set associativity 1<<MMU_NWAY (4) */
+#define MMU_I7SET	6		/* cp15 c7 set incrementer 1<<MMU_I7SET */
+#define MMU_I7WAY	30		/* cp15 c7 way incrementer 1<<MMU_I7WAY */
+#define MMU_I9WAY	30		/* cp15 c9 way incrementer 1<<MMU_I9WAY */
+
+#define MMU_SWAY	(MMU_CSIZE - MMU_NWAY)	/* set size 1<<MMU_SWAY */
+#define MMU_NSET	(MMU_SWAY - MMU_CLINE)	/* lines per way 1<<MMU_NSET */
+
+/* L2-Cache */
+#define __ARM_L2CACHE__ 1
+
+/*
+ * For reasons discussed in the platform expert code, we round the reported
+ * L2 size to 4MB, and adjust the other parameters accordingly.
+ */
+#define L2_CSIZE	__ARM_L2CACHE_SIZE_LOG__	/* cache size as 1<<L2_CSIZE */
+#define L2_CLINE	6		/* cache line size as 1<<L2_CSIZE (64) */
+#define L2_NWAY		4		/* set associativity as 1<<L2_CLINE (16, is actually 12) */
+#define L2_I7SET	6		/* cp15 c7 set incrementer 1<<L2_I7SET */
+#define L2_I7WAY	28		/* cp15 c7 way incrementer 1<<L2_I7WAY */
+#define L2_I9WAY	28		/* cp15 c9 way incremenber 1<<L2_I9WAY */
+
+#define L2_SWAY	(L2_CSIZE - L2_NWAY)		/* set size 1<<L2_SWAY */
+#define L2_NSET	(L2_SWAY - L2_CLINE)		/* lines per way 1<<L2_NSET */
+
+#else
+#error processor not supported
+#endif
+
+
+#if (__ARM_VMSA__ <= 7)
+
+/*
+ *  SCTLR: System Control Register
+ */
+/*
+ * System Control Register (SCTLR)
+ *
+ *  31 30 29  28   27    25 24 22 21   20  19   17  15 14 13 12 11 10           5    2 1 0
+ * +-+--+---+---+----+-+--+--+--+--+----+---+-+--+-+-+--+--+--+--+--+---+-+------+--+-+-+-+
+ * |0|TE|AFE|TRE|NMFI|0|EE|VE|11|FI|UWXN|WXN|1|HA|1|0|RR| V| I| Z|SW|000|1|C15BEN|11|C|A|M|
+ * +-+--+---+---+----+-+--+--+--+--+----+---+-+--+-+-+--+--+--+--+--+---+-+------+--+-+-+-+
+ *
+ *		TE				Thumb Exception enable
+ *		AFE				Access flag enable
+ *		TRE				TEX remap enable
+ *		NMFI			Non-maskable FIQ (NMFI) support
+ *		EE				Exception Endianness
+ *		VE				Interrupt Vectors Enable
+ *		FI				Fast interrupts configuration enable
+ *		ITD				IT Disable
+ *		UWXN			Unprivileged write permission implies PL1 XN
+ *		WXN				Write permission implies XN
+ *		HA				Hardware Access flag enable
+ *		RR				Round Robin select
+ *		V				High exception vectors 
+ *		I				Instruction cache enable
+ *		Z				Branch prediction enable
+ *		SW				SWP/SWPB enable
+ *		C15BEN			CP15 barrier enable
+ *		C				Cache enable
+ *		A				Alignment check enable
+ *		M				MMU enable
+ */
+
+#define	SCTLR_RESERVED					0x82DD8394
+
+#define SCTLR_ENABLE					0x00000001	/* MMU enable */
+#define SCTLR_ALIGN						0x00000002	/* Alignment check enable */
+#define SCTLR_DCACHE					0x00000004	/* Data or Unified Cache enable */
+#define	SCTLR_BEN						0x00000040	/* CP15 barrier enable */
+#define SCTLR_SW						0x00000400	/* SWP/SWPB Enable */
+#define SCTLR_PREDIC					0x00000800	/* Branch prediction enable */
+#define SCTLR_ICACHE					0x00001000	/* Instruction cache enabled. */
+#define SCTLR_HIGHVEC					0x00002000	/* Vector table at 0xffff0000 */
+#define SCTLR_RROBIN					0x00004000	/* Round Robin replacement */
+#define	SCTLR_HA						0x00020000	/* Hardware Access flag enable */
+#define SCTLR_NMFI						0x08000000	/* Non-maskable FIQ */
+#define SCTLR_TRE						0x10000000	/* TEX remap enable */
+#define SCTLR_AFE						0x20000000	/* Access flag enable */
+#define SCTLR_TE						0x40000000	/* Thumb Exception enable */
+
+#define	SCTLR_DEFAULT					(SCTLR_AFE|SCTLR_TRE|SCTLR_HIGHVEC|SCTLR_ICACHE|SCTLR_PREDIC|SCTLR_DCACHE|SCTLR_ENABLE)
+
+
+/*
+ *  PRRR: Primary Region Remap Register
+ *
+ *  31            24       20  19  18  17  16                     0
+ * +---------------------------------------------------------------+
+ * |      NOSn      |  Res   |NS1|NS0|DS1|DS0|       TRn           |
+ * +---------------------------------------------------------------+
+ */
+
+#define	PRRR_NS1						0x00080000
+#define	PRRR_NS0						0x00040000
+#define	PRRR_DS1						0x00020000
+#define	PRRR_DS0						0x00010000
+#define	PRRR_NOSn_ISH(region)			(0x1<<((region)+24))
+
+#if defined (ARMA7)
+#define	PRRR_SETUP			(0x1F08022A)
+#else
+#error processor not supported
+#endif
+
+/*
+ *  NMRR, Normal Memory Remap Register
+ *
+ *   30  28  26  24  22  20  18  16  14  12  10   8   6   4   2   0 
+ * +---------------------------------------------------------------+
+ * |OR7|OR6|OR5|OR4|OR3|OR2|OR1|OR0|IR7|IR6|IR5|IR4|IR3|IR2|IR1|IR0|
+ * +---------------------------------------------------------------+
+ */
+
+#define NMRR_DISABLED					0x0	/*  Non-cacheable */
+#define NMRR_WRITEBACK					0x1	/*  Write-Back, Write-Allocate */
+#define NMRR_WRITETHRU					0x2	/*  Write-Through, no Write-Allocate */
+#define NMRR_WRITEBACKNO				0x3	/*  Write-Back, no Write-Allocate */
+
+#if defined (ARMA7)
+#define	NMRR_SETUP			(0x01210121)
+#else
+#error processor not supported
+#endif
+
+/*
+ * TTBR: Translation Table Base Register
+ *
+ */
+
+#define	TTBR_IRGN_DISBALED				0x00000000	/* inner non-cacheable */
+#define	TTBR_IRGN_WRITEBACK				0x00000040	/* inner write back and allocate */
+#define	TTBR_IRGN_WRITETHRU				0x00000001	/* inner write thru */
+#define	TTBR_IRGN_WRITEBACKNO			0x00000041	/* inner write back no allocate */
+
+#define TTBR_RGN_DISBALED				0x00000000	/* outer non-cacheable */
+#define TTBR_RGN_WRITEBACK				0x00000008	/* outer write back and allocate */
+#define TTBR_RGN_WRITETHRU				0x00000010	/* outer write thru outer cache */
+#define TTBR_RGN_WRITEBACKNO			0x00000018	/* outer write back no allocate */
+
+#define TTBR_SHARED						0x00000002	/* Shareable memory atribute */
+#define TTBR_SHARED_NOTOUTER			0x00000020	/* Outer not shareable memory atribute */
+
+#if defined (ARMA7)
+#define	TTBR_SETUP	(TTBR_RGN_WRITEBACK|TTBR_IRGN_WRITEBACK|TTBR_SHARED)
+#else
+#error processor not supported
+#endif
+
+/*
+ * TTBCR: Translation Table Base Control register
+ *
+ *	31    3 2 0 
+ *	+----------+
+ *	| zero | N |
+ *	+----------+
+ *
+ * If N=0, always use translation table base register 0.  Otherwise, if
+ * bits [31:32-N] of the address are all zero use base register 0.  Otherwise,
+ * use base register 1.
+ *
+ * Reading from this register also returns the page table boundary for TTB0.
+ * Writing to it updates the boundary for TTB0. (0=16KB, 1=8KB, 2=4KB, etc...)
+ */
+
+#define	TTBCR_N_1GB_TTB0				0x2	/* 1 GB TTB0, 3GB TTB1 */
+#define	TTBCR_N_2GB_TTB0				0x1	/* 2 GB TTB0, 2GB TTB1 */
+#define	TTBCR_N_4GB_TTB0				0x0	/* 4 GB TTB0 */
+#define TTBCR_N_MASK					0x3
+
+
+
+/*
+ * ARM Page Granule
+ */
+#define ARM_PGSHIFT 12  
+#define ARM_PGBYTES (1 << ARM_PGSHIFT)
+#define ARM_PGMASK  (ARM_PGBYTES-1)
+
+/*
+ * DACR: Domain Access Control register
+ */
+
+#define DAC_FAULT						0x0	/* invalid domain - everyone loses */
+#define DAC_CLIENT						0x1	/* client domain - use AP bits */
+#define DAC_RESERVE						0x2	/* reserved domain - undefined */
+#define DAC_MANAGER						0x3	/* manager domain - all access */
+#define DACR_SET(dom, x)				((x)<<((dom)<<1))
+
+
+#define ARM_DOM_DEFAULT					0			/* domain that forces AP use */
+#define ARM_DAC_SETUP					0x1
+
+/*
+ *	ARM 2-level Page Table support
+ */
+
+/*
+ *  Memory Attribute Index
+ */
+#define	CACHE_ATTRINDX_WRITEBACK		0x0	/* cache enabled, buffer enabled */
+#define	CACHE_ATTRINDX_WRITECOMB		0x1	/* no cache, buffered writes */
+#define	CACHE_ATTRINDX_WRITETHRU		0x2	/* cache enabled, buffer disabled */
+#define	CACHE_ATTRINDX_DISABLE			0x3	/* no cache, no buffer */
+#define	CACHE_ATTRINDX_INNERWRITEBACK		0x4	/* inner cache enabled, buffer enabled, write allocate */
+#define CACHE_ATTRINDX_POSTED			CACHE_ATTRINDX_DISABLE
+#define	CACHE_ATTRINDX_DEFAULT			CACHE_ATTRINDX_WRITEBACK
+
+
+/*
+ * Access protection bit values
+ */
+#define	AP_RWNA							0x0	/* priv=read-write, user=no-access  */
+#define	AP_RWRW							0x1	/* priv=read-write, user=read-write */
+#define	AP_RONA							0x2	/* priv=read-only , user=no-access  */
+#define	AP_RORO							0x3	/* priv=read-only , user=read-only  */
+
+/*
+ *  L1 Translation table
+ *
+ *  Each translation table is up to 16KB
+ *  4096 32-bit entries of 1MB of address space.
+ */
+
+#define	ARM_TT_L1_SIZE					0x00100000	/* size of area covered by a tte */
+#define	ARM_TT_L1_OFFMASK				0x000FFFFF	/* offset within an L1 entry */
+#define	ARM_TT_L1_TABLE_OFFMASK			0x000FFFFF	/* offset within an L1 entry */
+#define	ARM_TT_L1_BLOCK_OFFMASK			0x000FFFFF	/* offset within an L1 entry */
+#define	ARM_TT_L1_SUPER_OFFMASK			0x00FFFFFF	/* offset within an L1 entry */
+#define	ARM_TT_L1_SHIFT					20			/* page descriptor shift */
+#define	ARM_TT_L1_INDEX_MASK			0xfff00000	/* mask for getting index in L1 table from virtual address */
+
+#define ARM_TT_L1_PT_SIZE			(4 * ARM_TT_L1_SIZE)	/* 4 L1 table entries required to consume 1 L2 pagetable page */
+#define ARM_TT_L1_PT_OFFMASK			(ARM_TT_L1_PT_SIZE - 1)
+
+/*
+ *  L2 Translation table
+ *
+ *  Each translation table is up to 1KB
+ *  4096 32-bit entries of 1MB (2^30) of address space.
+ */
+
+#define	ARM_TT_L2_SIZE					0x00001000	/* size of area covered by a tte */
+#define	ARM_TT_L2_OFFMASK				0x00000FFF	/* offset within an L2 entry */
+#define	ARM_TT_L2_SHIFT					12			/* page descriptor shift */
+#define	ARM_TT_L2_INDEX_MASK			0x000ff000	/* mask for getting index in L2 table from virtual address */
+
+/*
+ * Convenience definitions for:
+ *   ARM_TT_LEAF: The last level of the configured page table format.
+ *   ARM_TT_TWIG: The second to last level of the configured page table format.
+ *
+ *   My apologies to any botanists who may be reading this.
+ */
+#define ARM_TT_LEAF_SIZE				ARM_TT_L2_SIZE
+#define ARM_TT_LEAF_OFFMASK				ARM_TT_L2_OFFMASK
+#define ARM_TT_LEAF_SHIFT				ARM_TT_L2_SHIFT
+#define ARM_TT_LEAF_INDEX_MASK			ARM_TT_L2_INDEX_MASK
+
+#define ARM_TT_TWIG_SIZE				ARM_TT_L1_SIZE
+#define ARM_TT_TWIG_OFFMASK				ARM_TT_L1_OFFMASK
+#define ARM_TT_TWIG_SHIFT				ARM_TT_L1_SHIFT
+#define ARM_TT_TWIG_INDEX_MASK			ARM_TT_L1_INDEX_MASK
+
+/*
+ *	Level 1 Translation Table Entry
+ *
+ *	page table entry
+ *
+ *	31                   10 9 8  5  4  2  0
+ *	+----------------------+-+----+--+--+--+
+ *	| page table base addr | |dom |XN|00|01|
+ *	+----------------------+-+----+--+--+--+
+ *
+ *	direct (1MB) section entry
+ *
+ *	31         20 18    15  12 10 9 8  5  4  2  0
+ *	+------------+--+-+-+-+---+--+-+----+--+--+--+
+ *	| base addr  |00|G|S|A|TEX|AP| |dom |XN|CB|10|
+ *	+------------+--+-+-+-+---+--+-+----+--+--+--+
+ *
+ *  super (16MB) section entry
+ *
+ *	31      24 23  18    15  12 10 9 8  5  4  2  0
+ *	+---------+------+-+-+-+---+--+-+----+--+--+--+
+ *	|base addr|000001|G|S|A|TEX|AP| |dom |XN|CB|10|
+ *	+---------+------+-+-+-+---+--+-+----+--+--+--+
+ *
+ * where:
+ *	'G' is the notGlobal bit 
+ *	'S' is the shared bit
+ *	'A' in the access permission extension (APX) bit
+ *	'TEX' remap register control bits
+ *	'AP' is the access protection
+ *	'dom' is the domain for the translation
+ *	'XN' is the eXecute Never bit
+ *	'CB' is the cache/buffer attribute 
+ */
+
+#define ARM_TTE_EMPTY				0x00000000					/* unasigned entry */
+
+#define ARM_TTE_TYPE_FAULT			0x00000000					/* fault entry type */
+#define ARM_TTE_TYPE_TABLE			0x00000001					/* page table type */
+#define ARM_TTE_TYPE_BLOCK			0x00000002					/* section entry type */
+#define ARM_TTE_TYPE_MASK			0x00000003					/* mask for extracting the type */
+
+#define	ARM_TTE_BLOCK_NGSHIFT		17
+#define	ARM_TTE_BLOCK_NG_MASK		0x00020000  				 /* mask to determine notGlobal bit */
+#define	ARM_TTE_BLOCK_NG			0x00020000  				 /* value for a per-process mapping */
+
+#define ARM_TTE_BLOCK_SHSHIFT		16
+#define ARM_TTE_BLOCK_SH_MASK		0x00010000					/* shared (SMP) mapping mask */
+#define ARM_TTE_BLOCK_SH			0x00010000					/* shared (SMP) mapping */
+
+#define ARM_TTE_BLOCK_CBSHIFT		2
+#define ARM_TTE_BLOCK_CB(x)			((x) << ARM_TTE_BLOCK_CBSHIFT)
+#define	ARM_TTE_BLOCK_CB_MASK		(3<< ARM_TTE_BLOCK_CBSHIFT)
+
+#define ARM_TTE_BLOCK_AP0SHIFT		10
+#define ARM_TTE_BLOCK_AP0			(1<<ARM_TTE_BLOCK_AP0SHIFT)
+#define ARM_TTE_BLOCK_AP0_MASK		(1<<ARM_TTE_BLOCK_AP0SHIFT)
+
+#define ARM_TTE_BLOCK_AP1SHIFT		11
+#define ARM_TTE_BLOCK_AP1			(1<<ARM_TTE_BLOCK_AP1SHIFT)
+#define ARM_TTE_BLOCK_AP1_MASK		(1<<ARM_TTE_BLOCK_AP1SHIFT)
+
+#define ARM_TTE_BLOCK_AP2SHIFT		15
+#define ARM_TTE_BLOCK_AP2			(1<<ARM_TTE_BLOCK_AP2SHIFT)
+#define ARM_TTE_BLOCK_AP2_MASK		(1<<ARM_TTE_BLOCK_AP2SHIFT)
+
+
+																/* access protections */
+#define ARM_TTE_BLOCK_AP(ap)		((((ap)&0x1)<<ARM_TTE_BLOCK_AP1SHIFT)	\
+									| ((((ap)>>1)&0x1)<<ARM_TTE_BLOCK_AP2SHIFT))
+
+																/* mask access protections */
+#define ARM_TTE_BLOCK_APMASK		(ARM_TTE_BLOCK_AP1_MASK	\
+									| ARM_TTE_BLOCK_AP2_MASK)
+
+#define ARM_TTE_BLOCK_AF			ARM_TTE_BLOCK_AP0			/* value for access */
+#define ARM_TTE_BLOCK_AFMASK		ARM_TTE_BLOCK_AP0_MASK		/* access mask */
+
+#define ARM_TTE_TABLE_MASK			0xFFFFFC00					/* mask for a L2 page table entry */
+#define	ARM_TTE_TABLE_SHIFT			10							/* shift for  L2 page table phys address */
+
+#define	ARM_TTE_BLOCK_L1_MASK		0xFFF00000					/* mask to extract phys address from L1 section entry */
+#define	ARM_TTE_BLOCK_L1_SHIFT		20							/* shift for 1MB section phys address */
+
+#define	ARM_TTE_SUPER_L1_MASK		0xFF000000					/* mask to extract phys address from L1 super entry */
+#define	ARM_TTE_SUPER_L1_SHIFT		24							/* shift for 16MB section phys address */
+
+#define ARM_TTE_BLOCK_SUPER			0x00040000					/* make section a 16MB section */
+#define ARM_TTE_BLOCK_SUPER_MASK	0x00F40000					/* make section a 16MB section */
+
+#define ARM_TTE_BLOCK_NXSHIFT		4
+#define ARM_TTE_BLOCK_NX			0x00000010					/* section is no execute */
+#define ARM_TTE_BLOCK_NX_MASK		0x00000010					/* mask for extracting no execute bit */
+#define ARM_TTE_BLOCK_PNX		ARM_TTE_BLOCK_NX
+
+#define	ARM_TTE_BLOCK_TEX0SHIFT		12
+#define	ARM_TTE_BLOCK_TEX0			(1<<ARM_TTE_BLOCK_TEX0SHIFT)
+#define	ARM_TTE_BLOCK_TEX0_MASK		(1<<ARM_TTE_BLOCK_TEX0SHIFT)
+
+#define	ARM_TTE_BLOCK_TEX1SHIFT		13
+#define	ARM_TTE_BLOCK_TEX1			(1<<ARM_TTE_BLOCK_TEX1SHIFT)
+#define	ARM_TTE_BLOCK_TEX1_MASK		(1<<ARM_TTE_BLOCK_TEX1SHIFT)
+
+#define	ARM_TTE_BLOCK_TEX2SHIFT		14
+#define	ARM_TTE_BLOCK_TEX2			(1<<ARM_TTE_BLOCK_TEX2SHIFT)
+#define	ARM_TTE_BLOCK_TEX2_MASK		(1<<ARM_TTE_BLOCK_TEX2SHIFT)
+
+
+																/* mask memory attributes index */
+#define ARM_TTE_BLOCK_ATTRINDX(i)	((((i)&0x3)<<ARM_TTE_BLOCK_CBSHIFT)	\
+									| ((((i)>>2)&0x1)<<ARM_TTE_BLOCK_TEX0SHIFT))
+
+																/* mask memory attributes index */
+#define ARM_TTE_BLOCK_ATTRINDXMASK	(ARM_TTE_BLOCK_CB_MASK	\
+									| ARM_TTE_BLOCK_TEX0_MASK)
+
+
+/*
+ * Level 2 Page table entries
+ *
+ * The following page table entry types are possible:
+ *
+ *	fault page entry
+ *	31                                      2  0 
+ *	+----------------------------------------+--+
+ *	|    ignored                             |00|
+ *	+----------------------------------------+--+
+ *
+ *	large (64KB) page entry
+ *	31             16 15  12     9   6  4 3 2  0
+ *	+----------------+--+---+-+-+-+---+--+-+-+--+
+ *	| base phys addr |XN|TEX|G|S|A|000|AP|C|B|01|
+ *	+----------------+--+---+-+-+-+---+--+-+-+--+
+ *
+ *	small (4KB) page entry
+ *	31                    12     9   6  4 3 2 1  0
+ *	+-----------------------+-+-+-+---+--+-+-+-+--+
+ *	| base phys addr        |G|S|A|TEX|AP|C|B|1|XN|
+ *	+-----------------------+-+-+-+---+--+-+-+-+--+
+ *
+ * also where:
+ *	'XN' is the eXecute Never bit
+ *	'G' is the notGlobal (process-specific) bit
+ *	'S' is the shared bit
+ *	'A' in the access permission extension (ATX) bit
+ *	'TEX' remap register control bits
+ *	'AP' is the access protection
+ *	'dom' is the domain for the translation
+ *	'C' is the cache attribute 
+ *	'B' is the write buffer attribute
+ */
+
+#define PTE_SHIFT					2						/* shift width of a pte (sizeof(pte) == (1 << PTE_SHIFT)) */
+#define PTE_PGENTRIES				(1024 >> PTE_SHIFT)		/* number of ptes per page */
+
+#define	ARM_PTE_EMPTY					0x00000000			/* unasigned - invalid entry */
+
+/* markers for (invalid) PTE for a page sent to compressor */
+#define ARM_PTE_COMPRESSED	ARM_PTE_TEX1	/* compressed... */
+#define ARM_PTE_COMPRESSED_ALT	ARM_PTE_TEX2	/* ... and was "alt_acct" */
+#define ARM_PTE_COMPRESSED_MASK	(ARM_PTE_COMPRESSED | ARM_PTE_COMPRESSED_ALT)
+#define ARM_PTE_IS_COMPRESSED(x)					\
+	((((x) & 0x3) == 0) &&		/* PTE is not valid... */	\
+	 ((x) & ARM_PTE_COMPRESSED) &&	/* ...has "compressed" marker" */ \
+	 ((!((x) & ~ARM_PTE_COMPRESSED_MASK)) || /* ...no other bits */ \
+	  (panic("compressed PTE %p 0x%x has extra bits 0x%x: corrupted?", \
+		 &(x), (x), (x) & ~ARM_PTE_COMPRESSED_MASK), FALSE)))
+
+#define ARM_PTE_TYPE_FAULT				0x00000000			/* fault entry type */
+#define ARM_PTE_TYPE					0x00000002			/* small page entry type */
+#define ARM_PTE_TYPE_MASK				0x00000002			/* mask to get pte type */
+
+#define ARM_PTE_NG_MASK					0x00000800	 		/* mask to determine notGlobal bit */
+#define ARM_PTE_NG						0x00000800			 /* value for a per-process mapping */
+
+#define ARM_PTE_SHSHIFT					10
+#define ARM_PTE_SH_MASK					0x00000400			 /* shared (SMP) mapping mask */
+#define ARM_PTE_SH						0x00000400			 /* shared (SMP) mapping */
+
+#define ARM_PTE_CBSHIFT					2
+#define ARM_PTE_CB(x)					((x)<<ARM_PTE_CBSHIFT)
+#define ARM_PTE_CB_MASK					(0x3<<ARM_PTE_CBSHIFT)
+
+#define ARM_PTE_AP0SHIFT				4
+#define ARM_PTE_AP0						(1<<ARM_PTE_AP0SHIFT)
+#define ARM_PTE_AP0_MASK 				(1<<ARM_PTE_AP0SHIFT)
+
+#define ARM_PTE_AP1SHIFT 				5
+#define ARM_PTE_AP1						(1<<ARM_PTE_AP1SHIFT)
+#define ARM_PTE_AP1_MASK				(1<<ARM_PTE_AP1SHIFT)
+
+#define ARM_PTE_AP2SHIFT				9
+#define ARM_PTE_AP2						(1<<ARM_PTE_AP2SHIFT)
+#define ARM_PTE_AP2_MASK				(1<<ARM_PTE_AP2SHIFT)
+
+															/* access protections */
+#define ARM_PTE_AP(ap)					((((ap)&0x1)<<ARM_PTE_AP1SHIFT)	\
+										| ((((ap)>>1)&0x1)<<ARM_PTE_AP2SHIFT))
+
+										/* mask access protections */
+#define ARM_PTE_APMASK					(ARM_PTE_AP1_MASK	\
+										| ARM_PTE_AP2_MASK)
+
+#define ARM_PTE_AF						ARM_PTE_AP0			/* value for access */
+#define ARM_PTE_AFMASK					ARM_PTE_AP0_MASK	/* access mask */
+
+#define ARM_PTE_PAGE_MASK				0xFFFFF000			/* mask for a small page */
+#define ARM_PTE_PAGE_SHIFT				12					/* page shift for 4KB page */
+
+#define ARM_PTE_NXSHIFT					0
+#define ARM_PTE_NX						0x00000001			 /* small page no execute */
+#define ARM_PTE_NX_MASK					(1<<ARM_PTE_NXSHIFT)
+
+#define ARM_PTE_PNXSHIFT				0
+#define ARM_PTE_PNX						0x00000000			/* no privilege execute. not impl */
+#define ARM_PTE_PNX_MASK				(0<<ARM_PTE_NXSHIFT)
+
+#define ARM_PTE_TEX0SHIFT				6
+#define ARM_PTE_TEX0					(1<<ARM_PTE_TEX0SHIFT)
+#define ARM_PTE_TEX0_MASK				(1<<ARM_PTE_TEX0SHIFT)
+
+#define ARM_PTE_TEX1SHIFT				7
+#define ARM_PTE_TEX1					(1<<ARM_PTE_TEX1SHIFT)
+#define ARM_PTE_TEX1_MASK				(1<<ARM_PTE_TEX1SHIFT)
+
+#define	ARM_PTE_WRITEABLESHIFT			ARM_PTE_TEX1SHIFT
+#define	ARM_PTE_WRITEABLE				ARM_PTE_TEX1
+#define	ARM_PTE_WRITEABLE_MASK			ARM_PTE_TEX1_MASK
+
+#define ARM_PTE_TEX2SHIFT				8
+#define ARM_PTE_TEX2					(1<<ARM_PTE_TEX2SHIFT)
+#define ARM_PTE_TEX2_MASK				(1<<ARM_PTE_TEX2SHIFT)
+
+#define	ARM_PTE_WIREDSHIFT				ARM_PTE_TEX2SHIFT
+#define	ARM_PTE_WIRED					ARM_PTE_TEX2
+#define	ARM_PTE_WIRED_MASK				ARM_PTE_TEX2_MASK
+
+										/* mask memory attributes index */
+#define ARM_PTE_ATTRINDX(indx)			((((indx)&0x3)<<ARM_PTE_CBSHIFT)	\
+										| ((((indx)>>2)&0x1)<<ARM_PTE_TEX0SHIFT))
+
+										/* mask memory attributes index */
+#define ARM_PTE_ATTRINDXMASK			(ARM_PTE_CB_MASK	\
+										| ARM_PTE_TEX0_MASK)
+
+#define ARM_SMALL_PAGE_SIZE 			(4096)				/* 4KB */
+#define ARM_LARGE_PAGE_SIZE 			(64*1024)			/* 64KB */
+#define ARM_SECTION_SIZE   				(1024*1024)			/* 1MB */
+#define ARM_SUPERSECTION_SIZE 			(16*1024*1024)		/* 16MB */
+
+#endif
+
+/*
+ * Format of the Debug Status and Control Register (DBGDSCR)
+ */
+#define ARM_DBGDSCR_RXFULL			   		(1 << 30)
+#define ARM_DBGDSCR_TXFULL			   		(1 << 29)
+#define ARM_DBGDSCR_RXFULL_1		   		(1 << 27)
+#define ARM_DBGDSCR_TXFULL_1		   		(1 << 26)
+#define ARM_DBGDSCR_PIPEADV			  	 	(1 << 25)
+#define ARM_DBGDSCR_INSTRCOMPL_1	   		(1 << 24)
+#define ARM_DBGDSCR_EXTDCCMODE_MASK	   		(3 << 20)
+#define ARM_DBGDSCR_EXTDCCMODE_NONBLOCKING	(0 << 20)
+#define ARM_DBGDSCR_EXTDCCMODE_STALL   		(1 << 20)
+#define ARM_DBGDSCR_EXTDCCMODE_FAST	   		(1 << 20)
+#define ARM_DBGDSCR_ADADISCARD		   		(1 << 19)
+#define ARM_DBGDSCR_NS						(1 << 18)
+#define ARM_DBGDSCR_SPNIDDIS		   		(1 << 17)
+#define ARM_DBGDSCR_SPIDDIS		   			(1 << 16)
+#define ARM_DBGDSCR_MDBGEN		   			(1 << 15)
+#define ARM_DBGDSCR_HDBGEN		  			(1 << 14)
+#define ARM_DBGDSCR_ITREN		 			(1 << 13)
+#define ARM_DBGDSCR_UDCCDIS		  			(1 << 12)
+#define ARM_DBGDSCR_INTDIS		 			(1 << 11)
+#define ARM_DBGDSCR_DBGACK		  			(1 << 10)
+#define ARM_DBGDSCR_DBGNOPWRDWN				(1 << 9)
+#define ARM_DBGDSCR_UND_1					(1 << 8)
+#define ARM_DBGDSCR_ADABORT_1				(1 << 7)
+#define ARM_DBGDSCR_SDABORT_1				(1 << 6)
+#define ARM_DBGDSCR_MOE_MASK				(15 << 2)
+#define ARM_DBGDSCR_MOE_HALT_REQUEST		(0 << 2)
+#define ARM_DBGDSCR_MOE_BREAKPOINT			(1 << 2)
+#define ARM_DBGDSCR_MOE_ASYNC_WATCHPOINT	(2 << 2)
+#define ARM_DBGDSCR_MOE_BKPT_INSTRUCTION	(3 << 2)
+#define ARM_DBGDSCR_MOE_EXT_DEBUG_REQ		(4 << 2)
+#define ARM_DBGDSCR_MOE_VECTOR_CATCH		(5 << 2)
+#define ARM_DBGDSCR_MOE_DSIDE_ABORT			(6 << 2)
+#define ARM_DBGDSCR_MOE_ISIDE_ABORT			(7 << 2)
+#define ARM_DBGDSCR_MOE_OS_UNLOCK_CATCH		(8 << 2)
+#define ARM_DBGDSCR_MOE_SYNC_WATCHPOINT		(10 << 2)
+
+#define ARM_DBGDSCR_RESTARTED				(1 << 1)
+#define ARM_DBGDSCR_HALTED					(1 << 0)
+
+/*
+ * Format of the Debug & Watchpoint Breakpoint Value and Control Registers
+ * Using ARMv7 names; ARMv6 and ARMv6.1 are bit-compatible
+ */
+#define ARM_DBG_VR_ADDRESS_MASK             0xFFFFFFFC  /* BVR & WVR */
+#define ARM_DBGBVR_CONTEXTID_MASK           0xFFFFFFFF  /* BVR only  */
+
+#define ARM_DBG_CR_ADDRESS_MASK_MASK        0x1F000000  /* BCR & WCR */
+#define ARM_DBGBCR_MATCH_MASK               (1 << 22)   /* BCR only  */
+#define ARM_DBGBCR_MATCH_MATCH              (0 << 22)
+#define ARM_DBGBCR_MATCH_MISMATCH           (1 << 22)
+#define ARM_DBGBCR_TYPE_MASK                (1 << 21)   /* BCR only */
+#define ARM_DBGBCR_TYPE_IVA                 (0 << 21)
+#define ARM_DBGBCR_TYPE_CONTEXTID           (1 << 21)
+#define ARM_DBG_CR_LINKED_MASK              (1 << 20)   /* BCR & WCR */
+#define ARM_DBG_CR_LINKED_LINKED            (1 << 20)
+#define ARM_DBG_CR_LINKED_UNLINKED          (0 << 20)
+#define ARM_DBG_CR_LINKED_BRP_MASK          0x000F0000  /* BCR & WCR */
+#define ARM_DBG_CR_SECURITY_STATE_MASK      (3 << 14)   /* BCR & WCR */
+#define ARM_DBG_CR_SECURITY_STATE_BOTH      (0 << 14)
+#define ARM_DBG_CR_SECURITY_STATE_NONSECURE (1 << 14)
+#define ARM_DBG_CR_SECURITY_STATE_SECURE    (2 << 14)
+#define ARM_DBGWCR_BYTE_ADDRESS_SELECT_MASK 0x00001FE0  /* WCR only  */
+#define ARM_DBG_CR_BYTE_ADDRESS_SELECT_MASK 0x000001E0  /* BCR & WCR */
+#define ARM_DBGWCR_ACCESS_CONTROL_MASK      (3 << 3)    /* WCR only */
+#define ARM_DBCWCR_ACCESS_CONTROL_LOAD      (1 << 3)
+#define ARM_DBCWCR_ACCESS_CONTROL_STORE     (2 << 3)
+#define ARM_DBCWCR_ACCESS_CONTROL_ANY       (3 << 3)
+#define ARM_DBG_CR_MODE_CONTROL_MASK        (3 << 1)    /* BCR & WCR */
+#define ARM_DBG_CR_MODE_CONTROL_U_S_S       (0 << 1)    /* BCR only  */
+#define ARM_DBG_CR_MODE_CONTROL_PRIVILEDGED (1 << 1)    /* BCR & WCR */
+#define ARM_DBG_CR_MODE_CONTROL_USER        (2 << 1)    /* BCR & WCR */
+#define ARM_DBG_CR_MODE_CONTROL_ANY         (3 << 1)    /* BCR & WCR */
+#define ARM_DBG_CR_ENABLE_MASK              (1 << 0)    /* BCR & WCR */
+#define ARM_DBG_CR_ENABLE_ENABLE            (1 << 0)
+#define ARM_DBG_CR_ENABLE_DISABLE           (0 << 0)
+
+/*
+ * Format of the Device Power-down and Reset Status Register (DBGPRSR)
+ */
+#define ARM_DBGPRSR_STICKY_RESET_STATUS		(1 << 3)
+#define ARM_DBGPRSR_RESET_STATUS			(1 << 2)
+#define ARM_DBGPRSR_STICKY_POWERDOWN_STATUS	(1 << 1)
+#define ARM_DBGPRSR_POWERUP_STATUS			(1 << 0)
+
+/* 
+ * Format of the OS Lock Access (DBGOSLAR) and Lock Access Registers (DBGLAR)
+ */
+#define ARM_DBG_LOCK_ACCESS_KEY				0xC5ACCE55
+
+/* ARMv7 Debug register map */
+#define ARM_DEBUG_OFFSET_DBGDIDR			(0x000)
+#define ARM_DEBUG_OFFSET_DBGWFAR			(0x018)
+#define ARM_DEBUG_OFFSET_DBGVCR				(0x01C)
+#define ARM_DEBUG_OFFSET_DBGECR				(0x024)
+#define ARM_DEBUG_OFFSET_DBGDSCCR			(0x028)
+#define ARM_DEBUG_OFFSET_DBGDSMCR			(0x02C)
+#define ARM_DEBUG_OFFSET_DBGDTRRX			(0x080)
+#define ARM_DEBUG_OFFSET_DBGITR				(0x084)	/* Write-only */
+#define ARM_DEBUG_OFFSET_DBGPCSR			(0x084)	/* Read-only */
+#define ARM_DEBUG_OFFSET_DBGDSCR			(0x088)
+#define ARM_DEBUG_OFFSET_DBGDTRTX			(0x08C)
+#define ARM_DEBUG_OFFSET_DBGDRCR			(0x090)
+#define ARM_DEBUG_OFFSET_DBGBVR				(0x100)	/* 0x100 - 0x13C */
+#define ARM_DEBUG_OFFSET_DBGBCR				(0x140)	/* 0x140 - 0x17C */
+#define ARM_DEBUG_OFFSET_DBGWVR				(0x180)	/* 0x180 - 0x1BC */
+#define ARM_DEBUG_OFFSET_DBGWCR				(0x1C0)	/* 0x1C0 - 0x1FC */
+#define ARM_DEBUG_OFFSET_DBGOSLAR			(0x300)
+#define ARM_DEBUG_OFFSET_DBGOSLSR			(0x304)
+#define ARM_DEBUG_OFFSET_DBGOSSRR			(0x308)
+#define ARM_DEBUG_OFFSET_DBGPRCR			(0x310)
+#define ARM_DEBUG_OFFSET_DBGPRSR			(0x314)
+#define ARM_DEBUG_OFFSET_DBGITCTRL			(0xF00)
+#define ARM_DEBUG_OFFSET_DBGCLAIMSET		(0xFA0)
+#define ARM_DEBUG_OFFSET_DBGCLAIMCLR		(0xFA4)
+#define ARM_DEBUG_OFFSET_DBGLAR				(0xFB0)
+#define ARM_DEBUG_OFFSET_DBGLSR				(0xFB4)
+#define ARM_DEBUG_OFFSET_DBGAUTHSTATUS		(0xFB8)
+#define ARM_DEBUG_OFFSET_DBGDEVID			(0xFC8)
+#define ARM_DEBUG_OFFSET_DBGDEVTYPE			(0xFCC)
+#define ARM_DEBUG_OFFSET_DBGPID0			(0xFD0)
+#define ARM_DEBUG_OFFSET_DBGPID1			(0xFD4)
+#define ARM_DEBUG_OFFSET_DBGPID2			(0xFD8)
+#define ARM_DEBUG_OFFSET_DBGPID3			(0xFDA)
+#define ARM_DEBUG_OFFSET_DBGPID4			(0xFDC)
+#define ARM_DEBUG_OFFSET_DBGCID0			(0xFF0)
+#define ARM_DEBUG_OFFSET_DBGCID1			(0xFF4)
+#define ARM_DEBUG_OFFSET_DBGCID2			(0xFF8)
+#define ARM_DEBUG_OFFSET_DBGCID3			(0xFFA)
+#define ARM_DEBUG_OFFSET_DBGCID4			(0xFFC)
+
+/*
+ * Media and VFP Feature Register 1 (MVFR1)
+ */
+#define MVFR_ASIMD_HPFP				0x00100000UL
+
+#endif	/* _ARM_PROC_REG_H_ */

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2010 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2014 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -52,6 +52,7 @@
 #include <pexpert/pexpert.h>
 #include <sys/socketvar.h>
 #include <pexpert/pexpert.h>
+#include <netinet/tcp_var.h>
 
 extern uint32_t kern_maxvnodes;
 extern vm_map_t mb_map;
@@ -61,8 +62,7 @@ extern uint32_t   tcp_sendspace;
 extern uint32_t   tcp_recvspace;
 #endif
 
-void            bsd_bufferinit(void) __attribute__((section("__TEXT, initcode")));
-extern void     md_prepare_for_shutdown(int, int, char *);
+void            bsd_bufferinit(void);
 
 unsigned int	bsd_mbuf_cluster_reserve(boolean_t *);
 void bsd_scale_setup(int);
@@ -85,18 +85,21 @@ int		nbuf_headers = 0;
 #endif
 
 SYSCTL_INT (_kern, OID_AUTO, nbuf, CTLFLAG_RD | CTLFLAG_LOCKED, &nbuf_headers, 0, "");
-SYSCTL_INT (_kern, OID_AUTO, maxnbuf, CTLFLAG_RW | CTLFLAG_LOCKED, &max_nbuf_headers, 0, "");
+SYSCTL_INT (_kern, OID_AUTO, maxnbuf, CTLFLAG_RW | CTLFLAG_LOCKED | CTLFLAG_KERN, &max_nbuf_headers, 0, "");
 
 __private_extern__ int customnbuf = 0;
 int             serverperfmode = 0;	/* Flag indicates a server boot when set */
 int             ncl = 0;
+
+#if SOCKETS
 static unsigned int mbuf_poolsz;
+#endif
 
 vm_map_t        buffer_map;
 vm_map_t        bufferhdr_map;
 static int vnodes_sized = 0;
 
-extern void     bsd_startupearly(void) __attribute__((section("__TEXT, initcode")));
+extern void     bsd_startupearly(void);
 
 void
 bsd_startupearly(void)
@@ -138,6 +141,8 @@ bsd_startupearly(void)
 			    size,
 			    FALSE,
 			    VM_FLAGS_ANYWHERE,
+			    VM_MAP_KERNEL_FLAGS_NONE,
+			    VM_KERN_MEMORY_FILE,
 			    &bufferhdr_map);
 
 	if (ret != KERN_SUCCESS)
@@ -147,7 +152,8 @@ bsd_startupearly(void)
 				     &firstaddr,
 				     size,
 				     0,
-				     KMA_HERE | KMA_KOBJECT);
+				     KMA_HERE | KMA_KOBJECT,
+				     VM_KERN_MEMORY_FILE);
 
 	if (ret != KERN_SUCCESS)
 		panic("Failed to allocate bufferhdr_map");
@@ -200,8 +206,9 @@ bsd_startupearly(void)
 void
 bsd_bufferinit(void)
 {
+#if SOCKETS
 	kern_return_t   ret;
-
+#endif
 	/*
 	 * Note: Console device initialized in kminit() from bsd_autoconf()
 	 * prior to call to us in bsd_init().
@@ -211,10 +218,12 @@ bsd_bufferinit(void)
 
 #if SOCKETS
 	ret = kmem_suballoc(kernel_map,
-			    (vm_offset_t *) & mbutl,
+			    (vm_offset_t *) &mbutl,
 			    (vm_size_t) (nmbclusters * MCLBYTES),
 			    FALSE,
 			    VM_FLAGS_ANYWHERE,
+			    VM_MAP_KERNEL_FLAGS_NONE,
+			    VM_KERN_MEMORY_MBUF,
 			    &mb_map);
 
 	if (ret != KERN_SUCCESS)
@@ -235,6 +244,7 @@ bsd_bufferinit(void)
 #endif /* !__LP64__ */
 #define	MAX_NCL		(MAX_MBUF_POOL >> MCLSHIFT)
 
+#if SOCKETS
 /*
  * this has been broken out into a separate routine that
  * can be called from the x86 early vm initialization to
@@ -286,8 +296,8 @@ bsd_mbuf_cluster_reserve(boolean_t *overridden)
 				nmbclusters = MAX_NCL;
 		}
 
-		/* Round it down to nearest multiple of 4KB clusters */
-		nmbclusters = P2ROUNDDOWN(nmbclusters, NCLPBG);
+		/* Round it down to nearest multiple of PAGE_SIZE */
+		nmbclusters = P2ROUNDDOWN(nmbclusters, NCLPG);
 	}
 	mbuf_poolsz = nmbclusters << MCLSHIFT;
 done:
@@ -296,6 +306,8 @@ done:
 
 	return (mbuf_poolsz);
 }
+#endif
+
 #if defined(__LP64__)
 extern int tcp_tcbhashsize;
 extern int max_cached_sock_count;
@@ -309,6 +321,10 @@ bsd_scale_setup(int scale)
 	if ((scale > 0) && (serverperfmode == 0)) {
 		maxproc *= scale;
 		maxprocperuid = (maxproc * 2) / 3;
+		if (scale > 2) {
+			maxfiles *= scale;
+			maxfilesperproc = maxfiles/2;
+		}
 	}
 	/* Apply server scaling rules */
 	if ((scale >  0) && (serverperfmode !=0)) {
@@ -320,16 +336,20 @@ bsd_scale_setup(int scale)
 		maxfilesperproc = maxfiles/2;
 		desiredvnodes = maxfiles;
 		vnodes_sized = 1;
+		tcp_tfo_backlog = 100 * scale;
 		if (scale > 4) {
-			/* clip them at 32G level */
+			/* clip somaxconn at 32G level */
 			somaxconn = 2048;
-			/* 64G or more the hash size is 32k */
+			/*
+			 * For scale > 4 (> 32G), clip
+			 * tcp_tcbhashsize to 32K
+			 */
+			tcp_tcbhashsize = 32 *1024;
+
 			if (scale > 7) {
 				/* clip at 64G level */
-				tcp_tcbhashsize = 16 *1024;
 				max_cached_sock_count = 165000;
 			} else {
-				tcp_tcbhashsize = 32 *1024;
 				max_cached_sock_count = 60000 + ((scale-1) * 15000);
 			}
 		} else {
@@ -337,6 +357,10 @@ bsd_scale_setup(int scale)
 			tcp_tcbhashsize = 4*1024*scale;
 			max_cached_sock_count = 60000 + ((scale-1) * 15000);
 		}
+	}
+
+	if(maxproc > hard_maxproc) {
+		hard_maxproc = maxproc;
 	}
 #endif
 	bsd_exec_setup(scale);

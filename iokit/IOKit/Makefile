@@ -8,8 +8,8 @@ IOKIT_INCFRAME = $(FRAMEDIR)/IOKit.framework
 IOKIT_INCDIR = $(IOKIT_INCFRAME)/Versions/$(IOKIT_INCVERS)/Headers
 IOKIT_PINCDIR = $(IOKIT_INCFRAME)/Versions/$(IOKIT_INCVERS)/PrivateHeaders
 
-export INCDIR = $(IOKIT_INCDIR)
-export LCLDIR = $(IOKIT_PINCDIR)
+INCDIR = $(IOKIT_INCDIR)
+LCLDIR = $(IOKIT_PINCDIR)
 
 include $(MakeInc_cmd)
 include $(MakeInc_def)
@@ -22,37 +22,39 @@ INSTINC_SUBDIRS = \
 	rtc \
 	system_management
 
-INSTINC_SUBDIRS_ARM =
-
-INSTINC_SUBDIRS_I386 = 
-
-INSTINC_SUBDIRS_X86_64 = 
-
 
 EXPINC_SUBDIRS = ${INSTINC_SUBDIRS}
-EXPINC_SUBDIRS_ARM = ${INSTINC_SUBDIRS_ARM}
-EXPINC_SUBDIRS_I386 = ${INSTINC_SUBDIRS_I386}
-EXPINC_SUBDIRS_X86_64 = ${INSTINC_SUBDIRS_X86_64}
 
+# By default, everything in xnu/iokit/IOKit gets installed into
+# Kernel.framework/Headers/IOKit AND Kernel.framework/PrivateHeaders/IOKit.
+# This is so the files with #ifdef ...PRIVATE portions can be processed.
+# xnu/README documents the INSTALL* and EXPORT_MI_DIR lists.
+ALL_HEADERS = $(shell (cd $(SOURCE); echo *.h))
 
-NOT_EXPORT_HEADERS = 
+# Do not install these headers (anywhere).
+NOT_EXPORT_HEADERS = IOInterruptAccountingPrivate.h
 
+# Install these only in Kernel.framework's PrivateHeaders (not Headers).
 NOT_KF_MI_HEADERS  = $(NOT_EXPORT_HEADERS)			\
 		     IOKitKeysPrivate.h IOCPU.h			\
 		     IOHibernatePrivate.h IOPolledInterface.h	\
-		     IOCommandQueue.h IOLocksPrivate.h 		\
+		     IOCommandQueue.h IOLocksPrivate.h		\
 		     IOSyncer.h AppleKeyStoreInterface.h	\
-		     IOStatistics.h IOStatisticsPrivate.h
+		     IOStatistics.h IOStatisticsPrivate.h	\
+		     IOKernelReporters.h			\
+		     IOInterruptAccounting.h
 
-NOT_LOCAL_HEADERS = 
-
-ALL_HEADERS = $(shell (cd $(SOURCE); echo *.h))
-
-INSTALL_MI_LIST	= IOBSD.h IOKitKeys.h IOKitServer.h IOReturn.h\
-		  IOSharedLock.h IOTypes.h OSMessageNotification.h\
+# These should be additionally installed in IOKit.framework's public Headers
+INSTALL_MI_LIST	= IOBSD.h IOKitKeys.h IOKitServer.h IOReturn.h	    \
+		  IOSharedLock.h IOTypes.h OSMessageNotification.h  \
 		  IODataQueueShared.h IOMessage.h
-                  
-INSTALL_MI_LCL_LIST = IOKitKeysPrivate.h IOHibernatePrivate.h IOLocksPrivate.h IOStatistics.h AppleKeyStoreInterface.h
+
+# These should be additionally installed in IOKit.framework's PrivateHeaders
+INSTALL_MI_LCL_LIST = IOKitKeysPrivate.h IOHibernatePrivate.h   \
+		      IOLocksPrivate.h IOStatistics.h 		\
+		      AppleKeyStoreInterface.h  		\
+		      IOReportTypes.h IOKernelReportStructs.h   \
+		      IOReportMacros.h IOInterruptAccounting.h
 
 INSTALL_MI_DIR = .
 

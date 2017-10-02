@@ -22,7 +22,7 @@
 # @APPLE_OSREFERENCE_LICENSE_HEADER_END@
 #
 
-usage() {
+function usage() {
     echo "Usage: $0 <output>" 1>&2
     exit 1
 }

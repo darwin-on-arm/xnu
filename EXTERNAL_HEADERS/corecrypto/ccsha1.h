@@ -2,8 +2,9 @@
  *  ccsha1.h
  *  corecrypto
  *
- *  Created by Michael Brouwer on 12/1/10.
- *  Copyright 2010,2011 Apple Inc. All rights reserved.
+ *  Created on 12/01/2010
+ *
+ *  Copyright (c) 2010,2011,2012,2014,2015 Apple Inc. All rights reserved.
  *
  */
 
@@ -31,12 +32,16 @@ void ccsha1_final(const struct ccdigest_info *di, ccdigest_ctx_t,
 extern const struct ccdigest_info ccsha1_ltc_di;
 extern const struct ccdigest_info ccsha1_eay_di;
 
-#if CCSHA1_VNG_INTEL
-extern const struct ccdigest_info ccsha1_vng_intel_SSE3_di;
-extern const struct ccdigest_info ccsha1_vng_intel_NOSSE3_di;
+#if  CCSHA1_VNG_INTEL
+//extern const struct ccdigest_info ccsha1_vng_intel_di;
+#if defined(__x86_64__)
+extern const struct ccdigest_info ccsha1_vng_intel_AVX2_di;
+extern const struct ccdigest_info ccsha1_vng_intel_AVX1_di;
+#endif
+extern const struct ccdigest_info ccsha1_vng_intel_SupplementalSSE3_di;
 #endif
 
-#if CCSHA1_VNG_ARMV7NEON
+#if  CCSHA1_VNG_ARMV7NEON
 extern const struct ccdigest_info ccsha1_vng_armv7neon_di;
 #endif
 

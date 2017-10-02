@@ -3,77 +3,23 @@ export MakeInc_def=${SRCROOT}/makedefs/MakeInc.def
 export MakeInc_rule=${SRCROOT}/makedefs/MakeInc.rule
 export MakeInc_dir=${SRCROOT}/makedefs/MakeInc.dir
 
-
 include $(MakeInc_cmd)
 include $(MakeInc_def)
 
-ALL_SUBDIRS = 
+MD_SUPPORTED_KPI_FILENAME = SupportedKPIs-${CURRENT_ARCH_CONFIG_LC}.txt
+MI_SUPPORTED_KPI_FILENAME = SupportedKPIs-all-archs.txt
 
-INSTINC_SUBDIRS = 
-INSTINC_SUBDIRS_I386 = 
-INSTINC_SUBDIRS_X86_64 = 
-INSTINC_SUBDIRS_ARM = 
+INSTALL_KEXT_DIR = $(DSTROOT)$(INSTALL_EXTENSIONS_DIR)
 
-EXPINC_SUBDIRS = 
-EXPINC_SUBDIRS_I386 = 
-EXPINC_SUBDIRS_X86_64 = 
-EXPINC_SUBDIRS_ARM = 
-
-
-COMP_SUBDIRS = 
-
-INST_SUBDIRS =	
-
-
-INSTALL_KEXT_PLIST_LIST= \
+KEXT_PLIST_LIST = \
 	System.kext/Info.plist \
-	System.kext/PlugIns/Libkern.kext/Info.plist \
-	System.kext/PlugIns/Mach.kext/Info.plist \
-	System.kext/PlugIns/BSDKernel.kext/Info.plist \
-	System.kext/PlugIns/MACFramework.kext/Info.plist \
-	System.kext/PlugIns/IOKit.kext/Info.plist \
+	System.kext/PlugIns/Kasan.kext/Info.plist \
 	System.kext/PlugIns/AppleNMI.kext/Info.plist \
 	System.kext/PlugIns/ApplePlatformFamily.kext/Info.plist \
 	System.kext/PlugIns/IONVRAMFamily.kext/Info.plist \
-	System.kext/PlugIns/IOSystemManagement.kext/Info.plist \
-	System.kext/PlugIns/Unsupported.kext/Info.plist \
-	System.kext/PlugIns/Private.kext/Info.plist
-
-INSTALL_KEXT_DIR = /System/Library/Extensions/
-
-
-MD_SUPPORTED_KPI_FILENAME="SupportedKPIs-${ARCH_CONFIG_LC}.txt"
-MI_SUPPORTED_KPI_FILENAME="SupportedKPIs-all-archs.txt"
-
-ifneq ($(MACHINE_CONFIG), DEFAULT)
-OBJPATH = $(OBJROOT)/$(KERNEL_CONFIG)_$(ARCH_CONFIG)_$(MACHINE_CONFIG)
-else
-OBJPATH = $(OBJROOT)/$(KERNEL_CONFIG)_$(ARCH_CONFIG)
-endif
-
-ifeq ($(ARCH_CONFIG),ARM)
-SUPPORT_SYSTEM60_KEXT	= 1
-else
-SUPPORT_SYSTEM60_KEXT	= 0
-endif
-
-ifeq ($(ARCH_CONFIG),I386)
-SUPPORT_SYSTEM60_KEXT	= 1
-else
-SUPPORT_SYSTEM60_KEXT	= 0
-endif
-
-ifeq ($(SUPPORT_SYSTEM60_KEXT),1)
-INSTALL_KEXT_PLIST_LIST += \
-	System.kext/PlugIns/System6.0.kext/Info.plist \
-	System.kext/PlugIns/Libkern6.0.kext/Info.plist \
-	System.kext/PlugIns/Mach6.0.kext/Info.plist \
-	System.kext/PlugIns/BSDKernel6.0.kext/Info.plist \
-	System.kext/PlugIns/IOKit6.0.kext/Info.plist
-endif
+	System.kext/PlugIns/IOSystemManagement.kext/Info.plist
 
 SYMBOL_COMPONENT_LIST =	\
-        System6.0	\
         BSDKernel	\
         IOKit		\
         Libkern		\
@@ -82,156 +28,121 @@ SYMBOL_COMPONENT_LIST =	\
         Unsupported	\
         Private
 
-SYMBOL_SET_BUILD = $(foreach set, $(SYMBOL_COMPONENT_LIST), $(OBJPATH)/$(set).symbolset)
-SYMBOL_SET_FAT = $(foreach set, $(SYMBOL_COMPONENT_LIST), $(OBJROOT)/$(set).symbolset)
+# In general you want it to be possible to have a CPU sub-type's symbol exports
+# alias to the parent type's exports. This is a special-case way to handle it
+# for now:
+ifeq ($(CURRENT_ARCH_CONFIG_LC),x86_64h)
+EXPORT_SOURCE_ARCH_CONFIG_LC = x86_64
+else
+EXPORT_SOURCE_ARCH_CONFIG_LC = $(CURRENT_ARCH_CONFIG_LC)
+endif
 
-INSTALL_KEXT_PLISTS = $(addprefix $(DSTROOT)$(INSTALL_KEXT_DIR), $(INSTALL_KEXT_PLIST_LIST))
+KEXT_MACHO_LIST = $(foreach symbolset,$(filter-out Dummy,$(SYMBOL_COMPONENT_LIST)),System.kext/PlugIns/$(symbolset).kext/$(symbolset))
+KEXT_PLIST_LIST += $(foreach symbolset,$(filter-out Dummy,$(SYMBOL_COMPONENT_LIST)),System.kext/PlugIns/$(symbolset).kext/Info.plist)
 
-$(INSTALL_KEXT_PLISTS): $(DSTROOT)$(INSTALL_KEXT_DIR)% : $(SOURCE)/%
-	@echo Install $< in $@
-	$(_v)$(MKDIR) $(dir $@);				\
-	$(RM) $(RMFLAGS) $@;					\
-	$(INSTALL) $(DATA_INSTALL_FLAGS) $< $(dir $@)
+SYMROOT_INSTALL_KEXT_MACHO_FILES = $(addprefix $(SYMROOT)/,$(KEXT_MACHO_LIST))
+DSTROOT_INSTALL_KEXT_MACHO_FILES = $(addprefix $(INSTALL_KEXT_DIR)/,$(KEXT_MACHO_LIST))
 
-$(OBJPATH)/allsymbols: $(OBJPATH)/mach_kernel
+SYMROOT_INSTALL_KEXT_PLISTS = $(addprefix $(SYMROOT)/,$(KEXT_PLIST_LIST))
+DSTROOT_INSTALL_KEXT_PLISTS = $(addprefix $(INSTALL_KEXT_DIR)/,$(KEXT_PLIST_LIST))
+
+EXPORTS_FILES = $(foreach symbolset,$(SYMBOL_COMPONENT_LIST),$(symbolset).exports $(symbolset).$(EXPORT_SOURCE_ARCH_CONFIG_LC).exports) Unused.exports
+
+SYMBOL_SET_BUILD = $(foreach symbolset, $(SYMBOL_COMPONENT_LIST), $(OBJPATH)/$(symbolset).symbolset)
+
+$(OBJPATH)/allsymbols: $(OBJPATH)/$(KERNEL_FILE_NAME)
 	$(_v)$(NM) -gj $< > $@
 
-$(SYMBOL_SET_BUILD): $(OBJPATH)/%.symbolset :  %.exports %.$(ARCH_CONFIG_LC).exports $(OBJPATH)/allsymbols
-	$(_v)if [ "$*" != System6.0 -o $(SUPPORT_SYSTEM60_KEXT) -eq 1 ]; then	\
-		$(KEXT_CREATE_SYMBOL_SET) \
-		$($(addsuffix $(ARCH_CONFIG),ARCH_FLAGS_)) \
-		-import $(OBJPATH)/allsymbols \
-		-export $(SRCROOT)/config/$*.exports \
-		-export $(SRCROOT)/config/$*.$(ARCH_CONFIG_LC).exports \
-		-output $@ $(_vstdout); \
-	fi
-	$(_v)if [ ! -e $@ ]; then	\
-		printf "" > $@;		\
-	fi
+$(SYMBOL_SET_BUILD): $(OBJPATH)/%.symbolset :  %.exports %.$(EXPORT_SOURCE_ARCH_CONFIG_LC).exports $(OBJPATH)/allsymbols $(KEXT_CREATE_SYMBOL_SET)
+	@echo "$(ColorH)SYMBOLSET$(Color0)  $(ColorF)$*$(Color0) \"($(ColorLF)$(CURRENT_ARCH_CONFIG_LC)$(Color0))\""
+	$(_v)$(KEXT_CREATE_SYMBOL_SET)					\
+		$(ARCH_FLAGS_$(CURRENT_ARCH_CONFIG))			\
+		-import $(OBJPATH)/allsymbols				\
+		-export $(SOURCE)/$*.exports				\
+		-export $(SOURCE)/$*.$(EXPORT_SOURCE_ARCH_CONFIG_LC).exports	\
+		-output $@ $(_vstdout)
 
-# When building the top-level install target for all architectures, aggregate the per-arch
-# symbolsets for the primary machine configuration for each kernel/arch config
-$(SYMBOL_SET_FAT): $(OBJROOT)/%.symbolset :
-	$(_v)per_arch_symbolsets="";			\
-	for arch_config in $(INSTALL_ARCHS);		\
-	do						\
-							\
-	my_counter=1;					\
-	found_arch=0;					\
-	for my_config in $(TARGET_CONFIGS_UC);		\
-	do						\
-		if [ $${my_counter} -eq 1 ] ; then	\
-			kernel_config=$${my_config};	\
-		elif [ $${my_counter} -eq 2 ] ; then	\
-			if [ $${my_config} = $${arch_config} ]; then \
-				found_arch=1;		\
-			fi;				\
-		else					\
-			if [ $${found_arch} -eq 1 ]; then \
-				machine_config=$${my_config};\
-				break;			\
-			fi;				\
-			my_counter=0;			\
-		fi;					\
-		my_counter=$$((my_counter + 1));	\
-	done;						\
-							\
-	if [ $${arch_config} = ARM ] ; then		\
-		if [ $${machine_config} = DEFAULT ] ; then		\
-			machine_config=$(DEFAULT_ARM_MACHINE_CONFIG);	\
-		fi;							\
-	fi;						\
-	if [ $${arch_config} = L4_ARM ] ; then		\
-		if [ $${machine_config} = DEFAULT ] ; then		\
-			machine_config=$(DEFAULT_L4_ARM_MACHINE_CONFIG);	\
-		fi;							\
-	fi;						\
-	if [ $${machine_config} = DEFAULT ] ; then	\
-		objpath=${OBJROOT}/$${kernel_config}_$${arch_config};	\
-	else		\
-		objpath=${OBJROOT}/$${kernel_config}_$${arch_config}_$${machine_config};	\
-	fi;		\
-	if [ -s "$${objpath}/$*.symbolset" ]; then			\
-		per_arch_symbolsets="$${per_arch_symbolsets} $${objpath}/$*.symbolset";		\
-	fi;		\
-	done;		\
-	if [ -n "$${per_arch_symbolsets}" ]; then			\
-		$(LIPO) $${per_arch_symbolsets} -create -output $@;	\
-	else		\
-		printf "" > $@;						\
-	fi
+.PHONY: check_all_exports
 
-build_symbol_sets:	$(SYMBOL_SET_BUILD) $(OBJPATH)/allsymbols
-	$(_v)$(KEXT_CREATE_SYMBOL_SET) \
-		$($(addsuffix $(ARCH_CONFIG),ARCH_FLAGS_)) \
-		$(foreach comp,$(filter-out System6.0 Private,$(SYMBOL_COMPONENT_LIST)), \
-			-export $(SRCROOT)/$(COMPONENT)/$(comp).exports \
-			-export $(SRCROOT)/$(COMPONENT)/$(comp).$(ARCH_CONFIG_LC).exports) \
-		-import $(OBJPATH)/allsymbols \
-		-output /dev/null $(_vstdout);
-	$(_v)$(KEXT_CREATE_SYMBOL_SET) \
-		$($(addsuffix $(ARCH_CONFIG),ARCH_FLAGS_)) \
-		$(foreach comp,$(filter-out System6.0 Unsupported,$(SYMBOL_COMPONENT_LIST)), \
-			-export $(SRCROOT)/$(COMPONENT)/$(comp).exports \
-			-export $(SRCROOT)/$(COMPONENT)/$(comp).$(ARCH_CONFIG_LC).exports) \
-		-import $(OBJPATH)/allsymbols \
-		-output /dev/null $(_vstdout);
-	$(_v) $(SRCROOT)/$(COMPONENT)/list_supported.sh $(SRCROOT)/$(COMPONENT) $(ARCH_CONFIG_LC) $(OBJPATH)/${MD_SUPPORTED_KPI_FILENAME};
-	$(_v)if [ -n `echo $${ARCH_CONFIGS%%\ *} | grep -i  $(ARCH_CONFIG)` ]; \
-	then \
-		$(SRCROOT)/$(COMPONENT)/list_supported.sh $(SRCROOT)/$(COMPONENT) "ALL"  $(OBJROOT)/${MI_SUPPORTED_KPI_FILENAME}; \
-	fi
+check_all_exports: $(OBJPATH)/allsymbols $(KEXT_CREATE_SYMBOL_SET)
+	$(_v)$(KEXT_CREATE_SYMBOL_SET)					\
+		$(ARCH_FLAGS_$(CURRENT_ARCH_CONFIG))			\
+		-import $(OBJPATH)/allsymbols				\
+		$(foreach symbolset,$(filter-out Private,$(SYMBOL_COMPONENT_LIST)),	\
+			-export $(SOURCE)/$(symbolset).exports		\
+			-export $(SOURCE)/$(symbolset).$(EXPORT_SOURCE_ARCH_CONFIG_LC).exports)	\
+		-output /dev/null $(_vstdout)
+	$(_v)$(KEXT_CREATE_SYMBOL_SET)					\
+		$(ARCH_FLAGS_$(CURRENT_ARCH_CONFIG))			\
+		-import $(OBJPATH)/allsymbols				\
+		$(foreach symbolset,$(filter-out Unsupported,$(SYMBOL_COMPONENT_LIST)),	\
+			-export $(SOURCE)/$(symbolset).exports		\
+			-export $(SOURCE)/$(symbolset).$(EXPORT_SOURCE_ARCH_CONFIG_LC).exports)	\
+		-output /dev/null $(_vstdout)
+
+$(OBJPATH)/$(MD_SUPPORTED_KPI_FILENAME): $(EXPORTS_FILES)
+	@echo "$(ColorH)SUPPORTED_KPI$(Color0) \"($(ColorLF)$(CURRENT_ARCH_CONFIG_LC)$(Color0))\""
+	$(_v)$(SRCROOT)/config/list_supported.sh $(SOURCE) $(EXPORT_SOURCE_ARCH_CONFIG_LC) $@
+
+$(OBJPATH)/$(MI_SUPPORTED_KPI_FILENAME): $(EXPORTS_FILES)
+	@echo "$(ColorH)SUPPORTED_KPI$(Color0) \"($(ColorLF)all$(Color0))\""
+	$(_v)$(SRCROOT)/config/list_supported.sh $(SOURCE) all $@
+
+build_symbol_sets: check_all_exports $(SYMBOL_SET_BUILD) $(OBJPATH)/allsymbols \
+			$(OBJPATH)/$(MD_SUPPORTED_KPI_FILENAME) \
+			$(OBJPATH)/$(MI_SUPPORTED_KPI_FILENAME)
+
+do_config_all::	build_symbol_sets
+
+# There's no simple static pattern rule for these paths, so hardcode dependencies in the command list
+$(SYMROOT_INSTALL_KEXT_MACHO_FILES): ALWAYS
+	$(_v)$(MKDIR) $(dir $@)
+	$(_v)if [ $(OBJROOT)/.symbolset.timestamp -nt $@ ]; then		\
+		echo INSTALLSYM symbolset $(notdir $@) "($(CURRENT_ARCH_CONFIG_LC))";	\
+		$(INSTALL) $(EXEC_INSTALL_FLAGS) $(OBJPATH)/$(@F).symbolset $@;	\
+		cmdstatus=$$?;							\
+	else									\
+		echo INSTALLSYM symbolset $(notdir $@) "($(CURRENT_ARCH_CONFIG_LC))";	\
+		$(LIPO) -create $@ $(OBJPATH)/$(@F).symbolset -output $@ 2>/dev/null || true;	\
+		cmdstatus=$$?;							\
+	fi;									\
+	exit $$cmdstatus
+
+$(SYMROOT_INSTALL_KEXT_PLISTS): $(SYMROOT)/% : $(SOURCE)/%
+	$(_v)$(MKDIR) $(dir $@)
+	@echo "$(ColorH)INSTALLSYM$(ColorH) $(ColorLF)kextplist$(Color0) $(ColorF)$*$(Color0)"
+	$(_v)$(INSTALL) $(DATA_INSTALL_FLAGS) $< $@
+	$(_v)$(NEWVERS) $@ $(_vstdout)
+
+$(DSTROOT_INSTALL_KEXT_PLISTS): $(INSTALL_KEXT_DIR)/% : $(SYMROOT)/%
+	$(_v)$(MKDIR) $(dir $@)
+	@echo "$(ColorH)INSTALL$(ColorH)    $(ColorLF)kextplist$(Color0) $(ColorF)$*$(Color0)"
+	$(_v)$(INSTALL) $(DATA_INSTALL_FLAGS) $< $@
+
+$(DSTROOT_INSTALL_KEXT_MACHO_FILES): $(INSTALL_KEXT_DIR)/% : $(SYMROOT)/% ALWAYS
+	$(_v)$(MKDIR) $(dir $@)
+	@echo "$(ColorF)INSTALL$(Color0)    $(ColorF)$(notdir $@)$(Color0) \"($(ColorLF)$(CURRENT_ARCH_CONFIG_LC)$(Color0))\""
+	$(_v)$(INSTALL) $(EXEC_INSTALL_FLAGS) $< $@
+
+$(DSTROOT)/$(KRESDIR)/$(MD_SUPPORTED_KPI_FILENAME) $(DSTROOT)/$(KRESDIR)/$(MI_SUPPORTED_KPI_FILENAME): $(DSTROOT)/$(KRESDIR)/% : $(OBJPATH)/%
+	$(_v)$(MKDIR) $(dir $@)
+	@echo "$(ColorH)INSTALL$(Color0)    $(ColorF)$*$(Color0)"
+	$(_v)$(INSTALL) $(INSTALL_FLAGS) $< $@
+
+ifneq ($(INSTALL_KASAN_ONLY),1)
+do_config_install::	$(SYMROOT_INSTALL_KEXT_MACHO_FILES) \
+				$(SYMROOT_INSTALL_KEXT_PLISTS) \
+				$(DSTROOT_INSTALL_KEXT_MACHO_FILES) \
+				$(DSTROOT_INSTALL_KEXT_PLISTS) \
+				$(DSTROOT)/$(KRESDIR)/$(MD_SUPPORTED_KPI_FILENAME) \
+				$(DSTROOT)/$(KRESDIR)/$(MI_SUPPORTED_KPI_FILENAME)
+endif
 
 
-install_symbol_sets:	$(SYMBOL_SET_FAT) $(SRCROOT)/config/MasterVersion $(INSTALL_KEXT_PLISTS)
-	$(_v)if [ -s "$(OBJROOT)/System6.0.symbolset" -a $(SUPPORT_SYSTEM60_KEXT) -eq 1 ]; then	\
-		install $(INSTALL_FLAGS) $(OBJROOT)/System6.0.symbolset    $(DSTROOT)/$(INSTALL_KEXT_DIR)/System.kext/PlugIns/System6.0.kext/kernel.6.0;	\
-		install $(INSTALL_FLAGS) $(OBJROOT)/System6.0.symbolset    $(DSTROOT)/$(INSTALL_KEXT_DIR)/System.kext/PlugIns/Mach6.0.kext/Mach6.0;	\
-		install $(INSTALL_FLAGS) $(OBJROOT)/System6.0.symbolset    $(DSTROOT)/$(INSTALL_KEXT_DIR)/System.kext/PlugIns/BSDKernel6.0.kext/BSDKernel6.0;	\
-		install $(INSTALL_FLAGS) $(OBJROOT)/System6.0.symbolset    $(DSTROOT)/$(INSTALL_KEXT_DIR)/System.kext/PlugIns/Libkern6.0.kext/Libkern6.0;	\
-		install $(INSTALL_FLAGS) $(OBJROOT)/System6.0.symbolset    $(DSTROOT)/$(INSTALL_KEXT_DIR)/System.kext/PlugIns/IOKit6.0.kext/IOKit6.0;	\
-	fi
-	$(_v)if [ -s "$(OBJROOT)/BSDKernel.symbolset" ]; then \
-		install $(INSTALL_FLAGS) $(OBJROOT)/BSDKernel.symbolset    $(DSTROOT)/$(INSTALL_KEXT_DIR)/System.kext/PlugIns/BSDKernel.kext/BSDKernel;			\
-		install $(INSTALL_FLAGS) $(OBJROOT)/IOKit.symbolset        $(DSTROOT)/$(INSTALL_KEXT_DIR)/System.kext/PlugIns/IOKit.kext/IOKit;				\
-		install $(INSTALL_FLAGS) $(OBJROOT)/Libkern.symbolset      $(DSTROOT)/$(INSTALL_KEXT_DIR)/System.kext/PlugIns/Libkern.kext/Libkern;			\
-		install $(INSTALL_FLAGS) $(OBJROOT)/Mach.symbolset         $(DSTROOT)/$(INSTALL_KEXT_DIR)/System.kext/PlugIns/Mach.kext/Mach;				\
-		install $(INSTALL_FLAGS) $(OBJROOT)/MACFramework.symbolset $(DSTROOT)/$(INSTALL_KEXT_DIR)/System.kext/PlugIns/MACFramework.kext/MACFramework;		\
-		install $(INSTALL_FLAGS) $(OBJROOT)/Unsupported.symbolset  $(DSTROOT)/$(INSTALL_KEXT_DIR)/System.kext/PlugIns/Unsupported.kext/Unsupported;		\
-		install $(INSTALL_FLAGS) $(OBJROOT)/Private.symbolset      $(DSTROOT)/$(INSTALL_KEXT_DIR)/System.kext/PlugIns/Private.kext/Private;			\
-	fi
-	$(_v)$(NEWVERS) $(DSTROOT)/$(INSTALL_KEXT_DIR)/System.kext/Info.plist \
-		$(DSTROOT)/$(INSTALL_KEXT_DIR)/System.kext/PlugIns/AppleNMI.kext/Info.plist \
-		$(DSTROOT)/$(INSTALL_KEXT_DIR)/System.kext/PlugIns/ApplePlatformFamily.kext/Info.plist \
-		$(DSTROOT)/$(INSTALL_KEXT_DIR)/System.kext/PlugIns/BSDKernel.kext/Info.plist \
-		$(DSTROOT)/$(INSTALL_KEXT_DIR)/System.kext/PlugIns/IOKit.kext/Info.plist \
-		$(DSTROOT)/$(INSTALL_KEXT_DIR)/System.kext/PlugIns/IONVRAMFamily.kext/Info.plist \
-		$(DSTROOT)/$(INSTALL_KEXT_DIR)/System.kext/PlugIns/IOSystemManagement.kext/Info.plist \
-		$(DSTROOT)/$(INSTALL_KEXT_DIR)/System.kext/PlugIns/Libkern.kext/Info.plist \
-		$(DSTROOT)/$(INSTALL_KEXT_DIR)/System.kext/PlugIns/Mach.kext/Info.plist \
-		$(DSTROOT)/$(INSTALL_KEXT_DIR)/System.kext/PlugIns/MACFramework.kext/Info.plist \
-		$(DSTROOT)/$(INSTALL_KEXT_DIR)/System.kext/PlugIns/Unsupported.kext/Info.plist \
-		$(DSTROOT)/$(INSTALL_KEXT_DIR)/System.kext/PlugIns/Private.kext/Info.plist;
-	$(_v)$(MKDIR) $(DSTROOT)/$(KRESDIR);
-	$(_v)$(MKDIR) $(SYMROOT)
-	$(_v)$(CP) -rf $(DSTROOT)/$(INSTALL_KEXT_DIR)/System.kext $(SYMROOT)
+$(OBJPATH)/all-kpi.exp: $(EXPORTS_FILES)
+	$(_v)$(SOURCE)/generate_linker_exports.sh $@ $+
 
-do_build_all:	build_symbol_sets
-
-do_build_install:	install_symbol_sets 
-
-EXPORTS_FILE_LIST = $(addprefix $(SOURCE)/,$(foreach set,$(SYMBOL_COMPONENT_LIST), $(set).exports $(set).$(ARCH_CONFIG_LC).exports))
-EXPORTS_FILE_LIST_NOSYSTEM60 = $(addprefix $(SOURCE)/,$(foreach set, $(filter-out System6.0,$(SYMBOL_COMPONENT_LIST)), $(set).exports $(set).$(ARCH_CONFIG_LC).exports))
-
-# Does not include "whole-kernel" clients
-build_mach_kernel_exports:
-	$(_v)if [ $(SUPPORT_SYSTEM60_KEXT) -eq 1 ]; then \
-		$(SOURCE)/generate_linker_exports.sh $(OBJPATH)/kernel-kpi.exp \
-		 	 $(EXPORTS_FILE_LIST) || exit 1; \
-	else \
-		$(SOURCE)/generate_linker_exports.sh $(OBJPATH)/kernel-kpi.exp \
-		 	 $(EXPORTS_FILE_LIST_NOSYSTEM60) || exit 1; \
-	fi;
+do_build_all:: $(OBJPATH)/all-kpi.exp
 
 include $(MakeInc_rule)
 include $(MakeInc_dir)
